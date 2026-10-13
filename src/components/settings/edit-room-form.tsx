@@ -154,7 +154,7 @@ export function EditRoomForm({ roomId, teacherRoomId, currency, initial }: EditR
       <Input label="Postcode" maxLength={POSTCODE_MAX} value={postcode} onChange={(e) => { setPostcode(e.target.value); clearStatus(); }} />
       <Input label="Floor" maxLength={FLOOR_MAX} value={floor} onChange={(e) => { setFloor(e.target.value); clearStatus(); }} placeholder="e.g. Ground, 1st" />
       <Input label="Max capacity" type="number" max={CAPACITY_MAX} value={maxCapacity} onChange={(e) => { setMaxCapacity(e.target.value); clearStatus(); }} />
-      <Input label={`Rental rate (${currencyLabel(currency)})`} type="text" inputMode="decimal" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
+      <Input label={`Rental rate (${currencyLabel(currency)})`} hint="If you charge VAT, enter it excl. VAT." type="text" inputMode="decimal" value={rentalRate} onChange={(e) => { setRentalRate(e.target.value); clearStatus(); }} />
 
       <fieldset className="flex flex-col gap-1">
         <legend className="text-brown mb-2">Available props</legend>

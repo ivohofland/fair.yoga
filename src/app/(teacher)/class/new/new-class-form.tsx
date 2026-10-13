@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
+import { vatPercentViolation } from '@/lib/vat';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_DECIMALS, MONEY_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
@@ -62,6 +63,7 @@ interface FormData {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;
   // Step 3: Policies
   cancelDeadline: string;
   autoCancelCheck: string;
@@ -121,6 +123,7 @@ const INITIAL_FORM: FormData = {
   targetRate: 25,
   minStudents: 4,
   maxStudents: 12,
+  vatPercent: 0,
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
 };
@@ -160,10 +163,10 @@ function normalizeDescription(value: string): string | null {
 // Component
 // ---------------------------------------------------------------------------
 
-export function NewClassForm({ currency }: { currency: Currency }) {
+export function NewClassForm({ currency, defaultVatPercent }: { currency: Currency; defaultVatPercent: number }) {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [form, setForm] = useState<FormData>(INITIAL_FORM);
+  const [form, setForm] = useState<FormData>({ ...INITIAL_FORM, vatPercent: defaultVatPercent });
   const [errors, setErrors] = useState<StepErrors>({});
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomData[]>([]);
   // Issue 76. Kept separately from `teacherRooms.length` (the filtered,
@@ -223,6 +226,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
   // Derive selected room data
   const selectedRoom = teacherRooms.find((tr) => tr.id === form.teacherRoomId);
   const roomCapacity = selectedRoom?.capacityOverride ?? 30;
+  const chargesVat = form.vatPercent > 0;
 
   // -------------------------------------------------------------------------
   // Field update helpers
@@ -298,6 +302,8 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       if (!Number.isFinite(form.targetRate)) errs.targetRate = 'Enter a number for target rate';
       else if (Math.abs(form.targetRate) > MONEY_MAX)
         errs.targetRate = `Target rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
+      const vatMessage = vatPercentViolation(form.vatPercent);
+      if (vatMessage) errs.vatPercent = vatMessage;
       if (form.minStudents <= 0) errs.minStudents = 'Min students must be at least 1';
       else if (!Number.isInteger(form.minStudents))
         errs.minStudents = 'Min students must be a whole number';
@@ -592,18 +598,32 @@ export function NewClassForm({ currency }: { currency: Currency }) {
       {/* Step 2: Pricing */}
       {step === 2 && (
         <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <NumberInput
               id="roomCost"
-              label={`Room cost (${currencyLabel(currency)})`}
+              label={
+                chargesVat
+                  ? `Room cost excl. VAT (${currencyLabel(currency)})`
+                  : `Room cost (${currencyLabel(currency)})`
+              }
               decimals={MONEY_DECIMALS}
               value={form.roomCost}
               onValueChange={(n) => updateField('roomCost', n)}
+              hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
               error={errors.roomCost}
             />
             <NumberInput
+              id="vatPercent"
+              label="VAT %"
+              decimals={Infinity}
+              value={form.vatPercent}
+              onValueChange={(n) => updateField('vatPercent', n)}
+              hint="Included in student prices. Use 0 if you don't charge VAT."
+              error={errors.vatPercent}
+            />
+            <NumberInput
               id="minRate"
-              label={`Min rate (${currencyLabel(currency)})`}
+              label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
               decimals={MONEY_DECIMALS}
               signed
               value={form.minRate}
@@ -612,7 +632,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             />
             <NumberInput
               id="targetRate"
-              label={`Target rate (${currencyLabel(currency)})`}
+              label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
               decimals={MONEY_DECIMALS}
               signed
               value={form.targetRate}
@@ -729,6 +749,7 @@ export function NewClassForm({ currency }: { currency: Currency }) {
             <p className="text-base text-ink">
               Room cost: {formatMoney(form.roomCost, currency)} &middot; Rate:{' '}
               {formatMoney(form.minRate, currency)} &ndash; {formatMoney(form.targetRate, currency)}
+              {chargesVat && <> &middot; VAT {form.vatPercent}%</>}
             </p>
           </div>
 

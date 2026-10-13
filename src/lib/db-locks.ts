@@ -518,10 +518,10 @@ export async function lockTeacherForNoKeyUpdate(
 export async function lockTeacherForShare(
   tx: TransactionClientOnly,
   teacherId: string,
-): Promise<{ currency: Currency } | null> {
+): Promise<{ currency: Currency; defaultVatPercent: Prisma.Decimal } | null> {
   await setLockTimeout(tx);
-  const rows = await tx.$queryRaw<Array<{ currency: Currency }>>`
-    SELECT currency FROM "Teacher"
+  const rows = await tx.$queryRaw<Array<{ currency: Currency; defaultVatPercent: Prisma.Decimal }>>`
+    SELECT currency, "defaultVatPercent" FROM "Teacher"
      WHERE id = ${teacherId} AND "deletedAt" IS NULL
      FOR SHARE`;
   return rows[0] ?? null;

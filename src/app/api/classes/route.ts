@@ -173,6 +173,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         targetRate: body.targetRate,
         minStudents: body.minStudents,
         maxStudents: body.maxStudents,
+        vatPercent: body.vatPercent ?? teacher.defaultVatPercent,
         cancelDeadline: body.cancelDeadline,
         autoCancelCheck: body.autoCancelCheck,
         status: 'draft',

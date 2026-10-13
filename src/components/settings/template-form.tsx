@@ -14,6 +14,7 @@ import {
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
+import { vatPercentViolation } from '@/lib/vat';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -66,6 +67,7 @@ interface TemplateFormValues {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;
   cancelDeadline: CancelDeadline;
   autoCancelCheck: AutoCancelCheck;
 }
@@ -79,7 +81,7 @@ type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
  *
  * The issue warned that a pin "has to target the right schema per branch"
  * because create and update differ — they do differ, in optionality and
- * `.strict()`, but not in *keys*: thirteen each, the same thirteen. For a
+ * `.strict()`, but not in *keys*: the same keys on each. For a
  * key-set pin they are interchangeable as things stand. The day their keys
  * diverge, that single body stops satisfying one of them, and a pin against
  * only the other would not notice.
@@ -107,6 +109,8 @@ interface TemplateFormProps {
   mode: 'create' | 'edit';
   templateId?: string;
   currency: Currency;
+  /** The teacher's profile default; seeds a new template's VAT %. An edit reads `initial`. */
+  defaultVatPercent?: number;
   initial?: TemplateFormValues;
 }
 
@@ -190,7 +194,7 @@ function numberFieldError(form: TemplateFormValues): string | undefined {
   if (!Number.isInteger(form.minStudents)) return 'Min students must be a whole number';
   if (form.maxStudents <= 0) return 'Max students must be at least 1';
   if (!Number.isInteger(form.maxStudents)) return 'Max students must be a whole number';
-  return undefined;
+  return vatPercentViolation(form.vatPercent) ?? undefined;
 }
 
 const INITIAL_VALUES: TemplateFormValues = {
@@ -205,13 +209,14 @@ const INITIAL_VALUES: TemplateFormValues = {
   targetRate: 25,
   minStudents: 4,
   maxStudents: 12,
+  vatPercent: 0,
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
 };
 
-export function TemplateForm({ mode, templateId, currency, initial }: TemplateFormProps) {
+export function TemplateForm({ mode, templateId, currency, defaultVatPercent, initial }: TemplateFormProps) {
   const router = useRouter();
-  const [form, setForm] = useState(initial ?? INITIAL_VALUES);
+  const [form, setForm] = useState(initial ?? { ...INITIAL_VALUES, vatPercent: defaultVatPercent ?? INITIAL_VALUES.vatPercent });
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomOption[]>([]);
   // Issue 76. Held separately from `teacherRooms.length` (which is the
   // filtered, offerable count) so the empty state below can tell "no rooms
@@ -295,6 +300,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
 
   const selectedRoom = teacherRooms.find((tr) => tr.id === form.teacherRoomId);
   const roomCapacity = selectedRoom?.capacityOverride ?? 30;
+  const chargesVat = form.vatPercent > 0;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -697,22 +703,35 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         onValueChange={(n) => update('durationMinutes', n)}
       />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <NumberInput
-          label={`Room cost (${currencyLabel(currency)})`}
+          label={
+            chargesVat
+              ? `Room cost excl. VAT (${currencyLabel(currency)})`
+              : `Room cost (${currencyLabel(currency)})`
+          }
           decimals={MONEY_DECIMALS}
           value={form.roomCost}
           onValueChange={(n) => update('roomCost', n)}
+          hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
         />
         <NumberInput
-          label={`Min rate (${currencyLabel(currency)})`}
+          id="vatPercent"
+          label="VAT %"
+          decimals={Infinity}
+          value={form.vatPercent}
+          onValueChange={(n) => update('vatPercent', n)}
+          hint="Included in student prices. Use 0 if you don't charge VAT."
+        />
+        <NumberInput
+          label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
           decimals={MONEY_DECIMALS}
           signed
           value={form.minRate}
           onValueChange={(n) => update('minRate', n)}
         />
         <NumberInput
-          label={`Target rate (${currencyLabel(currency)})`}
+          label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
           decimals={MONEY_DECIMALS}
           signed
           value={form.targetRate}

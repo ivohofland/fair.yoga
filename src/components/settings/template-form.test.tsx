@@ -38,6 +38,7 @@ describe('TemplateForm', () => {
     targetRate: 25,
     minStudents: 4,
     maxStudents: 12,
+    vatPercent: 0,
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
   } as const;
@@ -97,6 +98,7 @@ describe('TemplateForm', () => {
     targetRate: 25,
     minStudents: 4,
     maxStudents: 12,
+    vatPercent: 0,
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
   };
@@ -320,7 +322,36 @@ describe('TemplateForm', () => {
     expect(screen.queryByLabelText('Room cost (€)')).toBeNull();
   });
 
-  it('sends the same thirteen fields when creating', async () => {
+  it('create mode seeds the VAT % from defaultVatPercent, and the labels follow it (#819)', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={9} />);
+    expect(await screen.findByLabelText('VAT %')).toHaveValue('9');
+    expect(screen.getByLabelText('Room cost excl. VAT (€)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '0' } });
+    expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
+    expect(screen.queryByText("You reclaim the room's VAT in your own VAT return.")).toBeNull();
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '9' } });
+    expect(screen.getByText("You reclaim the room's VAT in your own VAT return.")).toBeInTheDocument();
+  });
+
+  it('a cleared VAT % is sent as 0 (#819)', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={9} />);
+    const roomSelect = await screen.findByLabelText('Room');
+    fireEvent.change(roomSelect, { target: { value: '11111111-1111-4111-8111-111111111111' } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '' } });
+    const { body } = await submit();
+    expect(body.vatPercent).toBe(0);
+  });
+
+  it('edit mode shows the stored VAT % (#819)', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, vatPercent: 21 }} />);
+    expect(await screen.findByLabelText('VAT %')).toHaveValue('21');
+  });
+
+  it('sends the same fields when creating', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="create" />);
     const roomSelect = await screen.findByLabelText('Room');
@@ -336,7 +367,7 @@ describe('TemplateForm', () => {
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
       'durationMinutes', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
-      'startTime', 'targetRate', 'teacherRoomId',
+      'startTime', 'targetRate', 'teacherRoomId', 'vatPercent',
     ]);
   });
 

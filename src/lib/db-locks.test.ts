@@ -950,8 +950,10 @@ describe('the Teacher first lock (#758)', () => {
     await expect(prisma.$transaction((tx) => lockTeacherForNoKeyUpdate(tx, missing))).resolves.toBeNull();
   });
 
-  it('lockTeacherForShare answers the currency for a live teacher, null otherwise', async () => {
-    await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, liveId))).resolves.toEqual({ currency: 'GBP' });
+  it('lockTeacherForShare answers the currency and default VAT for a live teacher, null otherwise', async () => {
+    const live = await prisma.$transaction((tx) => lockTeacherForShare(tx, liveId));
+    expect(live?.currency).toBe('GBP');
+    expect(live?.defaultVatPercent.toNumber()).toBe(0);
     await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, erasedId))).resolves.toBeNull();
     await expect(prisma.$transaction((tx) => lockTeacherForShare(tx, missing))).resolves.toBeNull();
   });

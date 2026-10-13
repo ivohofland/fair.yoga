@@ -50,6 +50,7 @@ export default async function EditTemplatePage({
           targetRate: Number(template.targetRate),
           minStudents: template.minStudents,
           maxStudents: template.maxStudents,
+          vatPercent: template.vatPercent.toNumber(),
           cancelDeadline: template.cancelDeadline,
           autoCancelCheck: template.autoCancelCheck,
         }}

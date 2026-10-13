@@ -151,6 +151,7 @@ type TeacherEditableClassTemplateField =
   | 'targetRate'
   | 'minStudents'
   | 'maxStudents'
+  | 'vatPercent'
   | 'cancelDeadline'
   | 'autoCancelCheck';
 
@@ -194,8 +195,6 @@ void _templateAllowlistHasNoStaleFields;
  *                        id — including, via the composite FK, one they do
  *                        not own. Nothing on this route ever needs to move a
  *                        template between rules.
- *   - `vatPercent`    → not in the wire schema, so the plain edit cannot write it;
- *                        listed so the partition classifies the column.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
  *   - `roomArchived`   → the issue 272 room mirror. Written only at the create
  *                        and move sites in this module, which assert or mirror
@@ -225,7 +224,6 @@ type PlainUpdateForbiddenTemplateField =
   | 'kind'
   | 'roomArchived'
   | 'ruleLive'
-  | 'vatPercent'
   | 'createdAt'
   | 'updatedAt';
 
@@ -1070,9 +1068,8 @@ export async function createClassTemplate(
       // lock (#758)"), held while the first window generated below reads the
       // teacher's currency and stamps it. A new write or lock in this
       // transaction moves `CREATE_TEMPLATE_TIMEOUT_MS`.
-      if (!(await lockTeacherForShare(tx, teacherId))) {
-        return { ok: false as const, reason: 'teacher_gone' as const };
-      }
+      const teacher = await lockTeacherForShare(tx, teacherId);
+      if (!teacher) return { ok: false as const, reason: 'teacher_gone' as const };
       const [rule] = await tx.scheduleRule.createManyAndReturn({
         data: [{
           teacherId,
@@ -1108,6 +1105,7 @@ export async function createClassTemplate(
           targetRate: input.targetRate,
           minStudents: input.minStudents,
           maxStudents: input.maxStudents,
+          vatPercent: input.vatPercent ?? teacher.defaultVatPercent,
           cancelDeadline: input.cancelDeadline,
           autoCancelCheck: input.autoCancelCheck,
         },

@@ -54,6 +54,7 @@ describe('ClassEditForm', () => {
     targetRate: 25,
     minStudents: 4,
     maxStudents: 12,
+    vatPercent: 0,
   };
 
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
@@ -79,6 +80,7 @@ describe('ClassEditForm', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
     });
   });
 
@@ -102,9 +104,22 @@ describe('ClassEditForm', () => {
     expect(Object.keys(body).sort()).toEqual([
       'classType', 'description', 'durationMinutes',
     ]);
-    for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents', 'date', 'startTime']) {
+    for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents', 'vatPercent', 'date', 'startTime']) {
       expect(body).not.toHaveProperty(f);
     }
+  });
+
+  it('shows the stored VAT %, and the room cost label follows whether VAT is charged (#819)', () => {
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
+    expect(screen.getByLabelText('VAT %')).toHaveValue('21');
+    expect(screen.getByLabelText('Room cost excl. VAT (€)')).toBeInTheDocument();
+    expect(screen.getByText("You reclaim the room's VAT in your own VAT return.")).toBeInTheDocument();
+  });
+
+  it('keeps the plain room cost label at 0% VAT (#819)', () => {
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
+    expect(screen.queryByText("You reclaim the room's VAT in your own VAT return.")).toBeNull();
   });
 
   it('disables the date and start time once booked, and says how to change the time (#836)', () => {
@@ -596,6 +611,7 @@ describe('ClassEditForm, late-move notice', () => {
     targetRate: 25,
     minStudents: 4,
     maxStudents: 12,
+    vatPercent: 0,
   };
   const warning: MoveWarning = {
     timeZone: 'Europe/Amsterdam',

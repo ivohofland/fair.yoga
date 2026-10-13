@@ -111,7 +111,7 @@ describe('NewClassPage', () => {
    * default; step 2 and step 3 defaults already validate), then submits.
    */
   async function fillAndSubmit(): Promise<{ url: string; method: string; body: Record<string, unknown> }> {
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -149,7 +149,7 @@ describe('NewClassPage', () => {
    * above — and everything else is `INITIAL_FORM`'s default, untouched by
    * step 2 and step 3's no-op "Next" clicks.
    */
-  it('sends exactly these thirteen fields, with the values the wizard actually produces', async () => {
+  it('sends exactly these fields, with the values the wizard actually produces', async () => {
     stubFetch();
     const { url, method, body } = await fillAndSubmit();
     expect(url).toBe('/api/classes');
@@ -166,14 +166,65 @@ describe('NewClassPage', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
     });
   });
 
+  it('seeds the VAT % from defaultVatPercent, and the pricing labels follow it (#819)', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={9} />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+
+    expect(await screen.findByLabelText('VAT %')).toHaveValue('9');
+    expect(screen.getByLabelText('Room cost excl. VAT (€)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Min rate excl. VAT (€)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Target rate excl. VAT (€)')).toBeInTheDocument();
+    expect(screen.getByText("You reclaim the room's VAT in your own VAT return.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '0' } });
+    expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Min rate (€)')).toBeInTheDocument();
+    expect(screen.queryByText("You reclaim the room's VAT in your own VAT return.")).toBeNull();
+  });
+
+  it('a cleared VAT % is sent as 0, and the review names VAT only when charged (#819)', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={9} />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    fireEvent.change(await screen.findByLabelText('VAT %'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    expect(screen.queryByText(/VAT 0%/)).toBeNull();
+    const { body } = await submit();
+    expect(body.vatPercent).toBe(0);
+  });
+
+  it('names the VAT % in the review when charged (#819)', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={9} />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    expect(screen.getByText(/VAT 9%/)).toBeInTheDocument();
+  });
+
   it('sends description when entered and renders it in step 4 review', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -201,7 +252,7 @@ describe('NewClassPage', () => {
 
   it('sends whitespace-only description as null', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -228,7 +279,7 @@ describe('NewClassPage', () => {
 
   it('sends empty-string description as null', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -255,7 +306,7 @@ describe('NewClassPage', () => {
 
   it('renders formatted date, time, and class summary on the step 4 review screen', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     // Step 1: Basics
     const roomSelect = await screen.findByLabelText('Room');
@@ -497,7 +548,7 @@ describe('NewClassPage', () => {
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
     try {
       stubFetch();
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
       const date = await screen.findByLabelText('Date');
       await waitFor(() => expect(date).toHaveAttribute('min', '2026-08-18'));
     } finally {
@@ -520,7 +571,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header while the rooms are loading', () => {
       fetchMock.mockImplementation(() => new Promise(() => {}));
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(screen.getByText('Loading rooms...')).toBeInTheDocument();
       expectHeader();
@@ -529,7 +580,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when the rooms fail to load', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expectHeader();
@@ -538,7 +589,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when the teacher has no rooms', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
       expectHeader();
@@ -547,7 +598,7 @@ describe('NewClassPage', () => {
     it('shows the wizard header when every room is archived', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ ...ROOM, isArchived: true }] }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
       expectHeader();
@@ -563,7 +614,7 @@ describe('NewClassPage', () => {
    */
   it('offers both a recurring class and a studio class as alternatives to the wizard (#436)', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     fireEvent.click(await screen.findByRole('button', { name: /set up a recurring class/i }));
     expect(routerPush).toHaveBeenCalledWith('/settings/recurring/new');
@@ -574,7 +625,7 @@ describe('NewClassPage', () => {
 
   it('offers the alternatives only on step 1, and again on returning to it', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
     fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
@@ -615,7 +666,7 @@ describe('NewClassPage', () => {
 
     it('does not offer an archived room in the picker', async () => {
       stubRooms([LIVE, ARCHIVED]);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText(/Main Venue/)).toBeInTheDocument();
       expect(screen.queryByText(/Shelved Venue/)).not.toBeInTheDocument();
@@ -623,7 +674,7 @@ describe('NewClassPage', () => {
 
     it('tells a teacher whose rooms are all archived to unarchive, not to add one', async () => {
       stubRooms([ARCHIVED]);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText('All your rooms are archived')).toBeInTheDocument();
       expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
@@ -631,7 +682,7 @@ describe('NewClassPage', () => {
 
     it('still tells a teacher with no rooms at all to add one', async () => {
       stubRooms([]);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
     });
@@ -641,7 +692,7 @@ describe('NewClassPage', () => {
     it('distinguishes a failed load from an absence of rooms', async () => {
       fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expect(screen.queryByText('No rooms configured')).not.toBeInTheDocument();
@@ -652,7 +703,7 @@ describe('NewClassPage', () => {
       const down = new Error('network down');
       fetchMock.mockRejectedValue(down);
       vi.stubGlobal('fetch', fetchMock);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
 
       expect(await screen.findByText("Couldn't load your rooms")).toBeInTheDocument();
       expect(consoleError).toHaveBeenCalledWith('[class-new-rooms] request failed', {
@@ -664,7 +715,7 @@ describe('NewClassPage', () => {
   describe('step 1 validation (#318)', () => {
     async function renderAtStep1() {
       stubFetch();
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
       await screen.findByLabelText('Room');
     }
 
@@ -779,7 +830,7 @@ describe('NewClassPage', () => {
     /** Renders the wizard over `rooms` and fills step 1 validly with `roomId`, then presses Next. */
     async function renderAndPassStep1(rooms: readonly (typeof ROOM)[], roomId: string) {
       stubRooms(rooms);
-      render(<NewClassForm currency="EUR" />);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
       fireEvent.change(await screen.findByLabelText('Room'), { target: { value: roomId } });
       fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
       fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
@@ -1102,7 +1153,7 @@ describe('NewClassPage', () => {
 
   it('feeds the pricing preview from the rate fields as the teacher types', async () => {
     stubFetch();
-    render(<NewClassForm currency="EUR" />);
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });

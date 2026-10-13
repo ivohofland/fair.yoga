@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { getNextOccurrences } from '@/services/entry-generation';
@@ -2925,4 +2925,66 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
       expect(data.lateFirstClass?.state).toBe('past_deadline');
       expect(data.lateFirstClass?.date).toBe(date);
     }));
+});
+
+describe('the VAT % a class template stamps (#819)', () => {
+  const post = (body: Record<string, unknown>) =>
+    fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify(body),
+    });
+
+  async function setDefaultVat(percent: number): Promise<void> {
+    const before = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { defaultVatPercent: true } });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { defaultVatPercent: percent } });
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { defaultVatPercent: before.defaultVatPercent } });
+    });
+  }
+
+  it("create without a vatPercent reads the teacher's default", async () => {
+    await setDefaultVat(9);
+    const [day] = sameWeekDayPair();
+    const res = await post(templateBody('Vat Default', '03:10', day));
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: data.id } });
+    expect(template.vatPercent.toNumber()).toBe(9);
+  });
+
+  it('a template at 9 generates classes at 9; a PUT to 21 leaves them, and the next generated read 21', async () => {
+    const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
+    const create = await post({ ...templateBody('Vat Stamp', '04:20', OLD_DAY), vatPercent: 9 });
+    expect(create.status).toBe(201);
+    const { data: created } = (await create.json()) as { data: { id: string } };
+    const id = created.id;
+    const owned = { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } };
+
+    const before = await prisma.class.findMany({ where: owned });
+    expect(before.length).toBe(4);
+    expect(before.map((c) => c.vatPercent.toNumber())).toEqual([9, 9, 9, 9]);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ vatPercent: 21, dayOfWeek: NEW_DAY }),
+    });
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { firstEffective: string } };
+
+    const stillThere = await prisma.class.findMany({ where: { id: { in: before.map((c) => c.id) } } });
+    expect(stillThere.map((c) => c.vatPercent.toNumber())).toEqual([9, 9, 9, 9]);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
+    });
+    expect(template.vatPercent.toNumber()).toBe(21);
+    const later = await generateInstancesForTemplate(prisma, template, new Date(data.firstEffective));
+    expect(later.created).toBeGreaterThan(0);
+    const after = await prisma.class.findMany({ where: { ...owned, id: { notIn: before.map((c) => c.id) } } });
+    expect(after.length).toBe(later.created);
+    expect(after.every((c) => c.vatPercent.toNumber() === 21)).toBe(true);
+  });
 });
