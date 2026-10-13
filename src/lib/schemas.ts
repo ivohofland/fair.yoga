@@ -7,6 +7,7 @@ import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations } from '@/lib/class-economics';
 import { vatPercentViolation } from '@/lib/vat';
+import { RESERVED_SLUGS } from '@/lib/reserved-slugs';
 import {
   singleLineText,
   multiLineText,
@@ -267,37 +268,6 @@ export const passkeyAuthVerifySchema = z.object({
 // ============================================================================
 // TEACHERS
 // ============================================================================
-
-// Names a teacher may not claim as `fair.yoga/<pageSlug>`. A static route
-// segment beats the `[slug]` dynamic one, so a route sharing a teacher's slug
-// would silently hide their page — `schemas.test.ts` holds every static
-// top-level route segment against this set. The rest are reserved before any
-// route holds them: a name taken by a teacher cannot later become a page
-// without hiding theirs, and some would make a teacher's page read as the
-// platform's own.
-const RESERVED_SLUGS = new Set([
-  // Routes the app has today.
-  'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
-  'inbox', 'class', 'studio-class', 'api', 'health', 'admin', 'account', 'updates', 'start',
-  'payout-pause', 'unsubscribe', 'passkey-revoke',
-  // Common website pages.
-  'home', 'about', 'about-us', 'contact', 'contact-us', 'help', 'support', 'faq',
-  'pricing', 'prices', 'costs', 'running-costs', 'donate', 'donations', 'blog', 'news',
-  'press', 'changelog', 'status', 'docs', 'open-source', 'team', 'jobs', 'careers',
-  // Legal pages.
-  'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'tos', 'legal', 'cookies',
-  'gdpr', 'imprint', 'impressum', 'accessibility', 'security',
-  // Names that would pass a teacher's page off as the platform's.
-  'yoga', 'fair', 'fair-yoga', 'fairyoga', 'official', 'staff', 'administrator', 'root',
-  'system', 'moderator',
-  // Routes the app may grow.
-  'logout', 'sign-in', 'sign-out', 'signin', 'register', 'auth', 'invite', 'join',
-  'onboarding', 'dashboard', 'me', 'profile', 'teacher', 'teachers', 'student', 'classes',
-  'calendar', 'notifications', 'payments', 'search', 'explore',
-  // Infrastructure and technical names.
-  'www', 'app', 'mail', 'email', 'static', 'assets', 'cdn', 'icons', 'images', 'public',
-  'robots', 'sitemap', 'favicon', 'null', 'undefined', 'test',
-]);
 
 /**
  * The public page address, `fair.yoga/<pageSlug>`.

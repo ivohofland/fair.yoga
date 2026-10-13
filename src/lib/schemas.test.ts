@@ -711,18 +711,21 @@ describe('pageSlugField', () => {
     expect(pageSlugField.parse('anna-yoga')).toBe('anna-yoga');
   });
 
-  // Every static first segment of the app, inside a route group or not, beats
-  // `(public)/[slug]`; a slug equal to one would never reach its teacher's page.
-  it('reserves every static top-level route segment', () => {
+  // Every static first segment of the app, inside route groups at any depth,
+  // beats `(public)/[slug]`, and so does every top-level entry of `public/`; a
+  // slug equal to one would never reach its teacher's page.
+  it('reserves every static top-level route segment and public/ name', () => {
     const app = path.resolve(__dirname, '../app');
-    const dirs = (dir: string) =>
-      readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
-    const segments = dirs(app).flatMap((name) =>
-      /^\(.+\)$/.test(name) ? dirs(path.join(app, name)) : [name],
-    );
-    const statics = segments.filter((name) => !name.startsWith('[') && !name.startsWith('('));
+    const entries = (dir: string) => readdirSync(dir, { withFileTypes: true });
+    const segments = (dir: string): string[] =>
+      entries(dir)
+        .filter((d) => d.isDirectory())
+        .flatMap((d) => (/^\(.+\)$/.test(d.name) ? segments(path.join(dir, d.name)) : [d.name]));
+    const statics = segments(app).filter((name) => !name.startsWith('['));
+    const publicNames = entries(path.resolve(__dirname, '../../public')).map((d) => d.name);
     expect(statics.length).toBeGreaterThan(0);
-    expect(statics.filter((name) => pageSlugField.safeParse(name).success)).toEqual([]);
+    expect(publicNames.length).toBeGreaterThan(0);
+    expect([...statics, ...publicNames].filter((name) => pageSlugField.safeParse(name).success)).toEqual([]);
   });
 });
 
