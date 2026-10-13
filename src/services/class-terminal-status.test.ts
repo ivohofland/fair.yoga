@@ -266,6 +266,7 @@ describe('class_terminal_status_guard', () => {
         effectiveTeacherRate: 25,
         totalStudents: 1,
         totalRevenue: 45,
+        vatTotal: 0,
       },
     });
 

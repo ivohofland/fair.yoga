@@ -109,6 +109,8 @@ export function classRow(
     effectiveTeacherRate: null,
     totalStudents: null,
     totalRevenue: null,
+    vatTotal: null,
+    vatPercent: new Decimal(0),
     spotBroadcastAt: null,
     autoCancelDecidedAt: null,
     teacherReminderSentAt: null,

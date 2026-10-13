@@ -19,3 +19,29 @@ export function vatPercentViolation(value: number): string | null {
   }
   return null;
 }
+
+/** Hundred percent, in thousandths of a percent. */
+const WHOLE = 100 * SCALE;
+
+/** A percentage of at most `VAT_PERCENT_DECIMALS` decimals as whole thousandths: 14.975 → 14975. */
+export function vatThousandths(percent: number): number {
+  return Math.round(percent * SCALE);
+}
+
+/**
+ * `amount` with VAT added. The factor is computed first so that at 0% it is
+ * exactly 1 and the amount comes back unchanged, bit for bit.
+ */
+export function withVat(amount: number, thousandths: number): number {
+  return amount * ((WHOLE + thousandths) / WHOLE);
+}
+
+/** The VAT added on top of a VAT-exclusive amount, in whole cents. */
+export function addedVatCents(baseCents: number, thousandths: number): number {
+  return Math.round((baseCents * thousandths) / WHOLE);
+}
+
+/** The VAT contained in a VAT-inclusive price, in whole cents. */
+export function includedVatCents(priceCents: number, thousandths: number): number {
+  return Math.round((priceCents * thousandths) / (WHOLE + thousandths));
+}

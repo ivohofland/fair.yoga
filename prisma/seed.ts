@@ -123,6 +123,7 @@ async function createCompletedClass(
       effectiveTeacherRate: new Prisma.Decimal(totals.effectiveTeacherRate),
       totalStudents: totals.totalStudents,
       totalRevenue: new Prisma.Decimal(totals.totalRevenue),
+      vatTotal: new Prisma.Decimal(0),
     },
   });
   return created;

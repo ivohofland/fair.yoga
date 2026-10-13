@@ -62,6 +62,7 @@ describe('GET /settings/reporting across currencies', () => {
       durationMinutes: 60,
       roomCost: new Prisma.Decimal(roomCost),
       totalRevenue: new Prisma.Decimal(revenue),
+      vatTotal: 0,
       totalStudents: 1,
       minRate: 10,
       targetRate: 20,

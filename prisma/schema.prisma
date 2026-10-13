@@ -573,6 +573,7 @@ model ClassTemplate {
   targetRate      Decimal         @db.Decimal(10, 2)
   minStudents     Int
   maxStudents     Int
+  vatPercent      Decimal         @default(0) @db.Decimal(6, 3)
   cancelDeadline  CancelDeadline  @default(HOURS_24)
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
   createdAt       DateTime        @default(now())
@@ -671,6 +672,7 @@ model Class {
   targetRate           Decimal         @db.Decimal(10, 2)
   minStudents          Int
   maxStudents          Int
+  vatPercent           Decimal         @default(0) @db.Decimal(6, 3)
   cancelDeadline       CancelDeadline  @default(HOURS_24)
   autoCancelCheck      AutoCancelCheck @default(HOURS_2)
   status               ClassStatus     @default(draft)
@@ -678,6 +680,7 @@ model Class {
   effectiveTeacherRate Decimal?        @db.Decimal(10, 2)
   totalStudents        Int?
   totalRevenue         Decimal?        @db.Decimal(10, 2)
+  vatTotal             Decimal?        @db.Decimal(10, 2)
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -1212,6 +1215,7 @@ model Payment {
   id             String        @id @default(uuid())
   registrationId String        @unique
   amount         Decimal       @db.Decimal(10, 2)
+  vatAmount      Decimal       @default(0) @db.Decimal(10, 2)
   status         PaymentStatus @default(pending)
   method         String?
   processorRef   String?

@@ -194,6 +194,8 @@ void _templateAllowlistHasNoStaleFields;
  *                        id — including, via the composite FK, one they do
  *                        not own. Nothing on this route ever needs to move a
  *                        template between rules.
+ *   - `vatPercent`    → not in the wire schema, so the plain edit cannot write it;
+ *                        listed so the partition classifies the column.
  *   - `createdAt`, `updatedAt` → Prisma-managed.
  *   - `roomArchived`   → the issue 272 room mirror. Written only at the create
  *                        and move sites in this module, which assert or mirror
@@ -223,6 +225,7 @@ type PlainUpdateForbiddenTemplateField =
   | 'kind'
   | 'roomArchived'
   | 'ruleLive'
+  | 'vatPercent'
   | 'createdAt'
   | 'updatedAt';
 

@@ -8,6 +8,7 @@ const payment: Payment = {
   id: 'pay-1',
   registrationId: 'reg-1',
   amount: new Prisma.Decimal('12.50'),
+  vatAmount: new Prisma.Decimal(0),
   status: 'paid',
   method: 'cash',
   processorRef: null,

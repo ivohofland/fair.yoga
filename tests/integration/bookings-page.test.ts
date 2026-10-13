@@ -96,6 +96,7 @@ describe('GET /bookings (page) — payment status gate', () => {
       effectiveTeacherRate: 10,
       totalStudents: 1,
       totalRevenue: 30,
+      vatTotal: 0,
     });
     classId = cls.id;
 
@@ -1181,6 +1182,7 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
         durationMinutes: 60,
         status: 'completed',
         ...economics,
+        vatTotal: economics.totalRevenue === null ? null : 0,
       });
       const registration = await prisma.registration.create({
         data: { classId: cls.id, studentId, status: 'attended', tierAtBooking: 3 },
