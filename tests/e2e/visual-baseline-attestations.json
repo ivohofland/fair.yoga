@@ -10,6 +10,11 @@
     "baselineSha256": "25574a7adbb8e27e5b53c32693adfcde7490676fd27e902b5bcea5dae3121a36",
     "verifiedAt": "2026-10-03"
   },
+  "login": {
+    "sourceSha256": "a079098cdcb3ddb9ec21f6736f10e10b6c1458a93d86f6d7dc01650bc3e28c3c",
+    "baselineSha256": "508104cd42cf4dd111aaa24d8dd059288acd8d72012df409ab64dbc1a861b5e3",
+    "verifiedAt": "2026-10-13"
+  },
   "public-page": {
     "sourceSha256": "b837d640db11ad4a93441b52c65f2f57154a03fbd7b83111b2378a348231965c",
     "baselineSha256": "c405c17f0442fd3639744797ccb1862397606368e1994c8ff757e793fc446be9",
