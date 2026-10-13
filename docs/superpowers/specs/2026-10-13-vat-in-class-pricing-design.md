@@ -144,16 +144,18 @@ implicit 0%.
 
 `src/lib/vat.ts` gains pure helpers. A percentage of at most 3 decimals
 (already enforced by `vatPercentViolation`) becomes an exact integer number of
-thousandths (14.975 → 14975), so no float percentage is ever multiplied:
+thousandths (14.975 → 14975):
 
-- `vatThousandths(percent: number): number`, which is
-  `Math.round(percent × 1000)`
-- `withVatCents(baseCents, t)`, which is
-  `Math.round(baseCents × (100000 + t) / 100000)`
-- `includedVatCents(priceCents, t)`, which is
-  `Math.round(priceCents × t / (100000 + t))`
-
-At `t = 0` the first is the identity and the second is 0.
+- `vatThousandths(percent)`: `Math.round(percent × 1000)`
+- `withVat(amount, t)`: `amount × ((100000 + t) / 100000)`. The factor is
+  computed first, so at `t = 0` it is exactly 1 and the amount is unchanged
+  bit for bit. This is deliberate: rounding the total to cents first would
+  shift the engine's exact shares, and with them which student gets a
+  leftover cent, even at 0%.
+- `addedVatCents(baseCents, t)`: `Math.round(baseCents × t / 100000)`, the
+  form preview's VAT line
+- `includedVatCents(priceCents, t)`:
+  `Math.round(priceCents × t / (100000 + t))`, each student's VAT
 
 **`src/lib/teacher-earnings.ts`**: `teacherEarningsCents({ totalCents,
 roomCents, vatCents })`, which is `totalCents − roomCents − vatCents`. Task 1
@@ -163,8 +165,7 @@ field, so the compiler finds every caller.
 ### Engine and completion
 
 - `ClassPricingInput` gains `vatPercent: number`.
-  - `totalCost` becomes `withVatCents(round(100 × (room + effectiveRate)),
-    t) / 100`.
+  - `totalCost` becomes `withVat(room + effectiveRate, t)`.
   - The largest-remainder split is unchanged.
   - Each `PricedStudent` gains `vat`, which is
     `includedVatCents(priceCents, t) / 100`.
@@ -181,13 +182,15 @@ field, so the compiler finds every caller.
   completion notification's earnings figure is excl. VAT with no copy change.
 - Every type that repeats the economic fields gains `vatPercent`. The compiler
   then finds every page that builds one from a class row:
-  - `TierEstimateInput`, `ResolvePriceLineInput`
-  - `ClassEconomics`, `PricingPreviewInputs`
+  - `TierEstimateInput`, `ResolvePriceLineInput`, `PricingPreviewInputs`
+
+  `ClassEconomics` does not change. It carries only the cross-field rules,
+  and VAT is not part of them.
 
   Those pages are the public teacher page, the booking page and the student
-  bookings list. Each adds `vatPercent` to its `select`. The two hand-written
-  economics `select`s in `class-lifecycle.ts` (the `updateClass` merge) and
-  `class-template-lifecycle.ts` (the child-update gate) gain it too.
+  bookings list. Each adds `vatPercent` to its `select`. The hand-written
+  economics `select`s in `updateClass` and the template child-update gate
+  feed only `economicsViolations`, so they stay as they are.
 
 ### Wire, forms, pre-fill
 
@@ -275,7 +278,7 @@ New tests by layer:
 
 - **Unit, `vat.ts`:**
   - the helpers at `t = 0`
-  - `withVatCents(11000, 9000) = 11990`
+  - `withVat(110, 9000)` rounds to 11990 cents, and `addedVatCents(11000, 9000) = 990`
   - 14.975 and 8.1 convert exactly
   - included VAT ≤ price across a sweep of prices
 - **Unit, engine:**
