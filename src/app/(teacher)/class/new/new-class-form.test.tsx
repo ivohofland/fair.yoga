@@ -16,7 +16,7 @@ const ROOM = {
 };
 
 /**
- * #136. This wizard restates its thirteen fields three times — the `FormData`
+ * #136. This wizard restates its fields three times — the `FormData`
  * interface, `INITIAL_FORM`, and the POST body (the last derived from `form`
  * with `description` normalized at submit — see `page.tsx`) — and nothing
  * checked that the three agreed with each other or with `createClassSchema`.
@@ -134,7 +134,7 @@ describe('NewClassPage', () => {
   /**
    * A key-set assertion alone cannot see a value transposed between two
    * same-typed fields — e.g. `minRate` and `targetRate` swapped — because
-   * both are still numbers, in a body with the same thirteen keys. That matters
+   * both are still numbers, in a body with the same keys. That matters
    * more here than anywhere else in this batch: this is the one form in scope
    * carrying pricing fields, and `createClassSchema`'s refinements
    * (`minRate <= targetRate`, `minRate >= -roomCost`) reject some wrong

@@ -7,7 +7,7 @@ import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { DURATION_MAX_MINUTES, MONEY_MAX } from '@/lib/input-bounds';
 
 /**
- * #85. This form enumerated its thirteen fields three times — the `initial`
+ * #85. This form enumerated its fields three times — the `initial`
  * prop, `INITIAL_VALUES`, and the PUT body — and nothing checked that the three
  * agreed with each other or with `updateClassTemplateSchema`. One list now,
  * compiler-pinned; these tests hold what a pin cannot see, which is what
