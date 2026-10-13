@@ -3984,17 +3984,50 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     expect(result.lateFirstClass?.state).toBe('past_deadline');
   });
 
-  it('edit: a first class starting before the next sweep is judged at its own start, so it answers past_check', async () => {
-    const seeded = await freshTeacher('edit-cap');
+  it('edit: a candidate past its check by the next sweep is one the sweep declines, so the answer names the following week', async () => {
+    const seeded = await freshTeacher('edit-declined');
     const target = new Date(Date.now() + 40 * 60 * 1000);
     const template = await seedTemplate(seeded, target, true, 'HOURS_2');
 
-    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, {
-      classType: 'Renamed',
-    });
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, { classType: 'Renamed' });
 
     if (!result.ok) throw new Error('expected ok');
-    expect(result.lateFirstClass?.state).toBe('past_check');
+    const near = slotAt(target, 'UTC').date;
+    expect(result.firstEffective).toEqual(new Date(mondayOf(near) + 7 * 24 * 60 * 60 * 1000));
+    expect(result.lateFirstClass).toBeNull();
+  });
+
+  it('edit: a candidate whose check is still ahead now but passed by the next sweep is declined too', async () => {
+    const seeded = await freshTeacher('edit-declined-ahead');
+    // Its check, two hours before the start, is about 20 minutes away: not
+    // yet passed now, passed by the latest instant the next sweep runs.
+    const target = new Date(Date.now() + 140 * 60 * 1000);
+    const template = await seedTemplate(seeded, target, true, 'HOURS_2');
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, { classType: 'Renamed' });
+
+    if (!result.ok) throw new Error('expected ok');
+    const near = slotAt(target, 'UTC').date;
+    expect(result.firstEffective).toEqual(new Date(mondayOf(near) + 7 * 24 * 60 * 60 * 1000));
+    expect(result.lateFirstClass).toBeNull();
+  });
+
+  it('edit: a candidate whose check falls just after the next sweep is named, and judged against its deadline', async () => {
+    const seeded = await freshTeacher('edit-check-after');
+    // Its check is about 65 minutes away, after the next sweep's latest instant.
+    const target = new Date(Date.now() + 185 * 60 * 1000);
+    const template = await seedTemplate(seeded, target, true, 'HOURS_2', 'HOURS_24');
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, { classType: 'Renamed' });
+
+    if (!result.ok) throw new Error('expected ok');
+    const near = slotAt(target, 'UTC').date;
+    expect(result.firstEffective).toEqual(new Date(mondayOf(near)));
+    expect(result.lateFirstClass).toEqual({
+      date: near.toISOString().slice(0, 10),
+      state: 'past_deadline',
+      minStudents: 2,
+    });
   });
 
   it('edit: a paused template answers null', async () => {

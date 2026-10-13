@@ -138,7 +138,7 @@ describe('probeFirstEffectiveWeek', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const db = clientOf(() => Promise.reject(new Error('connection reset')));
 
-    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, 'studio template')).resolves.toBeNull();
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, null, 'studio template')).resolves.toBeNull();
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0]?.[1])).toContain('the first-effective-week probe failed');
@@ -158,7 +158,7 @@ describe('probeFirstEffectiveWeek', () => {
       ),
     );
 
-    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, 'recurring class')).resolves.toBeNull();
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, null, 'recurring class')).resolves.toBeNull();
 
     expect(warn).toHaveBeenCalledTimes(1);
     const message = String(warn.mock.calls[0]?.[1]);
@@ -173,7 +173,7 @@ describe('probeFirstEffectiveWeek', () => {
     const findMany = vi.fn();
     const db = { calendarEntry: { findMany } } as unknown as PrismaClient;
 
-    await expect(probeFirstEffectiveWeek(db, TEMPLATE, [], 'recurring class')).resolves.toBeNull();
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, [], null, 'recurring class')).resolves.toBeNull();
 
     expect(findMany).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
@@ -182,7 +182,7 @@ describe('probeFirstEffectiveWeek', () => {
   it('answers the week and the candidate date that opens it when a week is free', async () => {
     const db = clientOf(() => Promise.resolve([]));
 
-    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, 'recurring class')).resolves.toEqual({
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, null, 'recurring class')).resolves.toEqual({
       week: new Date('2026-09-21T00:00:00.000Z'),
       candidate: new Date('2026-09-24T00:00:00.000Z'),
     });

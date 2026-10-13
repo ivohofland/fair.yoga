@@ -1638,9 +1638,12 @@ export type UpdateRuleResult<TChild> =
       /**
        * Whether the class the sweep is expected to add first — the probe's
        * candidate — starts inside its cancellation deadline when it lands.
-       * A prediction like `firstEffective`, judged at the nominal insert
-       * instant, `min(now + CLASS_GENERATION_INTERVAL_MS, its start)`, so it
-       * errs toward warning. `null` when `firstEffective` is, when that class
+       * A prediction like `firstEffective`, judged at the same instant the
+       * probe declines at: the latest the next nominal sweep runs,
+       * `now + CLASS_GENERATION_INTERVAL_MS`, so it errs toward warning. A
+       * candidate past its auto-cancel check by then is one the sweep
+       * declines, so the probe skips it and this can be `past_deadline` but
+       * never `past_check`. `null` when `firstEffective` is, when that class
        * is in time, and for a family whose `lateFirstClass` is `null`.
        */
       lateFirstClass: LateFirstClass | null;
@@ -1858,6 +1861,15 @@ export async function updateRule<TChild>(
 
   const generationState = templateGenerationState(updatedRule);
 
+  // The latest instant the next nominal sweep runs: what the probe and the
+  // late-first-class judgement are both judged at, so they cannot disagree.
+  const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
+  const pastCancelCheck = family.pastCancelCheck;
+  const declines =
+    pastCancelCheck === null
+      ? null
+      : (date: Date) => pastCancelCheck(updated, { date, startTime: updatedRule.startTime }, timeZone, at);
+
   const probe =
     generationState === 'active'
       ? await probeFirstEffectiveWeek(
@@ -1870,24 +1882,19 @@ export async function updateRule<TChild>(
             durationMinutes: updated.durationMinutes,
           },
           horizon,
+          declines,
           family.editNoun,
         )
       : null;
 
-  // The zone the horizon was built from, and the nominal insert instant
-  // capped at the candidate's start — see `UpdateRuleResult`'s
-  // `lateFirstClass`. The edit has committed, so a throw here answers `null`
-  // rather than a 500 — the same contract as the probe above.
+  // The zone the horizon was built from, and the `at` the probe declined at —
+  // see `UpdateRuleResult`'s `lateFirstClass`. The edit has committed, so a
+  // throw here answers `null` rather than a 500 — the same contract as the
+  // probe above.
   let lateFirstClass: LateFirstClass | null = null;
   if (family.lateFirstClass && probe) {
     const entry = { date: probe.candidate, startTime: updatedRule.startTime };
     try {
-      const at = new Date(
-        Math.min(
-          now.getTime() + CLASS_GENERATION_INTERVAL_MS,
-          classStartInstant(entry, timeZone).getTime(),
-        ),
-      );
       lateFirstClass = family.lateFirstClass(updated, entry, timeZone, at);
     } catch (err) {
       log.warn(
