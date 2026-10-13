@@ -122,7 +122,7 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it('generates 4 class instances from a template', async () => {
-    // Use Monday SWEEP_YEAR-04-06 as the starting date.
+    // Use Monday 2037-04-06 as the starting date.
     const from = new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
@@ -1775,9 +1775,60 @@ describe('generateEntriesForRule — the sweep declines past its check (#859)', 
     expect(reasonOn(sweep.skipped, candidate.date)).toBe('slot_taken');
   });
 
+  it('a near candidate in a week its own template already holds is already_this_week, never past_cancel_check', async () => {
+    const { teacherId, teacherRoomId, fresh, candidate } = await seedNear(
+      'weekheld',
+      new Date(Date.now() + 90 * MINUTE),
+      'UTC',
+      'HOURS_2',
+    );
+    // Another day of the candidate's own Monday-keyed week.
+    const DAY = 24 * 60 * MINUTE;
+    const weekday = (candidate.date.getUTCDay() + 6) % 7;
+    const monday = candidate.date.getTime() - weekday * DAY;
+    const otherDate = new Date(weekday === 0 ? monday + DAY : monday);
+    await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      scheduleRuleId: fresh.scheduleRuleId,
+      classType: 'Vinyasa',
+      date: otherDate,
+      startTime: candidate.startTime,
+      durationMinutes: 60,
+      roomCost: 40,
+      minRate: 15,
+      targetRate: 30,
+      minStudents: 4,
+      maxStudents: 12,
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+      status: 'open',
+    });
+
+    const sweep = await generateEntriesForRule(prisma, CLASS_GENERATOR, fresh, 'sweep');
+    expect(reasonOn(sweep.skipped, candidate.date)).toBe('already_this_week');
+  });
+
+  it('judges at the wall clock, not at `from`: a window opened a day early still declines a candidate past its check now', async () => {
+    const { fresh, candidate } = await seedNear('wallclock', new Date(Date.now() + 90 * MINUTE), 'UTC', 'HOURS_2');
+
+    // `from` a day back: the candidate is still among the next occurrences, and
+    // its check (30 minutes ago) is AFTER `from` but before now.
+    const sweep = await generateEntriesForRule(
+      prisma,
+      CLASS_GENERATOR,
+      fresh,
+      'sweep',
+      new Date(Date.now() - 24 * 60 * MINUTE),
+    );
+    expect(reasonOn(sweep.skipped, candidate.date)).toBe('past_cancel_check');
+  });
+
   it("declines from the check instant itself, in the teacher's own zone, and fills 1 ms before it", async () => {
     const timeZone = 'Europe/Amsterdam';
-    const { fresh, candidate } = await seedNear('boundary', new Date(Date.now() + 3 * 60 * MINUTE), timeZone, 'HOURS_2');
+    // A fixed date clear of either 2037 DST transition, with the clock faked
+    // relative to its check, so the case runs the same whatever today is.
+    const { fresh, candidate } = await seedNear('boundary', new Date('2037-06-10T10:00:00.000Z'), timeZone, 'HOURS_2');
     const check = cancelCheckInstant(candidate, 'HOURS_2', timeZone);
 
     vi.useFakeTimers({ toFake: ['Date'] });
