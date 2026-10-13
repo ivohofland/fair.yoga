@@ -1018,7 +1018,9 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  * ONE PROBE FOR BOTH FAMILIES, matching the one generator it predicts. That
  * is what keeps a prediction and a behaviour from drifting apart per family,
  * and the family enters here only through `editNoun`, which reaches nothing
- * but the failure warn below. Do not add a family parameter to the reads:
+ * but the failure warn below, and `declines`, a predicate the caller builds
+ * that reaches nothing but the candidate filter. Do not add a family
+ * parameter to the reads:
  * every question this function asks is answered by `CalendarEntry` columns
  * both families share.
  *
@@ -1076,7 +1078,15 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *     #327's: the constraint behind both reasons is a RANGE now. A read keyed
  *     on `startTime` reproduced neither reason fully, and erred in the
  *     dishonest direction while this bullet claimed it reproduced both.
- *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
+ *   - `past_cancel_check` (#859) — a candidate whose auto-cancel check has
+ *     passed by the instant the sweep judges it. Not a read: reproduced by
+ *     `declines`, which the caller builds from the family's `pastCancelCheck`
+ *     judged at the LATEST instant the next nominal sweep runs. That instant
+ *     errs in the tolerated direction: a sweep running earlier may still fill
+ *     a candidate declined here, and the class then arrives a week before the
+ *     answer named it. The nominal interval itself is #860's imprecision, not
+ *     this bullet's.
+ *   - `raced` —**not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
  *     effect on this prediction is bounded and self-correcting: the sweep loses
@@ -1087,8 +1097,8 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  * The two facts are kept apart rather than merged into one set, because they
  * are not the same fact: a WEEK this template already occupies versus a single
  * DATE whose slot another entry holds. Slot-taken dates are removed from the
- * candidate list; `firstFreeWeek` then answers the week question over what is
- * left. BOTH reads are bounded by `horizon` itself — its first and last weeks
+ * candidate list, as are declined ones; `firstFreeWeek` then answers the week
+ * question over what is left. BOTH reads are bounded by `horizon` itself — its first and last weeks
  * for the week read, its own members for the slot read — so nothing here can
  * disagree with anything else about which dates are in play.
  *
@@ -1120,6 +1130,10 @@ export async function probeFirstEffectiveWeek(
     durationMinutes: number;
   },
   horizon: readonly Date[],
+  // The family's `past_cancel_check` refusal as a predicate over a candidate
+  // date, or `null` for a family that has none — see the docblock's bullet.
+  // A predicate rather than the family, so the reads stay family-agnostic.
+  declines: ((candidate: Date) => boolean) | null,
   // The noun THIS function's own failure warn composes from — deliberately
   // `EditLogNoun`, not `GeneratorFamily.logNoun`. See `EditLogNoun`'s own
   // docblock above for why the two must never be composed from one another;
@@ -1244,8 +1258,11 @@ export async function probeFirstEffectiveWeek(
     // one date unfillable — and since a weekly template has exactly one
     // candidate per week, the week is lost as a consequence, not as a
     // definition. The generator draws the same distinction, which is why it
-    // reports two different reasons.
-    const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
+    // reports two different reasons. A declined date is removed the same way
+    // and for the same reason; a throw from `declines` lands in this guard.
+    const candidates = horizon.filter(
+      (date) => !takenDates.has(date.getTime()) && !(declines?.(date) ?? false),
+    );
 
     const free = firstFreeWeek(candidates, heldWeeks);
     // `week` is converted to the Monday here rather than in the copy layer —
