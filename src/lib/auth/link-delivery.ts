@@ -24,9 +24,9 @@ export type BoundSignInLink = string & { readonly [boundLinkBrand]: true };
  * from `ensureOriginNonce`, which they must call for every accepted request
  * regardless of whether an account exists.
  *
- * `opts.timeZone` is the zone the requester's browser reported, or
- * `undefined`, forwarded to `sendMagicLinkEmail` with the token's expiry. It
- * is a required key so a caller that has a zone cannot drop it by omission.
+ * `opts.timeZone` is the zone the email names the expiry in, or `undefined`;
+ * it is forwarded to `sendMagicLinkEmail` with the token's expiry. It is a
+ * required key so a caller that has a zone cannot drop it by omission.
  */
 export async function deliverSignInLink(
   db: PrismaClient,

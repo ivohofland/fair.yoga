@@ -276,12 +276,12 @@ export function renderNotificationEmail(
 /**
  * The sign-in email: one link, one expiry note, nothing else.
  *
- * Its subject names the link's expiry to the second, in the zone the
- * requesting browser reported: Gmail threads mail by subject and trims
- * repeated content inside a thread, so a subject that repeats lets Gmail hide
- * a second email's Sign in button behind `•••` (#825). A zone that is missing, or that
- * `isValidTimeZone` refuses, renders in UTC, labelled, so the subject is never
- * a silent guess and never throws.
+ * Its subject names the link's expiry to the second, in `timeZone`: Gmail
+ * threads mail by subject and trims repeated content inside a thread, so a
+ * subject that repeats lets Gmail hide a second email's Sign in button behind
+ * `•••` (#825). A `timeZone` that is missing, or that `isValidTimeZone`
+ * refuses, renders in UTC, labelled, so the subject is never a silent guess
+ * and never throws.
  */
 export function renderMagicLinkEmail(
   magicLink: string,

@@ -338,8 +338,8 @@ const wrappers = [
     name: 'magic link',
     label: 'magic-link',
     audience: 'platform',
-    send: () => sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC'),
-    rendered: () => renderMagicLinkEmail(LINK, WHEN, 'UTC'),
+    send: () => sendMagicLinkEmail('a@test.local', LINK, WHEN, 'Europe/Amsterdam'),
+    rendered: () => renderMagicLinkEmail(LINK, WHEN, 'Europe/Amsterdam'),
   },
   {
     name: 'invitation',

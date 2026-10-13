@@ -60,7 +60,7 @@ export async function mintMagicLinkToken(
   return { token: rawToken, expiresAt };
 }
 
-/** `mintMagicLinkToken`'s token alone, for callers that never show the expiry. */
+/** `mintMagicLinkToken` without the expiry. */
 export async function generateMagicLinkToken(
   db: PrismaClient,
   email: string,
