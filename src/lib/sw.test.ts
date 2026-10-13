@@ -284,31 +284,72 @@ describe('public/sw.js', () => {
   });
 
   it('opens a window at the url when the open window refuses to navigate', async () => {
+    const refusal = new TypeError('This service worker is not the client\'s active service worker.');
     const w = fakeWindow({
       navigate: vi.fn(async () => {
-        throw new TypeError('This service worker is not the client\'s active service worker.');
+        throw refusal;
       }),
     });
     const { self, listeners } = loadWorker([w]);
-    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n5' } } };
-    listeners.notificationclick!(e);
-    await e.done();
-    expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n5');
-    expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n5');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n5' } } };
+      listeners.notificationclick!(e);
+      await e.done();
+      expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n5');
+      expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n5');
+      expect(consoleWarn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), refusal);
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
-  it('opens a window at the url when the open window refuses focus', async () => {
+  it('navigates the open window on tap even when it refuses focus', async () => {
+    const refusal = new Error('Not allowed to focus a window.');
     const w = fakeWindow({
       focus: vi.fn(async () => {
-        throw new Error('Not allowed to focus a window.');
+        throw refusal;
       }),
     });
     const { self, listeners } = loadWorker([w]);
-    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n7' } } };
-    listeners.notificationclick!(e);
-    await e.done();
-    expect(w.navigate).not.toHaveBeenCalled();
-    expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n7');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n7' } } };
+      listeners.notificationclick!(e);
+      await e.done();
+      expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n7');
+      expect(self.clients.openWindow).not.toHaveBeenCalled();
+      expect(consoleWarn).toHaveBeenCalledTimes(1);
+      expect(consoleWarn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), refusal);
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('opens a window at the url when the open window refuses both focus and navigation', async () => {
+    const focusRefusal = new Error('Not allowed to focus a window.');
+    const navigateRefusal = new TypeError('This service worker is not the client\'s active service worker.');
+    const w = fakeWindow({
+      focus: vi.fn(async () => {
+        throw focusRefusal;
+      }),
+      navigate: vi.fn(async () => {
+        throw navigateRefusal;
+      }),
+    });
+    const { self, listeners } = loadWorker([w]);
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n9' } } };
+      listeners.notificationclick!(e);
+      await e.done();
+      expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n9');
+      expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n9');
+      expect(consoleWarn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), focusRefusal);
+      expect(consoleWarn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), navigateRefusal);
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
   it('logs a click chain that fails outright, rather than failing the event', async () => {

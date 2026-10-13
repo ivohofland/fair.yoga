@@ -395,15 +395,21 @@ self.addEventListener('notificationclick', (event) => {
       .matchAll({ type: 'window', includeUncontrolled: true })
       .then((windows) => {
         const existing = windows.find((w) => w.url.startsWith(self.location.origin));
-        // `navigate` rejects for a window this worker does not control.
-        // `clients.claim()` on activation takes every window already open,
-        // so that is one loaded by a hard reload, which bypasses the worker;
-        // a new window opens at `url` instead.
+        // Focus is best-effort: the browser may refuse it, and `navigate`
+        // does not need it, so a refusal is logged and the window is still
+        // navigated. `navigate` rejects for a window this worker does not
+        // control. `clients.claim()` on activation takes every window already
+        // open, so that is one loaded by a hard reload, which bypasses the
+        // worker; a new window opens at `url` instead.
         if (existing) {
           return existing
             .focus()
-            .then((client) => client.navigate(url))
-            .catch(() => self.clients.openWindow(url));
+            .catch((err) => console.warn('[sw] focus refused', err))
+            .then(() => existing.navigate(url))
+            .catch((err) => {
+              console.warn('[sw] navigate refused; opening a new window', err);
+              return self.clients.openWindow(url);
+            });
         }
         return self.clients.openWindow(url);
       })
