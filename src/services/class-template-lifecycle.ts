@@ -55,6 +55,8 @@ import {
 } from './class-generator';
 import { CHARGED_STATUSES } from './class-lifecycle';
 import type { GenerationResult } from '@/lib/generation';
+import type { LateFirstClass } from '@/lib/late-publish';
+import { lateFirstClass } from './late-first-class';
 import {
   archiveOrUnarchiveRule,
   pauseOrResumeRule,
@@ -885,6 +887,8 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
     },
     foreignKeyConstraint: CLASS_TEMPLATE_ROOM_FK,
   },
+  lateFirstClass: (child, entry, timeZone, at) =>
+    lateFirstClass({ template: child, entry, timeZone, at }),
   updateChild: async (tx, templateId, childData, roomResult, template, data) => {
     // Checked on the row the write would leave, under the row lock
     // `updateRule` took, and before the write: the `CHECK`s raise at the
@@ -1019,7 +1023,17 @@ export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>
  * the other's transaction and Postgres breaks the cycle with `40P01`.
  */
 export type CreateTemplateResult =
-  | { ok: true; template: ClassTemplateWithSlot; generation: GenerationResult }
+  | {
+      ok: true;
+      template: ClassTemplateWithSlot;
+      generation: GenerationResult;
+      /**
+       * The earliest class this create added, when it starts inside its
+       * cancellation deadline — judged at the instant generation stamped it
+       * at; `null` when it added none or that class is in time.
+       */
+      lateFirstClass: LateFirstClass | null;
+    }
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   | { ok: false; reason: 'busy' }
   | { ok: false; reason: 'teacher_gone' };
@@ -1038,7 +1052,12 @@ export async function createClassTemplate(
   input: CreateClassTemplateInput,
 ): Promise<CreateTemplateResult> {
   let outcome:
-    | { ok: true; created: ClassTemplateWithSlot; generation: GenerationResult }
+    | {
+        ok: true;
+        created: ClassTemplateWithSlot;
+        generation: GenerationResult;
+        lateFirstClass: LateFirstClass | null;
+      }
     | { ok: false; reason: 'slot' | 'teacher_gone' };
   try {
     outcome = await db.$transaction(async (tx) => {
@@ -1092,8 +1111,24 @@ export async function createClassTemplate(
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
       const generation = await generateInstancesForTemplate(tx, created);
+      // Here, while the joined `created` still carries the zone and the
+      // `@db.Time` start, at the instant generation stamped the class at.
+      const lateFirstClass =
+        CLASS_FAMILY.lateFirstClass && generation.firstCreated
+          ? CLASS_FAMILY.lateFirstClass(
+              created,
+              generation.firstCreated,
+              created.scheduleRule.teacher.defaultTimezone,
+              generation.firstCreated.at,
+            )
+          : null;
       const { scheduleRule, ...bare } = created;
-      return { ok: true as const, created: withSlot(bare, scheduleRule), generation };
+      return {
+        ok: true as const,
+        created: withSlot(bare, scheduleRule),
+        generation,
+        lateFirstClass,
+      };
     }, { timeout: CREATE_TEMPLATE_TIMEOUT_MS });
   } catch (err) {
     // BEFORE any conflict check (`api-errors.ts`: `transientDbFailure` is
@@ -1138,5 +1173,10 @@ export async function createClassTemplate(
     });
     return { ok: false, reason: 'slot_conflict', heldBy };
   }
-  return { ok: true, template: outcome.created, generation: outcome.generation };
+  return {
+    ok: true,
+    template: outcome.created,
+    generation: outcome.generation,
+    lateFirstClass: outcome.lateFirstClass,
+  };
 }

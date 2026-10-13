@@ -286,11 +286,16 @@ export type GeneratorFamily<TChild, TKind extends ClassFamily = ClassFamily> = R
    * structural subset of the requested dates that survived `ON CONFLICT DO
    * NOTHING` — there is no predicate left for this write to re-apply and
    * nothing here may conflict. Called only when that subset is non-empty.
+   *
+   * `at` is the instant any stamp the children carry is judged at — the one
+   * `generateEntriesForRule` returns as `firstCreated.at`, so a caller judging
+   * the first class judges it at the same instant its stamp was.
    */
   createChildren: (
     db: PrismaClient | Prisma.TransactionClient,
     template: ChildWithRule<TChild>,
     entries: readonly { id: string; date: Date; startTime: Date }[],
+    at: Date,
   ) => Promise<void>;
 }>;
 
@@ -595,7 +600,7 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
         `${family.logNoun} generation found no candidate dates because their start instants could not be read`,
       );
     }
-    return { created: 0, skipped: [] };
+    return { created: 0, skipped: [], firstCreated: null };
   }
 
   // ONE query for the whole window, over `CalendarEntry` — which since #327 is
@@ -837,9 +842,18 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
           select: { id: true, date: true, startTime: true },
         });
 
+  // Read once: the stamp `createChildren` writes and the `firstCreated.at`
+  // returned below are this one instant.
+  const at = new Date();
   if (inserted.length > 0) {
-    await family.createChildren(db, template, inserted);
+    await family.createChildren(db, template, inserted, at);
   }
+  // The minimum by date, not `inserted[0]`: `RETURNING` order is not
+  // guaranteed.
+  const earliest = inserted.reduce<(typeof inserted)[number] | null>(
+    (min, row) => (min === null || row.date.getTime() < min.date.getTime() ? row : min),
+    null,
+  );
 
   // A free date that did not come back was refused by a constraint the
   // pre-check said nothing about, and `ON CONFLICT DO NOTHING` swallowed the
@@ -896,7 +910,12 @@ export async function generateEntriesForRule<TChild extends { id: string }>(
   skipped.sort((a, b) => a.date.getTime() - b.date.getTime());
   logSkippedEntries(family.logNoun, template.id, template.scheduleRule.teacherId, skipped);
 
-  return { created: inserted.length, skipped };
+  return {
+    created: inserted.length,
+    skipped,
+    firstCreated:
+      earliest === null ? null : { date: earliest.date, startTime: earliest.startTime, at },
+  };
 }
 
 /**
@@ -961,9 +980,9 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
 /**
  * The probe behind each family's `firstEffective`
  * (`UpdateClassTemplateResult`, #194; `UpdateStudioClassTemplateResult`,
- * #284): the Monday of the first week in `horizon` whose candidate date
- * `generateEntriesForRule` would actually fill, GIVEN that the template is
- * eligible to generate at all.
+ * #284): the first candidate date in `horizon` that `generateEntriesForRule`
+ * would actually fill (`candidate`), and the Monday of its week (`week`),
+ * GIVEN that the template is eligible to generate at all.
  *
  * ONE PROBE FOR BOTH FAMILIES, matching the one generator it predicts. That
  * is what keeps a prediction and a behaviour from drifting apart per family,
@@ -1075,7 +1094,7 @@ export async function probeFirstEffectiveWeek(
   // docblock above for why the two must never be composed from one another;
   // this is the parameter to read before reaching for `logNoun` here instead.
   editNoun: EditLogNoun,
-): Promise<Date | null> {
+): Promise<{ week: Date; candidate: Date } | null> {
   // Guarded rather than `!`-asserted: under `noUncheckedIndexedAccess` a `!`
   // here would be a claim about `getNextOccurrences` and its filter several
   // lines away, and both ends are dereferenced below.
@@ -1198,10 +1217,10 @@ export async function probeFirstEffectiveWeek(
     const candidates = horizon.filter((date) => !takenDates.has(date.getTime()));
 
     const free = firstFreeWeek(candidates, heldWeeks);
-    // Converted to the WEEK's Monday before leaving this function, not left as
-    // the candidate date — see either family's `firstEffective` note for why
-    // the conversion cannot live in the copy layer.
-    return free === null ? null : new Date(mondayOf(free));
+    // `week` is converted to the Monday here rather than in the copy layer —
+    // see `UpdateRuleResult`'s `firstEffective` note for why. `candidate` is
+    // the occurrence itself, unconverted.
+    return free === null ? null : { week: new Date(mondayOf(free)), candidate: free };
   } catch (err: unknown) {
     log.warn(
       { err, templateId: template.id },

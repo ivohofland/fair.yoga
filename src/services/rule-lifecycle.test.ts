@@ -234,12 +234,14 @@ describe("the two families' lifecycle results are not interchangeable", () => {
       template: {} as WithSlot<ClassTemplate>,
       firstEffective: null,
       generationState: 'active',
+      lateFirstClass: null,
     };
     const studioResult: UpdateRuleResult<StudioClassTemplate> = {
       ok: true,
       template: {} as WithSlot<StudioClassTemplate>,
       firstEffective: null,
       generationState: 'active',
+      lateFirstClass: null,
     };
 
     expect(takesStudio(studioResult)).toBe(true);

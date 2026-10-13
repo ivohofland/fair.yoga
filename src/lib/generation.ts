@@ -173,6 +173,11 @@ export interface SkippedSlot {
 export interface GenerationResult {
   created: number;
   skipped: SkippedSlot[];
+  /**
+   * The earliest entry this run inserted, and `at`, the instant its children
+   * were stamped at; `null` when it inserted none.
+   */
+  firstCreated: { date: Date; startTime: Date; at: Date } | null;
 }
 
 /**
@@ -391,5 +396,5 @@ export function spansOverlap(
   return aStart < bStart + b.durationMinutes && bStart < aStart + a.durationMinutes;
 }
 
-/** The generation sweep's interval; the scheduler reads it from here. */
+/** The generation sweep's interval. */
 export const CLASS_GENERATION_INTERVAL_MS = 60 * 60 * 1000;

@@ -53,8 +53,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
       where: { id: templateId },
       include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
     }),
-  createChildren: async (db, template, entries) => {
-    const now = new Date();
+  createChildren: async (db, template, entries, at) => {
     await db.class.createMany({
       data: entries.map((entry) => ({
         calendarEntryId: entry.id,
@@ -76,14 +75,15 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         autoCancelCheck: template.autoCancelCheck,
         // Inserted inside its own check window, or after its start has passed:
         // the generator is not asking the sweep to judge a class that was
-        // never given the chance to fill.
+        // never given the chance to fill. Judged and stamped at `at`, the
+        // instant the generator passes in, never a fresh read of the clock.
         autoCancelDecidedAt: isPastCancelCheck(
           entry,
           template.autoCancelCheck,
           template.scheduleRule.teacher.defaultTimezone,
-          now,
+          at,
         )
-          ? now
+          ? at
           : null,
         status: 'open' as const,
       })),

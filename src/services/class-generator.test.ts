@@ -1180,7 +1180,7 @@ describe('generateClassInstances (DB)', () => {
         // that each got a reason. `skipped` is empty for the same reason
         // `created` is 0: the function returns before the loop that would have
         // classified anything.
-        expect(result).toEqual({ created: 0, skipped: [] });
+        expect(result).toEqual({ created: 0, skipped: [], firstCreated: null });
 
         // Once per call, and the one line that identifies the template. The
         // other calls on this spy are `classStartInstant`'s own, one per

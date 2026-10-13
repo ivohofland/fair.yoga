@@ -91,7 +91,7 @@ describe('firstFreeWeek', () => {
 });
 
 // ===========================================================================
-// probeFirstEffectiveWeek — the two failure modes, and that neither escapes
+// probeFirstEffectiveWeek — its answer, and the two failure modes that never escape
 // ===========================================================================
 
 /**
@@ -107,7 +107,7 @@ describe('firstFreeWeek', () => {
  * path, and both branches need a read that misbehaves in a way no real query
  * against a healthy schema produces.
  */
-describe('probeFirstEffectiveWeek failure handling', () => {
+describe('probeFirstEffectiveWeek', () => {
   const THURSDAYS = [
     new Date('2026-09-24T00:00:00.000Z'),
     new Date('2026-10-01T00:00:00.000Z'),
@@ -176,5 +176,14 @@ describe('probeFirstEffectiveWeek failure handling', () => {
 
     expect(findMany).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('answers the week and the candidate date that opens it when a week is free', async () => {
+    const db = clientOf(() => Promise.resolve([]));
+
+    await expect(probeFirstEffectiveWeek(db, TEMPLATE, THURSDAYS, 'recurring class')).resolves.toEqual({
+      week: new Date('2026-09-21T00:00:00.000Z'),
+      candidate: new Date('2026-09-24T00:00:00.000Z'),
+    });
   });
 });

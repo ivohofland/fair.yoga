@@ -604,6 +604,9 @@ export const STUDIO_FAMILY: TemplateFamily<StudioClassTemplate, 'studio'> = {
   withdraw: null,
   editNoun: 'studio template',
   room: null,
+  // A studio class has no bookings and so no cancellation deadline to warn
+  // about.
+  lateFirstClass: null,
   updateChild: async (tx, templateId, childData) => {
     const writeData: Prisma.StudioClassTemplateUncheckedUpdateManyInput &
       Partial<Record<PlainUpdateForbiddenStudioTemplateField, never>> =
