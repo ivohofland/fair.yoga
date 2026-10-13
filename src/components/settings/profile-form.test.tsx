@@ -547,16 +547,30 @@ describe('ProfileForm', () => {
       });
 
       // The endpoint cannot tell who asks: it calls the teacher's own slug taken.
-      it('neither checks nor judges the saved slug, as loaded or typed back', async () => {
+      it('neither checks nor judges the saved slug as loaded', async () => {
         vi.useFakeTimers();
         slugCheck.mockImplementation((slug) => slug !== 'anna');
         stubFetch();
         renderForm();
         await afterDebounce();
+        expect(slugCheck).not.toHaveBeenCalled();
+        expect(screen.queryByText('That address is taken')).toBeNull();
+        expect(screen.queryByText('Available')).toBeNull();
+      });
+
+      // A check of another slug has run and been drawn before the switch back.
+      it('neither checks nor judges the saved slug when typed back', async () => {
+        vi.useFakeTimers();
+        slugCheck.mockImplementation((slug) => slug !== 'anna');
+        stubFetch();
+        renderForm();
         fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        await afterDebounce();
+        expect(screen.getByText('Available')).toBeInTheDocument();
+
         fireEvent.change(slugField(), { target: { value: 'anna' } });
         await afterDebounce();
-        expect(slugCheck).not.toHaveBeenCalled();
+        expect(checkedSlugs()).toEqual(['anna-yoga']);
         expect(screen.queryByText('That address is taken')).toBeNull();
         expect(screen.queryByText('Available')).toBeNull();
       });
