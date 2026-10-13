@@ -4,6 +4,7 @@ import {
   calculateClassPricing,
 } from './pricing';
 import { TIER_RATIOS, type IncomeTier } from '@/lib/tiers';
+import { includedVatCents } from '@/lib/vat';
 
 describe('TIER_RATIOS', () => {
   it('has 5 tiers with compressed 2x spread', () => {
@@ -115,6 +116,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [],
     });
 
@@ -131,6 +133,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [1, 1, 2, 3, 3, 4, 4, 5, 5],
     });
 
@@ -172,6 +175,7 @@ describe('calculateClassPricing', () => {
         targetRate: 25,
         minStudents: 4,
         maxStudents: 12,
+        vatPercent: 0,
         studentTiers,
       });
       const sumCents = result.students.reduce((a, s) => a + Math.round(s.price * 100), 0);
@@ -186,6 +190,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 1,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [3],
     });
 
@@ -202,6 +207,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [3, 3, 3, 3, 3],
     });
 
@@ -222,6 +228,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [1, 1, 2, 2, 3, 3, 3, 4, 4, 5, 5, 5, 5, 5],
     });
 
@@ -236,6 +243,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [3, 3, 3, 3],
     });
 
@@ -252,6 +260,7 @@ describe('calculateClassPricing', () => {
       targetRate: 20,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [1, 3, 5],
     });
 
@@ -265,6 +274,7 @@ describe('calculateClassPricing', () => {
       targetRate: 25,
       minStudents: 4,
       maxStudents: 12,
+      vatPercent: 0,
       studentTiers: [3, 1, 5, 2, 4],
     });
 
@@ -278,6 +288,7 @@ describe('calculateClassPricing', () => {
       targetRate: 55,
       minStudents: 6,
       maxStudents: 14,
+      vatPercent: 0,
       studentTiers: [1, 1, 2, 2, 3, 3, 3, 4, 4, 5],
     });
 
@@ -303,6 +314,7 @@ describe('calculateClassPricing', () => {
       targetRate: 10,
       minStudents: 4,
       maxStudents: 4,
+      vatPercent: 0,
       studentTiers: [1, 3, 3, 3],
     });
 
@@ -314,7 +326,7 @@ describe('calculateClassPricing', () => {
   it('pairs each price with the tier and ratio it was computed from', () => {
     const result = calculateClassPricing({
       roomCost: 35, minRate: 15, targetRate: 25,
-      minStudents: 4, maxStudents: 12,
+      minStudents: 4, maxStudents: 12, vatPercent: 0,
       studentTiers: [1, 5, 3],
     });
 
@@ -323,5 +335,40 @@ describe('calculateClassPricing', () => {
     expect(result.students.map((s) => s.tier)).toEqual([1, 5, 3]);
     expect(result.students.map((s) => s.ratio)).toEqual([0.65, 1.35, 1.0]);
     expect(result.students.every((s) => s.price > 0)).toBe(true);
+  });
+});
+
+describe('calculateClassPricing with VAT', () => {
+  const full = (n: number): IncomeTier[] => Array.from({ length: n }, () => 3 as IncomeTier);
+  const base = { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 4, maxStudents: 12 };
+
+  it('prices the issue example: \u20ac30 room + \u20ac80 rate at 9% totals \u20ac119.90', () => {
+    const r = calculateClassPricing({ ...base, vatPercent: 9, studentTiers: full(12) });
+    const cents = r.students.reduce((s, p) => s + Math.round(p.price * 100), 0);
+    expect(cents).toBe(11990);
+  });
+
+  it('gives each student the VAT contained in their own price', () => {
+    const r = calculateClassPricing({ ...base, vatPercent: 9, studentTiers: [1, 2, 3, 4, 5] });
+    for (const s of r.students) {
+      expect(Math.round(s.vat * 100)).toBe(includedVatCents(Math.round(s.price * 100), 9000));
+    }
+  });
+
+  it('keeps \u03a3 prices = total and VAT \u2264 price for a walk-in class over max', () => {
+    const tiers: IncomeTier[] = [1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 1, 2, 3, 4, 5];
+    const r = calculateClassPricing({ ...base, vatPercent: 14.975, studentTiers: tiers });
+    const cents = r.students.reduce((s, p) => s + Math.round(p.price * 100), 0);
+    expect(cents).toBe(Math.round(r.totalCost * 100));
+    for (const s of r.students) expect(s.vat).toBeLessThanOrEqual(s.price);
+    const vatCents = r.students.reduce((s, p) => s + Math.round(p.vat * 100), 0);
+    const exact = (r.totalCost * 100 * 14975) / 114975;
+    expect(Math.abs(vatCents - exact)).toBeLessThanOrEqual(0.5 * tiers.length);
+  });
+
+  it('is unchanged at 0% and carries zero VAT', () => {
+    const at0 = calculateClassPricing({ ...base, vatPercent: 0, studentTiers: [1, 3, 5] });
+    expect(at0.totalCost).toBe(base.roomCost + at0.effectiveTeacherRate);
+    for (const s of at0.students) expect(s.vat).toBe(0);
   });
 });

@@ -55,6 +55,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
       targetRate: Number(cls.targetRate),
       minStudents: cls.minStudents,
       maxStudents: cls.maxStudents,
+      vatPercent: Number(cls.vatPercent),
     },
     studentTiers,
   );

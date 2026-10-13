@@ -257,6 +257,7 @@ export default async function StudentBookingsPage() {
                     targetRate: Number(cls.targetRate),
                     minStudents: cls.minStudents,
                     maxStudents: cls.maxStudents,
+                    vatPercent: Number(cls.vatPercent),
                     registrations: cls.registrations,
                     viewer,
                   })}
@@ -330,6 +331,7 @@ export default async function StudentBookingsPage() {
                           targetRate: Number(cls.targetRate),
                           minStudents: cls.minStudents,
                           maxStudents: cls.maxStudents,
+                          vatPercent: Number(cls.vatPercent),
                           registrations: cls.registrations,
                           viewer,
                         })}
@@ -377,6 +379,7 @@ export default async function StudentBookingsPage() {
                 classStatus: cls.status,
                 roomCost: cls.roomCost,
                 totalRevenue: cls.totalRevenue,
+                vatTotal: cls.vatTotal,
                 totalStudents: cls.totalStudents,
                 payment,
               },

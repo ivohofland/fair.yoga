@@ -55,6 +55,7 @@ export default async function ReportingPage() {
       select: {
         currency: true,
         totalRevenue: true,
+        vatTotal: true,
         roomCost: true,
         totalStudents: true,
         calendarEntry: { select: { date: true } },
@@ -98,7 +99,11 @@ export default async function ReportingPage() {
     Math.round(Number(val ?? 0) * 100);
 
   const classEarningsCents = (c: (typeof completedClasses)[number]) =>
-    teacherEarningsCents({ totalCents: toCents(c.totalRevenue), roomCents: toCents(c.roomCost) });
+    teacherEarningsCents({
+      totalCents: toCents(c.totalRevenue),
+      roomCents: toCents(c.roomCost),
+      vatCents: toCents(c.vatTotal),
+    });
   const studioEarningsCents = (s: (typeof completedStudioClasses)[number]) =>
     Math.round((toCents(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60);
 

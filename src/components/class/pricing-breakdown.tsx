@@ -16,8 +16,13 @@ interface PricingBreakdownProps {
 export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
   const totalRevenue = cls.totalRevenue ? Number(cls.totalRevenue) : 0;
   const roomCost = Number(cls.roomCost);
+  const vatTotal = cls.vatTotal ? Number(cls.vatTotal) : 0;
   const teacherEarnings =
-    teacherEarningsCents({ totalCents: Math.round(totalRevenue * 100), roomCents: Math.round(roomCost * 100) }) / 100;
+    teacherEarningsCents({
+      totalCents: Math.round(totalRevenue * 100),
+      roomCents: Math.round(roomCost * 100),
+      vatCents: Math.round(vatTotal * 100),
+    }) / 100;
   const totalStudents = cls.totalStudents ?? 0;
 
   // Group by tier, using the actual stored price

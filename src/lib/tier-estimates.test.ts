@@ -15,6 +15,7 @@ const base: TierEstimateInput = {
   targetRate: 25,
   minStudents: 2,
   maxStudents: 10,
+  vatPercent: 0,
   registeredTiers: [],
 };
 
@@ -40,6 +41,7 @@ describe('estimateTierPrices', () => {
         targetRate: 25,
         minStudents: 2,
         maxStudents: 10,
+        vatPercent: 0,
         studentTiers: [tier, 3],
       }).students[0]!.price;
       expect(prices[tier - 1]!).toBe(expected);
@@ -56,6 +58,7 @@ describe('estimateTierPrices', () => {
       targetRate: 25,
       minStudents: 2,
       maxStudents: 10,
+      vatPercent: 0,
       studentTiers: [2, 4, 1],
     }).students[2]!.price;
     expect(prices[0]!).toBe(expected);
@@ -73,6 +76,7 @@ describe('estimateTierPrices', () => {
       targetRate: 25,
       minStudents: 2,
       maxStudents: 10,
+      vatPercent: 0,
       studentTiers: [5, 1, 3],
     }).students;
     expect(prices[2]!).toBe(engine[2]!.price);
@@ -101,6 +105,7 @@ describe('estimateAttendanceSpread', () => {
     targetRate: 25,
     minStudents: 2,
     maxStudents: 10,
+    vatPercent: 0,
   };
 
   it('spreads the canonical empty class exactly (viewer tier 3)', () => {
@@ -142,6 +147,7 @@ describe('estimateAttendanceSpread', () => {
       ...base,
       minStudents: 100_000,
       maxStudents: 100_000,
+      vatPercent: 0,
       registeredTiers: [],
       viewerTier: 3,
     });
@@ -154,6 +160,7 @@ describe('estimateAttendanceSpread', () => {
     const spread = estimateAttendanceSpread({
       ...base,
       maxStudents: 2,
+      vatPercent: 0,
       registeredTiers: [3, 3],
       viewerTier: 3,
     });
@@ -188,7 +195,7 @@ describe('padTiersToMinimum (#836)', () => {
 
 describe('billAtLeastMinimum (#836)', () => {
   // The live run (verify836 S5): two students under a minimum of four.
-  const live = { roomCost: 30, minRate: 10, targetRate: 40, minStudents: 4, maxStudents: 10 };
+  const live = { roomCost: 30, minRate: 10, targetRate: 40, minStudents: 4, maxStudents: 10, vatPercent: 0 };
 
   it('bills the real students 7.12 and 10.96 and the teacher -11.92', () => {
     const { billed, billedCents, earningsCents } = billAtLeastMinimum(live, [1, 3]);
@@ -206,5 +213,19 @@ describe('billAtLeastMinimum (#836)', () => {
   it('caps the padding at MAX_CLASS_SIZE', () => {
     const { billed } = billAtLeastMinimum({ ...live, minStudents: Number.MAX_SAFE_INTEGER, maxStudents: MAX_CLASS_SIZE }, [3]);
     expect(billed).toHaveLength(1);
+  });
+});
+
+describe('billAtLeastMinimum with VAT', () => {
+  it('charges VAT on billed students only, never on padding seats', () => {
+    // 2 real students in a class whose minimum is 4: two padding seats are priced but billed to no one.
+    const b = billAtLeastMinimum(
+      { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 4, maxStudents: 12, vatPercent: 9 },
+      [3, 3],
+    );
+    expect(b.billed).toHaveLength(2);
+    const billedVat = b.billed.reduce((s, p) => s + Math.round(p.vat * 100), 0);
+    expect(b.vatCents).toBe(billedVat);
+    expect(b.earningsCents).toBe(b.billedCents - 3000 - b.vatCents);
   });
 });

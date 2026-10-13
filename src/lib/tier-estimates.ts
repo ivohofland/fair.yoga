@@ -10,6 +10,7 @@ export interface TierEstimateInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;
   /** Tiers of everyone currently registered (charged statuses). */
   registeredTiers: IncomeTier[];
 }
@@ -35,7 +36,9 @@ export interface Billing {
   /** One record per real student, in the order given. Padding seats are not here. */
   billed: PricedStudent[];
   billedCents: number;
-  /** What the billed students pay, less the room, in whole cents. */
+  /** The VAT contained in what the billed students pay, in whole cents. */
+  vatCents: number;
+  /** What the billed students pay, less the room and the VAT, in whole cents. */
   earningsCents: number;
 }
 
@@ -56,10 +59,16 @@ export function billAtLeastMinimum(
   });
   const billed = pricing.students.slice(0, chargedTiers.length);
   const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
+  const vatCents = billed.reduce((sum, s) => sum + Math.round(s.vat * 100), 0);
   return {
     billed,
     billedCents,
-    earningsCents: teacherEarningsCents({ totalCents: billedCents, roomCents: Math.round(input.roomCost * 100) }),
+    vatCents,
+    earningsCents: teacherEarningsCents({
+      totalCents: billedCents,
+      roomCents: Math.round(input.roomCost * 100),
+      vatCents,
+    }),
   };
 }
 
@@ -80,6 +89,7 @@ export function estimateTierPrices(input: TierEstimateInput): TierPrices {
       targetRate: input.targetRate,
       minStudents: input.minStudents,
       maxStudents: input.maxStudents,
+      vatPercent: input.vatPercent,
       studentTiers: tiers,
     });
     // The joining student is at index registeredTiers.length. This assertion
@@ -130,6 +140,7 @@ export function estimateAttendanceSpread(input: AttendanceSpreadInput): Attendan
       targetRate: input.targetRate,
       minStudents: input.minStudents,
       maxStudents: input.maxStudents,
+      vatPercent: input.vatPercent,
       studentTiers: tiers,
     });
     // Same non-null assertion, same reason: see estimateTierPrices above.

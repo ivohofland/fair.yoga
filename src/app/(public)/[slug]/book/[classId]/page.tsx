@@ -66,6 +66,7 @@ export default async function BookClassPage({
     targetRate: Number(cls.targetRate),
     minStudents: cls.minStudents,
     maxStudents: cls.maxStudents,
+    vatPercent: Number(cls.vatPercent),
     registeredTiers: cls.registrations.map((r) =>
       toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
     ),
@@ -152,6 +153,7 @@ export default async function BookClassPage({
           targetRate: Number(cls.targetRate),
           minStudents: cls.minStudents,
           maxStudents: cls.maxStudents,
+          vatPercent: Number(cls.vatPercent),
           registrations: cls.registrations,
           viewer: viewer ? { studentId: viewer.id, tier: viewer.tier, tierSelectedAt: viewer.tierSelectedAt } : null,
         })}
