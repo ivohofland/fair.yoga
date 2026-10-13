@@ -11,6 +11,7 @@ export function detectTimeZone(): string | undefined {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
   } catch {
+    // No readable zone is a supported answer: the caller falls back.
     return undefined;
   }
 }

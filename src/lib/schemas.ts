@@ -200,13 +200,13 @@ export const TEACHER_PROFILE_PATH = '/signup/profile';
 export const MAGIC_LINK_REFUSED_STATUS = 400;
 
 // The zone a browser detected (#258, #825) — a value the browser reported,
-// not a preference the person chose. Optional so a browser that cannot report
-// one still gets through, and the reader applies its fallback. A zone the browser DID report degrades to that same fallback
-// whenever `isValidTimeZone` refuses it — one the server does not recognise
-// (the browser's ICU is newer), or an offset identifier the server recognises
-// but refuses — rather than 400ing the whole request with no retry path: this
-// is passive detection, not a value the person typed and can correct. A zone
-// it keeps passes through `modernTimeZone`, as `updateTeacherSchema`'s does.
+// not a preference the person chose. A zone `isValidTimeZone` refuses — one
+// the server does not recognise (the browser's ICU is newer), or an offset
+// identifier the server recognises but refuses — becomes `undefined`, the
+// same as no zone at all, rather than 400ing the whole request with no retry
+// path: this is passive detection, not a value the person typed and can
+// correct. A zone it keeps passes through `modernTimeZone`, as
+// `updateTeacherSchema`'s does.
 const detectedTimezoneField = z
   .string()
   .transform((s) => (isValidTimeZone(s) ? modernTimeZone(s) : undefined));

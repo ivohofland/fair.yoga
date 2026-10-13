@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 
 // The email is invisible to this tier, so this pins only that each sign-in
-// door accepts the new key, a recognised zone or not, without refusing.
+// door accepts a `timeZone` key, a recognised zone or not, without refusing.
 const ROUTES = ['/api/auth/magic-link/send', '/api/auth/teacher-signup', '/api/auth/student-signup'] as const;
 
 describe('sign-in requests carry the browser zone (#825)', () => {
