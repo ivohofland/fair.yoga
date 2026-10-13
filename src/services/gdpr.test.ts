@@ -3790,3 +3790,94 @@ describe('exports carry currency (#758)', () => {
     expect(exported.bookings[0]?.payment).toMatchObject({ currency: 'CHF' });
   });
 });
+
+/** #819: the VAT a class charged is part of what an export tells the subject. */
+describe('exports carry VAT (#819)', () => {
+  const prisma = new PrismaClient();
+  const suffix = `gdpr-vat-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  let teacherId: string;
+  let accountId: string;
+  let studentId: string;
+  let roomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Vat', lastName: 'Teacher', email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: '', pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Vat Studio', address: `${suffix} St`, city: 'Utrecht', postcode: '3511',
+        floor: '1', roomName: 'Main', maxCapacity: 20, createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const economics = { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 1, maxStudents: 10 };
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id, classType: 'Vat class',
+      date: new Date('2099-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
+      ...economics, status: 'open', vatPercent: 9,
+      totalRevenue: 119.9, vatTotal: 9.9, effectiveTeacherRate: 80,
+    });
+    await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Vat tpl', dayOfWeek: 3,
+            startTime: hhmmToTime('11:00'), durationMinutes: 60, isActive: true,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
+        description: 'Vat template',
+        ...economics,
+        vatPercent: 21,
+      },
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Vat', lastName: 'Student', email: `${suffix}-s@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    studentId = student.id;
+    await prisma.registration.create({
+      data: {
+        classId: cls.id, studentId, status: 'registered', tierAtBooking: 2, price: 12,
+        payment: { create: { amount: 12, vatAmount: 0.99 } },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
+    if (teacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it('teacher export: a class carries its VAT percent and total, a template its percent', async () => {
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.classes.map((c) => ({ p: Number(c.vatPercent), t: Number(c.vatTotal) }))).toEqual([{ p: 9, t: 9.9 }]);
+    expect(exported.recurringTemplates.map((t) => Number(t.vatPercent))).toEqual([21]);
+  });
+
+  it('student export: the payment carries its VAT amount', async () => {
+    const exported = await exportStudentData(prisma, studentId);
+    expect(Number(exported.bookings[0]?.payment?.vatAmount)).toBe(0.99);
+  });
+});
