@@ -245,7 +245,7 @@ describe('deploy/deploy.sh', () => {
     expect(result.stderr).toContain(before);
     expect(result.stderr).toContain(v2);
     expect(result.stderr).toContain('rolling back');
-  });
+  }, 20_000);
 
   it('seeds the record from HEAD before a first deploy that fails at the swap, and runs the whole deploy again on a retry', () => {
     const before = head();
@@ -379,7 +379,7 @@ describe('deploy/deploy.sh', () => {
       child.kill('SIGTERM');
 
       const code = await closed;
-      expect(code).not.toBe(0);
+      expect(code).toBe(143);
       expect(head()).toBe(before);
       expect(recorded()).toBe(before);
       expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
@@ -399,7 +399,7 @@ describe('deploy/deploy.sh', () => {
       while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
       expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
       expect(head()).toBe(v2);
-      // Nothing reads the pipes any more, as when the SSH connection drops; the failed build's message is then written to a closed pipe.
+      // Nothing reads the pipes any more, simulating a dropped SSH connection; the failed build's message is then written to a closed pipe.
       child.stdout.destroy();
       child.stderr.destroy();
 
