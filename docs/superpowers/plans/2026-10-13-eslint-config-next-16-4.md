@@ -15,7 +15,7 @@ Per-site verdict, each measured by editing the file and re-linting:
 |---|---|---|---|
 | `bank-account-form.tsx:214` | `refs` | false positive — `handleRemove` reads `headingRef` only from the confirm click | rewrite: `onConfirm` moves from the `removeControlProps(...)` return object to a JSX prop at both `<RemoveControl>` sites. Measured CLEAN. The rule flags any ref-reading closure handed to a function called during render; extracting the ref read into a `focusHeading()` helper is still flagged |
 | `attendance-list.tsx:219` | `refs` | false positive — a ref callback runs at commit | per-line `eslint-disable-next-line react-hooks/refs -- …`. React's own documented "list of refs" pattern (`map.set` + returned cleanup) is flagged identically, measured; a `useCallback` ref factory passes the rule only by hiding the read from it, and the DOM-query alternative couples focus order to DOM order instead of to the id |
-| `account-security.tsx:82` | `set-state-in-effect` | **issue premise wrong**: no state is set "at the top of the effect" — every `setState` in `loadPasskeys` sits after `await fetch`. The rule does not model an `await` inside a called function | rewrite: a module-level `fetchPasskeys()` returns the rows or `null` without touching state; the effect applies the result in `.then`, behind a `cancelled` flag; `loadPasskeys` (handlers) stays as `apply(await fetchPasskeys())` |
+| `account-security.tsx:82` | `set-state-in-effect` | **issue premise wrong**: no state is set "at the top of the effect" — every `setState` in `loadPasskeys` sits after `await fetch`. The rule does not model an `await` inside a called function | rewrite: a module-level `fetchPasskeys()` returns the rows or `null` without touching state; the effect applies the result in `.then`, behind a `cancelled` flag; a component-local `applyPasskeys(rows)` sets state, and `loadPasskeys` (handlers) is `applyPasskeys(await fetchPasskeys())` |
 | `add-walk-in.tsx:107` | `set-state-in-effect` | **real**: six synchronous `setState`s at the top of the effect, an extra render per open and per refetch | rewrite, see Task 3 |
 
 ## Global Constraints
@@ -74,13 +74,14 @@ reset-both-lists comment guards against by hand.
    `router.refresh()` brings a newly linked student into an open picker, and an existing
    test pins it.
 3. A refetch while open keeps the current rows on screen until its result replaces them
-   (success → new rows; failure → `failed`, rows gone, message shown). Today the picker
-   blanks to loading on every refresh.
+   (success → new rows; failure → `failed`, rows gone, message shown). A list already
+   `failed` keeps its message until the refetch settles. Today the picker blanks to loading
+   on every refresh.
 4. The already-registered filter applies at render against the current
    `registeredStudentIds`, not at fetch time, so a student registered by the refresh that
    triggered the refetch is gone from the picker immediately, not one fetch later.
 
-**Tests (write first, see them fail on the current code):**
+**Tests (write first; the first two fail on the current code, the third passes there — the old effect's reset covered reopen — and guards the open-handler reset instead, proven by mutation (c)):**
 - A refetch triggered by a rerender with a fresh `registeredStudentIds` keeps the picker's
   existing options visible while the refetch is pending (hold the second fetch on a
   deferred promise).
@@ -90,7 +91,7 @@ reset-both-lists comment guards against by hand.
 - Every existing test passes unchanged.
 
 **Prove the guards bite:** after GREEN, (a) re-add a `loading` reset at the top of the effect
-→ the keep-rows test fails; (b) move the registered filter back into the fetch `.then` → the
+→ the keep-rows and drop-option tests fail; (b) move the registered filter back into the fetch `.then` → the
 drop-option test fails; (c) remove the reset from the open handler → the reopen test fails.
 Record each failure's text, restore, re-run.
 

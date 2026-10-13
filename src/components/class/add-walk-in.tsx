@@ -101,9 +101,9 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   // Fetches only — each list's state is set when its own request settles.
   // Opening the picker is what puts both lists back to `loading`
   // (`openPicker`), so a refetch while open keeps the current rows on screen
-  // until its result replaces them. `registeredStudentIds` is a dependency
-  // because the fresh array a `router.refresh()` hands down is how a
-  // newly linked student reaches a picker that is already open.
+  // until its result replaces them. `registeredStudentIds` is a dependency:
+  // a new array identity refetches both lists, which is how a picker that is
+  // already open picks up a newly linked student.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
