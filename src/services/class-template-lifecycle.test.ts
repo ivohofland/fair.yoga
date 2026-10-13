@@ -3786,6 +3786,7 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     seeded: { teacherId: string; teacherRoomId: string },
     target: Date,
     isActive: boolean,
+    autoCancelCheck?: CreateClassTemplateInput['autoCancelCheck'],
   ) => {
     const slot = slotAt(target, 'UTC');
     return prisma.classTemplate.create({
@@ -3808,6 +3809,7 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
         minStudents: 2,
         maxStudents: 8,
         cancelDeadline: 'HOURS_48',
+        ...(autoCancelCheck ? { autoCancelCheck } : {}),
       },
     });
   };
@@ -3930,6 +3932,19 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
       minStudents: 2,
     });
     expect(result.firstEffective).toEqual(new Date(mondayOf(candidate)));
+  });
+
+  it('edit: a first class starting before the next sweep is judged at its own start, so it answers past_check', async () => {
+    const seeded = await freshTeacher('edit-cap');
+    const target = new Date(Date.now() + 40 * 60 * 1000);
+    const template = await seedTemplate(seeded, target, true, 'HOURS_2');
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, {
+      classType: 'Renamed',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lateFirstClass?.state).toBe('past_check');
   });
 
   it('edit: a paused template answers null', async () => {

@@ -1111,8 +1111,9 @@ export async function createClassTemplate(
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });
       const generation = await generateInstancesForTemplate(tx, created);
-      // Here, while the joined `created` still carries the zone and the
-      // `@db.Time` start, at the instant generation stamped the class at.
+      // Here, while the joined `created` still carries the zone: the judged
+      // start is the generated entry's (`generation.firstCreated`), at the
+      // instant generation stamped the class at.
       const lateFirstClass =
         CLASS_FAMILY.lateFirstClass && generation.firstCreated
           ? CLASS_FAMILY.lateFirstClass(

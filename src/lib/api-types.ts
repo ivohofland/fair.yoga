@@ -116,7 +116,7 @@ export interface TemplateEditResponse {
 
 /**
  * The `data` payload of a successful PUT on a recurring class template: the
- * edit's prediction plus whether the first class it will add starts inside its
+ * edit's prediction plus whether the first class it may add starts inside its
  * cancellation deadline (#849). The studio edit answers `TemplateEditResponse`.
  */
 export type ClassTemplateEditResponse = TemplateEditResponse & {
