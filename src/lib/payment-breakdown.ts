@@ -5,6 +5,8 @@ import type { ClassStatus, PaymentStatus, Prisma } from '@prisma/client';
 export interface PaymentBreakdownLines {
   roomCents: number;
   vatCents: number;
+  /** Whether the class charges VAT, which its VAT line can round to nothing under. */
+  chargesVat: boolean;
   teacherCents: number;
   totalCents: number;
   students: number;
@@ -21,6 +23,7 @@ export interface ResolvePaymentBreakdownInput {
   roomCost: Prisma.Decimal;
   totalRevenue: Prisma.Decimal | null;
   vatTotal: Prisma.Decimal | null;
+  /** The class's VAT percentage; what decides whether the breakdown names VAT. */
   vatPercent: number;
   totalStudents: number | null;
   payment: { status: PaymentStatus; amount: Prisma.Decimal } | null;
@@ -53,7 +56,7 @@ function toCents(value: Prisma.Decimal): number {
  * hidden row: docs/superpowers/specs/2026-09-14-past-class-payment-breakdown-design.md.
  */
 export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): PaymentBreakdownResult {
-  const { classStatus, roomCost, totalRevenue, vatTotal, totalStudents, payment } = input;
+  const { classStatus, roomCost, totalRevenue, vatTotal, vatPercent, totalStudents, payment } = input;
 
   if (classStatus !== 'completed') return { kind: 'hidden' };
   if (totalRevenue === null || vatTotal === null || totalStudents === null) return { kind: 'snapshot_missing' };
@@ -67,6 +70,7 @@ export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): Pa
     lines: {
       roomCents,
       vatCents,
+      chargesVat: vatPercent > 0,
       teacherCents: teacherEarningsCents({ totalCents, roomCents, vatCents }),
       totalCents,
       students: totalStudents,
