@@ -52,6 +52,10 @@ describe('GET /settings/reporting (reporting page)', () => {
   let negTeacherAccountId: string;
   let negTeacherToken: string;
 
+  let vatTeacherId: string;
+  let vatTeacherAccountId: string;
+  let vatTeacherToken: string;
+
   let roomId: string;
   let reportTeacherRoomId: string;
 
@@ -157,6 +161,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       futurePacificTeacherId,
       floatTeacherId,
       negTeacherId,
+      vatTeacherId,
     ].filter(Boolean);
     const accountIds = [
       emptyTeacherAccountId,
@@ -165,6 +170,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       futurePacificTeacherAccountId,
       floatTeacherAccountId,
       negTeacherAccountId,
+      vatTeacherAccountId,
     ].filter(Boolean);
 
     await prisma.payment.deleteMany({
@@ -460,6 +466,53 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('May 2026');
       expect(html).toMatch(/May 2026[\s\S]*?<span[^>]*type-number[^>]*>−€20\.00<\/span>/);
       expect(html).not.toContain('€-20.00');
+    });
+
+    it('reports what a class kept after the room and the VAT it charged (#819)', async () => {
+      const vatEmail = `report-vat-${suffix}@test.local`;
+      const vatTeacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Vat',
+          lastName: 'Teacher',
+          email: vatEmail,
+          account: { create: { email: vatEmail } },
+          bio: 'VAT reporting test',
+          pageSlug: `report-vat-${suffix}`,
+        },
+      });
+      vatTeacherId = vatTeacher.id;
+      vatTeacherAccountId = vatTeacher.accountId;
+      vatTeacherToken = await seedSession(prisma, vatTeacher.accountId);
+      const vatTeacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: vatTeacher.id, roomId, rentalRate: 30, capacityOverride: 10 },
+      });
+
+      // Billed 119.90 = (30.00 room + 80.00 rate) + 9.90 VAT at 9%
+      await createClassFixture(prisma, {
+        teacherId: vatTeacher.id,
+        teacherRoomId: vatTeacherRoom.id,
+        classType: 'VAT Flow',
+        date: new Date('2026-04-10T00:00:00.000Z'),
+        startTime: hhmmToTime('10:00'),
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal('30.00'),
+        totalRevenue: new Prisma.Decimal('119.90'),
+        vatPercent: new Prisma.Decimal('9'),
+        vatTotal: new Prisma.Decimal('9.90'),
+        totalStudents: 2,
+        minRate: 10,
+        targetRate: 90,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed',
+      });
+
+      const res = await reportingPage(vatTeacherToken);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('April 2026');
+      expect(html).toMatch(/April 2026[\s\S]*?<span[^>]*type-number[^>]*>€80\.00<\/span>/);
     });
 
     it('handles singular student reach and excludes cancelled registrations from reach count', async () => {

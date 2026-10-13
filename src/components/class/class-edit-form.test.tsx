@@ -116,6 +116,18 @@ describe('ClassEditForm', () => {
     expect(screen.getByText("You reclaim the room's VAT in your own VAT return.")).toBeInTheDocument();
   });
 
+  it('saves an edited non-zero VAT % (#819)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse((options as { body: string }).body) as Record<string, unknown>;
+    expect(body.vatPercent).toBe(9);
+  });
+
   it('keeps the plain room cost label at 0% VAT (#819)', () => {
     render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
