@@ -3,7 +3,7 @@ import type { Currency } from '@prisma/client';
 import { formatMoney } from '@/lib/format';
 import { TIER_INFO } from '@/lib/tiers';
 import { tierPrices, priceSpread, studentsIn, type TierCounts } from '@/lib/pricing-preview';
-import { addedVatCents, vatThousandths, withVat } from '@/lib/vat';
+import { vatThousandths, withVat } from '@/lib/vat';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
 
 export interface PricingPreviewInputs {
@@ -50,9 +50,11 @@ export function PricingPreviewResult({
   const thousandths = vatThousandths(vatPercent);
   const chargesVat = thousandths > 0;
   const baseCost = roomCost + teacherRate;
-  const baseCents = Math.round(baseCost * 100);
-  const vatCents = addedVatCents(baseCents, thousandths);
-  const totalCost = chargesVat ? (baseCents + vatCents) / 100 : baseCost;
+  // The engine's own total, rounded to cents once; the VAT line is what that
+  // total adds to the rounded base, so the lines shown add up to it.
+  const totalCents = chargesVat ? Math.round(withVat(baseCost, thousandths) * 100) : 0;
+  const vatCents = totalCents - Math.round(baseCost * 100);
+  const totalCost = chargesVat ? totalCents / 100 : baseCost;
   const rateRange = targetRate - minRate;
   const rateProgress =
     rateRange === 0 ? 100 : Math.round(((teacherRate - minRate) / rateRange) * 100);

@@ -36,11 +36,6 @@ export function withVat(amount: number, thousandths: number): number {
   return amount * ((WHOLE + thousandths) / WHOLE);
 }
 
-/** The VAT added on top of a VAT-exclusive amount, in whole cents. */
-export function addedVatCents(baseCents: number, thousandths: number): number {
-  return Math.round((baseCents * thousandths) / WHOLE);
-}
-
 /** The VAT contained in a VAT-inclusive price, in whole cents. */
 export function includedVatCents(priceCents: number, thousandths: number): number {
   return Math.round((priceCents * thousandths) / (WHOLE + thousandths));
