@@ -122,7 +122,7 @@ describe('TemplateForm', () => {
     };
   }
 
-  it('refuses a create without its VAT default and an edit without its template or values at compile time (#874)', () => {
+  it('refuses a create or edit missing a required prop at compile time (#874)', () => {
     // @ts-expect-error a create seeds its VAT % from the teacher's default
     const createWithoutVat = <TemplateForm mode="create" currency="EUR" />;
     // @ts-expect-error an edit saves to a template id
