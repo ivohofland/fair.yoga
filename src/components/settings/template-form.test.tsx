@@ -351,6 +351,14 @@ describe('TemplateForm', () => {
     expect(await screen.findByLabelText('VAT %')).toHaveValue('21');
   });
 
+  it('edit mode submits the stored VAT % and an edited one (#819)', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, vatPercent: 21 }} />);
+    expect((await submit()).body.vatPercent).toBe(21);
+    fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '9' } });
+    expect((await submit()).body.vatPercent).toBe(9);
+  });
+
   it('sends the same fields when creating', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="create" />);

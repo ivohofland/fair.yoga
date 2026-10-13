@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolvePriceLine } from './price-line';
+import { estimateTierPrices } from './tier-estimates';
 
 const BASE = {
   roomCost: 40,
@@ -127,6 +128,32 @@ describe('resolvePriceLine', () => {
       // Same other registrant, own row excluded either way -> same estimates,
       // proving the viewer's own row was not double-counted.
       expect(bookedTierUnknown.estimates).toEqual(unbookedSamePool.estimates);
+    }
+  });
+
+  it('quotes the pre-class range including VAT, as the estimator does at that percentage (#819)', () => {
+    const registrations = [
+      { id: 'a', studentId: 'a', tierAtBooking: 2, status: 'registered' as const },
+      { id: 'b', studentId: 'b', tierAtBooking: 4, status: 'registered' as const },
+    ];
+    const at = (vatPercent: number) =>
+      resolvePriceLine({ ...BASE, vatPercent, registrations, viewer: null });
+    const expected = estimateTierPrices({
+      roomCost: BASE.roomCost,
+      minRate: BASE.minRate,
+      targetRate: BASE.targetRate,
+      minStudents: BASE.minStudents,
+      maxStudents: BASE.maxStudents,
+      vatPercent: 9,
+      registeredTiers: [2, 4],
+    });
+    const withNine = at(9);
+    const withZero = at(0);
+    expect(withNine.kind).toBe('anonymous');
+    expect(withZero.kind).toBe('anonymous');
+    if (withNine.kind === 'anonymous' && withZero.kind === 'anonymous') {
+      expect(withNine.estimates).toEqual(expected);
+      expect(withNine.estimates[4]).toBeGreaterThan(withZero.estimates[4]);
     }
   });
 });
