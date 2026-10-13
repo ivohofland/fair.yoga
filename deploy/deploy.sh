@@ -63,8 +63,8 @@ echo "deploying $PREVIOUS -> $SHA"
 # Build and migrate while the running app keeps serving; only `up` replaces
 # it. Any exit before `up`, a failure or a signal, puts the checkout back so the
 # tree matches what serves; it is a no-op while the checkout is still there. The
-# signal traps turn a signal into an exit so the EXIT trap runs; PIPE is what a
-# dropped SSH session raises on the next write.
+# signal traps turn a signal into an exit so the EXIT trap runs. A dropped SSH
+# session makes the next write fail; see the PIPE trap.
 restore_checkout() {
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS" || true
 }
@@ -72,7 +72,9 @@ trap restore_checkout EXIT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 trap 'exit 130' INT
-trap 'exit 141' PIPE
+# Ignored, not handled: a handler does not run when the write that raises it is
+# to stderr, while an ignored PIPE makes that write fail and `set -e` or `fail` exit.
+trap '' PIPE
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
 if ! docker compose -f "$COMPOSE_FILE" build; then
