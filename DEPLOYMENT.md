@@ -240,9 +240,11 @@ finishes; either way `/opt/fairyoga/.deployed` holds the deployed commit. A
 failed container replacement or health check leaves the new commit checked
 out and turns the CI run red: `<new> is checked out, <old> was before it`,
 naming the commit to roll back to. Either can leave the site down. The
-script records the commit that last passed its health check in
-`/opt/fairyoga/.deployed`, so running it again for the failed commit, or
-re-running the CI job, deploys it again; or roll back. The app is
+script records the commit it last deployed through a passing health check in
+`/opt/fairyoga/.deployed` (the first run records the checkout's HEAD), so
+running it again for the failed commit, or re-running the CI job, deploys it
+again; or roll back. Running the recorded commit instead refuses, naming both
+commits, rather than answering that it is already there. The app is
 unreachable for the few seconds the container swap takes.
 
 The previous commit keeps serving, and running its scheduler, while the
