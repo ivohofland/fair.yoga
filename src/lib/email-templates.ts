@@ -278,8 +278,8 @@ export function renderNotificationEmail(
  *
  * Its subject names the link's expiry to the second, in the zone the
  * requesting browser reported: Gmail threads mail by subject and trims
- * repeated content inside a thread, so a constant subject hid a second
- * email's Sign in button behind `•••` (#825). A zone that is missing, or that
+ * repeated content inside a thread, so a subject that repeats lets Gmail hide
+ * a second email's Sign in button behind `•••` (#825). A zone that is missing, or that
  * `isValidTimeZone` refuses, renders in UTC, labelled, so the subject is never
  * a silent guess and never throws.
  */
