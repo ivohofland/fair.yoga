@@ -213,16 +213,21 @@ describe('deploy/deploy.sh', () => {
 
     expect(result.status).not.toBe(0);
     expect(calls()).not.toContain('curl');
+    expect(head()).toBe(v2);
     expect(result.stderr).toContain(before);
     expect(result.stderr).toContain(v2);
     expect(result.stderr).toContain('rolling back');
   });
 
   it('fails when the app does not report ok within the health timeout', () => {
+    const before = head();
     const v2 = commitToOrigin('v2');
     const result = run({ sshCommand: v2, env: { FAKE_HEALTH: '{"status":"degraded","db":"down"}' } });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/health/i);
+    expect(result.stderr).toContain(before);
+    expect(result.stderr).toContain(v2);
+    expect(result.stderr).toContain('rolling back');
   });
 
   it.skipIf(!HAS_FLOCK)('refuses to run while another deploy holds the lock', () => {
