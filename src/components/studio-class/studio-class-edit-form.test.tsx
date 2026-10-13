@@ -71,9 +71,13 @@ describe('StudioClassEditForm', () => {
     expect(screen.getByLabelText(/Hourly rate/)).toHaveValue('45');
   });
 
-  it('steps the start time by five minutes', () => {
+  it('steps the start time by five minutes from midnight, whatever is typed', () => {
     renderForm();
-    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('min', '00:00');
+    fireEvent.change(input, { target: { value: '14:37' } });
+    expect(input).toHaveAttribute('step', '300');
+    expect(input.checkValidity()).toBe(false);
   });
 
   it('keeps a saved start time off the five-minute grid valid', () => {
