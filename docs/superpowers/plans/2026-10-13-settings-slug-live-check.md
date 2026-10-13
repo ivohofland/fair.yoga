@@ -27,7 +27,11 @@
    `currentSlug`. While `value === currentSlug`: no request, and no verdict drawn
    — even a stored answer for that value (an "Available" fetched before it was
    saved must not linger as a claim about the teacher's own address). Silence,
-   not "Available": the field is unchanged, so there is nothing to say.
+   not "Available": there is nothing to say about an address the teacher holds.
+   The profile form passes `currentSlug={pendingSlug ?? savedSlug}`: the saved
+   slug, or — while a save is in flight — the slug being sent, because the
+   server may already hold it for this teacher and a check fired mid-save would
+   call it taken. A failed save hands the slug back to the live check.
    Client-side rather than a session-aware endpoint: the endpoint is public and
    serves signup, where no teacher exists yet.
 3. **The #826 warning sits with the verdict, under the field.** `PageAddressField`
@@ -35,13 +39,22 @@
    `aria-describedby` passthrough to its `Input`. The profile form passes its
    live region + warning as children, unchanged in behaviour.
 4. **The 409 `SLUG_TAKEN` at save becomes the field's `error`,** keyed to the
-   slug it was about (the `SlugRejection` shape `profile-setup-form.tsx` already
-   uses), so editing the slug retires it. Other failures keep the form-level
-   error. It still renders as `role="alert"` (the `Input`'s error span).
+   slug it was about (`SlugRejection`, exported from `page-address-field.tsx`
+   and used by both forms), so editing the slug retires it and typing it back
+   restores it. It renders as `role="alert"` (the `Input`'s error span). The
+   form also shows "Not saved — check the page address." by the Save button,
+   which stays visible when the slug was edited while the save was in flight.
+   A changed slug `pageSlugField` refuses (reserved or malformed) is not sent:
+   the field already shows the reason, and the form shows the same "Not saved"
+   line. Other failures keep the form-level error, as does a `SLUG_TAKEN` for a
+   save that sent no slug.
 5. **One label: "Page address".** Settings adopts the signup label; the
    form-level "Page slug is required" becomes "Page address is required";
-   `PAGE_SLUG_TAKEN_MESSAGE` becomes "That page address is already taken." and
-   its docblock keeps naming the label it follows.
+   `PAGE_SLUG_TAKEN_MESSAGE` becomes "That page address is already taken.", and
+   its docblock says only what the constant is, naming no label. `pageSlugField`'s
+   messages say "address" too: "Use lowercase letters, numbers and hyphens
+   only." and "That address is reserved." (`schemas.ts`, with `schemas.test.ts`
+   and `profile-setup-form.test.tsx`).
 6. **Kept as is:** the settings field's character filter (lowercase, strip
    outside `[a-z0-9-]`) stays in the profile form's `onChange` — not asked for,
    and harmless with a live check.
@@ -71,7 +84,9 @@ suppression.
 
 Files: `src/components/settings/profile-form.tsx`,
 `src/components/settings/profile-form.test.tsx`, `src/lib/schemas.ts`
-(`PAGE_SLUG_TAKEN_MESSAGE` text), and any test asserting the old label or
+(`PAGE_SLUG_TAKEN_MESSAGE` text and `pageSlugField`'s messages),
+`src/lib/schemas.test.ts`, `src/components/signup/profile-setup-form.tsx`
+(imports the shared `SlugRejection`), and any test asserting the old label or
 message (`grep -rn "Page slug\|page slug is already taken" src tests e2e`).
 
 Depends on Task 1.
@@ -80,18 +95,27 @@ Tests first:
 - the field is labelled "Page address";
 - typing a different slug triggers a `slug-available` request and draws its
   verdict ("Available" / "That address is taken");
-- the saved slug (initial, and after a successful save of a new one) draws no
-  verdict and makes no `slug-available` request;
+- the saved slug (initial, typed back after another check, and after a
+  successful save of a new one) draws no verdict and makes no `slug-available`
+  request; nor does a slug while a save of it is in flight;
+- a save of a changed slug that fails (network, or a non-slug refusal) leaves
+  that slug checked again after the debounce;
 - a 409 `SLUG_TAKEN` at save shows the server message as the field's error
-  (`role="alert"`, input `aria-invalid`), not the form-level error, and editing
-  the slug clears it; a non-slug failure still uses the form-level error;
+  (`role="alert"`, input `aria-invalid`, alongside the #826 warning in
+  `aria-describedby`) and "Not saved — check the page address." at form level;
+  editing the slug clears the field error and typing it back restores it; the
+  "Not saved" line shows even when the slug was edited during the save;
+- a changed reserved slug is not sent: the field says "That address is
+  reserved." and the form "Not saved — check the page address.";
+- a non-slug failure, and a `SLUG_TAKEN` for a save that sent no slug, use the
+  form-level error;
 - every existing #826 warning test still passes (live region pre-mounted,
   `aria-describedby` contains the warning id, etc.). Existing tests whose
   `fetchMock` now also sees `slug-available` calls must route by URL rather
   than assume call order.
 
 Implement: replace the slug `Input` + caption with `PageAddressField`
-(`value`, filtered `onChange`, `currentSlug={savedSlug}`, `error`,
+(`value`, filtered `onChange`, `currentSlug={pendingSlug ?? savedSlug}`, `error`,
 `aria-describedby` for the warning, warning live region as children). The
 field's own caption "Your booking page: fair.yoga/…" replaces the form's.
 
