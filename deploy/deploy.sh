@@ -20,6 +20,12 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 LOCK_FILE="${LOCK_FILE:-/tmp/fairyoga-deploy.lock}"
 
 fail() { echo "deploy refused: $*" >&2; exit 1; }
+# Once `up` starts, containers may have been replaced, so the checkout stays on
+# $SHA and a failure is rolled back by hand.
+deploy_failed() {
+  echo "deploy failed: $*; $SHA is checked out, $PREVIOUS was before it (DEPLOYMENT.md §6, rolling back)" >&2
+  exit 1
+}
 
 # SSH_ORIGINAL_COMMAND when set (even empty: a key-forced call with no
 # command is still a request, and an empty one is refused), else the argument.
@@ -53,19 +59,12 @@ if ! docker compose -f "$COMPOSE_FILE" build; then
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
   fail "build failed; still running $PREVIOUS"
 fi
-# Its own step, because `up` replaces `app` before a failing `migrate` it
-# depends on could stop it. The `migrate` inside `up` then has nothing to apply.
+# Migrations run on their own so a failing one replaces nothing; the `migrate`
+# that `up` runs again then has nothing to apply. Why: DEPLOYMENT.md §6.
 if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
   fail "migrate failed; still running $PREVIOUS"
 fi
-
-# Past this point containers may have been replaced, so the checkout stays on
-# $SHA and a failure is rolled back by hand.
-deploy_failed() {
-  echo "deploy failed: $*; $SHA is checked out, $PREVIOUS was before it (DEPLOYMENT.md §6, rolling back)" >&2
-  exit 1
-}
 
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans \
   || deploy_failed "replacing the containers failed"
