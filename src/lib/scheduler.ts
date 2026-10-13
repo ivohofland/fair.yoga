@@ -21,6 +21,7 @@
  */
 
 import type { PrismaClient } from '@prisma/client';
+import { CLASS_GENERATION_INTERVAL_MS } from '@/lib/generation';
 import { log } from '@/lib/log';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 
@@ -352,7 +353,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       // happens in. That count is a duration only because of the
       // job's `intervalMs`.
       name: 'class-generation',
-      intervalMs: 60 * MINUTE,
+      intervalMs: CLASS_GENERATION_INTERVAL_MS,
       run: isolatedSweeps('class-generation', [runClassGenerationTick, runStudioClassGenerationTick]),
     },
     {

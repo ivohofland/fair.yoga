@@ -5,7 +5,7 @@ import { DEADLINE_HOURS, isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';
 import { cancelCheckInstant, isPastCancelCheck } from '@/lib/auto-cancel-check';
 import { classStartInstant, startsInPast } from '@/lib/timezone';
-import { latePublishState, latePublishRefreshInstants, latePublishInstants, moveWarningFor } from './late-publish';
+import { latePublishState, latePublishRefreshInstants, latePublishInstants, moveWarningFor, isLateFirstClass } from './late-publish';
 
 const HOUR = 60 * 60 * 1000;
 const start = new Date('2030-01-10T18:00:00Z');
@@ -124,5 +124,26 @@ describe('moveWarningFor', () => {
 
   it('gives none for an open class that is locked', () => {
     expect(moveWarningFor({ ...base, status: 'open', settingsLocked: true })).toBeNull();
+  });
+});
+
+describe('isLateFirstClass', () => {
+  const ok = { date: '2026-11-10', state: 'past_deadline', minStudents: 3 };
+
+  it('accepts a well-formed value', () => {
+    expect(isLateFirstClass(ok)).toBe(true);
+    expect(isLateFirstClass({ ...ok, state: 'past_check' })).toBe(true);
+  });
+
+  it.each([
+    ['null', null],
+    ['a string', 'past_deadline'],
+    ['state none', { ...ok, state: 'none' }],
+    ['a malformed date', { ...ok, date: '10-11-2026' }],
+    ['zero students', { ...ok, minStudents: 0 }],
+    ['fractional students', { ...ok, minStudents: 1.5 }],
+    ['a missing field', { date: ok.date, state: ok.state }],
+  ])('rejects %s', (_label, value) => {
+    expect(isLateFirstClass(value)).toBe(false);
   });
 });

@@ -74,3 +74,25 @@ export function moveWarningFor(cls: {
     autoCancelCheck: cls.autoCancelCheck,
   };
 }
+
+/** What a template's first class faces when it starts inside the template's cancellation window. */
+export type LateFirstClassState = Exclude<LatePublishState, 'none'>;
+
+export interface LateFirstClass {
+  date: string;
+  state: LateFirstClassState;
+  minStudents: number;
+}
+
+export function isLateFirstClass(value: unknown): value is LateFirstClass {
+  if (typeof value !== 'object' || value === null) return false;
+  const { date, state, minStudents } = value as Record<string, unknown>;
+  return (
+    typeof date === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+    (state === 'past_deadline' || state === 'past_check') &&
+    typeof minStudents === 'number' &&
+    Number.isInteger(minStudents) &&
+    minStudents > 0
+  );
+}

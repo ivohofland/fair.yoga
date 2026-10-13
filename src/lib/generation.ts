@@ -390,3 +390,6 @@ export function spansOverlap(
   const bStart = b.startTime.getUTCHours() * 60 + b.startTime.getUTCMinutes();
   return aStart < bStart + b.durationMinutes && bStart < aStart + a.durationMinutes;
 }
+
+/** The generation sweep's interval; the scheduler reads it from here. */
+export const CLASS_GENERATION_INTERVAL_MS = 60 * 60 * 1000;
