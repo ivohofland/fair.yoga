@@ -250,6 +250,7 @@
         <div class="section-label">Defaults</div>
         <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, default EUR</span></div>
         <div class="field"><span class="field-name">default_timezone</span><span class="field-type">string, e.g. 'Europe/Amsterdam'</span></div>
+        <div class="field"><span class="field-name">default_vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
         <div class="section-label">Notifications</div>
         <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off, default morning_of</span></div>
         <div class="field"><span class="field-name">class_reminder_channel</span><span class="field-type">enum: inbox, email, inbox_and_email, default inbox_and_email</span></div>
@@ -384,6 +385,7 @@
         <div class="field"><span class="field-name">target_rate</span><span class="field-type">decimal</span></div>
         <div class="field"><span class="field-name">min_students</span><span class="field-type">int</span></div>
         <div class="field"><span class="field-name">max_students</span><span class="field-type">int</span></div>
+        <div class="field"><span class="field-name">vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
         <div class="section-label">Policies</div>
         <div class="field"><span class="field-name">cancel_deadline</span><span class="field-type">enum: 48h, 24h, 12h, 6h</span></div>
         <div class="field"><span class="field-name">auto_cancel_check</span><span class="field-type">enum: 4h, 2h, 1h</span></div>
@@ -411,6 +413,7 @@
         <div class="field"><span class="field-name">target_rate</span><span class="field-type">decimal</span></div>
         <div class="field"><span class="field-name">min_students</span><span class="field-type">int</span></div>
         <div class="field"><span class="field-name">max_students</span><span class="field-type">int</span></div>
+        <div class="field"><span class="field-name">vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
         <div class="section-label">Policies</div>
         <div class="field"><span class="field-name">cancel_deadline</span><span class="field-type">enum: 48h, 24h, 12h, 6h</span></div>
         <div class="field"><span class="field-name">auto_cancel_check</span><span class="field-type">enum: 4h, 2h, 1h</span></div>
@@ -422,6 +425,7 @@
         <div class="field"><span class="field-name">effective_teacher_rate</span><span class="field-type">decimal, nullable</span></div>
         <div class="field"><span class="field-name">total_students</span><span class="field-type">int, nullable</span></div>
         <div class="field"><span class="field-name">total_revenue</span><span class="field-type">decimal, nullable</span></div>
+        <div class="field"><span class="field-name">vat_total</span><span class="field-type">decimal(10,2), nullable</span></div>
         <div class="field-note">Status: draft &#8594; open &#8594; full &#8594; in_progress &#8594; completed &#8594; cancelled</div>
       </div>
     </div>
@@ -501,6 +505,7 @@
         <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
         <div class="field"><span class="field-name fk">registration_id</span><span class="field-type">&#8594; Registration</span></div>
         <div class="field"><span class="field-name">amount</span><span class="field-type">decimal</span></div>
+        <div class="field"><span class="field-name">vat_amount</span><span class="field-type">decimal(10,2), default 0</span></div>
         <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
         <div class="field"><span class="field-name">method</span><span class="field-type">string, nullable</span></div>
         <div class="field"><span class="field-name">processor_ref</span><span class="field-type">string, nullable</span></div>
@@ -582,7 +587,7 @@
 <div class="notes-box">
   <h2>Design Notes</h2>
   <p><strong>tier_at_booking</strong> on Registration captures the student's tier at the moment they booked. The student's global tier on the Student table can change anytime, but the tier used for pricing is the one at booking time. This also serves as the income history — no separate tracking needed.</p>
-  <p><strong>settings_locked</strong> on Class flips to true when the first Registration is created. After that, economic fields (room_cost, min_rate, target_rate, min_students, max_students) become immutable.</p>
+  <p><strong>settings_locked</strong> on Class flips to true when the first Registration is created. After that, the fields <code>LOCKED_FIELDS</code> names (<code>src/lib/class-fields.ts</code>) become immutable.</p>
   <p><strong>WaitlistEntry</strong> is separate from Registration to cleanly model the hybrid promotion rules. When promoted, a Registration is created and linked via registration_id.</p>
   <p><strong>StudioClass</strong> is intentionally disconnected from Room and Student. It's a simple log entry for the teacher's calendar and income reporting.</p>
   <p><strong>Notification</strong> uses a polymorphic recipient (teacher or student) so both share the same inbox infrastructure.</p>
