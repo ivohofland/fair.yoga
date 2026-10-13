@@ -32,6 +32,7 @@
     "admin:grant": "tsx scripts/admin-grant.ts grant",
     "admin:revoke": "tsx scripts/admin-grant.ts revoke",
     "admin:list": "tsx scripts/admin-grant.ts list",
+    "check:reserved-slugs": "tsx scripts/check-reserved-slugs.ts",
     "worktree:setup": "tsx scripts/worktree-setup.ts",
     "worktree:up": "tsx scripts/worktree-up.ts",
     "worktree:down": "tsx scripts/worktree-down.ts"
