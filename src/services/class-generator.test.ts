@@ -35,6 +35,11 @@ const prisma = new PrismaClient();
 const uniqueSuffix = `gen-${Date.now()}`;
 
 describe('generateClassInstances (DB)', () => {
+  // Every sweep case in this describe runs in this year, deliberately: the
+  // sweep judges each candidate's check at the wall clock, not at `from`, so a
+  // past window would be declined whole as `past_cancel_check` (#859). 2037
+  // shares 2026's weekday calendar, so the dates below keep their weekdays.
+  const SWEEP_YEAR = 2037;
   let teacherId: string;
   let roomId: string;
   let teacherRoomId: string;
@@ -117,11 +122,8 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it('generates 4 class instances from a template', async () => {
-    // Use Monday 2037-04-06 as the starting date. A future year in every sweep
-    // case here, deliberately: the sweep judges each candidate's check at the
-    // wall clock, not at `from`, so a past window would be declined whole as
-    // `past_cancel_check` (#859).
-    const from = new Date('2037-04-06T00:00:00.000Z');
+    // Use Monday SWEEP_YEAR-04-06 as the starting date.
+    const from = new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
@@ -155,7 +157,7 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it('is idempotent — running again creates no duplicates', async () => {
-    const from = new Date('2037-04-06T00:00:00.000Z');
+    const from = new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -174,7 +176,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
 
-    const from = new Date('2037-04-06T00:00:00.000Z');
+    const from = new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -201,7 +203,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
 
-    const from = new Date('2037-04-06T00:00:00.000Z');
+    const from = new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -215,40 +217,40 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it("skips today's occurrence when its start has already passed", async () => {
-    // Tuesday 2037-04-07 at 18:00 UTC — hours after the template's 09:00
+    // Tuesday SWEEP_YEAR-04-07 at 18:00 UTC — hours after the template's 09:00
     // Amsterdam start. The run must not create a class earlier the same
     // day; the window slides to the next four Tuesdays instead.
     await prisma.calendarEntry.deleteMany({
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
-    const from = new Date('2037-04-07T18:00:00.000Z');
+    const from = new Date(`${SWEEP_YEAR}-04-07T18:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
-      '2037-04-14T00:00:00.000Z',
-      '2037-04-21T00:00:00.000Z',
-      '2037-04-28T00:00:00.000Z',
-      '2037-05-05T00:00:00.000Z',
+      `${SWEEP_YEAR}-04-14T00:00:00.000Z`,
+      `${SWEEP_YEAR}-04-21T00:00:00.000Z`,
+      `${SWEEP_YEAR}-04-28T00:00:00.000Z`,
+      `${SWEEP_YEAR}-05-05T00:00:00.000Z`,
     ]);
   });
 
   it("includes today's occurrence while its start is still ahead", async () => {
-    // Tuesday 2037-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
+    // Tuesday SWEEP_YEAR-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
     await prisma.calendarEntry.deleteMany({
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
-    const from = new Date('2037-04-07T05:00:00.000Z');
+    const from = new Date(`${SWEEP_YEAR}-04-07T05:00:00.000Z`);
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
-      '2037-04-07T00:00:00.000Z',
-      '2037-04-14T00:00:00.000Z',
-      '2037-04-21T00:00:00.000Z',
-      '2037-04-28T00:00:00.000Z',
+      `${SWEEP_YEAR}-04-07T00:00:00.000Z`,
+      `${SWEEP_YEAR}-04-14T00:00:00.000Z`,
+      `${SWEEP_YEAR}-04-21T00:00:00.000Z`,
+      `${SWEEP_YEAR}-04-28T00:00:00.000Z`,
     ]);
   });
 
@@ -1270,7 +1272,7 @@ describe('generateClassInstances (DB)', () => {
 
         const count = await generateClassInstances(prisma, {
           streaks: createContentionStreaks(),
-          from: new Date('2026-04-06T00:00:00.000Z'),
+          from: new Date(`${SWEEP_YEAR}-04-06T00:00:00.000Z`),
           teacherId: other.id,
         });
         expect(count).toBe(0);
@@ -1557,7 +1559,7 @@ describe('generateClassInstances (per-template isolation)', () => {
 
 
 // ===========================================================================
-// #836 — a candidate generated inside its own check window is born decided
+// #836, #859 — the sweep declines a candidate past its check; the teacher path stamps it
 // ===========================================================================
 
 describe('generateClassInstances — the auto-cancel decision (#836, #859)', () => {
