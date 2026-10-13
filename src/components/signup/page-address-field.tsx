@@ -73,7 +73,7 @@ interface PageAddressFieldProps {
    * address taken.
    */
   currentSlug?: string;
-  /** Passed through to the input, ahead of the ids `Input` adds itself. */
+  /** Passed through to the input. */
   'aria-describedby'?: string;
   /** Rendered in the field's column, after the verdict. */
   children?: ReactNode;
