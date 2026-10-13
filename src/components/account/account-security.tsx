@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { Button } from '@/components/ui/button';
@@ -50,6 +50,20 @@ const REMOVE_ERROR_COPY = {
   paused: 'Passkeys can’t be removed while payments are paused. Resume payments first.',
 } as const;
 
+// The account's passkeys, or null when the list could not be read. Touches
+// no state, so the mount effect and the handlers each apply it themselves.
+async function fetchPasskeys(): Promise<PasskeyRow[] | null> {
+  try {
+    const res = await fetch('/api/auth/passkey');
+    if (!res.ok) throw new RefusedError('list', (await readError(res, 'list')).code);
+    const json = (await res.json()) as { data: PasskeyRow[] };
+    return json.data;
+  } catch (err) {
+    logRequestFailure('account-security', { step: 'list' }, err);
+    return null;
+  }
+}
+
 // Sign-in security for the signed-in account: its passkeys (list, add,
 // remove) and ending every session. Adding needs a sign-in within the last
 // few minutes; when the server says so, the person is offered a fresh
@@ -65,22 +79,31 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
 
-  const loadPasskeys = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/passkey');
-      if (!res.ok) throw new RefusedError('list', (await readError(res, 'list')).code);
-      const json = (await res.json()) as { data: PasskeyRow[] };
-      setPasskeys(json.data);
-      setListError(false);
-    } catch (err) {
-      logRequestFailure('account-security', { step: 'list' }, err);
+  async function loadPasskeys() {
+    const rows = await fetchPasskeys();
+    if (rows === null) {
       setListError(true);
+      return;
     }
-  }, []);
+    setPasskeys(rows);
+    setListError(false);
+  }
 
   useEffect(() => {
-    void loadPasskeys();
-  }, [loadPasskeys]);
+    let cancelled = false;
+    void fetchPasskeys().then((rows) => {
+      if (cancelled) return;
+      if (rows === null) {
+        setListError(true);
+        return;
+      }
+      setPasskeys(rows);
+      setListError(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleAdd() {
     setAddState('working');
