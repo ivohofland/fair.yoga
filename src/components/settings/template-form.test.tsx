@@ -324,7 +324,7 @@ describe('TemplateForm', () => {
    */
   it('names the teacher’s currency in its money labels (#758)', async () => {
     stubFetch();
-    render(<TemplateForm currency="CHF" mode="create" />);
+    render(<TemplateForm currency="CHF" mode="create" defaultVatPercent={0} />);
     await screen.findByLabelText('Room');
     expect(screen.getByLabelText('Room cost (CHF)')).toBeInTheDocument();
     expect(screen.getByLabelText('Min rate (CHF)')).toBeInTheDocument();
@@ -371,7 +371,7 @@ describe('TemplateForm', () => {
 
   it('sends the same fields when creating', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -443,7 +443,7 @@ describe('TemplateForm', () => {
    */
   it('refuses a blank room before any request, with product copy and alert role', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(screen.getByLabelText('Class type'), {
       target: { value: 'Vinyasa' },
@@ -487,7 +487,7 @@ describe('TemplateForm', () => {
    */
   it('refuses a blank class type before any request, with product copy and alert role', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -522,7 +522,7 @@ describe('TemplateForm', () => {
       stubFetch();
       render(
         mode === 'create' ? (
-          <TemplateForm currency="EUR" mode="create" />
+          <TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />
         ) : (
           <TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />
         ),
@@ -587,7 +587,7 @@ describe('TemplateForm', () => {
     stubFetch();
     render(
       mode === 'create' ? (
-        <TemplateForm currency="EUR" mode="create" />
+        <TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />
       ) : (
         <TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />
       ),
@@ -853,7 +853,7 @@ describe('TemplateForm', () => {
    */
   it('rejects min rate subsidizing more than room cost on create before any request is sent', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     // Pick room (roomCost becomes 20 from stubFetch rentalRate: 20)
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -882,7 +882,7 @@ describe('TemplateForm', () => {
    */
   it('permits min rate exactly matching negative room cost on create ($0 net)', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -942,7 +942,7 @@ describe('TemplateForm', () => {
   // G8
   it('cannot submit twice when the create push commits nothing', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
@@ -989,7 +989,7 @@ describe('TemplateForm', () => {
       return new Response('{}', { status: 200 });
     }));
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     expect(await screen.findByRole('option', { name: /Live Venue/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Archived Venue/ })).not.toBeInTheDocument();
@@ -1039,7 +1039,7 @@ describe('TemplateForm', () => {
       return new Response('{}', { status: 200 });
     }));
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     expect(await screen.findByText('All your rooms are archived.')).toBeInTheDocument();
     expect(screen.getByText('Unarchive one in Settings to schedule here.')).toBeInTheDocument();
@@ -1057,7 +1057,7 @@ describe('TemplateForm', () => {
   it('distinguishes a failed room load from an absence of rooms', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
@@ -1066,7 +1066,7 @@ describe('TemplateForm', () => {
   it('distinguishes a thrown room fetch from an absence of rooms', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     expect(await screen.findByText("Couldn't load your rooms.")).toBeInTheDocument();
     expect(screen.queryByText(/no rooms configured/i)).not.toBeInTheDocument();
@@ -1120,7 +1120,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -1199,7 +1199,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
       target: { value: '11111111-1111-4111-8111-111111111111' },
@@ -1274,7 +1274,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1338,7 +1338,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1414,7 +1414,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1463,7 +1463,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1512,7 +1512,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1557,7 +1557,7 @@ describe('TemplateForm', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     fireEvent.change(await screen.findByLabelText('Room'), {
       target: { value: '11111111-1111-4111-8111-111111111111' },
     });
@@ -1967,7 +1967,7 @@ describe('TemplateForm', () => {
    */
   it('ignores a submit event dispatched at the form once created', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
 
     const roomSelect = await screen.findByLabelText('Room');
     fireEvent.change(roomSelect, {
@@ -2023,7 +2023,7 @@ describe('TemplateForm', () => {
     }
 
     async function create() {
-      render(<TemplateForm currency="EUR" mode="create" />);
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
       fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_A } });
       fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
       fireEvent.click(await screen.findByRole('button', { name: /create/i }));

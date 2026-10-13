@@ -105,14 +105,19 @@ void _formCoversCreate;
 void _formHasNoExtras;
 void _formHasNoExtrasOnCreate;
 
-interface TemplateFormProps {
-  mode: 'create' | 'edit';
-  templateId?: string;
-  currency: Currency;
-  /** The teacher's profile default; seeds a new template's VAT %. An edit reads `initial`. */
-  defaultVatPercent?: number;
-  initial?: TemplateFormValues;
-}
+type TemplateFormProps =
+  | {
+      mode: 'create';
+      currency: Currency;
+      /** The teacher's profile default; seeds a new template's VAT %. */
+      defaultVatPercent: number;
+    }
+  | {
+      mode: 'edit';
+      currency: Currency;
+      templateId: string;
+      initial: TemplateFormValues;
+    };
 
 const DAY_OPTIONS = [
   { value: 0, label: 'Monday' },
@@ -214,9 +219,14 @@ const INITIAL_VALUES: TemplateFormValues = {
   autoCancelCheck: 'HOURS_2',
 };
 
-export function TemplateForm({ mode, templateId, currency, defaultVatPercent, initial }: TemplateFormProps) {
+export function TemplateForm(props: TemplateFormProps) {
+  const { mode, currency } = props;
+  const templateId = props.mode === 'edit' ? props.templateId : undefined;
+  const initial = props.mode === 'edit' ? props.initial : undefined;
   const router = useRouter();
-  const [form, setForm] = useState(initial ?? { ...INITIAL_VALUES, vatPercent: defaultVatPercent ?? INITIAL_VALUES.vatPercent });
+  const [form, setForm] = useState<TemplateFormValues>(
+    props.mode === 'edit' ? props.initial : { ...INITIAL_VALUES, vatPercent: props.defaultVatPercent },
+  );
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomOption[]>([]);
   // Issue 76. Held separately from `teacherRooms.length` (which is the
   // filtered, offerable count) so the empty state below can tell "no rooms
