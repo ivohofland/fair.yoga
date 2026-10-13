@@ -58,7 +58,7 @@ Step 2 — Calculate each student's price:
 `total class cost = (room cost + teacher rate) × (1 + VAT%)`
 `student price = total class cost / sum of all student ratios × student's ratio`
 
-The teacher rate and the room cost are entered excl. VAT, and the teacher earns the rate whatever the VAT. Each student's VAT is the VAT contained in their own price, and the class VAT is their sum; the teacher absorbs the cent or two this rounding moves. Worked example: room €30, rate €80, 9% VAT. 30 + 80 = €110; VAT €9.90; total €119.90; the teacher earns €80.
+The teacher rate and the room cost are entered excl. VAT, and the teacher earns the rate whatever the VAT. Each student's VAT is the VAT contained in their own price, and the class VAT is their sum. Because each price is rounded to the cent before its VAT is taken, the recorded VAT and earnings can differ from the worked figures by a few cents, either way. Worked example: room €30, rate €80, 9% VAT. 30 + 80 = €110; VAT €9.90; total €119.90; the teacher earns €80. Recorded for a full class of 12 tier-3 students, the same class reads VAT €9.86 and earnings €80.04.
 
 **Tier ratios (compressed 2× spread):**
 

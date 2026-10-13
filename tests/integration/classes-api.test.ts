@@ -5,6 +5,7 @@ import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
 import { MONEY_MAX } from '@/lib/input-bounds';
+import { VAT_PERCENT_MAX, vatThousandths, withVat } from '@/lib/vat';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
@@ -466,7 +467,8 @@ describe('POST /api/classes/[id]/complete', () => {
 
   // #769: the money cap exists so that roomCost + targetRate, written to
   // `totalRevenue` and `effectiveTeacherRate` at completion, still fits a
-  // Decimal(10,2). Both fields at the cap is the largest total a class can have.
+  // Decimal(10,2). Both fields at the cap, at the most VAT a class can charge,
+  // is the largest total a class can have.
   it('completes a class priced at the money cap and stores the sum', async () => {
     const slot = wallSlotAt(new Date(Date.now() - 50 * 60_000), 'Europe/Amsterdam');
     const cls = await createClassFixture(prisma, {
@@ -479,6 +481,7 @@ describe('POST /api/classes/[id]/complete', () => {
       roomCost: MONEY_MAX,
       minRate: MONEY_MAX,
       targetRate: MONEY_MAX,
+      vatPercent: VAT_PERCENT_MAX,
       minStudents: 1,
       maxStudents: 4,
       status: 'open',
@@ -495,12 +498,15 @@ describe('POST /api/classes/[id]/complete', () => {
         where: { id: cls.id },
         include: { registrations: { include: { payment: true } } },
       });
+      const total = withVat(2 * MONEY_MAX, vatThousandths(VAT_PERCENT_MAX));
       expect(after.status).toBe('completed');
       expect(Number(after.effectiveTeacherRate)).toBe(MONEY_MAX);
-      expect(Number(after.totalRevenue)).toBe(2 * MONEY_MAX);
+      expect(Number(after.totalRevenue)).toBe(total);
+      // The VAT contained in a price at 100% is half of it.
+      expect(Number(after.vatTotal)).toBe(total / 2);
       // The only student carries the whole class total.
-      expect(after.registrations.map((r) => Number(r.price))).toEqual([2 * MONEY_MAX]);
-      expect(after.registrations.map((r) => Number(r.payment?.amount))).toEqual([2 * MONEY_MAX]);
+      expect(after.registrations.map((r) => Number(r.price))).toEqual([total]);
+      expect(after.registrations.map((r) => Number(r.payment?.amount))).toEqual([total]);
     } finally {
       await removeIsolatedClass(cls);
     }
