@@ -525,6 +525,18 @@ describe('ProfileForm', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('refuses a changed slug the field already refuses, without sending', async () => {
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'admin' } });
+      save();
+
+      expect(await findSlugFieldAlert()).toHaveTextContent('That address is reserved.');
+      expect(screen.getByText(NOT_SAVED)).toHaveAttribute('role', 'alert');
+      expect(screen.queryByText(/pageSlug:/)).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     describe('live availability check (#827)', () => {
       /** Runs the field's debounce out and lets its answer arrive. */
       async function afterDebounce(): Promise<void> {
@@ -729,7 +741,7 @@ describe('ProfileForm', () => {
       fetchMock.mockResolvedValue({
         ok: false,
         status: 400,
-        json: async () => ({ error: { message: 'That address is reserved.' } }),
+        json: async () => ({ error: { message: 'Bio must be 250 characters or fewer.' } }),
       });
       stubFetch();
       renderForm();
@@ -737,7 +749,7 @@ describe('ProfileForm', () => {
       save();
 
       const alert = await screen.findByRole('alert');
-      expect(alert).toHaveTextContent('That address is reserved.');
+      expect(alert).toHaveTextContent('Bio must be 250 characters or fewer.');
       expect(slugField()).not.toHaveAttribute('aria-invalid');
       expect(slugField().getAttribute('aria-describedby')?.split(' ') ?? []).not.toContain(alert.id);
     });

@@ -4,7 +4,7 @@ import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { Currency } from '@prisma/client';
-import type { updateTeacherSchema } from '@/lib/schemas';
+import { pageSlugField, type updateTeacherSchema } from '@/lib/schemas';
 import type { NotificationPrefsBody } from '@/components/settings/notification-prefs-form';
 import { NAME_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
@@ -171,6 +171,11 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
     }
     if (!form.pageSlug.trim()) {
       setError('Page address is required');
+      return;
+    }
+    // A changed slug `pageSlugField` refuses is not sent: the field gives the reason.
+    if (slugChanged && !pageSlugField.safeParse(form.pageSlug.trim()).success) {
+      setError(SLUG_NOT_SAVED);
       return;
     }
     const vatMessage = vatPercentViolation(form.defaultVatPercent);
