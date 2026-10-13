@@ -123,7 +123,8 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Nothing redirects from an old slug (#826): a link shared before the change 404s.
+  // True while the field holds a slug the server has not confirmed; the
+  // caption under the field then names the address still live.
   const slugChanged = form.pageSlug.trim() !== savedSlug;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
