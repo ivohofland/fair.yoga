@@ -305,16 +305,15 @@ describe('updateClassTemplate (DB)', () => {
     // template row's own fields are asserted above and re-listing all twenty
     // here would make this case fail on every unrelated schema change.
     //
-    // Four keys, not two, since #194: `firstEffective` and `generationState`
-    // are both PREDICTIONS about the sweep, not reports of work this call did,
-    // and the distinction is exactly what this assertion is here to keep. A
-    // key that counted rows this call touched would be the propagation coming
-    // back. Re-derived from the arm's own declaration when `generationState`
-    // was added rather than incremented, which is how the counts on this
-    // branch drifted in the first place.
+    // Every key beside `ok` and `template` is a PREDICTION about the sweep,
+    // not a report of work this call did, and the distinction is exactly what
+    // this assertion is here to keep. A key that counted rows this call
+    // touched would be the propagation coming back. The list is re-derived
+    // from the arm's own declaration (`UpdateRuleResult`), never incremented.
     expect(Object.keys(result).sort()).toEqual([
       'firstEffective',
       'generationState',
+      'lateFirstClass',
       'ok',
       'template',
     ]);
@@ -3712,5 +3711,237 @@ describe('updateClassTemplate (DB) — transient failures', () => {
       warn.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
+  const HOUR = 60 * 60 * 1000;
+
+  /**
+   * The weekly slot whose occurrence is `target` in `timeZone`: the schema's
+   * `dayOfWeek` of the target's local calendar date, and its local `HH:MM`
+   * with the minutes floored. `Intl` and `Date.UTC` only, because the unit
+   * project runs under `TZ=America/New_York` and the teacher's zone is not it.
+   */
+  const slotAt = (target: Date, timeZone: string) => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      })
+        .formatToParts(target)
+        .map((p) => [p.type, p.value]),
+    );
+    const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+    return {
+      date,
+      dayOfWeek: (date.getUTCDay() + 6) % 7,
+      startTime: `${String(parts.hour)}:${String(parts.minute)}`,
+    };
+  };
+
+  /** One teacher per case, so no two cases' slots can collide; torn down with its case. */
+  const freshTeacher = async (label: string) => {
+    const seeded = await seedTeacher(`late-${label}`);
+    onTestFinished(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: seeded.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: seeded.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: seeded.teacherId } });
+      await prisma.room.delete({ where: { id: seeded.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: seeded.accountId } });
+      await prisma.teacher.delete({ where: { id: seeded.teacherId } });
+      await prisma.account.delete({ where: { id: seeded.accountId } });
+    });
+    return seeded;
+  };
+
+  const createInput = (
+    teacherRoomId: string,
+    target: Date,
+    deadlines: Pick<CreateClassTemplateInput, 'cancelDeadline' | 'autoCancelCheck'>,
+  ): CreateClassTemplateInput => {
+    const slot = slotAt(target, 'UTC');
+    return {
+      teacherRoomId,
+      classType: 'Late First',
+      dayOfWeek: slot.dayOfWeek,
+      startTime: slot.startTime,
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 3,
+      maxStudents: 8,
+      ...deadlines,
+    };
+  };
+
+  /** Seeded the way `makeTemplate` seeds: nested create, no entries. */
+  const seedTemplate = (
+    seeded: { teacherId: string; teacherRoomId: string },
+    target: Date,
+    isActive: boolean,
+  ) => {
+    const slot = slotAt(target, 'UTC');
+    return prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: seeded.teacherId,
+            kind: 'regular',
+            classType: 'Late Seeded',
+            dayOfWeek: slot.dayOfWeek,
+            startTime: hhmmToTime(slot.startTime),
+            durationMinutes: 60,
+            isActive,
+          },
+        },
+        teacherRoom: { connect: { id: seeded.teacherRoomId } },
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        cancelDeadline: 'HOURS_48',
+      },
+    });
+  };
+
+  /** The earliest class the template's rule holds, with its entry's date. */
+  const earliestClass = (scheduleRuleId: string) =>
+    prisma.class.findFirstOrThrow({
+      where: { calendarEntry: { scheduleRuleId } },
+      orderBy: { calendarEntry: { date: 'asc' } },
+      select: { autoCancelDecidedAt: true, calendarEntry: { select: { date: true } } },
+    });
+
+  beforeAll(async () => {
+    await prisma.$connect();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('create: a first class inside its deadline answers past_deadline, and the sweep still judges it', async () => {
+    const seeded = await freshTeacher('create-deadline');
+    const target = new Date(Date.now() + 30 * HOUR);
+
+    const result = await createClassTemplate(
+      prisma,
+      seeded.teacherId,
+      createInput(seeded.teacherRoomId, target, { cancelDeadline: 'HOURS_48', autoCancelCheck: 'HOURS_2' }),
+    );
+
+    if (!result.ok) throw new Error('expected ok');
+    const first = await earliestClass(result.template.scheduleRuleId);
+    expect(result.lateFirstClass).toEqual({
+      date: first.calendarEntry.date.toISOString().slice(0, 10),
+      state: 'past_deadline',
+      minStudents: 3,
+    });
+    expect(first.autoCancelDecidedAt).toBeNull();
+  });
+
+  it('create: a first class inside its check answers past_check, stamped at the instant it was judged at', async () => {
+    const seeded = await freshTeacher('create-check');
+    const target = new Date(Date.now() + 90 * 60 * 1000);
+
+    const result = await createClassTemplate(
+      prisma,
+      seeded.teacherId,
+      createInput(seeded.teacherRoomId, target, { cancelDeadline: 'HOURS_24', autoCancelCheck: 'HOURS_4' }),
+    );
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lateFirstClass?.state).toBe('past_check');
+    const first = await earliestClass(result.template.scheduleRuleId);
+    expect(result.lateFirstClass?.date).toBe(first.calendarEntry.date.toISOString().slice(0, 10));
+    expect(result.generation.firstCreated).not.toBeNull();
+    expect(first.autoCancelDecidedAt).not.toBeNull();
+    expect(first.autoCancelDecidedAt?.getTime()).toBe(result.generation.firstCreated?.at.getTime());
+  });
+
+  it('create: a first class outside its deadline answers null', async () => {
+    const seeded = await freshTeacher('create-in-time');
+    const target = new Date(Date.now() + 6 * 24 * HOUR);
+
+    const result = await createClassTemplate(
+      prisma,
+      seeded.teacherId,
+      createInput(seeded.teacherRoomId, target, { cancelDeadline: 'HOURS_24' }),
+    );
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lateFirstClass).toBeNull();
+  });
+
+  it('resume: the first class the resume adds inside its deadline answers past_deadline', async () => {
+    const seeded = await freshTeacher('resume');
+    const template = await seedTemplate(seeded, new Date(Date.now() + 30 * HOUR), false);
+
+    const result = await pauseOrResumeTemplate(prisma, template.id, seeded.teacherId, 'active');
+
+    if (!result.ok || result.action !== 'active') throw new Error('expected active');
+    expect(result.added).toBeGreaterThan(0);
+    expect(result.lateFirstClass?.state).toBe('past_deadline');
+  });
+
+  it('resume: a resume that adds nothing answers null, though the first class is inside its deadline', async () => {
+    const seeded = await freshTeacher('resume-nothing');
+    const created = await createClassTemplate(
+      prisma,
+      seeded.teacherId,
+      createInput(seeded.teacherRoomId, new Date(Date.now() + 30 * HOUR), {
+        cancelDeadline: 'HOURS_48',
+        autoCancelCheck: 'HOURS_2',
+      }),
+    );
+    if (!created.ok) throw new Error('expected ok');
+    expect(created.lateFirstClass?.state).toBe('past_deadline');
+    await pauseOrResumeTemplate(prisma, created.template.id, seeded.teacherId, 'paused');
+
+    const result = await pauseOrResumeTemplate(prisma, created.template.id, seeded.teacherId, 'active');
+
+    if (!result.ok || result.action !== 'active') throw new Error('expected active');
+    expect(result.added).toBe(0);
+    expect(result.lateFirstClass).toBeNull();
+  });
+
+  it("edit: an active template's candidate inside its deadline answers past_deadline on that candidate", async () => {
+    const seeded = await freshTeacher('edit');
+    const target = new Date(Date.now() + 30 * HOUR);
+    const template = await seedTemplate(seeded, target, true);
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, {
+      classType: 'Renamed',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    const candidate = slotAt(target, 'UTC').date;
+    expect(result.lateFirstClass).toEqual({
+      date: candidate.toISOString().slice(0, 10),
+      state: 'past_deadline',
+      minStudents: 2,
+    });
+    expect(result.firstEffective).toEqual(new Date(mondayOf(candidate)));
+  });
+
+  it('edit: a paused template answers null', async () => {
+    const seeded = await freshTeacher('edit-paused');
+    const template = await seedTemplate(seeded, new Date(Date.now() + 30 * HOUR), false);
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, {
+      classType: 'Renamed',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.generationState).toBe('paused');
+    expect(result.lateFirstClass).toBeNull();
   });
 });

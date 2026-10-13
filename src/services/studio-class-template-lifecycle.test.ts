@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
@@ -1508,12 +1508,15 @@ describe('updateStudioClassTemplate (DB)', () => {
     // the template row's own fields are asserted above and re-listing them here
     // would make this case fail on every unrelated schema change.
     //
-    // Both new keys are PREDICTIONS about the sweep, not reports of work this
-    // call did. A key counting rows this call touched would be the propagation
-    // #194 deleted coming back, and it fails here first.
+    // Every key beside `ok` and `template` is a PREDICTION about the sweep,
+    // not a report of work this call did. A key counting rows this call
+    // touched would be the propagation #194 deleted coming back, and it fails
+    // here first. Re-derived from the arm's own declaration
+    // (`UpdateRuleResult`).
     expect(Object.keys(result).sort()).toEqual([
       'firstEffective',
       'generationState',
+      'lateFirstClass',
       'ok',
       'template',
     ]);
@@ -2223,5 +2226,89 @@ describe('createStudioClassTemplate (DB)', () => {
       warn.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+describe('studio templates never carry a late first class (DB) (#849)', () => {
+  /**
+   * A slot whose next occurrence starts 30 hours from now in UTC — inside
+   * any class family's deadline, so a non-null answer here would be the
+   * studio family reaching for the warning. `Intl` and `Date.UTC` only: the
+   * unit project runs under `TZ=America/New_York`.
+   */
+  const slotIn30Hours = () => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'UTC',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      })
+        .formatToParts(new Date(Date.now() + 30 * 60 * 60 * 1000))
+        .map((p) => [p.type, p.value]),
+    );
+    const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+    return { dayOfWeek: (date.getUTCDay() + 6) % 7, startTime: `${String(parts.hour)}:${String(parts.minute)}` };
+  };
+
+  /** One teacher per case, torn down with its case; the template seeded with no entries. */
+  const seedLateTemplate = async (label: string, isActive: boolean) => {
+    const { teacherId, accountId } = await seedTeacher(`late-${label}`);
+    onTestFinished(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.session.deleteMany({ where: { accountId } });
+      await prisma.teacher.delete({ where: { id: teacherId } });
+      await prisma.account.delete({ where: { id: accountId } });
+    });
+    const slot = slotIn30Hours();
+    const template = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId,
+            kind: 'studio',
+            classType: 'Late Studio',
+            dayOfWeek: slot.dayOfWeek,
+            startTime: hhmmToTime(slot.startTime),
+            durationMinutes: 60,
+            isActive,
+          },
+        },
+        location: 'Studio Loft',
+        hourlyRate: 45,
+      },
+    });
+    return { teacherId, template };
+  };
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('an edit answers null', async () => {
+    const { teacherId, template } = await seedLateTemplate('edit', true);
+
+    const result = await updateStudioClassTemplate(prisma, template.id, teacherId, {
+      classType: 'Renamed',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.generationState).toBe('active');
+    expect(result.firstEffective).not.toBeNull();
+    expect(result.lateFirstClass).toBeNull();
+  });
+
+  it('a resume answers null', async () => {
+    const { teacherId, template } = await seedLateTemplate('resume', false);
+
+    const result = await pauseOrResumeStudioTemplate(prisma, template.id, teacherId, 'active');
+
+    if (!result.ok || result.action !== 'active') throw new Error('expected active');
+    expect(result.added).toBeGreaterThan(0);
+    expect(result.lateFirstClass).toBeNull();
   });
 });

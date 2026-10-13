@@ -11,7 +11,13 @@ import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
-import { countSkipReasons, type GenerationResult, type SkipCounts } from '@/lib/generation';
+import {
+  CLASS_GENERATION_INTERVAL_MS,
+  countSkipReasons,
+  type GenerationResult,
+  type SkipCounts,
+} from '@/lib/generation';
+import type { LateFirstClass } from '@/lib/late-publish';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { isRecordNotFound, transientDbFailure, isRestrictViolationOn } from '@/lib/api-errors';
@@ -288,6 +294,20 @@ export type TemplateFamily<TChild, TKind extends ClassFamily = ClassFamily> = Ge
    * or has neither (#231).
    */
   room: RoomDescriptor | null;
+  /**
+   * What the template's first class faces if it becomes bookable at `at`, for
+   * a family whose classes carry a cancellation deadline; `null` for a family
+   * that never warns (studio). `entry` is the class's calendar date and
+   * `@db.Time` start, `timeZone` the teacher's.
+   */
+  lateFirstClass:
+    | ((
+        child: TChild,
+        entry: { date: Date; startTime: Date },
+        timeZone: string,
+        at: Date,
+      ) => LateFirstClass | null)
+    | null;
   /**
    * Write the child row inside the transaction, with family-specific typing.
    *
@@ -974,6 +994,13 @@ export type PauseRuleResult<TChild> =
        * skipped.length` is the candidate count.
        */
       counts: SkipCounts;
+      /**
+       * The earliest class this resume added, when it starts inside its
+       * cancellation deadline — judged at the instant generation stamped it
+       * at. `null` when the resume added nothing, when that class is in time,
+       * and for a family whose `lateFirstClass` is `null`.
+       */
+      lateFirstClass: LateFirstClass | null;
     }
   | { ok: true; action: 'unchanged'; template: WithSlot<TChild> }
   | { ok: false; reason: 'not_found' }
@@ -1040,6 +1067,7 @@ export type PauseRuleOutcome<TChild> =
       scheduled: number;
       added: number;
       counts: SkipCounts;
+      lateFirstClass: LateFirstClass | null;
     };
 
 /**
@@ -1404,12 +1432,25 @@ export async function pauseOrResumeRule<TChild>(
           );
         }
 
+        // `claimed`'s zone, the read generation filtered against, and
+        // generation's own instant, the one its stamp was judged at.
+        const lateFirstClass =
+          family.lateFirstClass && generation.firstCreated
+            ? family.lateFirstClass(
+                claimed,
+                generation.firstCreated,
+                claimed.scheduleRule.teacher.defaultTimezone,
+                generation.firstCreated.at,
+              )
+            : null;
+
         return {
           outcome: 'active',
           template: family.withSlot(claimed, claimed.scheduleRule),
           scheduled,
           added,
           counts,
+          lateFirstClass,
         };
       },
       // Three 10s budgets: the claim's own transaction, this transaction, and
@@ -1490,6 +1531,7 @@ export async function pauseOrResumeRule<TChild>(
         scheduled: result.scheduled,
         added: result.added,
         counts: result.counts,
+        lateFirstClass: result.lateFirstClass,
       };
     case 'paused':
       break;
@@ -1565,11 +1607,12 @@ export type UpdateRuleResult<TChild> =
        * sentence built from this speaks about weeks; a bare `Date` here
        * invites the occurrence reading and would put the wrong day in front
        * of a teacher. The conversion happens in the service layer —
-       * `probeFirstEffectiveWeek` (`entry-generation.ts`) returns the Monday,
-       * so this field is already one — rather than in the copy layer, because
-       * `mondayOf` lives in `@/lib/timezone`, which imports pino, and
-       * `template-action-messages.ts` is value-imported by a `'use client'`
-       * component.
+       * `probeFirstEffectiveWeek` (`entry-generation.ts`) answers the Monday
+       * as its `week`, and this field is that — rather than in the copy
+       * layer, because `mondayOf` lives in `@/lib/timezone`, which imports
+       * pino, and `template-action-messages.ts` is value-imported by a
+       * `'use client'` component. The occurrence itself, the probe's
+       * `candidate`, is what `lateFirstClass` below is judged on.
        *
        * A prediction, not a report: this PUT generates nothing, so the class
        * it names does not exist yet and will be created by the sweep.
@@ -1592,6 +1635,15 @@ export type UpdateRuleResult<TChild> =
        * memory of it.
        */
       generationState: TemplateGenerationState;
+      /**
+       * Whether the class the sweep is expected to add first — the probe's
+       * candidate — starts inside its cancellation deadline when it lands.
+       * A prediction like `firstEffective`, judged at the nominal insert
+       * instant, `min(now + CLASS_GENERATION_INTERVAL_MS, its start)`, so it
+       * errs toward warning. `null` when `firstEffective` is, when that class
+       * is in time, and for a family whose `lateFirstClass` is `null`.
+       */
+      lateFirstClass: LateFirstClass | null;
     }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'forbidden' }
@@ -1799,34 +1851,49 @@ export async function updateRule<TChild>(
   }
 
   const now = new Date();
+  const timeZone = template.scheduleRule.teacher.defaultTimezone;
   const horizon = getNextOccurrences(updatedRule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
-    (date) =>
-      classStartInstant(
-        { date, startTime: updatedRule.startTime },
-        template.scheduleRule.teacher.defaultTimezone,
-      ) > now,
+    (date) => classStartInstant({ date, startTime: updatedRule.startTime }, timeZone) > now,
   );
 
   const generationState = templateGenerationState(updatedRule);
 
+  const probe =
+    generationState === 'active'
+      ? await probeFirstEffectiveWeek(
+          db,
+          {
+            id: templateId,
+            scheduleRuleId: template.scheduleRuleId,
+            teacherId,
+            startTime: updated.startTime,
+            durationMinutes: updated.durationMinutes,
+          },
+          horizon,
+          family.editNoun,
+        )
+      : null;
+
+  // The zone the horizon was built from, and the nominal insert instant
+  // capped at the candidate's start — see `UpdateRuleResult`'s
+  // `lateFirstClass`.
+  let lateFirstClass: LateFirstClass | null = null;
+  if (family.lateFirstClass && probe) {
+    const entry = { date: probe.candidate, startTime: updatedRule.startTime };
+    const at = new Date(
+      Math.min(
+        now.getTime() + CLASS_GENERATION_INTERVAL_MS,
+        classStartInstant(entry, timeZone).getTime(),
+      ),
+    );
+    lateFirstClass = family.lateFirstClass(updated, entry, timeZone, at);
+  }
+
   return {
     ok: true,
     template: updated,
-    firstEffective:
-      generationState === 'active'
-        ? await probeFirstEffectiveWeek(
-            db,
-            {
-              id: templateId,
-              scheduleRuleId: template.scheduleRuleId,
-              teacherId,
-              startTime: updated.startTime,
-              durationMinutes: updated.durationMinutes,
-            },
-            horizon,
-            family.editNoun,
-          )
-        : null,
+    firstEffective: probe?.week ?? null,
     generationState,
+    lateFirstClass,
   };
 }
