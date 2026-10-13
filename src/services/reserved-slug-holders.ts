@@ -9,7 +9,8 @@ export interface ReservedSlugHolder {
 /**
  * Every teacher holding one of `reserved` as their page slug, ordered by slug.
  * Runs in the migrate image, which has no tsconfig paths: relative imports
- * only.
+ * only. CI's "Reserved-slug check loads in the migration image" step catches
+ * a non-relative import.
  */
 export async function findReservedSlugHolders(
   db: PrismaClient,

@@ -11,8 +11,8 @@ import { findReservedSlugHolders } from '../src/services/reserved-slug-holders';
 async function main(): Promise<number> {
   const db = new PrismaClient();
   try {
-    // An explicit connect reports an unreachable database as P1001; a first
-    // query reports the same failure with no code.
+    // The explicit connect makes an unreachable database surface as P1001,
+    // which CI's "Reserved-slug check loads in the migration image" asserts.
     await db.$connect();
     const holders = await findReservedSlugHolders(db, RESERVED_SLUGS);
     if (holders.length === 0) {
