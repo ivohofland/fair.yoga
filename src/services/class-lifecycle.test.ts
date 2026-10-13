@@ -1748,6 +1748,15 @@ describe('completeClass (DB)', () => {
     expect(updated.status).toBe('completed');
   });
 
+  it('stores the room as a loss when nobody was charged', async () => {
+    const { id } = await makeClass({ status: 'in_progress' });
+    await prisma.class.update({ where: { id }, data: { roomCost: 30 } });
+    expect((await completeClass(prisma, id, { finishedEarly: true })).ok).toBe(true);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id } });
+    expect(Number(after.totalRevenue)).toBe(0);
+    expect(Number(after.effectiveTeacherRate)).toBe(-30);
+  });
+
   it("erasure's finishedEarly checks no clock", async () => {
     // `finishedEarly` exists for `deleteTeacherAccount`, which closes
     // in-flight classes during erasure whatever the clock says.

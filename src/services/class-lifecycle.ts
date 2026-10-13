@@ -36,6 +36,7 @@ import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { log } from '@/lib/log';
 import { redecideAfterMove, stampIfPastCancelCheck } from './auto-cancel-decision';
 
@@ -835,7 +836,13 @@ export async function completeClass(
     if (chargedRegistrations.length === 0) {
       await tx.class.update({
         where: { id: classId },
-        data: { status: 'completed', effectiveTeacherRate: 0, totalStudents: 0, totalRevenue: 0 },
+        data: {
+          status: 'completed',
+          effectiveTeacherRate:
+            teacherEarningsCents({ totalCents: 0, roomCents: Math.round(Number(cls.roomCost) * 100) }) / 100,
+          totalStudents: 0,
+          totalRevenue: 0,
+        },
       });
       return { ok: true, newStatus: 'completed' as ClassStatus };
     }
