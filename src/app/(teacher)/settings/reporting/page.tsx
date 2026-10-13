@@ -6,6 +6,7 @@ import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatMonthLabel, formatMoneyCents } from '@/lib/format';
+import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { orZero, totalsByCurrency, type MoneyTotals } from '@/lib/money-totals';
 
 export const dynamic = 'force-dynamic';
@@ -97,7 +98,7 @@ export default async function ReportingPage() {
     Math.round(Number(val ?? 0) * 100);
 
   const classEarningsCents = (c: (typeof completedClasses)[number]) =>
-    toCents(c.totalRevenue) - toCents(c.roomCost);
+    teacherEarningsCents({ totalCents: toCents(c.totalRevenue), roomCents: toCents(c.roomCost) });
   const studioEarningsCents = (s: (typeof completedStudioClasses)[number]) =>
     Math.round((toCents(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60);
 

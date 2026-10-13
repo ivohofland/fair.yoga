@@ -1,3 +1,4 @@
+import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import type { ClassStatus, PaymentStatus, Prisma } from '@prisma/client';
 
 /** The lines of a completed class's breakdown, in whole cents. */
@@ -61,7 +62,7 @@ export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): Pa
     kind: 'shown',
     lines: {
       roomCents,
-      teacherCents: totalCents - roomCents,
+      teacherCents: teacherEarningsCents({ totalCents, roomCents }),
       totalCents,
       students: totalStudents,
       shareCents: toCents(payment.amount),

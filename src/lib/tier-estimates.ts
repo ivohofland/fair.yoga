@@ -1,3 +1,4 @@
+import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { calculateClassPricing } from '@/services/pricing';
 import { MAX_CLASS_SIZE } from '@/lib/schemas';
 import { DEFAULT_INCOME_TIER, type IncomeTier } from '@/lib/tiers';
@@ -55,7 +56,11 @@ export function billAtLeastMinimum(
   });
   const billed = pricing.students.slice(0, chargedTiers.length);
   const billedCents = billed.reduce((sum, s) => sum + Math.round(s.price * 100), 0);
-  return { billed, billedCents, earningsCents: billedCents - Math.round(input.roomCost * 100) };
+  return {
+    billed,
+    billedCents,
+    earningsCents: teacherEarningsCents({ totalCents: billedCents, roomCents: Math.round(input.roomCost * 100) }),
+  };
 }
 
 /**

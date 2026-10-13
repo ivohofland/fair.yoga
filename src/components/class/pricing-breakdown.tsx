@@ -1,4 +1,5 @@
 import type { Class } from '@prisma/client';
+import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { formatMoney } from '@/lib/format';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 
@@ -15,7 +16,8 @@ interface PricingBreakdownProps {
 export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
   const totalRevenue = cls.totalRevenue ? Number(cls.totalRevenue) : 0;
   const roomCost = Number(cls.roomCost);
-  const teacherEarnings = totalRevenue - roomCost;
+  const teacherEarnings =
+    teacherEarningsCents({ totalCents: Math.round(totalRevenue * 100), roomCents: Math.round(roomCost * 100) }) / 100;
   const totalStudents = cls.totalStudents ?? 0;
 
   // Group by tier, using the actual stored price
