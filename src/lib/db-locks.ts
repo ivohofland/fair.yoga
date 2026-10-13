@@ -511,8 +511,8 @@ export async function lockTeacherForNoKeyUpdate(
 /**
  * The teacher's row `FOR SHARE`, with the shared bounded wait, taken as the
  * first lock of a transaction that must not overlap a
- * `lockTeacherForNoKeyUpdate` holder. Answers the live teacher's currency,
- * read under the lock, or `null` when the row is absent or erased.
+ * `lockTeacherForNoKeyUpdate` holder. Answers the live teacher's currency and
+ * default VAT percentage, read under the lock, or `null` when the row is absent or erased.
  * `docs/lock-order.md`, "The `Teacher` row is the first lock (#758)".
  */
 export async function lockTeacherForShare(

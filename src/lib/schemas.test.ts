@@ -31,6 +31,7 @@ import {
   pageSlugField,
 } from './schemas';
 import type { NoneOf } from './type-pins';
+import { VAT_PERCENT_MAX, vatThousandths, withVat } from './vat';
 import {
   ADVERSARIAL_MEGABYTE,
   PARSE_BUDGET_MS,
@@ -1925,8 +1926,9 @@ describe('what the money cap is decided against (#769)', () => {
    */
   const DECIMAL_10_2_MAX = 99_999_999.99;
 
-  it('keeps a completed class total, roomCost + targetRate, inside Decimal(10,2)', () => {
+  it('keeps a completed class total, roomCost + targetRate plus the most VAT a class can charge, inside Decimal(10,2)', () => {
     expect(2 * MONEY_MAX).toBeLessThanOrEqual(DECIMAL_10_2_MAX);
+    expect(withVat(2 * MONEY_MAX, vatThousandths(VAT_PERCENT_MAX))).toBeLessThanOrEqual(DECIMAL_10_2_MAX);
   });
 
   it('pins the currencies MONEY_MAX was decided for, so a new one forces a re-decision', () => {

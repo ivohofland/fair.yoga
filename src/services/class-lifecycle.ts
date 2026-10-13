@@ -1123,7 +1123,8 @@ type PlainUpdateForbiddenClassField =
   | 'settingsLocked'
   | 'effectiveTeacherRate'
   | 'totalStudents'
-  | 'totalRevenue';
+  | 'totalRevenue'
+  | 'vatTotal';
 
 /**
  * Compile-time pin (completeness): no column may leave the list above
@@ -1158,7 +1159,8 @@ const _classForbiddenListIsComplete: NoneOf<
     | 'settingsLocked'
     | 'effectiveTeacherRate'
     | 'totalStudents'
-    | 'totalRevenue',
+    | 'totalRevenue'
+    | 'vatTotal',
     PlainUpdateForbiddenClassField
   >
 > = true;
