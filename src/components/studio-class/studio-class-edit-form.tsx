@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { parseDecimal } from '@/lib/decimal-input';
 import { Input } from '@/components/ui/input';
 import { currencyLabel } from '@/lib/format';
+import { startTimeStep } from '@/lib/time-of-day';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
@@ -261,6 +262,7 @@ export function StudioClassEditForm({
           <Input
             label="Start time"
             type="time"
+            step={startTimeStep(initial.startTime)}
             value={form.startTime}
             error={fieldErrors.startTime}
             onChange={(e) => set('startTime', e.target.value)}

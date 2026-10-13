@@ -21,7 +21,7 @@ import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
-import { hhmmToTime } from '@/lib/time-of-day';
+import { hhmmToTime, startTimeStep } from '@/lib/time-of-day';
 import { readClassStart } from '@/lib/class-start';
 import type { MoveWarning } from '@/lib/late-publish';
 import {
@@ -327,6 +327,7 @@ export function ClassEditForm({
           <Input
             label="Start time"
             type="time"
+            step={startTimeStep(initial.startTime)}
             value={form.startTime}
             disabled={settingsLocked}
             onChange={(e) => set('startTime', e.target.value)}

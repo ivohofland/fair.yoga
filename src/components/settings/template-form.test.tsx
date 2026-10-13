@@ -332,6 +332,22 @@ describe('TemplateForm', () => {
     expect(screen.queryByLabelText('Room cost (€)')).toBeNull();
   });
 
+  it('steps the start time by five minutes', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="create" />);
+    await screen.findByLabelText('Room');
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
+  it('keeps a saved start time off the five-minute grid valid', async () => {
+    stubFetch();
+    render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, startTime: '09:37' }} />);
+    await screen.findByLabelText('Room');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('step', '60');
+    expect(input.checkValidity()).toBe(true);
+  });
+
   it('create mode seeds the VAT % from defaultVatPercent, and the labels follow it (#819)', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={9} />);

@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel } from '@/lib/format';
+import { startTimeStep } from '@/lib/time-of-day';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
@@ -413,6 +414,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       <Input
         label="Start time"
         type="time"
+        step={startTimeStep(initial?.startTime)}
         value={form.startTime}
         onChange={(e) => update('startTime', e.target.value)}
       />

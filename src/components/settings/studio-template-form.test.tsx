@@ -69,6 +69,18 @@ describe('StudioTemplateForm', () => {
     hourlyRate: 20,
   };
 
+  it('steps the start time by five minutes', () => {
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
+  it('keeps a saved start time off the five-minute grid valid', () => {
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL, startTime: '09:37' }} />);
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('step', '60');
+    expect(input.checkValidity()).toBe(true);
+  });
+
   /**
    * One body serves two endpoints, so the key-set has to hold in both modes —
    * a create-only or edit-only assertion would miss a schema that drifted

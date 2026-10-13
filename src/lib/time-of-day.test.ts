@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { timeToHHmm, hhmmToTime } from './time-of-day';
+import { timeToHHmm, hhmmToTime, startTimeStep, START_TIME_STEP_SECONDS } from './time-of-day';
 
 describe('hhmmToTime / timeToHHmm', () => {
   it('round-trips an ordinary time', () => {
@@ -30,5 +30,22 @@ describe('hhmmToTime / timeToHHmm', () => {
   // live dependant, not a hypothetical one.
   it('renders an invalid Date as "NaN:NaN"', () => {
     expect(timeToHHmm(new Date(NaN))).toBe('NaN:NaN');
+  });
+});
+
+describe('startTimeStep', () => {
+  it('steps a new start time by five minutes', () => {
+    expect(startTimeStep()).toBe(START_TIME_STEP_SECONDS);
+    expect(START_TIME_STEP_SECONDS).toBe(300);
+  });
+
+  it('keeps the five-minute step for a saved time on the grid', () => {
+    expect(startTimeStep('18:45')).toBe(START_TIME_STEP_SECONDS);
+    expect(startTimeStep('00:00')).toBe(START_TIME_STEP_SECONDS);
+  });
+
+  it('falls back to one minute for a saved time off the grid, so it still saves unchanged', () => {
+    expect(startTimeStep('18:37')).toBe(60);
+    expect(startTimeStep('23:59')).toBe(60);
   });
 });

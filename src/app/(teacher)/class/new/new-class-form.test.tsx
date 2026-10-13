@@ -149,6 +149,13 @@ describe('NewClassPage', () => {
    * above — and everything else is `INITIAL_FORM`'s default, untouched by
    * step 2 and step 3's no-op "Next" clicks.
    */
+  it('steps the start time by five minutes', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+    await screen.findByLabelText('Room');
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+  });
+
   it('sends exactly these fields, with the values the wizard actually produces', async () => {
     stubFetch();
     const { url, method, body } = await fillAndSubmit();
