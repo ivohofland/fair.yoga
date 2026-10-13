@@ -4,7 +4,7 @@ import { formatDayHeader } from '@/lib/format';
 import { PaymentBreakdown } from './payment-breakdown';
 
 const DATE = new Date('2026-06-01T00:00:00.000Z');
-const LINES = { roomCents: 4000, vatCents: 0, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 };
+const LINES = { roomCents: 4000, vatCents: 0, chargesVat: false, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 };
 
 /** The value rendered beside a label in the breakdown's description list. */
 function valueFor(label: string): string | null {
@@ -49,7 +49,7 @@ describe('PaymentBreakdown', () => {
     render(
       <PaymentBreakdown
         currency="EUR"
-        lines={{ ...LINES, roomCents: 3000, vatCents: 990, teacherCents: 8000, totalCents: 11990 }}
+        lines={{ ...LINES, roomCents: 3000, vatCents: 990, chargesVat: true, teacherCents: 8000, totalCents: 11990 }}
         classType="Vinyasa"
         date={DATE}
       />,
@@ -62,5 +62,12 @@ describe('PaymentBreakdown', () => {
   it('shows no VAT row when the class charged none', () => {
     render(<PaymentBreakdown currency="EUR" lines={LINES} classType="Vinyasa" date={DATE} />);
     expect(screen.queryByText(/VAT/)).toBeNull();
+  });
+
+  it('shows a VAT row of zero when the class charges VAT that rounds to nothing', () => {
+    render(
+      <PaymentBreakdown currency="EUR" lines={{ ...LINES, chargesVat: true }} classType="Vinyasa" date={DATE} />,
+    );
+    expect(valueFor('VAT')).toBe('€0.00');
   });
 });

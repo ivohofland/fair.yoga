@@ -18,7 +18,7 @@ describe('resolvePaymentBreakdown', () => {
   it('shows every line from the snapshot, in cents', () => {
     expect(resolvePaymentBreakdown(COMPLETED)).toEqual({
       kind: 'shown',
-      lines: { roomCents: 4000, vatCents: 0, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 },
+      lines: { roomCents: 4000, vatCents: 0, chargesVat: false, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 },
     });
   });
 
@@ -49,7 +49,10 @@ describe('resolvePaymentBreakdown', () => {
 
   it('takes the class VAT out of the teacher line', () => {
     const result = resolvePaymentBreakdown({ ...COMPLETED, roomCost: d('30.00'), totalRevenue: d('119.90'), vatTotal: d('9.90'), vatPercent: 9 });
-    expect(result).toMatchObject({ kind: 'shown', lines: { teacherCents: 8000, totalCents: 11990 } });
+    expect(result).toMatchObject({
+      kind: 'shown',
+      lines: { teacherCents: 8000, totalCents: 11990, chargesVat: true },
+    });
   });
 
   it('carries the VAT and the three lines add up to the total', () => {
@@ -64,6 +67,16 @@ describe('resolvePaymentBreakdown', () => {
     const { lines } = result;
     expect(lines.vatCents).toBe(990);
     expect(lines.roomCents + lines.vatCents + lines.teacherCents).toBe(lines.totalCents);
+  });
+
+  it('still says the class charges VAT when its VAT rounds to 0 cents', () => {
+    const result = resolvePaymentBreakdown({
+      ...COMPLETED,
+      totalRevenue: d('40.01'),
+      vatTotal: d('0'),
+      vatPercent: 0.001,
+    });
+    expect(result).toMatchObject({ kind: 'shown', lines: { vatCents: 0, chargesVat: true } });
   });
 
   it('reports a completed class with no totalRevenue as a missing snapshot', () => {
