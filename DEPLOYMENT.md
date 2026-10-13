@@ -234,18 +234,20 @@ and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
 would leave the site down. A failed build or migration, or a signal that ends
-the run before the swap, puts the checkout back and leaves the running app
-alone. After a dropped connection the run either stops the same way or
-finishes; either way `/opt/fairyoga/.deployed` holds the deployed commit. A
-failed container replacement or health check leaves the new commit checked
-out and turns the CI run red: `<new> is checked out, <old> was before it`,
-naming the commit to roll back to. Either can leave the site down. The
-script records the commit it last deployed through a passing health check in
-`/opt/fairyoga/.deployed` (the first run records the checkout's HEAD), so
-running it again for the failed commit, or re-running the CI job, deploys it
-again; or roll back. Running the recorded commit instead refuses, naming both
-commits, rather than answering that it is already there. The app is
-unreachable for the few seconds the container swap takes.
+the run before the swap, puts the checkout back where the run found it
+(normally the recorded commit) and leaves the running app alone. A dropped
+connection before the swap ends the run the same way, putting the checkout
+back; after the swap, the run either carries on and records the commit once
+its health check passes, or ends like a failed swap. A failed container
+replacement or health check leaves the new commit checked out and turns the
+CI run red: `<new> is checked out, <old> was before it`, naming the commit to
+roll back to. Either can leave the site down. The script records the commit
+it last deployed through a passing health check in `/opt/fairyoga/.deployed`
+(a run that finds no such file records the checkout's HEAD), so running it
+again for the failed commit, or re-running the CI job, deploys it again; or
+roll back. Running the recorded commit, or an older one, instead refuses,
+naming both commits, rather than answering that it is already there. The app
+is unreachable for the few seconds the container swap takes.
 
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
@@ -254,9 +256,15 @@ inserts leave it out), and a column or table is renamed or removed only once
 no deployed code reads it.
 
 It only moves forward along `origin/main`. A commit already deployed (the one
-recorded in `.deployed`; the first run, with no such file, records the
-checkout's HEAD), or an older one, answers success and changes nothing, so
-two runs finishing out of order cannot roll the server back.
+recorded in `.deployed`; a run that finds no such file records the checkout's
+HEAD), or an older one, answers success and changes nothing, so two runs
+finishing out of order cannot roll the server back. While the checkout is off
+the recorded commit it refuses instead: a deploy ended after moving the
+checkout without passing its health check, or the checkout was moved by hand,
+and which commit serves is unknown. Bring the checkout and `.deployed` to the
+serving commit. A `.deployed` that is empty or holds anything but a full
+commit hash is refused too; with the serving commit checked out,
+`git rev-parse HEAD > .deployed` repairs it.
 
 ### Setting it up
 
@@ -309,8 +317,9 @@ two runs finishing out of order cannot roll the server back.
    and succeeds; with only some set, it fails.
 
 Test it by re-running the `deploy` job of the latest `main` run. If that
-run's deploy succeeded, the script answers that it is already there, which
-proves the key, the host key and the forced command without changing anything.
+run's deploy succeeded and the checkout is still on it, the script answers
+that it is already there, which proves the key, the host key and the forced
+command without changing anything.
 
 ### By hand
 
@@ -338,14 +347,14 @@ recipe's included, runs `migrate` as well, so until it is resolved each one
 fails with P3009 and leaves `app` replaced by a container that never starts.
 Run no `up` until it is resolved.
 
-The checkout is back on the old commit, but the built images are still the
-failed commit's. That is why the resolve command below can see the failed
-migration's folder, so resolve before any rebuild (`--build`). After
-resolving, do not run a plain `up -d` either: it reruns the failed commit's
-migrations from those images and, if they pass, starts that commit's code
-while the checkout names the old one. Until the images are next built, §8's
-admin commands run the failed commit's CLI against a schema its migrations
-did not finish.
+The checkout is back where the run found it, normally the old commit, but the
+built images are still the failed commit's. That is why the resolve command
+below can see the failed migration's folder, so resolve before any rebuild
+(`--build`). After resolving, do not run a plain `up -d` either: it reruns
+the failed commit's migrations from those images and, if they pass, starts
+that commit's code while the checkout names the old one. Until the images are
+next built, §8's admin commands run the failed commit's CLI against a schema
+its migrations did not finish.
 
 Resolve it on the VPS:
 
@@ -380,8 +389,8 @@ git rev-parse HEAD > .deployed
 ```
 
 Record the commit because otherwise the script still counts the newer commit
-as deployed, and a re-run of it answers that it is already there while the
-older one serves.
+as deployed, and while the older one is checked out it refuses to run the
+newer commit, or any older one, until the checkout and the record agree.
 
 Migrations do not roll back: the older code runs against the newer schema, so
 a migration that dropped or renamed something the older code reads needs a
