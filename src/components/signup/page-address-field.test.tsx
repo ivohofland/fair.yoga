@@ -199,8 +199,7 @@ describe('PageAddressField', () => {
     await advance(400);
     await settle(calls[0], refused());
 
-    expect(screen.queryByText('Available')).toBeNull();
-    expect(screen.queryByText('That address is taken')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   /**
@@ -227,7 +226,7 @@ describe('PageAddressField', () => {
     // One more keystroke. Nothing has been asked about `alphax` yet, so there
     // is nothing to say about it.
     typeAddress('alphax');
-    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   /**
@@ -271,7 +270,7 @@ describe('PageAddressField', () => {
     await advance(400);
     await settle(calls[0], answered(true));
 
-    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
     expect(screen.getByRole('alert')).toHaveTextContent(
       'That address is taken — please pick another.',
     );
@@ -279,7 +278,7 @@ describe('PageAddressField', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The teacher's own address (Settings → Profile)
+// The teacher's own address (`currentSlug`)
 // ---------------------------------------------------------------------------
 
 /** A field that starts on, and may return to, the teacher's saved address. */
@@ -308,8 +307,7 @@ describe('PageAddressField with a currentSlug', () => {
     await advance(400);
 
     expect(calls).toHaveLength(0);
-    expect(screen.queryByText('Available')).toBeNull();
-    expect(screen.queryByText('That address is taken')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('still checks any other address', async () => {
@@ -339,8 +337,7 @@ describe('PageAddressField with a currentSlug', () => {
     expect(screen.getByText('Available')).toBeInTheDocument();
 
     rerender(<PageAddressField value="anna-yoga" onChange={onChange} currentSlug="anna-yoga" />);
-    expect(screen.queryByText('Available')).toBeNull();
-    expect(screen.queryByText('That address is taken')).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
   });
 });
 
