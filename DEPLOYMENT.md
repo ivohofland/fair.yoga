@@ -229,7 +229,8 @@ A commit on `main` deploys itself once every CI test job has passed: the
 `deploy` job in `.github/workflows/ci.yml` connects over SSH and runs
 `deploy/deploy.sh` with that commit's hash. The script checks the commit out,
 builds while the old containers keep serving, applies the migrations as a step
-of its own (`docker compose run --rm migrate`), then replaces the containers
+of its own (`docker compose run --rm migrate`, which then checks that no
+teacher holds a reserved page slug), then replaces the containers
 and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
@@ -373,6 +374,38 @@ commit again by hand. If the migration itself was wrong, do not edit it: an
 applied migration is immutable, and CI's `check-migrations` refuses a change
 to one. Undo whatever of it applied, do by hand what it should have done, mark
 it applied, and put anything still missing in a new migration on `main`.
+
+### A reserved page slug a teacher holds
+
+After the migrations, the migrate step runs `scripts/check-reserved-slugs.ts`,
+which refuses while any teacher's page slug is in `RESERVED_SLUGS`
+(`src/lib/reserved-slugs.ts`). It prints each such slug with its teacher's id,
+and the deploy stops as a failed migrate step does: no container is replaced
+and the checkout goes back where the run found it. The migrations it applied
+stay applied, which the rule above, that a migration works with the previous
+commit running against it, already makes safe.
+
+It matters because a release that adds a route by that name hides the
+teacher's page behind it, and a release that only reserves the name makes
+every save of their profile fail, since the slug it carries no longer passes.
+
+The fix is a human decision. Either talk to the teacher and move them to a new
+slug they agree to, one that is neither reserved nor taken, by hand with
+`psql`:
+
+```bash
+cd /opt/fairyoga
+docker compose -f docker-compose.prod.yml exec db psql -U fairyoga fairyoga \
+  -c "UPDATE \"Teacher\" SET \"pageSlug\" = '<new slug>' WHERE id = '<teacher id>'"
+```
+
+or drop the name from the release, renaming the route if it has one. Then
+deploy the same commit again.
+
+The built images are still the refused commit's, and every `docker compose up`
+runs `migrate`, check included. Like a failed migration, each one fails and
+leaves `app` replaced by a container that never starts. Run no `up` until the
+slug is resolved, or rebuild from the old commit (*Rolling back*).
 
 ### Rolling back
 

@@ -51,7 +51,11 @@ COPY prisma ./prisma
 # (DEPLOYMENT.md §8).
 COPY scripts/admin-grant.ts ./scripts/admin-grant.ts
 COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
-CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]
+# The deploy gate run after migrations (DEPLOYMENT.md §6).
+COPY scripts/check-reserved-slugs.ts ./scripts/check-reserved-slugs.ts
+COPY src/services/reserved-slug-holders.ts ./src/services/reserved-slug-holders.ts
+COPY src/lib/reserved-slugs.ts ./src/lib/reserved-slugs.ts
+CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm exec tsx scripts/check-reserved-slugs.ts"]
 
 # ---------------------------------------------------------------------------
 FROM base AS runner

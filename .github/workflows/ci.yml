@@ -520,6 +520,15 @@ jobs:
           echo "$OUT"
           grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the schema engine did not load"; exit 1; }
 
+      # The deploy gate (#855) runs from this image after the migrations; a
+      # file it imports but the stage does not COPY would refuse every deploy.
+      # Reaching P1001 means every import resolved.
+      - name: Reserved-slug check loads in the migration image
+        run: |
+          OUT="$(docker run --rm --network none -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec tsx scripts/check-reserved-slugs.ts 2>&1)" || true
+          echo "$OUT"
+          grep -q 'P1001' <<< "$OUT" || { echo "::error::the reserved-slug check did not reach the database - it failed to load in the migration image"; exit 1; }
+
   # This job exists so the branch ruleset's required status check named
   # `test` keeps reporting after the split: ruleset 19724469 requires the
   # contexts `checks` and `test` (re-derive:
