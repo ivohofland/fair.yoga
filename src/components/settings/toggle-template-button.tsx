@@ -8,6 +8,8 @@ import {
   UNREADABLE_CONFIRMATION_MESSAGE,
   type TemplateToggleResponse,
 } from './template-action-messages';
+import { isLateFirstClass, type LateFirstClass } from '@/lib/late-publish';
+import { LateFirstClassNotice } from './late-first-class-notice';
 
 interface ToggleTemplateButtonProps {
   templateId: string;
@@ -19,11 +21,13 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [late, setLate] = useState<LateFirstClass | null>(null);
 
   async function handleToggle() {
     setLoading(true);
     setError('');
     setMessage('');
+    setLate(null);
     try {
       // Derived beside the label below, from the same prop, so the two cannot
       // disagree about which direction this click means.
@@ -56,6 +60,14 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
           try {
             const { data } = rawJson as { data: TemplateToggleResponse };
             setMessage(resolveTemplateConfirmation(data) ?? '');
+            // Read after the message, null-safely: a body with no `data` must
+            // not change which message shows.
+            const wireLate = (data as { lateFirstClass?: unknown } | undefined)?.lateFirstClass;
+            if (isLateFirstClass(wireLate)) {
+              setLate(wireLate);
+            } else if (wireLate !== null && wireLate !== undefined) {
+              console.warn('recurring class resume: unreadable lateFirstClass, no notice shown', wireLate);
+            }
           } catch (err) {
             console.error('[toggle-template] updated, but the confirmation could not be resolved', {
               templateId,
@@ -91,6 +103,7 @@ export function ToggleTemplateButton({ templateId, isActive }: ToggleTemplateBut
       </button>
       {error && <p role="alert" className="text-sm text-danger mt-2">{error}</p>}
       {message && <p className="type-caption mt-2">{message}</p>}
+      {late && <LateFirstClassNotice late={late} when="added" />}
     </div>
   );
 }

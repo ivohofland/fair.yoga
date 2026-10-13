@@ -38,6 +38,8 @@ import type { TemplateGenerationState } from '@/lib/template-selection';
 import { anyBlocked } from '@/lib/generation';
 import { hasIntegerCounts } from '@/components/settings/template-action-messages';
 import type { TemplateCreateResponse, TemplateEditResponse } from '@/lib/api-types';
+import { isLateFirstClass, type LateFirstClass } from '@/lib/late-publish';
+import { LateFirstClassNotice } from '@/components/settings/late-first-class-notice';
 
 interface TeacherRoomOption {
   id: string;
@@ -132,6 +134,19 @@ function isAutoCancelCheck(v: string): v is AutoCancelCheck {
 }
 
 /**
+ * A save response's `lateFirstClass`, or `null`. A present but unreadable
+ * value is logged and shows no notice: the save succeeded, and the field is
+ * advisory.
+ */
+function readLateFirstClass(value: unknown, site: string): LateFirstClass | null {
+  if (isLateFirstClass(value)) return value;
+  if (value !== null && value !== undefined) {
+    console.warn(`${site}: unreadable lateFirstClass, no notice shown`, value);
+  }
+  return null;
+}
+
+/**
  * #40 (whole-branch review F8). Where a successful create navigates, written
  * once. The push and the settled notice's retry are the *same* navigation —
  * two literals is how a retry ends up somewhere the create did not go, and the
@@ -207,6 +222,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [late, setLate] = useState<LateFirstClass | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
   // The filter below keys off this prop rather than `form.teacherRoomId` so
@@ -284,6 +300,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
     setForm((prev) => ({ ...prev, [key]: value }));
     setError('');
     setSuccess('');
+    setLate(null);
   }
 
   function handleRoomChange(teacherRoomId: string) {
@@ -302,6 +319,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
     });
     setError('');
     setSuccess('');
+    setLate(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -349,6 +367,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
     setSubmitting(true);
     setError('');
     setSuccess('');
+    setLate(null);
 
     try {
       const url = mode === 'create'
@@ -411,14 +430,15 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         // earns a 409 instead of duplicating the teacher's whole schedule.
         //
         // The POST also returns `added` and `counts` — the same shape the PATCH
-        // `active` arm carries (#296 nested them). #196 made
-        // `slotTaken` reachable here for the first time: a teacher creating a
-        // recurring class onto a day/time they already occupy gets a live
-        // template whose window came back short. A clean window navigates
-        // straight to the list as before; a short one stays on this page and
-        // says so, via the same `resumeMessage` the resume button renders —
-        // `scheduled` is exactly `added` here, since nothing existed under
-        // this brand-new template before this create.
+        // `active` arm carries (#296 nested them), and `lateFirstClass` (#849).
+        // #196 made `slotTaken` reachable here for the first time: a teacher
+        // creating a recurring class onto a day/time they already occupy gets
+        // a live template whose window came back short. The form navigates
+        // straight to the list only when the window is clean AND the first
+        // class is not late; otherwise it stays on this page and says so, via
+        // the same `resumeMessage` the resume button renders — `scheduled` is
+        // exactly `added` here, since nothing existed under this brand-new
+        // template before this create — with the late notice under it.
         //
         // `alreadyThisWeek` rides along inside `counts` — it is not a field of
         // this payload in its own right (#296) — and the GATE below covers it
@@ -460,7 +480,9 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         // shape check below.
         const result =
           typeof rawJson === 'object' && rawJson !== null
-            ? (rawJson as { data?: { added: TemplateCreateResponse['added']; counts?: unknown } }).data
+            ? (rawJson as {
+                data?: { added: TemplateCreateResponse['added']; counts?: unknown; lateFirstClass?: unknown };
+              }).data
             : undefined;
 
         // `anyBlocked` rather than a hand-listed pair (`@/lib/generation`). This
@@ -469,9 +491,15 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
         // been reachable on create since #196, and the gate listed it) — and
         // then navigated away from a short window in silence. See that
         // function's docblock; the paragraph ABOVE is the rule it broke.
+        //
+        // The page stays on either condition: a short window, or a first class
+        // inside its cancellation deadline. An unreadable `lateFirstClass` reads
+        // as not late — the create succeeded and the field is advisory.
         if (result && Number.isInteger(result.added) && hasIntegerCounts(result.counts)) {
-          if (anyBlocked(result.counts)) {
+          const firstLate = readLateFirstClass(result.lateFirstClass, 'recurring class create');
+          if (anyBlocked(result.counts) || firstLate !== null) {
             setSuccess(resumeMessage(result.added, result.added, result.counts));
+            setLate(firstLate);
           } else {
             router.push(RECURRING_LIST_PATH);
           }
@@ -543,6 +571,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
               data: {
                 firstEffective?: TemplateEditResponse['firstEffective'];
                 generationState?: string;
+                lateFirstClass?: unknown;
               };
             };
             const firstEffective = data.firstEffective ?? null;
@@ -556,6 +585,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
                 'recurring class',
               ),
             );
+            setLate(readLateFirstClass(data.lateFirstClass, 'recurring class edit'));
           } catch (err) {
             console.error('[template-form] updated, but the confirmation could not be resolved', {
               templateId,
@@ -747,6 +777,7 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
 
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
+      {late && <LateFirstClassNotice late={late} when={mode === 'create' ? 'added' : 'expected'} />}
 
       {created ? (
         <SettledNotice

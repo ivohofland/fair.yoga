@@ -1949,4 +1949,105 @@ describe('TemplateForm', () => {
     expect(screen.getByText('€30.00')).toBeTruthy();
     expect(screen.getByText('€50.00')).toBeTruthy();
   });
+
+  /**
+   * #849. A save answers whether the template's first class starts inside its
+   * cancellation deadline (`docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`).
+   */
+  describe('late first class', () => {
+    const CLEAN_COUNTS = { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 };
+    const LATE = { date: '2026-11-10', state: 'past_deadline', minStudents: 4 };
+
+    /** Rooms on GET; each class-template write answers the next of `bodies`. */
+    function stubSaves(bodies: unknown[]) {
+      const queue = [...bodies];
+      fetchMock.mockImplementation(async (input: string, init?: { method?: string }) => {
+        const url = String(input);
+        if (url === '/api/teacher-rooms') return roomsResponse([roomRow(ROOM_A, 'Studio A')]);
+        if (url.startsWith('/api/class-templates') && (init?.method === 'POST' || init?.method === 'PUT')) {
+          const body = queue.shift();
+          return { ok: true, json: async () => body };
+        }
+        throw new Error(`Unexpected fetch: ${url} ${init?.method ?? 'GET'}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    async function create() {
+      render(<TemplateForm currency="EUR" mode="create" />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_A } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.click(await screen.findByRole('button', { name: /create/i }));
+    }
+
+    it('stays on the page after a clean create whose first class is late, with the sentence and the notice', async () => {
+      stubSaves([{ data: { id: 'tpl-late', added: 4, counts: CLEAN_COUNTS, lateFirstClass: LATE } }]);
+      await create();
+
+      expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Your first class, on Tuesday, 10 Nov, starts inside its cancellation deadline. Students who book it can't cancel for free. You can cancel it from your schedule.",
+        ),
+      ).toBeInTheDocument();
+      expect(routerPush).not.toHaveBeenCalled();
+    });
+
+    it('navigates after a clean create whose first class is not late', async () => {
+      stubSaves([{ data: { id: 'tpl-clean', added: 4, counts: CLEAN_COUNTS, lateFirstClass: null } }]);
+      await create();
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+      expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
+    });
+
+    it('navigates without a notice, and warns, when lateFirstClass is unreadable', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      stubSaves([{ data: { id: 'tpl-bad', added: 4, counts: CLEAN_COUNTS, lateFirstClass: { state: 'soon' } } }]);
+      await create();
+
+      await waitFor(() => expect(routerPush).toHaveBeenCalledWith('/settings/recurring'));
+      expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('unreadable lateFirstClass'),
+        { state: 'soon' },
+      );
+      warn.mockRestore();
+    });
+
+    it('shows the expected-copy notice under the edit confirmation', async () => {
+      stubSaves([{ data: { id: 'tpl-1', firstEffective: '2026-11-09T00:00:00.000Z', lateFirstClass: LATE } }]);
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+      expect(
+        await screen.findByText(
+          'Template updated. It takes effect for newly generated classes — your first class on the new schedule is the week starting Monday, 9 Nov. Change or cancel existing classes individually if needed.',
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Your first class on the new schedule, on Tuesday, 10 Nov, may be added after its cancellation deadline has passed. Students who book it then can't cancel for free.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('drops the notice when a later save answers no late first class', async () => {
+      stubSaves([
+        { data: { id: 'tpl-1', firstEffective: '2026-11-09T00:00:00.000Z', lateFirstClass: LATE } },
+        { data: { id: 'tpl-1', firstEffective: '2026-11-09T00:00:00.000Z', lateFirstClass: null } },
+      ]);
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+      expect(await screen.findByText(/may be added after its cancellation deadline/)).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.filter(([, o]) => (o as { method?: string } | undefined)?.method === 'PUT')).toHaveLength(2),
+      );
+      await waitFor(() => expect(screen.getByRole('button', { name: /save/i })).toBeEnabled());
+      expect(screen.queryByText(/may be added after its cancellation deadline/)).not.toBeInTheDocument();
+      expect(await screen.findByText(/^Template updated\./)).toBeInTheDocument();
+    });
+  });
 });

@@ -606,22 +606,11 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
  * in the same PR; this is the layer #119's bug actually lived at.
  *
  * This resolver is never called on **create** — create's POST response has no
- * `action` field for a `switch` to dispatch on, so the create forms
- * (`template-form.tsx`, `studio-template-form.tsx`) call `resumeMessage`/
- * `resumeStudioMessage` directly instead when the window came back short.
- * That is new: creating a weekly template used to say nothing at all —
- * "put this on my schedule weekly", four classes appearing, was taken as the
- * definition of the thing working, not a consequence needing disclosure, and
- * both families' create forms navigated straight to their own settings list
- * (see `docs/superpowers/specs/2026-07-23-template-generate-on-create-design.md`,
- * "Response shapes are unchanged … The front-end needs no changes"). #196
- * made that decision incomplete rather than wrong: `slotTaken` is now
- * reachable on create, and a live template with an empty window and a silent
- * redirect is not "the thing working". The happy path still navigates
- * straight through and says nothing, matching the design note above; only a
- * window that came back short now stays on the page and speaks — through the
- * same two functions this file already uses for the resume PATCH, not
- * through this resolver.
+ * `action` field for a `switch` to dispatch on, so the create forms call
+ * `resumeMessage`/`resumeStudioMessage` directly when they stay on the page.
+ * The class create form's rule for staying is in
+ * `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`
+ * (Where it shows).
  */
 export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): string | null {
   switch (data.action) {
