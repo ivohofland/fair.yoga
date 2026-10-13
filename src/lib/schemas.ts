@@ -284,10 +284,10 @@ export const pageSlugField = z
   .refine((s) => !RESERVED_SLUGS.has(s), 'This slug is reserved');
 
 /**
- * The refusal for a page slug another teacher holds. Worded with the label
+ * The refusal for a page address another teacher holds. Worded with the label
  * the settings form shows for this field.
  */
-export const PAGE_SLUG_TAKEN_MESSAGE = 'That page slug is already taken.';
+export const PAGE_SLUG_TAKEN_MESSAGE = 'That page address is already taken.';
 
 export const teacherSignupSchema = z.object({
   email: emailField,
