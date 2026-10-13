@@ -22,7 +22,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const parsed = await parseBody(request, teacherSignupSchema);
   if ('error' in parsed) return parsed.error;
-  const { email } = parsed.data;
+  const { email, timeZone } = parsed.data;
 
   const emailCheck = checkRateLimit(rateLimitKey('teacher-signup:email', email), 3, 15 * 60 * 1000);
   if (!emailCheck.allowed) return respondRateLimited(emailCheck, 'Too many signup attempts.');
@@ -46,6 +46,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // instead of the page they asked for.
       redirectTo: TEACHER_PROFILE_PATH,
       purpose,
+      timeZone,
     });
   } catch (err) {
     // The nonce cookie is already attached to `response` — an exception here

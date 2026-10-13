@@ -338,8 +338,8 @@ const wrappers = [
     name: 'magic link',
     label: 'magic-link',
     audience: 'platform',
-    send: () => sendMagicLinkEmail('a@test.local', LINK),
-    rendered: () => renderMagicLinkEmail(LINK),
+    send: () => sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC'),
+    rendered: () => renderMagicLinkEmail(LINK, WHEN, 'UTC'),
   },
   {
     name: 'invitation',
@@ -426,7 +426,7 @@ describe('sendMagicLinkEmail dry-run', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const spy = logSpy();
 
-    await expect(sendMagicLinkEmail('a@test.local', LINK)).rejects.toThrow();
+    await expect(sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC')).rejects.toThrow();
 
     expect(spy.mock.calls.flat().join(' ')).not.toContain('secret-token');
   });
@@ -435,7 +435,7 @@ describe('sendMagicLinkEmail dry-run', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const spy = logSpy();
 
-    await sendMagicLinkEmail('a@test.local', LINK);
+    await sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC');
 
     expect(spy).toHaveBeenCalledWith(`\n[DEV] Magic link for a@test.local: ${LINK}\n`);
   });
@@ -445,7 +445,7 @@ describe('sendMagicLinkEmail dry-run', () => {
     process.env.EMAIL_DRY_RUN = '1';
     const spy = logSpy();
 
-    await expect(sendMagicLinkEmail('a@test.local', LINK)).resolves.toBeUndefined();
+    await expect(sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC')).resolves.toBeUndefined();
 
     expect(spy).toHaveBeenCalledWith(`\n[DEV] Magic link for a@test.local: ${LINK}\n`);
   });
@@ -508,7 +508,7 @@ describe('List-Unsubscribe headers', () => {
   });
 
   it.each([
-    ['magic link', () => sendMagicLinkEmail('a@test.local', LINK)],
+    ['magic link', () => sendMagicLinkEmail('a@test.local', LINK, WHEN, 'UTC')],
     ['passkey added', () => sendPasskeyAddedEmail('a@test.local', WHEN)],
     ['passkey removed', () => sendPasskeyRemovedEmail('a@test.local', WHEN)],
     ['payout changed', () => sendPayoutChangedEmail('a@test.local', PAYOUT)],

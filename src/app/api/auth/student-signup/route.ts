@@ -27,7 +27,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   }
   const emailParsed = await parseBody(request, studentSignupSchema);
   if ('error' in emailParsed) return emailParsed.error;
-  const { email, redirect } = emailParsed.data;
+  const { email, redirect, timeZone } = emailParsed.data;
 
   const emailCheck = checkRateLimit(rateLimitKey('student-signup:email', email), 3, 15 * 60 * 1000);
   if (!emailCheck.allowed) {
@@ -63,7 +63,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // link" when no email went out.
   let delivered = true;
   try {
-    await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect, purpose });
+    await deliverSignInLink(prisma, email, nonce, { redirectTo: redirect, purpose, timeZone });
   } catch (err) {
     delivered = false;
     log.error({ err }, 'student signup: deliverSignInLink failed');

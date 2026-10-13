@@ -17,7 +17,7 @@ describe('deliverSignInLink', () => {
 
   it('binds the token to the nonce that asked for it', async () => {
     const email = `delivery-bind-${Date.now()}@example.com`;
-    await deliverSignInLink(db, email, 'nonce-abc' as BrowserNonce);
+    await deliverSignInLink(db, email, 'nonce-abc' as BrowserNonce, { timeZone: undefined });
 
     const row = await db.magicLinkToken.findFirst({ where: { email } });
     expect(row?.originBrowserHash).toBe(hashNonce('nonce-abc'));
@@ -27,7 +27,7 @@ describe('deliverSignInLink', () => {
 
   it('emails a /verify URL carrying the raw token, which is never persisted', async () => {
     const email = `delivery-url-${Date.now()}@example.com`;
-    await deliverSignInLink(db, email, 'nonce-def' as BrowserNonce);
+    await deliverSignInLink(db, email, 'nonce-def' as BrowserNonce, { timeZone: undefined });
 
     expect(sendMagicLinkEmail).toHaveBeenCalledOnce();
     const [to, link] = vi.mocked(sendMagicLinkEmail).mock.calls[0]!;
@@ -43,11 +43,22 @@ describe('deliverSignInLink', () => {
     await deliverSignInLink(db, email, 'nonce-ghi' as BrowserNonce, {
       redirectTo: '/studio/book/42',
       purpose: 'teacher_signup',
+      timeZone: undefined,
     });
 
     const row = await db.magicLinkToken.findFirst({ where: { email } });
     expect(row?.redirectTo).toBe('/studio/book/42');
     expect(row?.purpose).toBe('teacher_signup');
+  });
+
+  it('emails the stored expiry in the zone the request reported', async () => {
+    const email = `delivery-zone-${Date.now()}@example.com`;
+    await deliverSignInLink(db, email, 'nonce-zone' as BrowserNonce, { timeZone: 'Europe/Amsterdam' });
+
+    const row = await db.magicLinkToken.findFirst({ where: { email } });
+    const [, , expiresAt, timeZone] = vi.mocked(sendMagicLinkEmail).mock.calls[0]!;
+    expect(expiresAt.getTime()).toBe(row!.expiresAt.getTime());
+    expect(timeZone).toBe('Europe/Amsterdam');
   });
 });
 
@@ -65,7 +76,7 @@ describe('deliverSignInLinkIfRegistered', () => {
     vi.spyOn(db.teacher, 'findUnique').mockImplementation(
       (() => new Promise(() => {})) as unknown as typeof db.teacher.findUnique,
     );
-    const returned: unknown = deliverSignInLinkIfRegistered(db, 'pending@example.com', 'n-sync' as BrowserNonce);
+    const returned: unknown = deliverSignInLinkIfRegistered(db, 'pending@example.com', 'n-sync' as BrowserNonce, { timeZone: undefined });
     expect(returned).toBeUndefined();
   });
 
@@ -86,8 +97,8 @@ describe('deliverSignInLinkIfRegistered', () => {
       (() => Promise.resolve(null)) as unknown as typeof db.student.findUnique,
     );
 
-    deliverSignInLinkIfRegistered(db, unknown, 'n-unknown' as BrowserNonce);
-    deliverSignInLinkIfRegistered(db, control, 'n-control' as BrowserNonce);
+    deliverSignInLinkIfRegistered(db, unknown, 'n-unknown' as BrowserNonce, { timeZone: undefined });
+    deliverSignInLinkIfRegistered(db, control, 'n-control' as BrowserNonce, { timeZone: undefined });
     await vi.waitFor(() => expect(sendMagicLinkEmail).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 100));
 
@@ -103,7 +114,7 @@ describe('deliverSignInLinkIfRegistered', () => {
     );
     const logged = vi.spyOn(log, 'error').mockImplementation(() => undefined);
 
-    deliverSignInLinkIfRegistered(db, 'down@example.com', 'n-down' as BrowserNonce);
+    deliverSignInLinkIfRegistered(db, 'down@example.com', 'n-down' as BrowserNonce, { timeZone: undefined });
     await flush();
 
     expect(logged).toHaveBeenCalledOnce();
@@ -121,10 +132,11 @@ describe('deliverSignInLinkIfRegistered', () => {
       (() => Promise.resolve(kind === 'student' ? found : null)) as unknown as typeof db.student.findUnique,
     );
 
-    deliverSignInLinkIfRegistered(db, email, 'n-reg' as BrowserNonce);
+    deliverSignInLinkIfRegistered(db, email, 'n-reg' as BrowserNonce, { timeZone: 'Asia/Kolkata' });
     createdFor.push(email);
     await vi.waitFor(() => expect(sendMagicLinkEmail).toHaveBeenCalledOnce());
 
     expect(vi.mocked(sendMagicLinkEmail).mock.calls[0]![0]).toBe(email);
+    expect(vi.mocked(sendMagicLinkEmail).mock.calls[0]![3]).toBe('Asia/Kolkata');
   });
 });

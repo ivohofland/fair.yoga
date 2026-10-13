@@ -28,7 +28,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
   const parsed = await parseBody(request, magicLinkSendSchema);
   if ('error' in parsed) return parsed.error;
-  const { email, redirect } = parsed.data;
+  const { email, redirect, timeZone } = parsed.data;
 
   // Must return above on an IP block rather than falling through — a
   // fall-through would let an IP-blocked caller still consume a hit from
@@ -43,7 +43,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const response = respondOk({ message: 'If an account exists, a magic link has been sent.' });
   const nonce = ensureOriginNonce(request, response.headers);
 
-  deliverSignInLinkIfRegistered(prisma, email, nonce, { redirectTo: redirect });
+  deliverSignInLinkIfRegistered(prisma, email, nonce, { redirectTo: redirect, timeZone });
 
   return response;
 });

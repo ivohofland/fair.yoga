@@ -13,7 +13,7 @@ export function hashToken(token: string): string {
 
 /**
  * Mints a single-use sign-in link token, returning the RAW token for the
- * email and storing only its SHA-256 hash.
+ * email and the expiry it stored, and storing only the token's SHA-256 hash.
  *
  * A second call for the same address deliberately mints a second live token
  * rather than reusing or invalidating the first: a resend must work, and the
@@ -32,7 +32,7 @@ export function hashToken(token: string): string {
  * any database read a sign-in — which is the whole reason this column is a
  * hash. #196's original design proposed reuse; that is why this note exists.
  */
-export async function generateMagicLinkToken(
+export async function mintMagicLinkToken(
   db: PrismaClient,
   email: string,
   opts?: {
@@ -41,7 +41,7 @@ export async function generateMagicLinkToken(
     ttlMs?: number;
     originBrowserHash?: string;
   },
-): Promise<string> {
+): Promise<{ token: string; expiresAt: Date }> {
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + (opts?.ttlMs ?? FIFTEEN_MINUTES_MS));
@@ -57,7 +57,16 @@ export async function generateMagicLinkToken(
     },
   });
 
-  return rawToken;
+  return { token: rawToken, expiresAt };
+}
+
+/** `mintMagicLinkToken`'s token alone, for callers that never show the expiry. */
+export async function generateMagicLinkToken(
+  db: PrismaClient,
+  email: string,
+  opts?: Parameters<typeof mintMagicLinkToken>[2],
+): Promise<string> {
+  return (await mintMagicLinkToken(db, email, opts)).token;
 }
 
 /**
