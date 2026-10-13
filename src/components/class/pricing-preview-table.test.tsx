@@ -258,7 +258,7 @@ describe('PricingPreviewTable', () => {
     it('keeps the size through the states a bound passes while being retyped', () => {
       const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
       setStudents(10);
-      // Backspacing 12 to type 15: cleared, then "1" (below the minimum), then "15".
+      // Clearing 12 to type 15: cleared, then "1" (below the minimum), then "15".
       rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={Number.NaN} />);
       rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={1} />);
       rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={15} />);
@@ -271,7 +271,38 @@ describe('PricingPreviewTable', () => {
       rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={6.5} />);
 
       expect(screen.getByText('6 students')).toBeTruthy();
+      expect(screen.getByText('6 max')).toBeTruthy();
       expect(seated()).toBe(6);
+    });
+
+    it('lands on a whole number when the minimum is not one', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} minStudents={9.5} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
+      expect(screen.getByText('10 min')).toBeTruthy();
+      expect(seated()).toBe(10);
+    });
+
+    it('gives the choice back when a narrowed bound widens again', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      setStudents(10);
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={6} />);
+      expect(screen.getByText('6 students')).toBeTruthy();
+      rerender(<PricingPreviewTable {...EXAMPLE} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
+      expect(seated()).toBe(10);
+    });
+
+    it('keeps the size while a bound is retyped through a range it can price', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} minStudents={1} />);
+      setStudents(10);
+      // At min 1 the "1" on the way to "15" is a range the preview prices.
+      rerender(<PricingPreviewTable {...EXAMPLE} minStudents={1} maxStudents={1} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} minStudents={1} maxStudents={15} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
     });
 
     it('starts from the midpoint when it mounted on a cleared count', () => {
@@ -283,7 +314,7 @@ describe('PricingPreviewTable', () => {
     });
 
     describe('with a fixed random source', () => {
-      // Math.random() = 0.5 puts every draw at tier 2 (see the block above).
+      // Math.random() = 0.5 puts every draw at tier 2 (see the top-level 'with a fixed random source' block).
       beforeEach(() => {
         vi.spyOn(Math, 'random').mockReturnValue(0.5);
       });
@@ -299,6 +330,14 @@ describe('PricingPreviewTable', () => {
 
         expect(screen.getByText('8 students')).toBeTruthy();
         expect(row('2 · Managing')[0]).toBe('8');
+      });
+
+      it('shows the count message from a shuffled mix while a bound is cleared', () => {
+        const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Shuffle mix' }));
+        rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={Number.NaN} />);
+
+        expect(screen.getByText('Enter valid student counts to see pricing preview.')).toBeTruthy();
       });
 
       it('redraws a shuffled mix at the new size', () => {
