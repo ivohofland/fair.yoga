@@ -54,7 +54,7 @@ function commitToOrigin(label: string): string {
 }
 
 function scriptEnv(input: { sshCommand?: string; env?: Record<string, string> }): NodeJS.ProcessEnv {
-return {
+  return {
     NODE_ENV: 'test',
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     HOME: root,
@@ -65,7 +65,7 @@ return {
     LOCK_FILE: path.join(root, 'deploy.lock'),
     DEPLOYED_FILE: deployedFile,
     ...(input.sshCommand === undefined ? {} : { SSH_ORIGINAL_COMMAND: input.sshCommand }),
-      ...input.env,
+    ...input.env,
   };
 }
 
@@ -301,7 +301,7 @@ describe('deploy/deploy.sh', () => {
     expect(recorded()).toBe(v3);
   });
 
-  it('puts the checkout back and starts nothing when it is terminated during the build', async () => {
+  it.each(['SIGTERM', 'SIGPIPE'] as const)('puts the checkout back and starts nothing when it receives %s during the build', async (signal) => {
     const before = head();
     const v2 = commitToOrigin('v2');
     const child: ChildProcess = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2' } }), stdio: ['ignore', 'ignore', 'ignore'] });
@@ -311,7 +311,7 @@ describe('deploy/deploy.sh', () => {
     while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
     expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
     expect(head()).toBe(v2);
-    child.kill('SIGTERM');
+    child.kill(signal);
 
     const code = await closed;
     expect(code).not.toBe(0);
