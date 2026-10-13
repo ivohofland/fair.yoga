@@ -66,6 +66,9 @@
  *    is also a span overlap).
  * 4. Post-insert probe: `blocked_by_overlap` vs `raced` (transient contention
  *    versus standing overlap).
+ * 5. `past_cancel_check` overlaps every other pre-check reason: whether a
+ *    candidate's auto-cancel check has passed says nothing about whether its
+ *    date was free.
  *
  * Because these predicates overlap, the order of evaluation in the generator
  * loop matters. Branch orderings divide into load-bearing requirements and
@@ -81,6 +84,10 @@
  *   refused by constraints at insert time are probed to distinguish standing
  *   midnight spills (`blocked_by_overlap`) from transient contention (`raced`).
  *   See `services/entry-generation.ts` for implementation.
+ * - `past_cancel_check` after every other pre-check: anywhere earlier it would
+ *   mask `already_generated` on every steady-state re-run, and every other
+ *   reason says the date was not free, which is the more useful thing to
+ *   report.
  *
  * Reporting preferences:
  * - `already_this_week` before `slot_taken`: when a candidate date is both held
