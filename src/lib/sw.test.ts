@@ -253,13 +253,19 @@ describe('public/sw.js', () => {
     w.focus = vi.fn(async () => { order.push('focus'); return w; });
     w.navigate = vi.fn(async () => { order.push('navigate'); return w; });
     const { self, listeners } = loadWorker([w]);
-    const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n2' } } };
-    listeners.notificationclick!(e);
-    await e.done();
-    expect(self.clients.matchAll).toHaveBeenCalledWith({ type: 'window', includeUncontrolled: true });
-    expect(order).toEqual(['focus', 'navigate']);
-    expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n2');
-    expect(self.clients.openWindow).not.toHaveBeenCalled();
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n2' } } };
+      listeners.notificationclick!(e);
+      await e.done();
+      expect(self.clients.matchAll).toHaveBeenCalledWith({ type: 'window', includeUncontrolled: true });
+      expect(order).toEqual(['focus', 'navigate']);
+      expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n2');
+      expect(self.clients.openWindow).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 
   it('opens a window on tap when none is open', async () => {
@@ -298,6 +304,7 @@ describe('public/sw.js', () => {
       await e.done();
       expect(w.navigate).toHaveBeenCalledWith('/inbox?n=n5');
       expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n5');
+      expect(consoleWarn).toHaveBeenCalledTimes(1);
       expect(consoleWarn).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), refusal);
     } finally {
       consoleWarn.mockRestore();

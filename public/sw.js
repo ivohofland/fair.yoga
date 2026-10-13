@@ -398,16 +398,17 @@ self.addEventListener('notificationclick', (event) => {
         // Focus is best-effort: the browser may refuse it, and `navigate`
         // does not need it, so a refusal is logged and the window is still
         // navigated. `navigate` rejects for a window this worker does not
-        // control. `clients.claim()` on activation takes every window already
-        // open, so that is one loaded by a hard reload, which bypasses the
-        // worker; that refusal is logged and `openWindow(url)` is asked instead.
+        // control: `clients.claim()` on activation takes every window open
+        // then, so that is one loaded later by a hard reload, which bypasses
+        // the worker. Any `navigate` rejection is logged and `openWindow(url)`
+        // is asked instead.
         if (existing) {
           return existing
             .focus()
             .catch((err) => console.warn('[sw] focus refused', err))
             .then(() => existing.navigate(url))
             .catch((err) => {
-              console.warn('[sw] navigate refused; opening a new window', err);
+              console.warn('[sw] navigate refused; asking openWindow', err);
               return self.clients.openWindow(url);
             });
         }
