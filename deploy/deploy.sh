@@ -45,9 +45,10 @@ git fetch --quiet origin main
 git merge-base --is-ancestor "$SHA" origin/main 2>/dev/null \
   || fail "$SHA is not on origin/main"
 
-# Without a record (the first deploy under this script) HEAD stands in for it,
-# and is written down before the checkout moves, so it is a record from then on.
-if [[ -s "$DEPLOYED_FILE" ]]; then
+# When no record file exists, HEAD stands in for it, and is written down before
+# the checkout moves, so it is a record from then on. A file that exists but is
+# empty is not absent: it falls through to the check below and is refused.
+if [[ -e "$DEPLOYED_FILE" ]]; then
   PREVIOUS="$(< "$DEPLOYED_FILE")"
 else
   PREVIOUS="$(git rev-parse HEAD)"
@@ -70,11 +71,17 @@ git merge-base --is-ancestor "$PREVIOUS" "$SHA" \
 echo "deploying $PREVIOUS -> $SHA"
 
 # Build and migrate while the running app keeps serving; only `up` replaces
-# it. Any exit before `up`, a failure or a signal, puts the checkout back on the
-# recorded commit. The signal traps turn a signal into an exit so the EXIT trap
-# runs. A dropped SSH session makes the next write fail; see the PIPE trap.
+# it. Any exit before `up`, a failure or a signal, puts the checkout back where
+# this run found it, which is not the record when an earlier swap failed: that
+# HEAD is what makes the check above refuse. The signal traps turn TERM, HUP
+# and INT into an exit, so the EXIT trap runs without depending on how a given
+# bash treats a fatal signal. A dropped SSH session makes the next write to the
+# dropped session fail; see the PIPE trap.
+ENTRY_HEAD="$(git rev-parse HEAD)"
 restore_checkout() {
-  git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS" || true
+  if ! git -c advice.detachedHead=false checkout --quiet --detach "$ENTRY_HEAD"; then
+    echo "deploy: could not put the checkout back on $ENTRY_HEAD; it is left at $(git rev-parse HEAD 2>/dev/null || echo 'an unknown commit'), and the next run's check of HEAD against $DEPLOYED_FILE will refuse older commits" >&2 || true
+  fi
 }
 trap restore_checkout EXIT
 trap 'exit 143' TERM
@@ -86,12 +93,12 @@ trap '' PIPE
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
 if ! docker compose -f "$COMPOSE_FILE" build; then
-  fail "build failed; still running $PREVIOUS"
+  fail "build failed; no container was replaced"
 fi
 # Migrations run as their own step so a failing one leaves the app alone.
 # Why: DEPLOYMENT.md §6.
 if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
-  fail "migrate failed; still running $PREVIOUS (DEPLOYMENT.md §6, a failed migration)"
+  fail "migrate failed; no container was replaced (DEPLOYMENT.md §6, a failed migration)"
 fi
 
 trap - EXIT
