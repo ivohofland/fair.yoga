@@ -121,8 +121,9 @@ export function getNextOccurrences(
  *
  * Strictly after is the comparison the generator's own window applies at its
  * run instant, so a candidate a sweep running at `at` would skip is not named.
- * Enumerated from `now` rather than `at`, so a candidate on `now`'s date is
- * not lost when `at` falls on the next UTC date. `DEFAULT_WEEKS * 2` for the
+ * Enumerated from `now` rather than `at`: in a zone west of UTC a candidate
+ * dated `now`'s UTC date can still start after `at` when `at` falls on the
+ * next UTC date, and enumerating from `at` would lose it. `DEFAULT_WEEKS * 2` for the
  * reason `DEFAULT_WEEKS` gives. The caller owns `at`.
  */
 export function probeHorizon(
