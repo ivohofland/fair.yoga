@@ -54,16 +54,16 @@ export type ChildWithRule<TChild> = TChild & {
 // ---------------------------------------------------------------------------
 
 /**
- * The rolling window, in occurrences — four weeks (`CLAUDE.md`).
+ * The rolling window, in occurrences (`CLAUDE.md`).
  *
  * `generateEntriesForRule` below reads it directly, for both families.
  * `probeHorizon` reads it too, to build the horizon an edit hands
- * `probeFirstEffectiveWeek`, which deliberately looks TWICE this far.
- * The asymmetry is the point rather than a disagreement: when all four of the
- * generator's weeks are held by the superseded schedule, the honest answer to
- * "when does this edit take effect" is week five, and no window this
- * generator can see contains it. Derived there rather than restated, so a
- * change to the window moves the prediction with it.
+ * `probeFirstEffectiveWeek`, and deliberately looks twice this far. The
+ * asymmetry is the point rather than a disagreement: when every week of the
+ * generator's window is held by the superseded schedule, the honest answer to
+ * "when does this edit take effect" is the week after the window, which no
+ * window this generator sees contains. `probeHorizon` derives its length from
+ * this constant, so a change to the window moves the prediction with it.
  */
 export const DEFAULT_WEEKS = 4;
 
@@ -118,13 +118,10 @@ export function getNextOccurrences(
  * occurrences of the rule's weekday enumerated from `at`'s UTC date, kept only
  * when the class would start strictly after `at`.
  *
- * That is `generateEntriesForRule`'s own enumeration and filter run at `at`,
- * so its first `DEFAULT_WEEKS` dates are exactly the ones a sweep running at
- * `at` keeps; the rest continue the same sequence, `DEFAULT_WEEKS * 2` for the
- * reason `DEFAULT_WEEKS` gives. A sweep running earlier enumerates from a UTC
- * date no later than `at`'s under a weaker filter, so it may fill a candidate
- * this skipped and the class arrives before the week named, the tolerated
- * direction. The caller owns `at`.
+ * Its first `DEFAULT_WEEKS` dates are the ones a sweep running at `at` keeps;
+ * the rest continue the sequence, for the reason `DEFAULT_WEEKS` gives. A
+ * sweep running before `at` may fill a candidate this skipped, so the class
+ * arrives early — the tolerated direction. The caller owns `at`.
  */
 export function probeHorizon(
   rule: { dayOfWeek: number; startTime: Date },
@@ -1067,13 +1064,11 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *
  * ## Which of the generator's refusals this reproduces, and which it does not
  *
- * Before refusing any date, the generator's own window keeps only candidates
- * starting strictly after its run instant. That filter is not a `SkipReason`;
- * it is reproduced by `horizon` itself, which the caller builds with
- * `probeHorizon`, enumerated from and filtered at the caller's `at`: the
- * latest instant the next nominal sweep runs, which `updateRule` owns. A
- * prediction, like `past_cancel_check` below: a sweep running at a different
- * instant can disagree.
+ * Before refusing any date, the generator keeps only candidates starting
+ * strictly after its run instant. That filter is not a `SkipReason`; it is
+ * reproduced by `horizon` itself, which `probeHorizon` builds at the caller's
+ * `at`. A prediction, like `past_cancel_check` below: a sweep running at a
+ * different instant can disagree.
  *
  * The generator declines a candidate date on grounds named by `SkipReason`
  * (`@/lib/generation`, whose own header documents the ordered first-match
