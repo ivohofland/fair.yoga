@@ -334,7 +334,7 @@ describe('TemplateForm', () => {
 
   it('steps the start time by five minutes from midnight', async () => {
     stubFetch();
-    render(<TemplateForm currency="EUR" mode="create" />);
+    render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
     await screen.findByLabelText('Room');
     const input = screen.getByLabelText<HTMLInputElement>('Start time');
     expect(input).toHaveAttribute('min', '00:00');

@@ -702,7 +702,7 @@ export function TemplateForm(props: TemplateFormProps) {
       <Input
         label="Start time"
         type="time"
-        {...startTimeInputProps(initial?.startTime)}
+        {...startTimeInputProps(edit?.initial.startTime)}
         value={form.startTime}
         onChange={(e) => update('startTime', e.target.value)}
       />
