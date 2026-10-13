@@ -356,8 +356,8 @@ describe('AddWalkIn', () => {
 
   /**
    * `visible.length === 0` is true the instant the picker opens too, before
-   * either fetch resolves — both lists open in `loading`, with no rows. The "No
-   * student matches" condition also requires `query` to be truthy, so a
+   * either fetch resolves — both lists open in `loading`, with no rows. The
+   * "No student matches" condition also requires `query` to be truthy, so a
    * *bare* open (no filter typed) never reaches it regardless of the
    * `loaded` gate. Typing a filter before either fetch resolves is what
    * forces the code down this branch and proves `loaded` — which requires
@@ -460,14 +460,10 @@ describe('AddWalkIn', () => {
    * loaded picker. Deliberately *not* modelled via Close+reopen: the Close
    * button's own handler calls `setError('')`, which would clear a stale
    * `error`-based message on its own and mask exactly the bug this test
-   * exists to catch. Re-rendering with a fresh (but content-equal) array is
-   * the realistic trigger — the real caller
-   * (`/app/(teacher)/class/[id]/(overview)/page.tsx`) hands down a freshly-`.map()`d
-   * array on every render, and `LiveUpdates`' `router.refresh()` on any
-   * inbound notification is what causes that render while the picker is
-   * still open. The message reads the roster's own `failed` state, which
-   * the refetch's success replaces, rather than `error` (never reset except
-   * by Close) — that is what keeps the two from drifting apart here.
+   * exists to catch. Re-rendering with a fresh but content-equal array is
+   * the trigger. The message reads the roster's own `failed` state, which
+   * the refetch's success replaces, not `error`, which only Close and the
+   * next submit clear.
    */
   it('clears the load-failure message once a later refetch succeeds, without closing the picker', async () => {
     let call = 0;
@@ -501,6 +497,7 @@ describe('AddWalkIn', () => {
   function stubRosterWithHeldRefetch(first: unknown[]): {
     studentsCalls: () => number;
     release: (students: unknown[]) => void;
+    fail: () => void;
   } {
     let calls = 0;
     let releaseHeld: ((value: unknown) => void) | undefined;
@@ -524,14 +521,17 @@ describe('AddWalkIn', () => {
       release: (students) => {
         releaseHeld?.({ ok: true, status: 200, json: async () => ({ data: { students } }) });
       },
+      fail: () => {
+        releaseHeld?.({ ok: false, status: 500, json: async () => ({}) });
+      },
     };
   }
 
   /**
-   * A refetch while the picker is open — the `registeredStudentIds` identity
-   * change `LiveUpdates`' `router.refresh()` produces — leaves the current
-   * options on screen until its own result replaces them, rather than
-   * blanking the picker for the length of the request.
+   * A refetch while the picker is open (a new `registeredStudentIds`
+   * identity) leaves the current options on screen until its own result
+   * replaces them, rather than blanking the picker for the length of the
+   * request.
    */
   it('keeps the current options on screen while a refetch is pending', async () => {
     const roster = stubRosterWithHeldRefetch([{ id: 's1', displayName: 'Anna Bakker' }]);
@@ -547,6 +547,24 @@ describe('AddWalkIn', () => {
 
     roster.release([{ id: 's2', displayName: 'Bram K.' }]);
     await screen.findByText('Bram K.');
+    expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
+  });
+
+  /**
+   * The rows a refetch kept on screen are not offered past its failure: a
+   * `failed` list holds no rows, so the options go and the message shows.
+   */
+  it('takes the kept options off the picker when the refetch fails', async () => {
+    const roster = stubRosterWithHeldRefetch([{ id: 's1', displayName: 'Anna Bakker' }]);
+    const { rerender } = render(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    openPicker();
+    await screen.findByText('Anna Bakker');
+
+    rerender(<AddWalkIn classId="c1" registeredStudentIds={[]} />);
+    await waitFor(() => expect(roster.studentsCalls()).toBe(2));
+    roster.fail();
+
+    await screen.findByText('Could not load your students.');
     expect(screen.queryByText('Anna Bakker')).not.toBeInTheDocument();
   });
 

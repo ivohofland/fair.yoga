@@ -59,11 +59,11 @@ One commit per file.
 
 **Files:** `src/components/class/add-walk-in.tsx`, `src/components/class/add-walk-in.test.tsx`.
 
-**Shape:** each list's four pieces of state (`students` + `studentsLoaded` +
-`studentsFailed`, and the invitations trio) collapse into one discriminated union per list:
+**Shape:** each list's three pieces of state (`students` + `studentsLoaded` +
+`studentsFailed`, and `invitees` + `invitationsLoaded` + `invitationsFailed`) collapse into one discriminated union per list:
 `{ status: 'loading' } | { status: 'loaded'; rows: T[] } | { status: 'failed' }`. "Failed
-with stale rows" becomes unrepresentable, which is the bug the current
-reset-both-lists comment guards against by hand.
+with stale rows" becomes unrepresentable, which is the bug the reset-both-lists
+comment on main guards against by hand.
 
 **Behaviour:**
 1. Opening the picker (the "Add walk-in" click) sets both lists to `loading`, then opens —

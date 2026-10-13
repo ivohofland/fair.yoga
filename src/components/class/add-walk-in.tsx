@@ -41,8 +41,7 @@ type WalkInSubject =
 /**
  * One fetched list. Each list settles on its own, so a failure in one never
  * takes the other off the picker, and a failed list holds no rows to offer.
- * `loading` and a loaded-but-empty list both render no options; only the
- * latter may read "No student matches."
+ * `loaded` and `failed` both count as settled; `loading` does not.
  */
 type ListState<T> =
   | { status: 'loading' }
@@ -89,9 +88,8 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  // Submit failures only. A list's load failure is its own `failed` state,
-  // so a failed submit leaves the picker in place for the retry, and a
-  // refetch that succeeds clears its list's message without touching this.
+  // Submit failures only; each list's load failure is its own `failed`
+  // state, so the two never clear each other.
   const [error, setError] = useState('');
 
   const [newFirstName, setNewFirstName] = useState('');
@@ -244,9 +242,9 @@ export function AddWalkIn({ classId, registeredStudentIds }: AddWalkInProps) {
         </Select>
       )}
       {/*
-        Only when a typed filter is what emptied the list — a bare empty
-        list shows nothing extra here, and loading/load-failure states show
-        neither.
+        Only once both lists have settled and a typed filter is what emptied
+        the merged list — a bare empty list shows nothing extra here, and
+        neither does a list still loading.
       */}
       {loaded && visible.length === 0 && query && (
         <p className="type-caption">No student matches.</p>
