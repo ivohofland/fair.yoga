@@ -80,4 +80,4 @@ already documents it.
 ## Out of scope
 
 As the issue says: no SQL `CHECK` copy of the list and no profanity list.
-`deploy.sh` is unchanged. Its existing failure message already points to §6.
+`deploy.sh` is unchanged. Its failure message names *a failed migration*, and that subsection points on to the reserved-slug one.

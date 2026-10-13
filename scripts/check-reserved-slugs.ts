@@ -1,7 +1,7 @@
 /**
  * Deploy gate (#855): refuses while a teacher holds a reserved page slug.
  * The migrate image runs it after `prisma migrate deploy`; a non-zero exit
- * stops the deploy before any container is replaced (DEPLOYMENT.md §6).
+ * fails the migrate step and so refuses the deploy (DEPLOYMENT.md §6).
  *   pnpm check:reserved-slugs
  */
 import { PrismaClient } from '@prisma/client';

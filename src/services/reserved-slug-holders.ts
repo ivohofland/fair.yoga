@@ -8,8 +8,8 @@ export interface ReservedSlugHolder {
 
 /**
  * Every teacher holding one of `reserved` as their page slug, ordered by slug.
- * Imported by the deploy check in the migrate image, so it imports nothing
- * through the `@/` alias.
+ * Runs in the migrate image, which has no tsconfig paths: relative imports
+ * only.
  */
 export async function findReservedSlugHolders(
   db: PrismaClient,
