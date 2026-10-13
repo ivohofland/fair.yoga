@@ -50,7 +50,7 @@ Subject: `Sign in to fair.yoga · valid until 22:29:37 CEST`.
 - `mintMagicLinkToken` (`magic-link.ts`) returns `{ token, expiresAt }`;
   `generateMagicLinkToken` stays as the wrapper returning only the token, so its
   existing callers and tests are untouched.
-- `deliverSignInLink` takes an optional `timeZone` in its `opts`, mints with
+- `deliverSignInLink` takes `timeZone` in its `opts`, mints with
   `mintMagicLinkToken`, and passes `expiresAt` and `timeZone` through
   `sendMagicLinkEmail` to `renderMagicLinkEmail`.
   `deliverSignInLinkIfRegistered` forwards the field.
@@ -60,8 +60,14 @@ Subject: `Sign in to fair.yoga · valid until 22:29:37 CEST`.
   `studentSignupSchema` (`.strict()`) gain `timeZone`, reusing
   `detectedTimezoneField`'s semantics: an unrecognised value becomes `undefined`
   rather than a 400, because this is passive detection the person cannot
-  correct. Bounded in length per the input-bounds rule; an over-long value is a
-  400 for any address alike.
+  correct. No separate length cap: the input-bounds census already classes the
+  zone fields as bounded by their IANA validity refine
+  (`2026-10-07-input-bounds-census.md`), and this field is the same builder.
+- The zone is a required parameter (`string | undefined`) of
+  `deliverSignInLink`, `deliverSignInLinkIfRegistered`, `sendMagicLinkEmail` and
+  `renderMagicLinkEmail`, so a route that parses it and forgets to pass it is a
+  compile error, not a silent UTC subject. `renderMagicLinkEmail` also falls back
+  to UTC for a zone `isValidTimeZone` refuses, so no caller can make it throw.
 
 **Client.** `detectTimeZone` moves from `profile-setup-form.tsx` to a shared,
 client-safe module and is called in each submit handler, never during render.
@@ -82,5 +88,8 @@ registered and an unregistered address (`2026-10-07-sign-in-oracles-design.md`).
   the stored row's `expiresAt`.
 - Schemas: a valid zone is kept and modernised; an unknown one is dropped; the
   strict schemas accept the new key.
+- Integration: each of the three routes answers 200 with a valid zone and with
+  an unrecognised one. The email itself is invisible to that tier, which is
+  why forwarding is a compile-time requirement rather than a test.
 - Component tests: each form's request body carries `timeZone`.
 - By hand: two sign-in emails in a row land as separate Gmail conversations.
