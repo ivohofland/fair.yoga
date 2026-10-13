@@ -336,8 +336,9 @@ The checkout is left detached at the commit the script last checked out, so
 
 ### A failed migration
 
-If the migrate step's output ends with a `reserved-slug check: refusing the
-deploy` line, no migration failed: see *A reserved page slug a teacher holds* below.
+If the migrate step's output ends with a line starting `reserved-slug check:`
+(`refusing the deploy` or `failed to run`), no migration failed: see *A
+reserved page slug a teacher holds* below.
 
 `prisma migrate deploy` applies pending migrations in order and stops at the
 first that fails. The ones before it in the same deploy stay applied. The
@@ -403,8 +404,14 @@ docker compose -f docker-compose.prod.yml exec db psql -U fairyoga fairyoga \
   -c "UPDATE \"Teacher\" SET \"pageSlug\" = '<new slug>' WHERE id = '<teacher id>'"
 ```
 
-or drop the name from the release, renaming the route if it has one. Then
-deploy the same commit again.
+and deploy the same commit again. Or drop the name from the release, renaming
+the route if it has one: that changes code, so it is a new commit on `main`,
+which deploys itself.
+
+A `reserved-slug check: failed to run; refusing the deploy` line instead means
+the check itself could not run, because it could not reach the database or
+could not load, and nothing is known about the slugs. The deploy stops the same
+way. Fix the cause and deploy the same commit again.
 
 The built images are still the refused commit's, and every `docker compose up`
 runs `migrate`, check included. Like a failed migration, each one fails and
@@ -413,15 +420,17 @@ slug is resolved, or rebuild from the old commit (*Rolling back*).
 
 `up` runs the check again after the separate migrate step. In the seconds
 between, the old app, which does not know the new names, could let a teacher
-claim a newly reserved slug, and that `up` would then fail with `app` already
-replaced. Resolve it as above and run the deploy again.
+claim a newly reserved slug, and that `up` would then fail as any failed `up`
+does: `app` replaced and the new commit checked out. Resolve the slug as above
+and run the deploy again.
 
 ### Rolling back
 
 Deliberately not something the CI key can do. If a migration is recorded as
 failed, resolve it first (*A failed migration*): the `up` below runs `migrate`
-too, and so does the reserved-slug check of the target commit: also make sure
-no teacher holds a name that commit reserves (*A reserved page slug a teacher
+too, and so does the target commit's reserved-slug check if it has one
+(commits before #855 have none): also make sure no teacher holds a name that
+commit reserves (*A reserved page slug a teacher
 holds*), or its `up` fails and leaves `app` replaced by a container that never
 starts. On the VPS:
 
