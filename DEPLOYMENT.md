@@ -409,8 +409,9 @@ the route if it has one: that changes code, so it is a new commit on `main`,
 which deploys itself.
 
 A `reserved-slug check: failed to run; refusing the deploy` line instead means
-the check itself could not run, because it could not reach the database or
-could not load, and nothing is known about the slugs. The deploy stops the same
+the check itself could not run, usually because it could not reach the
+database, and nothing is known about the slugs. A check that fails to load
+prints a stack trace instead of that line. Either way the deploy stops the same
 way. Fix the cause and deploy the same commit again.
 
 The built images are still the refused commit's, and every `docker compose up`
