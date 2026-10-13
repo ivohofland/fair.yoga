@@ -221,11 +221,10 @@ const INITIAL_VALUES: TemplateFormValues = {
 
 export function TemplateForm(props: TemplateFormProps) {
   const { mode, currency } = props;
-  const templateId = props.mode === 'edit' ? props.templateId : undefined;
-  const initial = props.mode === 'edit' ? props.initial : undefined;
+  const edit = props.mode === 'edit' ? props : null;
   const router = useRouter();
   const [form, setForm] = useState<TemplateFormValues>(
-    props.mode === 'edit' ? props.initial : { ...INITIAL_VALUES, vatPercent: props.defaultVatPercent },
+    props.mode === 'create' ? { ...INITIAL_VALUES, vatPercent: props.defaultVatPercent } : props.initial,
   );
   const [teacherRooms, setTeacherRooms] = useState<TeacherRoomOption[]>([]);
   // Issue 76. Held separately from `teacherRooms.length` (which is the
@@ -255,7 +254,7 @@ export function TemplateForm(props: TemplateFormProps) {
   // the refetched list offers it — and drops the archived room it replaced.
   // `GET /api/teacher-rooms` is idempotent and `loading` is not reset, so
   // there is no flash.
-  const initialTeacherRoomId = initial?.teacherRoomId;
+  const initialTeacherRoomId = edit?.initial.teacherRoomId;
 
   // #685. `form` is seeded once, so a refreshed `initial` would leave it on
   // the room this tab loaded. Where the teacher has not touched the room —
@@ -386,10 +385,10 @@ export function TemplateForm(props: TemplateFormProps) {
     setLate(null);
 
     try {
-      const url = mode === 'create'
-        ? '/api/class-templates'
-        : `/api/class-templates/${templateId}`;
-      const method = mode === 'create' ? 'POST' : 'PUT';
+      const url = edit
+        ? `/api/class-templates/${edit.templateId}`
+        : '/api/class-templates';
+      const method = edit ? 'PUT' : 'POST';
 
       // The intersection, not either half: `full` goes to both endpoints, so
       // it has to satisfy both schemas. The pins above hold the *key sets*
@@ -410,7 +409,7 @@ export function TemplateForm(props: TemplateFormProps) {
       };
       const { teacherRoomId, ...withoutRoom } = full;
       const payload =
-        mode === 'edit' && teacherRoomId === initial?.teacherRoomId ? withoutRoom : full;
+        edit !== null && teacherRoomId === edit.initial.teacherRoomId ? withoutRoom : full;
 
       let res: Response;
       try {
@@ -575,7 +574,7 @@ export function TemplateForm(props: TemplateFormProps) {
           rawJson = await res.json();
         } catch (err) {
           console.error('[template-form] updated, but response body was unreadable', {
-            templateId,
+            templateId: edit?.templateId,
             err,
           });
           setSuccess(UNREADABLE_CONFIRMATION_MESSAGE);
@@ -604,7 +603,7 @@ export function TemplateForm(props: TemplateFormProps) {
             setLate(readLateFirstClass(data.lateFirstClass, 'recurring class edit'));
           } catch (err) {
             console.error('[template-form] updated, but the confirmation could not be resolved', {
-              templateId,
+              templateId: edit?.templateId,
               err,
             });
             setSuccess(UNREADABLE_CONFIRMATION_MESSAGE);
