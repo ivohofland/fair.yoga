@@ -61,7 +61,8 @@ curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up"}
 curl -s -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"degradations":{"open":0}}
 ```
 
-The `migrate` service applies Prisma migrations before the app starts.
+The `migrate` service applies Prisma migrations before the app starts, then
+checks that no teacher holds a reserved page slug (§6).
 The app binds to `127.0.0.1:3000` only — Nginx is the public face.
 
 ## 3. Nginx + TLS
@@ -335,6 +336,9 @@ The checkout is left detached at the commit the script last checked out, so
 
 ### A failed migration
 
+If the migrate step's output ends with a `reserved-slug check: refusing the
+deploy` line, no migration failed: see *A reserved page slug a teacher holds* below.
+
 `prisma migrate deploy` applies pending migrations in order and stops at the
 first that fails. The ones before it in the same deploy stay applied. The
 failed one runs as a single transaction, so its own statements roll back,
@@ -407,11 +411,19 @@ runs `migrate`, check included. Like a failed migration, each one fails and
 leaves `app` replaced by a container that never starts. Run no `up` until the
 slug is resolved, or rebuild from the old commit (*Rolling back*).
 
+`up` runs the check again after the separate migrate step. In the seconds
+between, the old app, which does not know the new names, could let a teacher
+claim a newly reserved slug, and that `up` would then fail with `app` already
+replaced. Resolve it as above and run the deploy again.
+
 ### Rolling back
 
 Deliberately not something the CI key can do. If a migration is recorded as
 failed, resolve it first (*A failed migration*): the `up` below runs `migrate`
-too. On the VPS:
+too, and so does the reserved-slug check of the target commit: also make sure
+no teacher holds a name that commit reserves (*A reserved page slug a teacher
+holds*), or its `up` fails and leaves `app` replaced by a container that never
+starts. On the VPS:
 
 ```bash
 cd /opt/fairyoga

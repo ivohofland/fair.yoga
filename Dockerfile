@@ -1,8 +1,9 @@
 # fair.yoga production image — multi-stage, standalone Next.js output.
 # Build:  docker build -t fairyoga .
 # The `migrate` stage doubles as the one-off migration runner in
-# docker-compose.prod.yml (it keeps the full node_modules with the
-# Prisma CLI; the runtime image does not).
+# docker-compose.prod.yml, which also runs the deploy gate after the
+# migrations (it keeps the full node_modules with the Prisma CLI; the
+# runtime image does not).
 
 # ---------------------------------------------------------------------------
 # Digest-pinned: the tag on the `FROM` below is floating and can resolve to
