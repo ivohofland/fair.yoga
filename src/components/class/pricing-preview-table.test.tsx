@@ -9,6 +9,7 @@ const EXAMPLE = {
   targetRate: 90,
   minStudents: 4,
   maxStudents: 12,
+  vatPercent: 0,
 } as const;
 
 /** [count, price] of the tier row whose label is `label`. */
@@ -31,6 +32,7 @@ describe('PricingPreviewTable', () => {
         targetRate={30}
         minStudents={4}
         maxStudents={10}
+        vatPercent={0}
       />,
     );
     expect(container.textContent).toContain('CHF ');
@@ -156,6 +158,7 @@ describe('PricingPreviewTable', () => {
       targetRate: 40,
       minStudents: 6,
       maxStudents: 9,
+      vatPercent: 0,
     } as const;
 
     it('names the subsidy rule instead of pricing the class', () => {
@@ -348,6 +351,23 @@ describe('PricingPreviewTable', () => {
         expect(screen.getByText('6 students')).toBeTruthy();
         expect(row('2 · Managing')[0]).toBe('6');
       });
+    });
+  });
+
+  describe('a VAT percentage no write path would accept', () => {
+    it('names the violation instead of pricing the class', () => {
+      const { container } = render(<PricingPreviewTable {...EXAMPLE} vatPercent={100.001} />);
+
+      expect(screen.getByText('Keep VAT to 100% or less.')).toBeInTheDocument();
+      expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+      expect(container.textContent).not.toContain('€');
+    });
+
+    it('prices the class at a percentage it accepts', () => {
+      render(<PricingPreviewTable {...EXAMPLE} vatPercent={9} />);
+
+      expect(screen.getByRole('slider')).toBeInTheDocument();
+      expect(screen.getByText('What students pay (incl. VAT)')).toBeInTheDocument();
     });
   });
 });

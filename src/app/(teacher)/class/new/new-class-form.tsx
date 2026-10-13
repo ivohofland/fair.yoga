@@ -665,6 +665,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
             targetRate={form.targetRate}
             minStudents={form.minStudents}
             maxStudents={form.maxStudents}
+            vatPercent={form.vatPercent}
           />
         </div>
       )}

@@ -4,7 +4,7 @@ import { formatDayHeader } from '@/lib/format';
 import { PaymentBreakdown } from './payment-breakdown';
 
 const DATE = new Date('2026-06-01T00:00:00.000Z');
-const LINES = { roomCents: 4000, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 };
+const LINES = { roomCents: 4000, vatCents: 0, teacherCents: 1625, totalCents: 5625, students: 9, shareCents: 750 };
 
 /** The value rendered beside a label in the breakdown's description list. */
 function valueFor(label: string): string | null {
@@ -43,5 +43,24 @@ describe('PaymentBreakdown', () => {
     expect(
       screen.getByLabelText(`Where your payment goes — Vinyasa, ${formatDayHeader(DATE)}`),
     ).toBeInTheDocument();
+  });
+
+  it('shows a VAT row between Room and Teacher when the class charged VAT', () => {
+    render(
+      <PaymentBreakdown
+        currency="EUR"
+        lines={{ ...LINES, roomCents: 3000, vatCents: 990, teacherCents: 8000, totalCents: 11990 }}
+        classType="Vinyasa"
+        date={DATE}
+      />,
+    );
+    expect(valueFor('VAT')).toBe('€9.90');
+    const labels = screen.getAllByRole('term').map((el) => el.textContent);
+    expect(labels.slice(0, 3)).toEqual(['Room', 'VAT', 'Teacher']);
+  });
+
+  it('shows no VAT row when the class charged none', () => {
+    render(<PaymentBreakdown currency="EUR" lines={LINES} classType="Vinyasa" date={DATE} />);
+    expect(screen.queryByText(/VAT/)).toBeNull();
   });
 });

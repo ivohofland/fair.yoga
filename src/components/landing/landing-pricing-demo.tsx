@@ -16,6 +16,7 @@ const EXAMPLE = {
   minRate: 40,
   minStudents: 4,
   maxStudents: 12,
+  vatPercent: 0,
 } as const satisfies Omit<PricingPreviewInputs, 'targetRate'>;
 
 const FEWEST_STUDENTS = 2;

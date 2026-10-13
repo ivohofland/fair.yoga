@@ -764,6 +764,7 @@ export function TemplateForm({ mode, templateId, currency, defaultVatPercent, in
         targetRate={form.targetRate}
         minStudents={form.minStudents}
         maxStudents={form.maxStudents}
+        vatPercent={form.vatPercent}
       />
 
       <Select

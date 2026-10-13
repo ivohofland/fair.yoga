@@ -48,7 +48,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
     toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
   );
 
-  const { billed, earningsCents } = billAtLeastMinimum(
+  const { billed, earningsCents, vatCents } = billAtLeastMinimum(
     {
       roomCost: Number(cls.roomCost),
       minRate: Number(cls.minRate),
@@ -74,6 +74,7 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
   }
 
   const estimatedEarnings = earningsCents / 100;
+  const chargesVat = Number(cls.vatPercent) > 0;
 
   return (
     <div className="py-6">
@@ -84,7 +85,9 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
 
       {/* Estimated earnings — most prominent */}
       <div className="bg-teal-tint rounded-card p-5 text-center">
-        <span className="type-label">Estimated earnings</span>
+        <span className="type-label">
+          {chargesVat ? 'Estimated earnings (excl. VAT)' : 'Estimated earnings'}
+        </span>
         <p className="type-number text-[28px] leading-[1.25] mt-1">
           {formatMoney(estimatedEarnings, cls.currency)}
         </p>
@@ -95,12 +98,18 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
           <span className="type-body">Room cost</span>
           <span className="tabular-nums text-brown">{formatMoney(Number(cls.roomCost), cls.currency)}</span>
         </div>
+        {chargesVat && (
+          <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
+            <span className="type-body">VAT</span>
+            <span className="tabular-nums text-brown">{formatMoney(vatCents / 100, cls.currency)}</span>
+          </div>
+        )}
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Students</span>
           <span className="tabular-nums text-ink">{cls.minStudents} min &middot; {cls.maxStudents} max</span>
         </div>
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
-          <span className="type-body">Rate</span>
+          <span className="type-body">{chargesVat ? 'Rate (excl. VAT)' : 'Rate'}</span>
           <span className="tabular-nums text-ink">
             {formatMoney(Number(cls.minRate), cls.currency)} &ndash; {formatMoney(Number(cls.targetRate), cls.currency)}
           </span>

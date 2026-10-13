@@ -9,6 +9,7 @@ const EXAMPLE = {
   targetRate: 90,
   minStudents: 4,
   maxStudents: 12,
+  vatPercent: 0,
 } as const;
 const EIGHT = { 1: 1, 2: 2, 3: 3, 4: 2, 5: 0 };
 
@@ -71,5 +72,28 @@ describe('PricingPreviewResult', () => {
     const control = screen.getByRole('button', { name: 'Mix control' });
     const firstRow = screen.getByText('1 · Getting by');
     expect(control.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  describe('VAT', () => {
+    const VAT = { currency: 'EUR', roomCost: 30, minRate: 80, targetRate: 80, minStudents: 4, maxStudents: 12 } as const;
+
+    /** The text of the element right after the one labelled `label`. */
+    function after(label: string): string | null {
+      return screen.getByText(label).nextElementSibling?.textContent ?? null;
+    }
+
+    it('names no VAT at 0%', () => {
+      render(<PricingPreviewResult {...EXAMPLE} distribution={EIGHT} />);
+      expect(screen.queryByText(/VAT/)).toBeNull();
+    });
+
+    it('adds the VAT lines and the incl. label at 9%', () => {
+      render(<PricingPreviewResult {...VAT} vatPercent={9} distribution={EIGHT} />);
+      expect(screen.getByText('You earn (excl. VAT)').parentElement?.parentElement?.textContent).toContain('€80.00');
+      expect(screen.getByText('Room cost (excl. VAT)')).toBeTruthy();
+      expect(after('VAT (9%)')).toBe('€9.90');
+      expect(after('Total class cost')).toBe('€119.90');
+      expect(screen.getByText('What students pay (incl. VAT)')).toBeTruthy();
+    });
   });
 });

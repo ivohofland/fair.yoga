@@ -24,6 +24,7 @@ export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
       vatCents: Math.round(vatTotal * 100),
     }) / 100;
   const totalStudents = cls.totalStudents ?? 0;
+  const chargesVat = Number(cls.vatPercent) > 0;
 
   // Group by tier, using the actual stored price
   const tierSummary: { tier: IncomeTier; price: number; count: number }[] = [];
@@ -41,7 +42,7 @@ export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
 
       {/* Teacher earnings — the payoff, Display-size sans semibold teal */}
       <div className="bg-teal-tint rounded-card p-5 text-center">
-        <span className="type-label">Your earnings</span>
+        <span className="type-label">{chargesVat ? 'Your earnings (excl. VAT)' : 'Your earnings'}</span>
         <p className="type-number text-[28px] leading-[1.25] mt-1">
           {formatMoney(teacherEarnings, cls.currency)}
         </p>
@@ -52,6 +53,12 @@ export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
           <span className="type-body">Room cost</span>
           <span className="tabular-nums text-brown">{formatMoney(roomCost, cls.currency)}</span>
         </div>
+        {chargesVat && (
+          <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
+            <span className="type-body">VAT</span>
+            <span className="tabular-nums text-brown">{formatMoney(vatTotal, cls.currency)}</span>
+          </div>
+        )}
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
           <span className="type-body">Students charged</span>
           <span className="tabular-nums text-ink">{totalStudents}</span>
@@ -63,7 +70,7 @@ export function PricingBreakdown({ cls, tierPrices }: PricingBreakdownProps) {
           </span>
         </div>
         <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
-          <span className="type-body">Total revenue</span>
+          <span className="type-body">{chargesVat ? 'Total revenue (incl. VAT)' : 'Total revenue'}</span>
           <span className="type-number">{formatMoney(totalRevenue, cls.currency)}</span>
         </div>
       </div>

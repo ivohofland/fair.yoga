@@ -416,6 +416,7 @@ export function ClassEditForm({
             targetRate={form.targetRate}
             minStudents={form.minStudents}
             maxStudents={form.maxStudents}
+            vatPercent={form.vatPercent}
           />
         </div>
       </section>

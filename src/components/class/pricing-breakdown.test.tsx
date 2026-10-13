@@ -94,4 +94,29 @@ describe('PricingBreakdown', () => {
     expect(screen.getByText('Tier 2')).toBeInTheDocument();
     expect(screen.getByText('€14.00')).toBeInTheDocument();
   });
+
+  describe('VAT', () => {
+    function valueFor(label: string): string | null {
+      return screen.getByText(label).nextElementSibling?.textContent ?? null;
+    }
+
+    it('names no VAT at 0%', () => {
+      render(<PricingBreakdown cls={makeClass()} tierPrices={[]} />);
+      expect(screen.queryByText(/VAT/)).toBeNull();
+    });
+
+    it('labels earnings and revenue and shows the VAT row at 9%', () => {
+      const cls = makeClass({
+        totalRevenue: new Prisma.Decimal('119.90'),
+        roomCost: new Prisma.Decimal('30.00'),
+        vatTotal: new Prisma.Decimal('9.90'),
+        vatPercent: new Prisma.Decimal('9'),
+      });
+      render(<PricingBreakdown cls={cls} tierPrices={[]} />);
+
+      expect(screen.getByText('Your earnings (excl. VAT)').nextElementSibling?.textContent).toBe('€80.00');
+      expect(valueFor('VAT')).toBe('€9.90');
+      expect(valueFor('Total revenue (incl. VAT)')).toBe('€119.90');
+    });
+  });
 });

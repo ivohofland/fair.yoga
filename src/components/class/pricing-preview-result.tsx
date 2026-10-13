@@ -3,6 +3,7 @@ import type { Currency } from '@prisma/client';
 import { formatMoney } from '@/lib/format';
 import { TIER_INFO } from '@/lib/tiers';
 import { tierPrices, priceSpread, studentsIn, type TierCounts } from '@/lib/pricing-preview';
+import { addedVatCents, vatThousandths, withVat } from '@/lib/vat';
 import { calculateEffectiveTeacherRate } from '@/services/pricing';
 
 export interface PricingPreviewInputs {
@@ -12,6 +13,8 @@ export interface PricingPreviewInputs {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  /** The VAT percentage the class charges on top of room and rate; 0 charges none. */
+  vatPercent: number;
 }
 
 interface PricingPreviewResultProps extends PricingPreviewInputs {
@@ -31,6 +34,7 @@ export function PricingPreviewResult({
   targetRate,
   minStudents,
   maxStudents,
+  vatPercent,
   distribution,
   distributionControl,
   showRateProgress = true,
@@ -43,12 +47,17 @@ export function PricingPreviewResult({
     targetRate,
   });
 
-  const totalCost = roomCost + teacherRate;
+  const thousandths = vatThousandths(vatPercent);
+  const chargesVat = thousandths > 0;
+  const baseCost = roomCost + teacherRate;
+  const baseCents = Math.round(baseCost * 100);
+  const vatCents = addedVatCents(baseCents, thousandths);
+  const totalCost = chargesVat ? (baseCents + vatCents) / 100 : baseCost;
   const rateRange = targetRate - minRate;
   const rateProgress =
     rateRange === 0 ? 100 : Math.round(((teacherRate - minRate) / rateRange) * 100);
 
-  const prices = tierPrices(totalCost, distribution);
+  const prices = tierPrices(withVat(baseCost, thousandths), distribution);
   const spread = priceSpread(prices, distribution);
 
   return (
@@ -57,16 +66,22 @@ export function PricingPreviewResult({
       <div className="bg-teal-tint rounded-card p-5">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="type-label">You earn</p>
+            <p className="type-label">{chargesVat ? 'You earn (excl. VAT)' : 'You earn'}</p>
             <p className="type-caption">total for this class</p>
           </div>
           <p className="type-number text-[28px] leading-[1.25]">{formatMoney(teacherRate, currency)}</p>
         </div>
         <div className="flex gap-6">
           <div>
-            <p className="type-caption">Room cost</p>
+            <p className="type-caption">{chargesVat ? 'Room cost (excl. VAT)' : 'Room cost'}</p>
             <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(roomCost, currency)}</p>
           </div>
+          {chargesVat && (
+            <div>
+              <p className="type-caption">{`VAT (${vatPercent}%)`}</p>
+              <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(vatCents / 100, currency)}</p>
+            </div>
+          )}
           <div>
             <p className="type-caption">Total class cost</p>
             <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(totalCost, currency)}</p>
@@ -82,7 +97,9 @@ export function PricingPreviewResult({
 
       {/* What students pay */}
       <div>
-        <p className="type-label text-ink mb-3">What students pay</p>
+        <p className="type-label text-ink mb-3">
+          {chargesVat ? 'What students pay (incl. VAT)' : 'What students pay'}
+        </p>
 
         {distributionControl}
 

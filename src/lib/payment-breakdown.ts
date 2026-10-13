@@ -4,6 +4,7 @@ import type { ClassStatus, PaymentStatus, Prisma } from '@prisma/client';
 /** The lines of a completed class's breakdown, in whole cents. */
 export interface PaymentBreakdownLines {
   roomCents: number;
+  vatCents: number;
   teacherCents: number;
   totalCents: number;
   students: number;
@@ -20,6 +21,7 @@ export interface ResolvePaymentBreakdownInput {
   roomCost: Prisma.Decimal;
   totalRevenue: Prisma.Decimal | null;
   vatTotal: Prisma.Decimal | null;
+  vatPercent: number;
   totalStudents: number | null;
   payment: { status: PaymentStatus; amount: Prisma.Decimal } | null;
 }
@@ -64,6 +66,7 @@ export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): Pa
     kind: 'shown',
     lines: {
       roomCents,
+      vatCents,
       teacherCents: teacherEarningsCents({ totalCents, roomCents, vatCents }),
       totalCents,
       students: totalStudents,

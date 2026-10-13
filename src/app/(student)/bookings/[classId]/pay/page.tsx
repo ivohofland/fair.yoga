@@ -138,6 +138,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
       roomCost: cls.roomCost,
       totalRevenue: cls.totalRevenue,
       vatTotal: cls.vatTotal,
+      vatPercent: Number(cls.vatPercent),
       totalStudents: cls.totalStudents,
       payment,
     },
