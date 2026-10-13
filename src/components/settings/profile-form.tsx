@@ -128,8 +128,14 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   const [savedCurrency, setSavedCurrency] = useState(initial.currency);
   // The slug the server last confirmed. The warning below names it while the
   // field differs, and a save names `pageSlug` only then, so a save from a tab
-  // opened before a slug change made elsewhere does not move the page back.
+  // opened before a slug change made elsewhere does not move the page back. It
+  // is also the field's own address, which the live check neither asks about
+  // nor judges.
   const [savedSlug, setSavedSlug] = useState(initial.pageSlug);
+  // The slug a save in flight is sending. The field treats it as the teacher's
+  // own until the save answers: the server may already hold it for them, and
+  // the live check would call it taken.
+  const [pendingSlug, setPendingSlug] = useState<string | null>(null);
   const slugWarningId = useId();
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
   const [error, setError] = useState('');
@@ -174,6 +180,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
     try {
       const sentCurrency = form.currency !== savedCurrency ? form.currency : undefined;
       const sentSlug = slugChanged ? form.pageSlug.trim() : undefined;
+      if (sentSlug !== undefined) setPendingSlug(sentSlug);
       const payload: ProfileFormWire = {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
@@ -209,6 +216,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       logRequestFailure('profile-form', { teacherId }, err);
       setError('Network error. Please try again.');
     } finally {
+      setPendingSlug(null);
       setSubmitting(false);
     }
   }
@@ -254,7 +262,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <PageAddressField
           value={form.pageSlug}
           onChange={(value) => update('pageSlug', value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-          currentSlug={savedSlug}
+          currentSlug={pendingSlug ?? savedSlug}
           error={slugError}
           aria-describedby={slugChanged ? slugWarningId : undefined}
         >

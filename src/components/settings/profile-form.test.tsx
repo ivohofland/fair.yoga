@@ -582,6 +582,32 @@ describe('ProfileForm', () => {
         expect(checkedSlugs()).toEqual(['anna-yoga']);
         expect(screen.queryByText('That address is taken')).toBeNull();
       });
+
+      // The save lands inside the debounce: by the time the check would go
+      // out, the server already holds the slug for this teacher and calls it taken.
+      it('neither checks nor judges a slug while a save of it is in flight', async () => {
+        vi.useFakeTimers();
+        let respond: (value: unknown) => void = () => {};
+        fetchMock.mockReturnValue(new Promise((resolve) => { respond = resolve; }));
+        slugCheck.mockReturnValue(false);
+        stubFetch();
+        renderForm();
+        fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        save();
+        await afterDebounce();
+        expect(screen.getByRole('button', { name: 'Saving...' })).toBeInTheDocument();
+        expect(slugCheck).not.toHaveBeenCalled();
+        expect(screen.queryByText('That address is taken')).toBeNull();
+
+        await act(async () => {
+          respond({ ok: true, json: async () => ({ data: {} }) });
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByText('Saved')).toBeInTheDocument();
+        await afterDebounce();
+        expect(slugCheck).not.toHaveBeenCalled();
+        expect(screen.queryByText('That address is taken')).toBeNull();
+      });
     });
 
     it('shows a SLUG_TAKEN refusal on the field rather than the form, until the slug is edited', async () => {
