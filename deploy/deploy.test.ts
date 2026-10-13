@@ -284,6 +284,36 @@ describe('deploy/deploy.sh', () => {
     expect(recorded()).toBe(v2);
   }, 20_000);
 
+  it('refuses, naming both commits, to answer "already there" for the recorded commit while the checkout sits on a commit that failed its health check', () => {
+    const v1 = head();
+    const v2 = commitToOrigin('v2');
+    fs.writeFileSync(deployedFile, `${v1}\n`);
+    expect(run({ sshCommand: v2, env: { FAKE_HEALTH: '{"status":"degraded","db":"down"}' } }).status).not.toBe(0);
+    expect(head()).toBe(v2);
+    fs.rmSync(callLog);
+
+    const result = run({ sshCommand: v1 });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toMatch(/already/i);
+    expect(result.stderr).toContain(v1);
+    expect(result.stderr).toContain(v2);
+    expect(head()).toBe(v2);
+    expect(recorded()).toBe(v1);
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  }, 20_000);
+
+  it('refuses a record that does not hold a full commit hash, moving nothing', () => {
+    const v2 = commitToOrigin('v2');
+    const before = head();
+    fs.writeFileSync(deployedFile, 'main\n');
+    const result = run({ sshCommand: v2 });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(deployedFile);
+    expect(head()).toBe(before);
+    expect(recorded()).toBe('main');
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  });
+
   it('creates the record from HEAD when there is none, and compares against the record when there is one', () => {
     const v1 = head();
     const v2 = commitToOrigin('v2');
@@ -303,41 +333,49 @@ describe('deploy/deploy.sh', () => {
   it('puts the checkout back and starts nothing when it is terminated during the build', async () => {
     const before = head();
     const v2 = commitToOrigin('v2');
-    const child: ChildProcess = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2' } }), stdio: ['ignore', 'ignore', 'ignore'] });
+    const child: ChildProcess = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '5' } }), stdio: ['ignore', 'ignore', 'ignore'] });
     const closed = new Promise<number | null>((resolve) => child.on('close', (code: number | null) => resolve(code)));
 
-    const deadline = Date.now() + 10_000;
-    while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-    expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
-    expect(head()).toBe(v2);
-    child.kill('SIGTERM');
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
+      expect(head()).toBe(v2);
+      child.kill('SIGTERM');
 
-    const code = await closed;
-    expect(code).not.toBe(0);
-    expect(head()).toBe(before);
-    expect(recorded()).toBe(before);
-    expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
-  }, 20_000);
+      const code = await closed;
+      expect(code).not.toBe(0);
+      expect(head()).toBe(before);
+      expect(recorded()).toBe(before);
+      expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  }, 30_000);
 
   it('puts the checkout back and starts nothing when the output is closed mid-deploy', async () => {
     const before = head();
     const v2 = commitToOrigin('v2');
-    const child = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2', FAKE_BUILD_FAIL: '1' } }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '5', FAKE_BUILD_FAIL: '1' } }), stdio: ['ignore', 'pipe', 'pipe'] });
     const closed = new Promise<void>((resolve) => child.on('close', () => resolve()));
 
-    const deadline = Date.now() + 10_000;
-    while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-    expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
-    expect(head()).toBe(v2);
-    // Nothing reads the pipes any more, as when the SSH connection drops; the failed build's message is then written to a closed pipe.
-    child.stdout.destroy();
-    child.stderr.destroy();
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
+      expect(head()).toBe(v2);
+      // Nothing reads the pipes any more, as when the SSH connection drops; the failed build's message is then written to a closed pipe.
+      child.stdout.destroy();
+      child.stderr.destroy();
 
-    await closed;
-    expect(head()).toBe(before);
-    expect(recorded()).toBe(before);
-    expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
-  }, 20_000);
+      await closed;
+      expect(head()).toBe(before);
+      expect(recorded()).toBe(before);
+      expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  }, 30_000);
 
   it.skipIf(!HAS_FLOCK)('refuses to run while another deploy holds the lock', () => {
     const v2 = commitToOrigin('v2');

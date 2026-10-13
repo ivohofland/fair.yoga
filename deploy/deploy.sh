@@ -54,7 +54,13 @@ else
   printf '%s\n' "$PREVIOUS" > "$DEPLOYED_FILE.tmp"
   mv "$DEPLOYED_FILE.tmp" "$DEPLOYED_FILE"
 fi
+[[ "$PREVIOUS" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "$DEPLOYED_FILE does not hold a full commit hash; write the deployed commit's hash into it (DEPLOYMENT.md §6)"
 if git merge-base --is-ancestor "$SHA" "$PREVIOUS"; then
+  # A checkout that is not on the record is a swap that failed its health check.
+  CHECKED_OUT="$(git rev-parse HEAD)"
+  [[ "$CHECKED_OUT" == "$PREVIOUS" ]] \
+    || fail "the checkout is at $CHECKED_OUT, which never passed its health check; $PREVIOUS may not be what serves (DEPLOYMENT.md §6, rolling back)"
   echo "already at or past $SHA (deployed: $PREVIOUS); nothing to do"
   exit 0
 fi
@@ -64,10 +70,9 @@ git merge-base --is-ancestor "$PREVIOUS" "$SHA" \
 echo "deploying $PREVIOUS -> $SHA"
 
 # Build and migrate while the running app keeps serving; only `up` replaces
-# it. Any exit before `up`, a failure or a signal, puts the checkout back so the
-# tree matches what serves; it is a no-op while the checkout is still there. The
-# signal traps turn a signal into an exit so the EXIT trap runs. A dropped SSH
-# session makes the next write fail; see the PIPE trap.
+# it. Any exit before `up`, a failure or a signal, puts the checkout back on the
+# recorded commit. The signal traps turn a signal into an exit so the EXIT trap
+# runs. A dropped SSH session makes the next write fail; see the PIPE trap.
 restore_checkout() {
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS" || true
 }
@@ -89,7 +94,6 @@ if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
   fail "migrate failed; still running $PREVIOUS (DEPLOYMENT.md §6, a failed migration)"
 fi
 
-# From `up` on, containers may have been replaced and the checkout stays on $SHA.
 trap - EXIT
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans \
   || deploy_failed "replacing the containers failed"
