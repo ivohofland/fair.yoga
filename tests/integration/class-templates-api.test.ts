@@ -2879,7 +2879,9 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
       const { body } = bodyStartingIn(owner, 6 * 24, 'Clear Flow');
       const res = await postTemplate(owner.sessionToken, body);
       expect(res.status).toBe(201);
-      const { data } = (await res.json()) as { data: { lateFirstClass: LateWire } };
+      const { data } = (await res.json()) as { data: { added: number; lateFirstClass: LateWire } };
+      // A class was added, so the null is the judgement and not an empty window.
+      expect(data.added).toBeGreaterThanOrEqual(1);
       expect(data.lateFirstClass).toBeNull();
     }));
 

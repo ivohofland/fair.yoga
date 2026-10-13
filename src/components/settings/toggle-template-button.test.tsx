@@ -140,6 +140,25 @@ describe('ToggleTemplateButton', () => {
       expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
       expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
     });
+
+    it('shows the resume sentence and no notice for a malformed value, and warns', async () => {
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        stubFetch(resumeOk({ state: 'soon' }));
+        render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+        fireEvent.click(screen.getByRole('button'));
+
+        expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
+        expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
+        expect(consoleWarn).toHaveBeenCalledWith(
+          expect.stringContaining('unreadable lateFirstClass'),
+          { state: 'soon' },
+        );
+      } finally {
+        consoleWarn.mockRestore();
+      }
+    });
   });
 
   it('sends state=paused when the template is active', async () => {

@@ -605,12 +605,9 @@ export function resolveTemplateConfirmation(data: TemplateToggleResponse): strin
  * fifth arm added to the type left `tsc` at exit 0. The route grew this guard
  * in the same PR; this is the layer #119's bug actually lived at.
  *
- * This resolver is never called on **create** — create's POST response has no
- * `action` field for a `switch` to dispatch on, so the create forms call
- * `resumeMessage`/`resumeStudioMessage` directly when they stay on the page.
- * The class create form's rule for staying is in
- * `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`
- * (Where it shows).
+ * It reads a PATCH answer only: it dispatches on `action`, which a **create**
+ * POST response does not carry, so a create's sentence is
+ * `resumeStudioMessage`'s, not this resolver's.
  */
 export function resolveStudioConfirmation(data: StudioTemplateToggleResponse): string | null {
   switch (data.action) {

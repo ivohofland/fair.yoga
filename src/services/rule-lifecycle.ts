@@ -1876,17 +1876,26 @@ export async function updateRule<TChild>(
 
   // The zone the horizon was built from, and the nominal insert instant
   // capped at the candidate's start — see `UpdateRuleResult`'s
-  // `lateFirstClass`.
+  // `lateFirstClass`. The edit has committed, so a throw here answers `null`
+  // rather than a 500 — the same contract as the probe above.
   let lateFirstClass: LateFirstClass | null = null;
   if (family.lateFirstClass && probe) {
     const entry = { date: probe.candidate, startTime: updatedRule.startTime };
-    const at = new Date(
-      Math.min(
-        now.getTime() + CLASS_GENERATION_INTERVAL_MS,
-        classStartInstant(entry, timeZone).getTime(),
-      ),
-    );
-    lateFirstClass = family.lateFirstClass(updated, entry, timeZone, at);
+    try {
+      const at = new Date(
+        Math.min(
+          now.getTime() + CLASS_GENERATION_INTERVAL_MS,
+          classStartInstant(entry, timeZone).getTime(),
+        ),
+      );
+      lateFirstClass = family.lateFirstClass(updated, entry, timeZone, at);
+    } catch (err) {
+      log.warn(
+        { err, templateId },
+        `${family.editNoun} edit saved, but the late-first-class check threw — the confirmation will not warn`,
+      );
+      lateFirstClass = null;
+    }
   }
 
   return {

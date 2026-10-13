@@ -3746,8 +3746,8 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
   };
 
   /** One teacher per case, so no two cases' slots can collide; torn down with its case. */
-  const freshTeacher = async (label: string) => {
-    const seeded = await seedTeacher(`late-${label}`);
+  const freshTeacher = async (label: string, timeZone = 'UTC') => {
+    const seeded = await seedTeacher(`late-${label}`, timeZone);
     onTestFinished(async () => {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: seeded.teacherId } });
       await prisma.scheduleRule.deleteMany({ where: { teacherId: seeded.teacherId } });
@@ -3764,8 +3764,9 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     teacherRoomId: string,
     target: Date,
     deadlines: Pick<CreateClassTemplateInput, 'cancelDeadline' | 'autoCancelCheck'>,
+    timeZone = 'UTC',
   ): CreateClassTemplateInput => {
-    const slot = slotAt(target, 'UTC');
+    const slot = slotAt(target, timeZone);
     return {
       teacherRoomId,
       classType: 'Late First',
@@ -3787,6 +3788,7 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     target: Date,
     isActive: boolean,
     autoCancelCheck?: CreateClassTemplateInput['autoCancelCheck'],
+    cancelDeadline: CreateClassTemplateInput['cancelDeadline'] = 'HOURS_48',
   ) => {
     const slot = slotAt(target, 'UTC');
     return prisma.classTemplate.create({
@@ -3808,7 +3810,7 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
-        cancelDeadline: 'HOURS_48',
+        cancelDeadline,
         ...(autoCancelCheck ? { autoCancelCheck } : {}),
       },
     });
@@ -3880,7 +3882,28 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     );
 
     if (!result.ok) throw new Error('expected ok');
+    // A class was created, so the null is the judgement and not an empty window.
+    expect(result.generation.created).toBeGreaterThanOrEqual(1);
     expect(result.lateFirstClass).toBeNull();
+  });
+
+  it("create: the first class is judged in the teacher's own zone, and dated by it", async () => {
+    const timeZone = 'Pacific/Auckland';
+    const seeded = await freshTeacher('create-auckland', timeZone);
+    const target = new Date(Date.now() + 30 * HOUR);
+
+    const result = await createClassTemplate(
+      prisma,
+      seeded.teacherId,
+      createInput(seeded.teacherRoomId, target, { cancelDeadline: 'HOURS_48', autoCancelCheck: 'HOURS_2' }, timeZone),
+    );
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lateFirstClass).toEqual({
+      date: slotAt(target, timeZone).date.toISOString().slice(0, 10),
+      state: 'past_deadline',
+      minStudents: 3,
+    });
   });
 
   it('resume: the first class the resume adds inside its deadline answers past_deadline', async () => {
@@ -3932,6 +3955,19 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
       minStudents: 2,
     });
     expect(result.firstEffective).toEqual(new Date(mondayOf(candidate)));
+  });
+
+  it('edit: judged on the template as updated, so a deadline widened by the edit answers past_deadline', async () => {
+    const seeded = await freshTeacher('edit-widened');
+    const target = new Date(Date.now() + 30 * HOUR);
+    const template = await seedTemplate(seeded, target, true, undefined, 'HOURS_6');
+
+    const result = await updateClassTemplate(prisma, template.id, seeded.teacherId, {
+      cancelDeadline: 'HOURS_48',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.lateFirstClass?.state).toBe('past_deadline');
   });
 
   it('edit: a first class starting before the next sweep is judged at its own start, so it answers past_check', async () => {
