@@ -173,7 +173,7 @@ describe('PageAddressField', () => {
     await advance(400);
 
     expect(calls).toHaveLength(0);
-    expect(screen.getByRole('alert')).toHaveTextContent('This slug is reserved');
+    expect(screen.getByRole('alert')).toHaveTextContent('That address is reserved.');
   });
 
   it('rejects a malformed address without asking the server', async () => {
@@ -185,7 +185,7 @@ describe('PageAddressField', () => {
 
     expect(calls).toHaveLength(0);
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Slug must be lowercase alphanumeric with hyphens',
+      'Use lowercase letters, numbers and hyphens only.',
     );
   });
 
