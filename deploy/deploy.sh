@@ -11,7 +11,8 @@
 # DEPLOYED_FILE, written after the health check passes; the checkout's HEAD is
 # only where the work tree stands. A commit already deployed, or older than the
 # one deployed, answers success and changes nothing — two CI runs finishing out
-# of order cannot roll the server back. A commit not yet recorded runs the whole
+# of order cannot roll the server back — except while the checkout is off the
+# record, when it refuses instead. A commit not yet recorded runs the whole
 # deploy again. Rolling back is a deliberate act by hand (DEPLOYMENT.md §6), not
 # something this key can do.
 set -euo pipefail
@@ -58,10 +59,12 @@ fi
 [[ "$PREVIOUS" =~ ^[0-9a-f]{40}$ ]] \
   || fail "$DEPLOYED_FILE does not hold a full commit hash; write the deployed commit's hash into it (DEPLOYMENT.md §6)"
 if git merge-base --is-ancestor "$SHA" "$PREVIOUS"; then
-  # A checkout that is not on the record is a swap that failed its health check.
+  # The checkout is off the record: a deploy ended after moving it without
+  # passing its health check, or it was moved by hand. Which commit serves is
+  # unknown.
   CHECKED_OUT="$(git rev-parse HEAD)"
   [[ "$CHECKED_OUT" == "$PREVIOUS" ]] \
-    || fail "the checkout is at $CHECKED_OUT, which never passed its health check; $PREVIOUS may not be what serves (DEPLOYMENT.md §6, rolling back)"
+    || fail "the checkout is at $CHECKED_OUT but $DEPLOYED_FILE says $PREVIOUS; which one serves is unknown — bring the checkout and the record to the serving commit (DEPLOYMENT.md §6)"
   echo "already at or past $SHA (deployed: $PREVIOUS); nothing to do"
   exit 0
 fi
@@ -87,8 +90,10 @@ trap restore_checkout EXIT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 trap 'exit 130' INT
-# Ignored, not handled: a handler does not run when the write that raises it is
-# to stderr, while an ignored PIPE makes that write fail and `set -e` or `fail` exit.
+# Ignored, not handled: measured under bash 5.3, a PIPE handler did not reach
+# the EXIT trap when the failing write was to stderr. Ignored, the write fails
+# and `set -e` or `fail` exits through the EXIT trap. Every child inherits the
+# ignore, so docker, say, sees EPIPE on a write instead of dying of the signal.
 trap '' PIPE
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
@@ -113,7 +118,10 @@ until curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; do
   sleep 2
 done
 
-printf '%s\n' "$SHA" > "$DEPLOYED_FILE.tmp"
-mv "$DEPLOYED_FILE.tmp" "$DEPLOYED_FILE"
-docker image prune -f >/dev/null
+if ! { printf '%s\n' "$SHA" > "$DEPLOYED_FILE.tmp" && mv "$DEPLOYED_FILE.tmp" "$DEPLOYED_FILE"; }; then
+  echo "deploy incomplete: $SHA passed its health check and serves, but $DEPLOYED_FILE could not be written; fix the file or its directory and run this again" >&2
+  exit 1
+fi
+docker image prune -f >/dev/null \
+  || echo "warning: docker image prune failed; $SHA is deployed and recorded" >&2
 echo "deployed $SHA"
