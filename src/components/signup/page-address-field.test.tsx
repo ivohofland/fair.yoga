@@ -277,3 +277,125 @@ describe('PageAddressField', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// The teacher's own address (Settings → Profile)
+// ---------------------------------------------------------------------------
+
+/** A field that starts on, and may return to, the teacher's saved address. */
+function OwnAddressHarness({ currentSlug, initial }: { currentSlug: string; initial: string }) {
+  const [value, setValue] = useState(initial);
+  return <PageAddressField value={value} onChange={setValue} currentSlug={currentSlug} />;
+}
+
+describe('PageAddressField with a currentSlug', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  // The endpoint answers `available: false` for the caller's own slug — it
+  // cannot tell who is asking — so asking would draw "taken" against an
+  // address the teacher already holds.
+  it('asks nothing and says nothing about the teacher’s own address', async () => {
+    const calls = stubFetch();
+    render(<OwnAddressHarness currentSlug="anna" initial="anna" />);
+
+    await advance(400);
+
+    expect(calls).toHaveLength(0);
+    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByText('That address is taken')).toBeNull();
+  });
+
+  it('still checks any other address', async () => {
+    const calls = stubFetch();
+    render(<OwnAddressHarness currentSlug="anna" initial="anna" />);
+
+    typeAddress('anna-yoga');
+    await advance(400);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.slug).toBe('anna-yoga');
+
+    await settle(calls[0], answered(false));
+    expect(screen.getByText('That address is taken')).toBeInTheDocument();
+  });
+
+  // The address was checked before it was saved; once saved, the stored
+  // "Available" would be a claim about the teacher's own address.
+  it('draws no verdict for an answer about an address that has since become the teacher’s own', async () => {
+    const calls = stubFetch();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PageAddressField value="anna-yoga" onChange={onChange} currentSlug="anna" />,
+    );
+
+    await advance(400);
+    await settle(calls[0], answered(true));
+    expect(screen.getByText('Available')).toBeInTheDocument();
+
+    rerender(<PageAddressField value="anna-yoga" onChange={onChange} currentSlug="anna-yoga" />);
+    expect(screen.queryByText('Available')).toBeNull();
+    expect(screen.queryByText('That address is taken')).toBeNull();
+  });
+});
+
+describe('PageAddressField composition', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders its children in the field’s column, after the verdict', async () => {
+    const calls = stubFetch();
+    render(
+      <PageAddressField value="anna-devries" onChange={() => {}}>
+        <p>Links you have shared will stop working.</p>
+      </PageAddressField>,
+    );
+
+    await advance(400);
+    await settle(calls[0], answered(true));
+
+    const verdict = screen.getByText('Available');
+    const child = screen.getByText('Links you have shared will stop working.');
+    expect(child.parentElement).toBe(verdict.parentElement);
+    expect(verdict.compareDocumentPosition(child) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('passes aria-describedby to the input, alongside the error id', () => {
+    stubFetch();
+    render(
+      <PageAddressField
+        value="anna-devries"
+        onChange={() => {}}
+        error="That page address is already taken."
+        aria-describedby="slug-warning"
+      />,
+    );
+
+    const describedBy = screen.getByLabelText('Page address').getAttribute('aria-describedby') ?? '';
+    const ids = describedBy.split(' ');
+    expect(ids).toContain('slug-warning');
+    const errorId = screen.getByRole('alert').id;
+    expect(errorId).not.toBe('');
+    expect(ids).toContain(errorId);
+  });
+
+  it('passes aria-describedby to the input when there is no error', () => {
+    stubFetch();
+    render(
+      <PageAddressField value="anna-devries" onChange={() => {}} aria-describedby="slug-warning" />,
+    );
+
+    expect(screen.getByLabelText('Page address')).toHaveAttribute('aria-describedby', 'slug-warning');
+  });
+});
