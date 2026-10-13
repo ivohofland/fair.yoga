@@ -28,11 +28,11 @@ import {
 } from '@/services/class-template-lifecycle';
 import type { WithSlot } from '@/services/rule-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
-import type { TemplateToggleResponse, TemplateEditResponse } from '@/lib/api-types';
+import type { TemplateToggleResponse, ClassTemplateEditResponse } from '@/lib/api-types';
 import type { ClassTemplate } from '@prisma/client';
 
 type PatchResponse = WithSlot<ClassTemplate> & TemplateToggleResponse;
-type PutResponse = WithSlot<ClassTemplate> & TemplateEditResponse;
+type PutResponse = WithSlot<ClassTemplate> & ClassTemplateEditResponse;
 
 /**
  * The one `slot_conflict` reason (`class-template-lifecycle.ts`) carries a
@@ -309,6 +309,7 @@ export const PUT = withErrorHandler(async (
       ...result.template,
       firstEffective: result.firstEffective ? result.firstEffective.toISOString() : null,
       generationState: result.generationState,
+      lateFirstClass: result.lateFirstClass,
     });
   }
 
@@ -511,6 +512,7 @@ export const PATCH = withErrorHandler(async (
           // cannot be dropped here by omission — only by someone rebuilding the
           // object, which is the edit this shape exists to make unnecessary.
           counts: result.counts,
+          lateFirstClass: result.lateFirstClass,
         });
       case 'unchanged':
         return respondTyped<PatchResponse>({ ...result.template, action: result.action });

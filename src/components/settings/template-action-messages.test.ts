@@ -148,6 +148,7 @@ describe('resolveTemplateConfirmation', () => {
         scheduled: 4,
         added: 3,
         counts: { blockedByCancelled: 2, slotTaken: 1, alreadyThisWeek: 5, blockedByOverlap: 0 },
+        lateFirstClass: null,
       }),
     ).toBe(
       '4 classes on your schedule. 1 date already had a class. 2 cancelled classes still hold those dates. 5 dates are still held by classes on your previous day.',

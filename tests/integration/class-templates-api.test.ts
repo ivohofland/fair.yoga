@@ -2806,3 +2806,121 @@ describe('PUT /api/class-templates/[id]', () => {
     });
   });
 });
+
+describe('class-template responses carry lateFirstClass (#849)', () => {
+  const HOUR_MS = 60 * 60 * 1000;
+
+  /** A template body whose first candidate starts `hoursAhead` from now (the teacher's zone is UTC). */
+  const bodyStartingIn = (
+    owner: { teacherRoomId: string },
+    hoursAhead: number,
+    classType: string,
+  ) => {
+    const target = new Date(Date.now() + hoursAhead * HOUR_MS);
+    return {
+      date: target.toISOString().slice(0, 10),
+      body: {
+        teacherRoomId: owner.teacherRoomId,
+        classType,
+        dayOfWeek: (target.getUTCDay() + 6) % 7,
+        startTime: target.toISOString().slice(11, 16),
+        durationMinutes: 60,
+        roomCost: 15,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 8,
+        cancelDeadline: 'HOURS_48',
+        autoCancelCheck: 'HOURS_2',
+      },
+    };
+  };
+
+  const withOwner = async (
+    label: string,
+    run: (owner: Awaited<ReturnType<typeof seedTeacher>>) => Promise<void>,
+  ): Promise<void> => {
+    const owner = await seedTeacher(`late-first-${label}`);
+    try {
+      await run(owner);
+    } finally {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+      await prisma.room.delete({ where: { id: owner.roomId } });
+      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+      await prisma.teacher.delete({ where: { id: owner.teacherId } });
+      await prisma.account.delete({ where: { id: owner.accountId } });
+    }
+  };
+
+  type LateWire = { date: string; state: string; minStudents: number } | null;
+
+  const postTemplate = (sessionTokenOfOwner: string, body: object) =>
+    fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionTokenOfOwner) },
+      body: JSON.stringify(body),
+    });
+
+  it('POST names a first class inside its deadline', () =>
+    withOwner('post-late', async (owner) => {
+      const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
+      const res = await postTemplate(owner.sessionToken, body);
+      expect(res.status).toBe(201);
+      const { data } = (await res.json()) as { data: { lateFirstClass: LateWire } };
+      expect(data.lateFirstClass?.state).toBe('past_deadline');
+      expect(data.lateFirstClass?.date).toBe(date);
+      expect(data.lateFirstClass?.minStudents).toBe(2);
+    }));
+
+  it('POST answers null when the first class is clear of its deadline', () =>
+    withOwner('post-clear', async (owner) => {
+      const { body } = bodyStartingIn(owner, 6 * 24, 'Clear Flow');
+      const res = await postTemplate(owner.sessionToken, body);
+      expect(res.status).toBe(201);
+      const { data } = (await res.json()) as { data: { lateFirstClass: LateWire } };
+      expect(data.lateFirstClass).toBeNull();
+    }));
+
+  it('PUT names the first class the edit will add when it is inside its deadline', () =>
+    withOwner('put-late', async (owner) => {
+      const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
+      const created = await postTemplate(owner.sessionToken, body);
+      expect(created.status).toBe(201);
+      const { data: template } = (await created.json()) as { data: { id: string; scheduleRuleId: string } };
+      await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId: template.scheduleRuleId } });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${template.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
+        body: JSON.stringify({ classType: 'Renamed Flow' }),
+      });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { lateFirstClass: LateWire } };
+      expect(data.lateFirstClass?.state).toBe('past_deadline');
+      expect(data.lateFirstClass?.date).toBe(date);
+    }));
+
+  it('PATCH resume names the first class it adds when it is inside its deadline', () =>
+    withOwner('resume-late', async (owner) => {
+      const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
+      const created = await postTemplate(owner.sessionToken, body);
+      expect(created.status).toBe(201);
+      const { data: template } = (await created.json()) as { data: { id: string; scheduleRuleId: string } };
+      const patch = (state: string) =>
+        fetch(`${BASE_URL}/api/class-templates/${template.id}?state=${state}`, {
+          method: 'PATCH',
+          headers: cookie(owner.sessionToken),
+        });
+      expect((await patch('paused')).status).toBe(200);
+      await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId: template.scheduleRuleId } });
+
+      const res = await patch('active');
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { action: string; lateFirstClass: LateWire } };
+      expect(data.action).toBe('active');
+      expect(data.lateFirstClass?.state).toBe('past_deadline');
+      expect(data.lateFirstClass?.date).toBe(date);
+    }));
+});

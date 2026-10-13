@@ -13,6 +13,7 @@
 
 import type { RegistrationStatus } from '@prisma/client';
 import type { SkipCounts } from '@/lib/generation';
+import type { LateFirstClass } from '@/lib/late-publish';
 import type { TemplateGenerationState } from '@/lib/template-selection';
 import type { NoneOf } from '@/lib/type-pins';
 
@@ -44,6 +45,7 @@ export type TemplateToggleResponse =
       scheduled: number;
       added: number;
       counts: SkipCounts;
+      lateFirstClass: LateFirstClass | null;
     }
   | { action: 'unarchived' | 'unchanged' };
 
@@ -71,19 +73,23 @@ export type StudioTemplateToggleResponse =
 export interface TemplateCreateResponse {
   added: number;
   counts: SkipCounts;
+  lateFirstClass: LateFirstClass | null;
 }
 
 /**
  * The reporting fields carried on the `data` payload of a successful POST creating
  * a recurring studio class template (#196, #206).
  *
- * Structurally identical to `TemplateCreateResponse` today because both creation
- * services report the same generation metrics (`added` + `counts`). Unlike the
- * PATCH toggle response pair, the wire payload does not carry a `templateKind`
- * discriminator; callers distinguish families via the enclosing endpoint and the
- * Prisma model fields (`ClassTemplate` vs `StudioClassTemplate`) intersecting this shape.
+ * The class response's `added` and `counts`, without `lateFirstClass`: a studio
+ * class has no cancellation deadline to start inside. The wire payload carries
+ * no `templateKind` discriminator; callers distinguish families via the
+ * enclosing endpoint and the Prisma model fields (`ClassTemplate` vs
+ * `StudioClassTemplate`) intersecting this shape.
  */
-export type StudioTemplateCreateResponse = TemplateCreateResponse;
+export interface StudioTemplateCreateResponse {
+  added: number;
+  counts: SkipCounts;
+}
 
 /**
  * The prediction fields carried on the `data` payload of a successful PUT editing
@@ -107,6 +113,15 @@ export interface TemplateEditResponse {
   firstEffective: string | null;
   generationState: TemplateGenerationState;
 }
+
+/**
+ * The `data` payload of a successful PUT on a recurring class template: the
+ * edit's prediction plus whether the first class it will add starts inside its
+ * cancellation deadline (#849). The studio edit answers `TemplateEditResponse`.
+ */
+export type ClassTemplateEditResponse = TemplateEditResponse & {
+  lateFirstClass: LateFirstClass | null;
+};
 
 /**
  * The `data` payload of `GET /api/announcements/audience` (#48): the students
