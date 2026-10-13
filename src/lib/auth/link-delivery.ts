@@ -25,8 +25,8 @@ export type BoundSignInLink = string & { readonly [boundLinkBrand]: true };
  * regardless of whether an account exists.
  *
  * `opts.timeZone` is the zone the requester's browser reported, or
- * `undefined`; the email's subject names the link's expiry in it. It is a
- * required key so a caller that has a zone cannot drop it by omission.
+ * `undefined`, forwarded to `sendMagicLinkEmail` with the token's expiry. It
+ * is a required key so a caller that has a zone cannot drop it by omission.
  */
 export async function deliverSignInLink(
   db: PrismaClient,
