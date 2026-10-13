@@ -578,8 +578,7 @@ describe('ProfileForm', () => {
         renderForm();
         await afterDebounce();
         expect(slugCheck).not.toHaveBeenCalled();
-        expect(screen.queryByText('That address is taken')).toBeNull();
-        expect(screen.queryByText('Available')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
       });
 
       // A check of another slug has run and been drawn before the switch back.
@@ -595,8 +594,7 @@ describe('ProfileForm', () => {
         fireEvent.change(slugField(), { target: { value: 'anna' } });
         await afterDebounce();
         expect(checkedSlugs()).toEqual(['anna-yoga']);
-        expect(screen.queryByText('That address is taken')).toBeNull();
-        expect(screen.queryByText('Available')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
       });
 
       it('neither checks nor judges a slug once it is saved', async () => {
@@ -615,14 +613,15 @@ describe('ProfileForm', () => {
           await vi.advanceTimersByTimeAsync(0);
         });
         expect(screen.getByText('Saved')).toBeInTheDocument();
-        expect(screen.queryByText('Available')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
         await afterDebounce();
         expect(checkedSlugs()).toEqual(['anna-yoga']);
-        expect(screen.queryByText('That address is taken')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
       });
 
-      // The save lands inside the debounce: by the time the check would go
-      // out, the server already holds the slug for this teacher and calls it taken.
+      // The save goes out inside the debounce and is still unanswered when the
+      // check would: the server may already hold the slug for this teacher and
+      // call it taken.
       it('neither checks nor judges a slug while a save of it is in flight', async () => {
         vi.useFakeTimers();
         let respond: (value: unknown) => void = () => {};
@@ -635,7 +634,7 @@ describe('ProfileForm', () => {
         await afterDebounce();
         expect(screen.getByRole('button', { name: 'Saving...' })).toBeInTheDocument();
         expect(slugCheck).not.toHaveBeenCalled();
-        expect(screen.queryByText('That address is taken')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
 
         await act(async () => {
           respond({ ok: true, json: async () => ({ data: {} }) });
@@ -644,7 +643,36 @@ describe('ProfileForm', () => {
         expect(screen.getByText('Saved')).toBeInTheDocument();
         await afterDebounce();
         expect(slugCheck).not.toHaveBeenCalled();
-        expect(screen.queryByText('That address is taken')).toBeNull();
+        expect(screen.queryByRole('status')).toBeNull();
+      });
+
+      // Unsaved, the slug is not the teacher's own: once the save answers, it is checked again.
+      it.each([
+        ['cannot reach the server', (): void => { fetchMock.mockRejectedValue(new TypeError('Failed to fetch')); }],
+        ['is refused for another field', (): void => {
+          fetchMock.mockResolvedValue({
+            ok: false,
+            status: 400,
+            json: async () => ({ error: { message: 'Bio must be 250 characters or fewer.' } }),
+          });
+        }],
+      ])('checks a slug again after a save of it %s', async (_case, failSave) => {
+        vi.useFakeTimers();
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        failSave();
+        stubFetch();
+        renderForm();
+        fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        save();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+        expect(slugCheck).not.toHaveBeenCalled();
+
+        await afterDebounce();
+        expect(checkedSlugs()).toEqual(['anna-yoga']);
+        expect(screen.getByRole('status')).toHaveTextContent('Available');
       });
     });
 
@@ -735,6 +763,7 @@ describe('ProfileForm', () => {
       save();
       expect(await screen.findByText('Saved')).toBeInTheDocument();
       expect(screen.queryByText('That page address is already taken.')).toBeNull();
+      expect(slugField()).not.toHaveAttribute('aria-invalid');
     });
 
     it('keeps any other refusal of a slug change at the form level', async () => {
