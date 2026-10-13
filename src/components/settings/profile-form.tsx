@@ -123,8 +123,6 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // True while the field holds a slug the server has not confirmed; the
-  // caption under the field then names the address still live.
   const slugChanged = form.pageSlug.trim() !== savedSlug;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -241,11 +239,14 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <p className="type-caption">
           Your booking page: fair.yoga/{form.pageSlug}
         </p>
-        {slugChanged && (
-          <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
-            Links you’ve already shared to fair.yoga/{savedSlug} will stop working.
-          </p>
-        )}
+        {/* Always mounted, so the caption is announced as it appears while the field has focus. */}
+        <div aria-live="polite" className="empty:hidden">
+          {slugChanged && (
+            <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
+              Links you’ve already shared to fair.yoga/{savedSlug} will stop working.
+            </p>
+          )}
+        </div>
       </section>
 
       {/* Preferences */}

@@ -377,6 +377,7 @@ describe('ProfileForm', () => {
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       const caption = screen.getByText(warning('anna'));
       expect(slugField().getAttribute('aria-describedby')?.split(' ')).toContain(caption.id);
+      expect(caption.closest('[aria-live="polite"]')).not.toBeNull();
     });
 
     it('drops the warning when the teacher types the saved slug back', () => {
@@ -406,6 +407,17 @@ describe('ProfileForm', () => {
       expect(await screen.findByText('Saved')).toBeInTheDocument();
       fireEvent.change(slugField(), { target: { value: 'anna-flow' } });
       expect(screen.getByText(warning('anna-yoga'))).toBeInTheDocument();
+    });
+
+    it('keeps the warning when the save cannot reach the server', async () => {
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+      vi.stubGlobal('fetch', fetchMock);
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      save();
+      expect(await screen.findByText('Network error. Please try again.')).toBeInTheDocument();
+      expect(screen.getByText(warning('anna'))).toBeInTheDocument();
     });
 
     it('keeps the warning when the save fails', async () => {

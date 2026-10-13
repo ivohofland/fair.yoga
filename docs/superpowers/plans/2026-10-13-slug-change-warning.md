@@ -21,6 +21,7 @@
 - Copy, exactly: `Links you’ve already shared to fair.yoga/{savedSlug} will stop working.` (typographic apostrophe `’`, as `currencySwitchLine` in the same file uses).
 - Styling follows the in-settings attention precedent `late-first-class-notice.tsx`: `type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3` (no `mb-4`; the section's `gap-4` spaces it). Gold is never body text on cream — the tint background is what makes `text-gold-deep` legible.
 - The caption is tied to the input with `aria-describedby` so a screen reader hears it on the field, not only when it appears.
+- The caption sits in an always-mounted `aria-live="polite"` region (`empty:hidden`, so it adds no gap while empty): `aria-describedby` is read on focus, and the caption appears while the field already has it. Added after the branch review, with a network-error test (`fetch` rejects → warning stays).
 - Comments describe this file's code only (CLAUDE.md, *Comment Discipline*).
 
 ## Review Focus
