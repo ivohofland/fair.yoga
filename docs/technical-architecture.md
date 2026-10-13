@@ -629,10 +629,12 @@ Refusals are matched to the mounted list by class, not by row: a refusal for the
 
 ### Entry Generator (`services/entry-generation.ts`)
 
-Runs hourly as part of the in-process scheduler (see Cron Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason:
+Runs hourly as part of the in-process scheduler (see Cron Jobs below). For each template whose `ScheduleRule` is active and unarchived it tops up the rolling 4-week window — **at most one entry per week per template** (#194) — and reports every candidate date it could **not** fill along with the reason. Only the sweep also declines a candidate already past its auto-cancel check (`past_cancel_check`, #859); on create and resume the same function fills that date and the teacher is warned instead:
 
 ```typescript
-// generateEntriesForRule — one template, one window, either family.
+// generateEntriesForRule(db, family, template, caller, from) — one template,
+// one window, either family. `caller` is `'sweep'` or `'teacher'`
+// (`GenerationCaller`, `@/lib/generation`).
 // Real identifiers, bodies elided: `dates`, `free` and `startTime` are the
 // actual locals, `getNextOccurrences` and `classStartInstant` the actual
 // helpers. A sketch that invents names is a sketch nobody can grep, which is
@@ -671,6 +673,21 @@ const heldWeeks = new Set(
   })).map((e) => mondayOf(e.date)),
 );
 
+// Read once, before the loop: the `past_cancel_check` judgement, the stamp
+// `createChildren` writes, and `firstCreated.at` are this one instant.
+const at = new Date();
+
+for (const date of dates) {
+  // own date → week → exact slot → overlap, each `skipped.push` + `continue`
+  // …
+  // LAST, and sweep-only: the family's `pastCancelCheck` judged at `at`.
+  if (caller === 'sweep' && family.pastCancelCheck?.(/* template, candidate, tz, */ at)) {
+    skipped.push({ date, reason: 'past_cancel_check' });
+    continue;
+  }
+  free.push(date);
+}
+
 // The reasons are what the teacher and the operator get told.
 
 // TWO inserts since #327, and only the first can conflict. `skipDuplicates`
@@ -684,7 +701,6 @@ const inserted = await db.calendarEntry.createManyAndReturn({
   skipDuplicates: true,
   select: { id: true, date: true, startTime: true },
 });
-const at = new Date(); // the children's stamp, and `firstCreated.at`
 if (inserted.length > 0) {
   // The family's own write, not this function's: `class.createMany` under
   // `CLASS_GENERATOR`, `studioClass.createMany` under `STUDIO_GENERATOR`,
@@ -700,11 +716,11 @@ return {
 }; // GenerationResult
 ```
 
-**Not a per-date insert loop, deliberately.** It was one until #164. Every production path into this function runs inside an interactive transaction the CALLER owns — stated as that property rather than as a roster, which is what went stale here and in the function's own docblock. Re-derive the paths with `grep -rn 'generateInstancesForTemplate(\|generateStudioInstancesForTemplate(' src/ | grep -v '\.test\.'` — both adapters, since one function serves both families — and note that the grep is not exhaustive on its own: `CLASS_FAMILY.generate` and `STUDIO_FAMILY.generate` (the two `*-template-lifecycle.ts` files) hold their adapters by reference, so the shared `pauseOrResumeRule` (`services/rule-lifecycle.ts`) reaches them without a call site the grep can see. Prisma does not savepoint individual queries inside an interactive transaction, so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
+**Not a per-date insert loop, deliberately.** It was one until #164. Every production path into this function runs inside an interactive transaction the CALLER owns — stated as that property rather than as a roster, which is what went stale here and in the function's own docblock. Re-derive the paths with `grep -rn 'generateInstancesForTemplate(\|generateStudioInstancesForTemplate(\|generateEntriesForRule(' src/ | grep -v '\.test\.'` — both adapters, which pass `'teacher'`, and the two hourly sweeps, which call `generateEntriesForRule` directly with `'sweep'` — and note that the grep is not exhaustive on its own: `CLASS_FAMILY.generate` and `STUDIO_FAMILY.generate` (the two `*-template-lifecycle.ts` files) hold their adapters by reference, so the shared `pauseOrResumeRule` (`services/rule-lifecycle.ts`) reaches them without a call site the grep can see. Prisma does not savepoint individual queries inside an interactive transaction, so a per-date insert that hit a unique violation aborted the whole transaction, and a clash on the last date let `COMMIT` return the `ROLLBACK` tag with no error at all. A teacher resuming a template was told it worked while the template stayed paused. See `docs/superpowers/specs/2026-08-11-generator-slot-reporting-design.md`.
 
 **One generator, two families, since #284.** The code sketched above is `generateEntriesForRule` (`services/entry-generation.ts`), which both families run. Each supplies a `GeneratorFamily` descriptor naming its `CalendarEntry.kind`, its log noun, its child table, and how to read and write its own children — `CLASS_GENERATOR` in `services/class-generator.ts`, `STUDIO_GENERATOR` in `services/studio-class-generator.ts` — and each keeps a named per-template adapter (`generateInstancesForTemplate`, `generateStudioInstancesForTemplate`) because call sites and comments name it. The week key, the skip reasons and the `GenerationResult` are therefore the same code on both sides rather than the same shape written twice; the studio family gained the week key with the merge. The same file holds `claimRuleForGeneration` and `probeFirstEffectiveWeek`, likewise one copy for both.
 
-**A template edit reaches no generated class.** `updateClassTemplate` (`services/class-template-lifecycle.ts`) still touches no generated class: since #194 there is no propagation service. But it is no longer a single-table, single-statement write — issue 298 split the wire schema across `ClassTemplate` and `ScheduleRule`, so its `$transaction` writes `ClassTemplate` always and `ScheduleRule` only when the edit touches a slot field (`classType`/`dayOfWeek`/`startTime`/`durationMinutes`), up to three statements across the two tables. The transaction also takes the child row's `FOR UPDATE` lock the sibling template functions serialise against (`docs/lock-order.md`, "The child row is the lock node for the template families"), not merely `SET LOCAL lock_timeout` over a single `update`. The PUT then runs a read-only probe that predicts the first week the new schedule can reach, and says so in its response. For a class template it also answers whether that week's class would start inside its cancellation deadline (`lateFirstClass`, `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`).
+**A template edit reaches no generated class.** `updateClassTemplate` (`services/class-template-lifecycle.ts`) still touches no generated class: since #194 there is no propagation service. But it is no longer a single-table, single-statement write — issue 298 split the wire schema across `ClassTemplate` and `ScheduleRule`, so its `$transaction` writes `ClassTemplate` always and `ScheduleRule` only when the edit touches a slot field (`classType`/`dayOfWeek`/`startTime`/`durationMinutes`), up to three statements across the two tables. The transaction also takes the child row's `FOR UPDATE` lock the sibling template functions serialise against (`docs/lock-order.md`, "The child row is the lock node for the template families"), not merely `SET LOCAL lock_timeout` over a single `update`. The PUT then runs a read-only probe that predicts the first week the new schedule can reach, and says so in its response. For a class template it also answers whether that week's class would start inside its cancellation deadline (`lateFirstClass`, `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`; the probe now skips a first class the sweep would decline, so the answer is never `past_check` — `docs/superpowers/specs/2026-10-13-sweep-past-check-skip-design.md` §4).
 
 ---
 

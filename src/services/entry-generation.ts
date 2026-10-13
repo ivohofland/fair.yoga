@@ -1084,23 +1084,26 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  *     judged at the LATEST instant the next nominal sweep runs. That instant
  *     errs in the tolerated direction: a sweep running earlier may still fill
  *     a candidate declined here, and the class then arrives a week before the
- *     answer named it. The nominal interval itself is #860's imprecision, not
- *     this bullet's.
- *   - `raced` —**not reproduced, and not reproducible.** It is a concurrent
+ *     answer named it. A sweep running LATER than nominal errs the other way:
+ *     a candidate whose check falls between `now + interval` and that late
+ *     sweep was named here and is declined there, so the named week stays
+ *     empty — bounded by how late the sweep runs. The nominal interval itself
+ *     is #860's imprecision, not this bullet's.
+ *   - `raced` — **not reproduced, and not reproducible.** It is a concurrent
  *     insert landing between the generator's pre-check and its write, so at
  *     probe time it has not happened yet and there is nothing to read. Its
  *     effect on this prediction is bounded and self-correcting: the sweep loses
  *     that one date and picks the template up again on its next run, so the
- *     class arrives late rather than never. This is the one divergence, and it
- *     is the only one that errs later-than-promised.
+ *     class arrives late rather than never.
  *
  * The two facts are kept apart rather than merged into one set, because they
  * are not the same fact: a WEEK this template already occupies versus a single
  * DATE whose slot another entry holds. Slot-taken dates are removed from the
  * candidate list, as are declined ones; `firstFreeWeek` then answers the week
- * question over what is left. BOTH reads are bounded by `horizon` itself — its first and last weeks
- * for the week read, its own members for the slot read — so nothing here can
- * disagree with anything else about which dates are in play.
+ * question over what is left. BOTH reads are bounded by `horizon` itself — its
+ * first and last weeks for the week read, its own members for the slot read —
+ * so nothing here can disagree with anything else about which dates are in
+ * play.
  *
  * Answers `null` rather than throwing, on both of the ways it can fail: a read
  * that raises, and the week arithmetic that runs on what the reads returned
