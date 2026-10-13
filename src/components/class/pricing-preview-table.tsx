@@ -108,7 +108,9 @@ export function PricingPreviewTable({
   // other bound — cannot move the size; only a range the preview prices can.
   const lowest = Math.ceil(effectiveMin);
   const highest = Math.max(lowest, Math.floor(effectiveMax));
-  const clamped = Math.min(highest, Math.max(lowest, studentCount));
+  // A count that mounted as NaN has no place in the range; the midpoint stands in.
+  const current = Number.isFinite(studentCount) ? studentCount : Math.round((lowest + highest) / 2);
+  const clamped = Math.min(highest, Math.max(lowest, current));
   if (clamped !== studentCount) {
     // Adjusting state during render: React re-renders before committing, so the
     // stale size never reaches the screen.

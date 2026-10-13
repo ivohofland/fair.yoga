@@ -274,6 +274,14 @@ describe('PricingPreviewTable', () => {
       expect(seated()).toBe(6);
     });
 
+    it('starts from the midpoint when it mounted on a cleared count', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} maxStudents={Number.NaN} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} />);
+
+      expect(screen.getByText('8 students')).toBeTruthy();
+      expect(seated()).toBe(8);
+    });
+
     describe('with a fixed random source', () => {
       // Math.random() = 0.5 puts every draw at tier 2 (see the block above).
       beforeEach(() => {
@@ -281,6 +289,16 @@ describe('PricingPreviewTable', () => {
       });
       afterEach(() => {
         vi.restoreAllMocks();
+      });
+
+      it('keeps a shuffled mix when the size is still inside the new range', () => {
+        const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Shuffle mix' }));
+        vi.spyOn(Math, 'random').mockReturnValue(0.99);
+        rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={11} />);
+
+        expect(screen.getByText('8 students')).toBeTruthy();
+        expect(row('2 · Managing')[0]).toBe('8');
       });
 
       it('redraws a shuffled mix at the new size', () => {
