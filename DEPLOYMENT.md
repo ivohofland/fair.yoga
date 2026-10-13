@@ -234,16 +234,19 @@ and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
 would leave the site down. A failed build or migration puts the checkout back
-and replaces nothing. A failed container replacement or health check leaves
-the new commit checked out and turns the CI run red: `<new> is checked out,
-<old> was before it`, the two commits *Rolling back* needs. It may also leave
-the site down, since `up` runs `migrate` again and that can fail too. The app
-is unreachable for the few seconds the container swap takes.
+and leaves the running app alone. A failed container replacement or health
+check leaves the new commit checked out and turns the CI run red:
+`<new> is checked out, <old> was before it`, naming the commit to roll back
+to. Either can leave the site down. Running the script again for the same
+commit then answers that it is already there and retries nothing: retry with
+`docker compose -f docker-compose.prod.yml up -d`, or roll back. The app is
+unreachable for the few seconds the container swap takes.
 
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
-running against it: add a column or table before the code that uses it, and
-remove one only once no deployed code reads it.
+running against it: a new column is nullable or has a default (the old code's
+inserts leave it out), and a column or table is renamed or removed only once
+no deployed code reads it.
 
 It only moves forward along `origin/main`. A commit already deployed, or an
 older one, answers success and changes nothing, so two runs finishing out of
@@ -324,17 +327,19 @@ that schema.
 
 Prisma records the failed migration as failed, and refuses every later
 `migrate deploy` (error P3009) until it is resolved, so every later deploy
-fails at its migrate step too. Every `docker compose up` runs `migrate` as
-well (the *Rolling back* recipe, §8's redeploy, §2), so until it is resolved
-each one fails with P3009 and leaves `app` replaced by a container that never
-starts. Run no `up` until it is resolved.
+fails at its migrate step too. Every `docker compose up`, the *Rolling back*
+recipe's included, runs `migrate` as well, so until it is resolved each one
+fails with P3009 and leaves `app` replaced by a container that never starts.
+Run no `up` until it is resolved.
 
 The checkout is back on the old commit, but the built images are still the
 failed commit's. That is why the resolve command below can see the failed
-migration's folder, so resolve before any rebuild (`--build`). Do not run a
-plain `up -d` either: it would ship the failed commit's code onto the
-unmigrated schema. Until the next successful deploy, §8's admin commands run
-that commit's CLI against the old schema.
+migration's folder, so resolve before any rebuild (`--build`). After
+resolving, do not run a plain `up -d` either: it reruns the failed commit's
+migrations from those images and, if they pass, starts that commit's code
+while the checkout names the old one. Until the images are next built, §8's
+admin commands run the failed commit's CLI against a schema its migrations
+did not finish.
 
 Resolve it on the VPS:
 
@@ -347,13 +352,12 @@ docker compose -f docker-compose.prod.yml run --rm migrate pnpm exec prisma migr
 ```
 
 The migration name is the folder name in `prisma/migrations/`, and the
-deploy's output names it. A migration marked rolled back runs again as
-written, so if the migration itself was wrong, merge the fix to `main` after
-resolving and let that commit deploy. This is the one case where a migration
-already written is edited, since it never applied in production; a dev or CI
-database that applied the old version needs `pnpm exec prisma migrate reset`.
-If the cause was outside it, such as
-data it could not handle, fix that and deploy the same commit again by hand.
+deploy's output names it. If the cause was outside the migration, such as
+data it could not handle, fix that, mark it rolled back, and deploy the same
+commit again by hand. If the migration itself was wrong, do not edit it: an
+applied migration is immutable, and CI's `check-migrations` refuses a change
+to one. Undo whatever of it applied, do by hand what it should have done, mark
+it applied, and put anything still missing in a new migration on `main`.
 
 ### Rolling back
 
@@ -465,7 +469,10 @@ app process. It is off unless `ADMIN_HOST` is set. Design and gate:
    (one certificate, two names).
 4. Set `ADMIN_HOST=admin.<domain>` and `PASSKEY_RP_ID=<domain>` (the parent
    domain, so a passkey registered on the main site also signs in on the admin
-   host), then redeploy.
+   host), then restart the app with
+   `docker compose -f docker-compose.prod.yml up -d`. The deploy script does
+   not pick up an `.env` change, since it answers that the commit is already
+   there.
 5. Register a passkey on the main site as the person who is to be an admin
    (they need a teacher or student profile), then grant, revoke and list from
    the `migrate` image, which carries the CLI:
