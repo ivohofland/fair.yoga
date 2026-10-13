@@ -115,23 +115,23 @@ export function getNextOccurrences(
 
 /**
  * The candidates an edit's probe considers: the next `DEFAULT_WEEKS * 2`
- * occurrences of the rule's weekday, kept only when the class would start
- * strictly after `at`.
+ * occurrences of the rule's weekday enumerated from `at`'s UTC date, kept only
+ * when the class would start strictly after `at`.
  *
- * Strictly after is the comparison the generator's own window applies at its
- * run instant, so a candidate a sweep running at `at` would skip is not named.
- * Enumerated from `now` rather than `at`: in a zone west of UTC a candidate
- * dated `now`'s UTC date can still start after `at` when `at` falls on the
- * next UTC date, and enumerating from `at` would lose it. `DEFAULT_WEEKS * 2` for the
- * reason `DEFAULT_WEEKS` gives. The caller owns `at`.
+ * That is `generateEntriesForRule`'s own enumeration and filter run at `at`,
+ * so its first `DEFAULT_WEEKS` dates are exactly the ones a sweep running at
+ * `at` keeps; the rest continue the same sequence, `DEFAULT_WEEKS * 2` for the
+ * reason `DEFAULT_WEEKS` gives. A sweep running earlier enumerates from a UTC
+ * date no later than `at`'s under a weaker filter, so it may fill a candidate
+ * this skipped and the class arrives before the week named, the tolerated
+ * direction. The caller owns `at`.
  */
 export function probeHorizon(
   rule: { dayOfWeek: number; startTime: Date },
   timeZone: string,
-  now: Date,
   at: Date,
 ): Date[] {
-  return getNextOccurrences(rule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+  return getNextOccurrences(rule.dayOfWeek, at, DEFAULT_WEEKS * 2).filter(
     (date) => classStartInstant({ date, startTime: rule.startTime }, timeZone) > at,
   );
 }
@@ -1070,7 +1070,10 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
  * Before refusing any date, the generator's own window keeps only candidates
  * starting strictly after its run instant. That filter is not a `SkipReason`;
  * it is reproduced by `horizon` itself, which the caller builds with
- * `probeHorizon` to start after the caller's `at`, the sweep's instant.
+ * `probeHorizon`, enumerated from and filtered at the caller's `at`: the
+ * latest instant the next nominal sweep runs, which `updateRule` owns. A
+ * prediction, like `past_cancel_check` below: a sweep running at a different
+ * instant can disagree.
  *
  * The generator declines a candidate date on grounds named by `SkipReason`
  * (`@/lib/generation`, whose own header documents the ordered first-match
@@ -1183,9 +1186,9 @@ export async function probeFirstEffectiveWeek(
   //
   // The two `mondayOf` calls in the first read's `where` sit inside neither
   // guard: the argument object is built before `Promise.all` is entered, so a
-  // throw there escapes synchronously. Both operands come from
-  // `getNextOccurrences` and are `undefined`-guarded immediately above, which
-  // is what keeps that gap closed.
+  // throw there escapes synchronously. Both operands are `horizon`'s two ends,
+  // `undefined`-guarded immediately above, which is what keeps that gap
+  // closed.
   const reads = await Promise.all([
     // The weeks this template already occupies. Keyed on `scheduleRuleId`,
     // which rides `@@unique([scheduleRuleId, date])`, and bounded by the

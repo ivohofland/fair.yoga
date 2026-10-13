@@ -67,8 +67,8 @@ describe('getNextOccurrences', () => {
 describe('probeHorizon', () => {
   // Tuesday 2026-10-20 at 10:00; schema dayOfWeek 1 is Tuesday.
   const rule = { dayOfWeek: 1, startTime: hhmmToTime('10:00') };
-  const horizonAt = (zone: string, at: Date, now: Date = new Date(at.getTime() - 60 * 60_000)) =>
-    probeHorizon(rule, zone, now, at).map((d) => d.toISOString().slice(0, 10));
+  const horizonAt = (zone: string, at: Date) =>
+    probeHorizon(rule, zone, at).map((d) => d.toISOString().slice(0, 10));
   const S = new Date('2026-10-20T10:00:00.000Z');
 
   it('keeps a candidate starting 1 ms after the sweep instant', () => {
@@ -89,18 +89,18 @@ describe('probeHorizon', () => {
     expect(horizonAt('Europe/Amsterdam', start)[0]).toBe('2026-10-27');
   });
 
-  it("enumerates from now so a candidate on now's date survives when at is the next UTC date", () => {
-    // Monday 20:00 PDT is 2026-10-20T03:00Z: dated 10-19, starting after `at`.
+  it("names no candidate dated before at's UTC date, as a sweep at at never enumerates it", () => {
+    // Monday 20:00 PDT is 2026-10-20T03:00Z, dated 10-19: it starts after
+    // `at`, but a sweep running at `at` enumerates from 10-20 and never sees
+    // it, so the first candidate is the following Monday.
     const mondayEvening = { dayOfWeek: 0, startTime: hhmmToTime('20:00') };
-    const now = new Date('2026-10-19T23:30:00.000Z');
     const at = new Date('2026-10-20T00:30:00.000Z');
-    const dates = probeHorizon(mondayEvening, 'America/Los_Angeles', now, at);
-    expect(dates[0]!.toISOString().slice(0, 10)).toBe('2026-10-19');
+    const dates = probeHorizon(mondayEvening, 'America/Los_Angeles', at);
+    expect(dates[0]!.toISOString().slice(0, 10)).toBe('2026-10-26');
   });
 
   it('returns DEFAULT_WEEKS * 2 ascending Tuesdays when nothing is cut', () => {
-    const now = new Date('2026-10-13T00:00:00.000Z');
-    const dates = probeHorizon(rule, 'UTC', now, new Date(now.getTime() + 60 * 60_000));
+    const dates = probeHorizon(rule, 'UTC', new Date('2026-10-13T01:00:00.000Z'));
     expect(dates).toHaveLength(DEFAULT_WEEKS * 2);
     expect(dates.every((d) => d.getUTCDay() === 2)).toBe(true);
     const times = dates.map((d) => d.getTime());

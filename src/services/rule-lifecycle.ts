@@ -1863,7 +1863,7 @@ export async function updateRule<TChild>(
   // later than nominal can still miss the named candidate, bounded by how
   // late it runs.
   const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
-  const horizon = probeHorizon(updatedRule, timeZone, now, at);
+  const horizon = probeHorizon(updatedRule, timeZone, at);
 
   const generationState = templateGenerationState(updatedRule);
 
