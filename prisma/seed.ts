@@ -1,5 +1,7 @@
 import { PrismaClient, Prisma, type Currency } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { billAtLeastMinimum } from '@/lib/tier-estimates';
+import type { IncomeTier } from '@/lib/tiers';
 
 const prisma = new PrismaClient();
 
@@ -113,7 +115,7 @@ async function createClass(
 async function createCompletedClass(
   entry: EntrySchedule,
   klass: ClassFields,
-  totals: { effectiveTeacherRate: string; totalStudents: number; totalRevenue: string },
+  totals: { effectiveTeacherRate: string; totalStudents: number; totalRevenue: string; vatTotal: string },
 ): Promise<{ id: string }> {
   const created = await createClass(entry, { ...klass, status: 'open' });
   await prisma.class.update({
@@ -123,7 +125,7 @@ async function createCompletedClass(
       effectiveTeacherRate: new Prisma.Decimal(totals.effectiveTeacherRate),
       totalStudents: totals.totalStudents,
       totalRevenue: new Prisma.Decimal(totals.totalRevenue),
-      vatTotal: new Prisma.Decimal(0),
+      vatTotal: new Prisma.Decimal(totals.vatTotal),
     },
   });
   return created;
@@ -185,6 +187,7 @@ async function main() {
       bio: 'Vinyasa and Hatha teacher based in Amsterdam. Focused on accessible, ethical yoga for everyone.',
       pageSlug: 'ivo',
       currency: 'EUR',
+      defaultVatPercent: 9,
       defaultTimezone: 'Europe/Amsterdam',
       classReminder: 'morning_of',
       paymentLevel: 'LEVEL_1',
@@ -564,6 +567,7 @@ async function main() {
       maxStudents: 12,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
+      vatPercent: 9,
     },
   });
 
@@ -591,6 +595,7 @@ async function main() {
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
       status: 'draft',
+      vatPercent: 21,
     },
   );
 
@@ -701,7 +706,7 @@ async function main() {
       autoCancelCheck: 'HOURS_2',
       settingsLocked: true,
     },
-    { effectiveTeacherRate: '21.25', totalStudents: 9, totalRevenue: '56.25' },
+    { effectiveTeacherRate: '21.25', totalStudents: 9, totalRevenue: '56.25', vatTotal: '0' },
   );
 
   // 6. CANCELLED — last week, 2 registrations (below min_students of 4)
@@ -799,7 +804,7 @@ async function main() {
       cancelDeadline: 'HOURS_12',
       autoCancelCheck: 'HOURS_2',
     },
-    { effectiveTeacherRate: '14.00', totalStudents: 4, totalRevenue: '44.00' },
+    { effectiveTeacherRate: '14.00', totalStudents: 4, totalRevenue: '44.00', vatTotal: '0' },
   );
 
   // Next week, so the Schedule tab has a "Next week" heading to render for her
@@ -1139,6 +1144,7 @@ async function main() {
         effectiveTeacherRate: spec.effectiveTeacherRate,
         totalStudents: spec.roster.length,
         totalRevenue: spec.totalRevenue,
+        vatTotal: '0',
       },
     );
 
@@ -1165,6 +1171,73 @@ async function main() {
         },
       });
     }
+  }
+
+  // ==========================================================================
+  // VAT-CHARGING COMPLETED CLASS (9%)
+  // ==========================================================================
+  // Priced by the engine rather than typed in, so the stored totals satisfy
+  // totalRevenue - roomCost - vatTotal = effectiveTeacherRate by construction.
+  const vatEconomics = { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 4, maxStudents: 12, vatPercent: 9 };
+  // Students 0, 2, 4, 5, 6, 8 hold tiers 1, 2, 3, 3, 4, 5.
+  const vatRoster = [0, 2, 4, 5, 6, 8].map((i) => students[i]!);
+  const vatBill = billAtLeastMinimum(
+    vatEconomics,
+    vatRoster.map((st) => st.incomeTier as IncomeTier),
+  );
+  const vatClassDate = daysAgo(20);
+  const vatClass = await createCompletedClass(
+    {
+      teacherId: ivo.id,
+      classType: 'Vinyasa',
+      date: vatClassDate,
+      startTime: hhmmToTime('16:00'),
+      durationMinutes: 75,
+    },
+    {
+      teacherRoomId: ivoYogaschool.id,
+      description: 'Dynamic flow class suitable for all levels.',
+      roomCost: new Prisma.Decimal(vatEconomics.roomCost),
+      minRate: new Prisma.Decimal(vatEconomics.minRate),
+      targetRate: new Prisma.Decimal(vatEconomics.targetRate),
+      minStudents: vatEconomics.minStudents,
+      maxStudents: vatEconomics.maxStudents,
+      vatPercent: new Prisma.Decimal(vatEconomics.vatPercent),
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+      settingsLocked: true,
+    },
+    {
+      effectiveTeacherRate: String(vatBill.earningsCents / 100),
+      totalStudents: vatRoster.length,
+      totalRevenue: String(vatBill.billedCents / 100),
+      vatTotal: String(vatBill.vatCents / 100),
+    },
+  );
+
+  for (const [i, student] of vatRoster.entries()) {
+    const s = vatBill.billed[i]!;
+    const reg = await prisma.registration.create({
+      data: {
+        classId: vatClass.id,
+        studentId: student.id,
+        status: 'attended',
+        tierAtBooking: s.tier,
+        price: new Prisma.Decimal(s.price),
+        tierRatio: new Prisma.Decimal(s.ratio),
+        registeredAt: new Date(vatClassDate.getTime() - 3 * 86400_000),
+      },
+    });
+    await prisma.payment.create({
+      data: {
+        registrationId: reg.id,
+        amount: new Prisma.Decimal(s.price),
+        vatAmount: new Prisma.Decimal(s.vat),
+        status: 'paid',
+        method: 'bank_transfer',
+        paidAt: vatClassDate,
+      },
+    });
   }
 
   // ==========================================================================

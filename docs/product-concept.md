@@ -38,10 +38,11 @@ Each teacher has a personal page (e.g., app.com/teachername) showing their profi
 This is the heart of the app. The pricing model uses a compressed income-based spread with a scaling teacher rate.
 
 **Inputs (teacher sets during class creation):**
-- Room rental cost (per class)
+- Room rental cost (per class); entered excl. VAT when the teacher charges VAT
 - Minimum rate (what the teacher accepts at minimum class size)
 - Target rate (what the teacher wants to earn at full class size)
 - Minimum and maximum number of students
+- VAT % (default 0, pre-filled from the teacher's default; a teacher who is not VAT-registered leaves it at 0)
 - Student income tiers (self-reported, see below)
 
 **The algorithm:**
@@ -54,8 +55,10 @@ The rate is a per-class total (not per-student) that scales linearly: at minimum
 
 Step 2 — Calculate each student's price:
 
-`total class cost = room cost + teacher rate`
+`total class cost = (room cost + teacher rate) × (1 + VAT%)`
 `student price = total class cost / sum of all student ratios × student's ratio`
+
+The teacher rate and the room cost are entered excl. VAT, and the teacher earns the rate whatever the VAT. Each student's VAT is the VAT contained in their own price, and the class VAT is their sum; the teacher absorbs the cent or two this rounding moves. Worked example: room €30, rate €80, 9% VAT. 30 + 80 = €110; VAT €9.90; total €119.90; the teacher earns €80.
 
 **Tier ratios (compressed 2× spread):**
 
@@ -79,7 +82,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 **Walk-ins:** Teachers can add walk-in students during or just before class: someone on their roster, someone they have invited, or someone new, typed in at the door. Adding a person who is not yet on the roster links them to the teacher — their presence stands for accepting the invitation — and someone with no student profile yet is booked at the default tier, anyone else at their own; the tier they choose later applies to their own later bookings (the rule and its limits: `docs/data-model.md`, Invitation → Walk-ins). Walk-ins can exceed the maximum student count — the actual number of students becomes the new count for the price calculation. The teacher rate remains capped at the target rate, so walk-ins beyond max simply lower everyone's price. Walk-ins benefit everyone — more people sharing costs means lower prices for all.
 
-**Settings lock:** Once the first student registers for a class, the economic settings (room cost, min rate, target rate, min/max students) and the date and start time are locked: both cancellation settings are measured from the start, so moving a booked class would move every student's free-cancel deadline (#836). The teacher can still edit the class type, description and duration. If they need to change economics or the time, they cancel the class and create a new one. For recurring classes, they edit the template — which changes nothing that is already on the schedule (#194: a template is a stamp, not a live link). Not the locked instance, and not the unlocked ones either: every class the generator has already created keeps the settings it was stamped with. The new economics reach only classes generated after the edit, and since the generator lays down at most one class per week per template, the first to carry them is the first week that holds no class from that template. Instances the teacher does not want on the old terms are cancelled individually.
+**Settings lock:** Once the first student registers for a class, the economic settings (room cost, min rate, target rate, min/max students, VAT %) and the date and start time are locked: both cancellation settings are measured from the start, so moving a booked class would move every student's free-cancel deadline (#836). The teacher can still edit the class type, description and duration. If they need to change economics or the time, they cancel the class and create a new one. For recurring classes, they edit the template — which changes nothing that is already on the schedule (#194: a template is a stamp, not a live link). Not the locked instance, and not the unlocked ones either: every class the generator has already created keeps the settings it was stamped with. The new economics reach only classes generated after the edit, and since the generator lays down at most one class per week per template, the first to carry them is the first week that holds no class from that template. Instances the teacher does not want on the old terms are cancelled individually.
 
 **Income tier selection:**
 - 5 tiers with compressed spread (0.65, 0.80, 1.00, 1.20, 1.35)

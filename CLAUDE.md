@@ -89,7 +89,7 @@ The heart of the app. Income-based pricing with compressed tier spread and scali
 - Effective teacher rate is a per-class total (not per-student), scales linearly: min_rate (at min_students) → target_rate (at max_students)
 - Setting min_rate = target_rate collapses to flat rate
 - Negative min_rate allowed (teacher subsidizes room cost)
-- Total class cost: `total = room_cost + effective_teacher_rate`
+- Total class cost: `total = (room_cost + effective_teacher_rate) × (1 + VAT%)`; room cost and rate are entered excl. VAT, each student's VAT is the VAT contained in their own price, and the teacher earns `total − room − VAT` (`Class.vatPercent`, 0 = no VAT; #819)
 - Per-student price: `student_price = total / sum_of_tier_ratios × student_tier_ratio`
 - Post-class billing based on registrations (not attendance)
 - Prices are calculated after class ends, not during booking

@@ -155,7 +155,7 @@ link on the browser that asked for it never touches this row.
 | custom_domain | string, nullable | |
 | **Defaults** | | |
 | currency | enum `Currency`, default EUR | The teacher's live currency: what every priced row without a `currency` column of its own, and any new class, is priced in. A row with its own snapshot ("Currency lives where it can be frozen", below) keeps it once frozen, so changing this relabels only what is still editable. `PUT /api/teachers/[id]` runs `switchTeacherCurrency` (`src/services/currency-switch.ts`) through `updateTeacherProfile` (`src/services/teacher-profile.ts`); the lock order is in `docs/lock-order.md` |
-| defaultVatPercent | decimal(6,3), default 0 | The VAT percentage the teacher usually charges (9 means 9%), 0 to 100 with at most 3 decimals: `vatPercentViolation` (`src/lib/vat.ts`) on the wire, `Teacher_default_vat_percent_range_check` in the database. Saved by `PUT /api/teachers/[id]`. Nothing reads it yet; #819 will pre-fill each new class and class template from it. |
+| defaultVatPercent | decimal(6,3), default 0 | The VAT percentage the teacher usually charges (9 means 9%), 0 to 100 with at most 3 decimals: `vatPercentViolation` (`src/lib/vat.ts`) on the wire, `Teacher_default_vat_percent_range_check` in the database. Saved by `PUT /api/teachers/[id]`. Pre-fills each new class and class template's `vat_percent`. |
 | default_timezone | string | IANA identifier, e.g. 'Europe/Amsterdam'; V8's old spellings are stored renamed — see Design Notes |
 | **Notifications** | | |
 | class_reminder | enum: evening_before, morning_of, one_hour_before, off, default morning_of | When the teacher is reminded of each regular class they teach (studio classes get none) |
@@ -658,6 +658,7 @@ calendar-shaped, through this row.
 | target_rate | decimal | Ideal teacher earns per student |
 | min_students | int | Below this, class auto-cancels |
 | max_students | int | Registration cap |
+| vat_percent | decimal(6,3), default 0 | The VAT % the teacher charges, pre-filled from `Teacher.default_vat_percent`; 0 means no VAT. `ClassTemplate_vat_percent_range_check`: `0 <= vat_percent <= 100` |
 | **Policies** | | |
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | Student cancellation window |
 | auto_cancel_check | enum: 4h, 2h, 1h | When to check min_students threshold |
@@ -669,9 +670,10 @@ Class instances are generated on a rolling 4-week basis. Runs indefinitely
 until the rule is paused or archived — see ScheduleRule above for day/time,
 active/archived state, and the cross-family slot rule.
 
-The five economics columns above carry six `CHECK` constraints —
+The money and capacity columns above carry six `CHECK` constraints —
 `20260924190000_class_economics_checks` — the same six as `Class` below. See
-Design Notes for what they enforce and why.
+Design Notes for what they enforce and why. `vat_percent` carries its own, in
+`20261013133630_class_vat`.
 
 ### CalendarEntry (shared calendar identity, #327)
 
@@ -751,6 +753,7 @@ child, and the reverse does not.
 | target_rate | decimal | |
 | min_students | int | |
 | max_students | int | |
+| vat_percent | decimal(6,3), default 0 | The VAT % this class charges, copied from its template or pre-filled from `Teacher.default_vat_percent`; 0 means no VAT. Room cost is entered excl. VAT when it is above 0. `Class_vat_percent_range_check`: `0 <= vat_percent <= 100` |
 | **Policies** | | |
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | |
 | auto_cancel_check | enum: 4h, 2h, 1h | |
@@ -761,16 +764,18 @@ child, and the reverse does not.
 | auto_cancel_decided_at | datetime, nullable | When the auto-cancel decision was made; set means never judged again |
 | teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is claimed, before it is delivered; a failed email leaves it set (at most once) |
 | **Calculated** | | Populated after class ends |
-| effective_teacher_rate | decimal, nullable | What the teacher actually earned for the class: `total_revenue − room_cost`, written at completion. Below the minimum it is less than `min_rate`, and can be negative (#836) |
+| effective_teacher_rate | decimal, nullable | What the teacher actually earned for the class: `total_revenue − room_cost − vat_total`, written at completion (`teacherEarningsCents`). Below the minimum it is less than `min_rate`, and can be negative (#836) |
 | total_students | int, nullable | Number of charged registrations at completion |
-| total_revenue | decimal, nullable | Sum of the payments created at completion. A class below its minimum is priced on a pool padded to the minimum, and the padding seats bill no one, so this is less than `room_cost + min_rate` there (#836) |
+| total_revenue | decimal, nullable | Sum of the payments created at completion. A class below its minimum is priced on a pool padded to the minimum, and the padding seats bill no one, so this is less than `(room_cost + min_rate) × (1 + vat_percent / 100)` there (#836) |
+| vat_total | decimal(10,2), nullable | The VAT contained in `total_revenue`: the sum of the class's payments' `vat_amount`, written at completion. A snapshot, like `total_revenue`: `Class_vat_total_snapshot_check` makes it null exactly when `total_revenue` is, and `Class_vat_total_nonnegative_check` keeps it `>= 0` |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
 
-The five economics columns above carry six `CHECK` constraints —
+The money and capacity columns above carry six `CHECK` constraints —
 `20260924190000_class_economics_checks` — the same six as `ClassTemplate`
-above. See Design Notes for what they enforce and why.
+above. See Design Notes for what they enforce and why. `vat_percent` and
+`vat_total` carry their own, in `20261013133630_class_vat`.
 
 ### StudioClass (simple tracking)
 
@@ -948,7 +953,8 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 |---|---|---|
 | **id** (PK) | uuid | |
 | *registration_id* (FK) | → Registration | |
-| amount | decimal | In the currency of the registration's class (`Class.currency`); the row carries no currency of its own, because `completeClass` writes it after that class is already frozen |
+| amount | decimal | In the currency of the registration's class (`Class.currency`); the row carries no currency of its own, because `completeClass` writes it after that class is already frozen. Includes the VAT |
+| vat_amount | decimal(10,2), default 0 | The VAT contained in `amount`, written at completion; `Payment_vat_amount_range_check`: `0 <= vat_amount <= amount` |
 | status | enum | pending → paid / overdue / not_charged; paid and not_charged both reopen to pending |
 | method | string, nullable | e.g. "cash", "bank_transfer", "mollie", "stripe" |
 | processor_ref | string, nullable | External transaction ID (Level 2) |
@@ -1057,7 +1063,7 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - **No production path deletes a `ClassTemplate` or `StudioClassTemplate` row** — archiving withdraws a template's future window and records what it withdrew (`archivedAt`/`withdrawnCount` on the rule), and a delete would destroy that record; `deleteTeacherAccount` archives rather than deletes for the same reason. The consequence lives one model out: `ScheduleRule` carries no foreign key back to either child, so a child deleted out from under an open transaction would leave an orphaned rule row that either shared compare-and-swap would still match — the archive's and the pause/resume's, `archiveOrUnarchiveRule` and `pauseOrResumeRule` (`rule-lifecycle.ts`), each serving both template families. That is why each of those takes the child row `FOR UPDATE` first and checks the returned row count rather than discarding it, and why `claimTemplateForGeneration` (`class-generator.ts`) may follow its lock with `findUniqueOrThrow`. Re-derive rather than trusting this sentence — `grep -rnE '(classTemplate|studioClassTemplate)\.(delete|deleteMany)\(' src --include='*.ts' | grep -v '\.test\.'` — no hits today; a first hit is the signal to revisit every site named here.
 - **tier_at_booking** on Registration captures the student's income tier at the moment they booked. The student's global tier on the Student table can change anytime, but pricing uses the tier at booking time. This also serves as income history — no separate tracking table needed.
 - **Currency lives where it can be frozen** (#758). A row carries its own `currency` only if it can be frozen while the teacher's currency moves. Those rows are the models besides `Teacher` with a `currency` column — on 2026-10-06 `Class` and `StudioClass`; re-derive with `grep -nE '^\s+currency\s' prisma/schema.prisma` and the `model` each line sits in. A priced row that is always editable (a room's rental rate, a template's rates) would be relabelled by every switch anyway, so it reads `Teacher.currency`; `Registration.price` and `Payment.amount` read their `Class`. A sum across rows in different currencies is meaningless, so every cross-row total is grouped per currency (`src/lib/money-totals.ts`). The decision and the switch's steps: `docs/superpowers/specs/2026-10-06-multi-currency-design.md`.
-- **settings_locked** on Class flips to true when the first Registration is created. After that, the economic fields (room_cost, min_rate, target_rate, min_students, max_students) and the entry's date and start_time are immutable — `LOCKED_FIELDS` in `src/lib/class-fields.ts` (#836). Duration, class type and description stay editable.
+- **settings_locked** on Class flips to true when the first Registration is created. After that, the economic fields (`ECONOMIC_FIELDS` in `src/lib/class-fields.ts`) and the entry's date and start_time are immutable — `LOCKED_FIELDS` in `src/lib/class-fields.ts` (#836). Duration, class type and description stay editable.
 - **Terminal status is the second, wider freeze** (#247). Once a Class is `completed` or `cancelled`, `updateClass` refuses every field edit — the class, not a column list — and `PUT /api/classes/[id]` answers 409. It never lifts. The entry's schedule is additionally frozen in the database by `entry_frozen_schedule_guard`, because the waitlist retention sweep above deletes on a terminality-plus-date predicate and reads that column before it does; since #327 it covers `date`, `start_time` and `duration_minutes`, all three of which moved to `CalendarEntry` together. `entry_terminal_liveness_guard` freezes `cancelled_at` beside it, for regular entries only — a studio cancellation is reversible — and `entry_completion_marker_guard` makes `class_completed_at` write-once, which is what stops the freeze being walked around in two statements: every one of these is `BEFORE UPDATE OF <columns>` and `UPDATE OF` fires on a column's presence in the SET list, so a guard reading `OLD` is only as immovable as the columns its `OLD` depends on. All three are narrower than the service on purpose, so the two layers are not the same rule twice, and all three decide from the entry's own columns (`cancelled_at`, `class_completed_at`) rather than reaching back for `Class.status` — see `docs/lock-order.md` for why that direction matters.
 - **WaitlistEntry** is a separate entity from Registration to cleanly model the hybrid promotion rules. When promoted, a new Registration is created and linked via registration_id.
 - **StudioClass** is intentionally disconnected from Room and Student entities. It's a simple log entry for the teacher's calendar and income reporting.
