@@ -426,7 +426,7 @@
         <div class="field"><span class="field-name">total_students</span><span class="field-type">int, nullable</span></div>
         <div class="field"><span class="field-name">total_revenue</span><span class="field-type">decimal, nullable</span></div>
         <div class="field"><span class="field-name">vat_total</span><span class="field-type">decimal(10,2), nullable</span></div>
-        <div class="field-note">Status: draft &#8594; open &#8594; in_progress &#8594; completed. Full is derived (registrations at max_students), and cancellation is not a status (#327).</div>
+        <div class="field-note">Status: draft &#8594; open &#8594; in_progress &#8594; completed. Full is derived from registrations reaching max_students; cancellation is cancelled_at on the calendar entry, not a status.</div>
       </div>
     </div>
 
