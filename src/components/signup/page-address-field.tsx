@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui/icon';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure } from '@/lib/client-errors';
@@ -66,6 +66,17 @@ interface PageAddressFieldProps {
    * disagrees is by definition the stale one.
    */
   error?: string;
+  /**
+   * The address the teacher already holds, on a form that edits a saved one.
+   * While the field shows it, nothing is asked and no verdict is drawn: the
+   * endpoint cannot tell who is asking and would call the teacher's own
+   * address taken.
+   */
+  currentSlug?: string;
+  /** Passed through to the input, ahead of the ids `Input` adds itself. */
+  'aria-describedby'?: string;
+  /** Rendered in the field's column, after the verdict. */
+  children?: ReactNode;
 }
 
 /**
@@ -80,7 +91,14 @@ interface PageAddressFieldProps {
  * reported with no request at all. It is the same validator the route parses
  * with, so the field cannot accept something the route then rejects.
  */
-export function PageAddressField({ value, onChange, error }: PageAddressFieldProps) {
+export function PageAddressField({
+  value,
+  onChange,
+  error,
+  currentSlug,
+  'aria-describedby': describedBy,
+  children,
+}: PageAddressFieldProps) {
   const [answer, setAnswer] = useState<Answer | null>(null);
 
   // Both derived on render rather than stored: each is a pure function of
@@ -89,13 +107,20 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
   // one — a spinner on every keystroke is motion this design does not have.
   const parsed = value === '' ? null : pageSlugField.safeParse(value);
   const localError = parsed && !parsed.success ? parsed.error.issues[0]?.message : undefined;
-  const verdict = answer !== null && answer.slug === value ? answer.available : null;
+  // The teacher's own address draws nothing even when an answer about it is
+  // stored — one fetched before it was saved would otherwise linger as a
+  // claim about an address the teacher already holds.
+  const isOwn = currentSlug !== undefined && value === currentSlug;
+  const verdict = !isOwn && answer !== null && answer.slug === value ? answer.available : null;
 
   useEffect(() => {
     // An empty or malformed value is answered without a request at all. The
     // route would answer `available: false` for both, which reads as "someone
     // has it" when the truth is "this is not an address".
     if (value === '' || !pageSlugField.safeParse(value).success) return;
+    // Nor is the teacher's own address: the route would answer "taken",
+    // because this teacher holds it.
+    if (value === currentSlug) return;
 
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -119,7 +144,7 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [value]);
+  }, [value, currentSlug]);
 
   return (
     <div className="flex flex-col gap-2">
@@ -133,6 +158,7 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
+        aria-describedby={describedBy}
       />
       <p className="type-caption">
         Your booking page: fair.yoga/{value || 'your-name'}
@@ -152,6 +178,7 @@ export function PageAddressField({ value, onChange, error }: PageAddressFieldPro
           That address is taken
         </p>
       )}
+      {children}
     </div>
   );
 }
