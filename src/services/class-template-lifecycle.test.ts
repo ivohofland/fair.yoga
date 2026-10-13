@@ -13,6 +13,8 @@ import {
 import { isRestrictViolationOn, type TransientKind } from '@/lib/api-errors';
 import { startOfLocalDay, classStartInstant, mondayOf } from '@/lib/timezone';
 import { getNextOccurrences } from './entry-generation';
+import { generateClassInstances } from './class-generator';
+import { createContentionStreaks } from './generation-contention';
 import { formatDayHeader } from '@/lib/format';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -3995,6 +3997,11 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
     const near = slotAt(target, 'UTC').date;
     expect(result.firstEffective).toEqual(new Date(mondayOf(near) + 7 * 24 * 60 * 60 * 1000));
     expect(result.lateFirstClass).toBeNull();
+
+    // The other half: the sweep's first class lands in the week the edit named.
+    await generateClassInstances(prisma, { streaks: createContentionStreaks(), teacherId: seeded.teacherId });
+    const first = await earliestClass(template.scheduleRuleId);
+    expect(new Date(mondayOf(first.calendarEntry.date))).toEqual(result.firstEffective);
   });
 
   it('edit: a candidate whose check is still ahead now but passed by the next sweep is declined too', async () => {
@@ -4028,6 +4035,10 @@ describe('lateFirstClass on create, resume and edit (DB) (#849)', () => {
       state: 'past_deadline',
       minStudents: 2,
     });
+    // The other half: the sweep fills the named near week.
+    await generateClassInstances(prisma, { streaks: createContentionStreaks(), teacherId: seeded.teacherId });
+    const first = await earliestClass(template.scheduleRuleId);
+    expect(new Date(mondayOf(first.calendarEntry.date))).toEqual(result.firstEffective);
   });
 
   it('edit: a paused template answers null', async () => {
