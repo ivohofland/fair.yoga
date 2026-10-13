@@ -45,11 +45,14 @@ git fetch --quiet origin main
 git merge-base --is-ancestor "$SHA" origin/main 2>/dev/null \
   || fail "$SHA is not on origin/main"
 
-# Without a record (the first deploy under this script) HEAD stands in for it.
+# Without a record (the first deploy under this script) HEAD stands in for it,
+# and is written down before the checkout moves, so it is a record from then on.
 if [[ -s "$DEPLOYED_FILE" ]]; then
   PREVIOUS="$(< "$DEPLOYED_FILE")"
 else
   PREVIOUS="$(git rev-parse HEAD)"
+  printf '%s\n' "$PREVIOUS" > "$DEPLOYED_FILE.tmp"
+  mv "$DEPLOYED_FILE.tmp" "$DEPLOYED_FILE"
 fi
 if git merge-base --is-ancestor "$SHA" "$PREVIOUS"; then
   echo "already at or past $SHA (deployed: $PREVIOUS); nothing to do"

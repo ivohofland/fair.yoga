@@ -206,7 +206,7 @@ describe('deploy/deploy.sh', () => {
     expect(head()).toBe(before);
     expect(calls().some((c) => / run /.test(c))).toBe(false);
     expect(calls().some((c) => / up -d/.test(c))).toBe(false);
-    expect(recorded()).toBeNull();
+    expect(recorded()).toBe(before);
   });
 
   it('puts the checkout back and replaces no container when the migration fails', () => {
@@ -219,7 +219,7 @@ describe('deploy/deploy.sh', () => {
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
     expect(result.stderr).toContain('migrate');
     expect(result.stderr).toContain(before);
-    expect(recorded()).toBeNull();
+    expect(recorded()).toBe(before);
   });
 
   it('names both commits and the rollback when replacing the containers fails', () => {
@@ -247,13 +247,12 @@ describe('deploy/deploy.sh', () => {
     expect(result.stderr).toContain('rolling back');
   });
 
-  it('leaves the record alone when replacing the containers fails, and runs the whole deploy again on a retry', () => {
+  it('seeds the record from HEAD before a first deploy that fails at the swap, and runs the whole deploy again on a retry', () => {
     const before = head();
     const v2 = commitToOrigin('v2');
     expect(run({ sshCommand: v2, env: { FAKE_UP_FAIL: '1' } }).status).not.toBe(0);
-    expect(recorded()).toBeNull();
+    expect(recorded()).toBe(before);
     expect(head()).toBe(v2);
-    fs.writeFileSync(deployedFile, `${before}\n`);
     fs.rmSync(callLog);
 
     const retry = run({ sshCommand: v2 });
@@ -316,7 +315,7 @@ describe('deploy/deploy.sh', () => {
     const code = await closed;
     expect(code).not.toBe(0);
     expect(head()).toBe(before);
-    expect(recorded()).toBeNull();
+    expect(recorded()).toBe(before);
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
   }, 20_000);
 
@@ -336,7 +335,7 @@ describe('deploy/deploy.sh', () => {
 
     await closed;
     expect(head()).toBe(before);
-    expect(recorded()).toBeNull();
+    expect(recorded()).toBe(before);
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
   }, 20_000);
 
