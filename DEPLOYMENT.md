@@ -233,10 +233,11 @@ of its own (`docker compose run --rm migrate`), then replaces the containers
 and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
-would leave the site down. A failed build or migration, or a run cut off
-before the swap (a signal, a dropped connection), puts the checkout back and
-leaves the running app alone. A failed container replacement or health
-check leaves the new commit checked out and turns the CI run red:
+would leave the site down. A failed build or migration, or a signal that ends
+the run before the swap, puts the checkout back and leaves the running app
+alone. After a dropped connection the run either stops the same way or
+finishes; either way `/opt/fairyoga/.deployed` holds the deployed commit. A
+failed container replacement or health check leaves the new commit checked out and turns the CI run red:
 `<new> is checked out, <old> was before it`, naming the commit to roll back
 to. Either can leave the site down. The script records the commit that last
 passed its health check in `/opt/fairyoga/.deployed`, so running it again for
@@ -250,8 +251,8 @@ inserts leave it out), and a column or table is renamed or removed only once
 no deployed code reads it.
 
 It only moves forward along `origin/main`. A commit already deployed (the one
-recorded in `.deployed`; without that file, the checkout's HEAD), or an
-older one, answers success and changes nothing, so two runs finishing out of
+recorded in `.deployed`; the first run, with no such file, records the
+checkout's HEAD), or an older one, answers success and changes nothing, so two runs finishing out of
 order cannot roll the server back.
 
 ### Setting it up
@@ -304,9 +305,9 @@ order cannot roll the server back.
    With none of the three set, the job warns that deploy is not configured
    and succeeds; with only some set, it fails.
 
-Test it by re-running the `deploy` job of the latest `main` run. If that run's
-deploy succeeded, the script answers that it is already there, which proves the key, the host key and the
-forced command without changing anything.
+Test it by re-running the `deploy` job of the latest `main` run. If that
+run's deploy succeeded, the script answers that it is already there, which
+proves the key, the host key and the forced command without changing anything.
 
 ### By hand
 
@@ -316,8 +317,8 @@ The same script, as the deploy user on the VPS:
 cd /opt/fairyoga && git fetch -q origin main && fairyoga-deploy "$(git rev-parse origin/main)"
 ```
 
-The checkout is left detached at the commit the script last checked out, so `git pull` there no
-longer applies; `git fetch` and the script replace it.
+The checkout is left detached at the commit the script last checked out, so
+`git pull` there no longer applies; `git fetch` and the script replace it.
 
 ### A failed migration
 
