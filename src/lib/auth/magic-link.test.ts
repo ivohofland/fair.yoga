@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { PrismaClient } from '@prisma/client';
 import {
   generateMagicLinkToken,
+  mintMagicLinkToken,
+  hashToken,
   verifyMagicLinkToken,
   cleanupExpiredTokens,
 } from './magic-link';
@@ -71,6 +73,15 @@ describe('generateMagicLinkToken', () => {
     });
     expect(record).not.toBeNull();
     expect(record!.tokenHash).not.toBe(rawToken);
+  });
+});
+
+describe('mintMagicLinkToken', () => {
+  it('returns the expiry it stored, so an email can name it exactly', async () => {
+    const email = `mint-expiry-${Date.now()}@example.com`;
+    const { token, expiresAt } = await mintMagicLinkToken(db, email);
+    const row = await db.magicLinkToken.findUnique({ where: { tokenHash: hashToken(token) } });
+    expect(row?.expiresAt.getTime()).toBe(expiresAt.getTime());
   });
 });
 

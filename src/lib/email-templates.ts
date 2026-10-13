@@ -21,6 +21,7 @@ import {
   payPagePath,
 } from './notification-links';
 import { logDegraded } from './degradation';
+import { isValidTimeZone } from './iana-timezone';
 
 export function escapeHtml(text: string): string {
   return text
@@ -272,10 +273,32 @@ export function renderNotificationEmail(
   return { subject: notification.title, ...wrapEmail(notification.title, blocks, footer, unsubscribeUrl) };
 }
 
-/** The sign-in email: one link, one expiry note, nothing else. */
-export function renderMagicLinkEmail(magicLink: string): RenderedEmail {
+/**
+ * The sign-in email: one link, one expiry note, nothing else.
+ *
+ * Its subject names the link's expiry to the second, in the zone the
+ * requesting browser reported: Gmail threads mail by subject and trims
+ * repeated content inside a thread, so a constant subject hid a second
+ * email's Sign in button behind `•••` (#825). A zone that is missing, or that
+ * `isValidTimeZone` refuses, renders in UTC, labelled, so the subject is never
+ * a silent guess and never throws.
+ */
+export function renderMagicLinkEmail(
+  magicLink: string,
+  expiresAt: Date,
+  timeZone: string | undefined,
+): RenderedEmail {
+  const zone = timeZone !== undefined && isValidTimeZone(timeZone) ? timeZone : 'UTC';
+  const until = new Intl.DateTimeFormat('en-GB', {
+    timeZone: zone,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'short',
+  }).format(expiresAt);
   return {
-    subject: 'Sign in to fair.yoga',
+    subject: `Sign in to fair.yoga · valid until ${until}`,
     ...wrapEmail(
       'Sign in to fair.yoga',
       [

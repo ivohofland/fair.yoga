@@ -1,5 +1,5 @@
 import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
-import { generateMagicLinkToken } from './magic-link';
+import { mintMagicLinkToken } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { sendMagicLinkEmail } from '@/lib/email';
 import { log } from '@/lib/log';
@@ -23,22 +23,26 @@ export type BoundSignInLink = string & { readonly [boundLinkBrand]: true };
  * The only path from an address to a sign-in email. Callers obtain `nonce`
  * from `ensureOriginNonce`, which they must call for every accepted request
  * regardless of whether an account exists.
+ *
+ * `opts.timeZone` is the zone the requester's browser reported, or
+ * `undefined`; the email's subject names the link's expiry in it. It is a
+ * required key so a caller that has a zone cannot drop it by omission.
  */
 export async function deliverSignInLink(
   db: PrismaClient,
   email: string,
   nonce: BrowserNonce,
-  opts?: { redirectTo?: string; purpose?: MagicLinkPurpose },
+  opts: { timeZone: string | undefined; redirectTo?: string; purpose?: MagicLinkPurpose },
 ): Promise<void> {
-  const token = await generateMagicLinkToken(db, email, {
-    redirectTo: opts?.redirectTo,
-    purpose: opts?.purpose,
+  const { token, expiresAt } = await mintMagicLinkToken(db, email, {
+    redirectTo: opts.redirectTo,
+    purpose: opts.purpose,
     originBrowserHash: hashNonce(nonce),
   });
 
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
   const link = `${baseUrl}/verify?token=${token}` as BoundSignInLink;
-  await sendMagicLinkEmail(email, link);
+  await sendMagicLinkEmail(email, link, expiresAt, opts.timeZone);
 }
 
 /**
@@ -59,13 +63,13 @@ export function deliverSignInLinkIfRegistered(
   db: PrismaClient,
   email: string,
   nonce: BrowserNonce,
-  opts?: { redirectTo?: string },
+  opts: { timeZone: string | undefined; redirectTo?: string },
 ): FireAndForget {
   void (async () => {
     const teacher = await db.teacher.findUnique({ where: { email } });
     const user = teacher ?? (await db.student.findUnique({ where: { email } }));
     if (!user) return;
-    await deliverSignInLink(db, email, nonce, { redirectTo: opts?.redirectTo });
+    await deliverSignInLink(db, email, nonce, { redirectTo: opts.redirectTo, timeZone: opts.timeZone });
   })().catch((err: unknown) => {
     log.error({ err }, 'magic-link send: delivery failed');
   });

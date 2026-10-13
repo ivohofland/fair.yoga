@@ -155,9 +155,16 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult> {
  */
 export async function sendMagicLinkEmail(
   to: string,
-  magicLink: BoundSignInLink
+  magicLink: BoundSignInLink,
+  expiresAt: Date,
+  timeZone: string | undefined,
 ): Promise<void> {
-  const result = await sendEmail({ to, audience: 'platform', content: renderMagicLinkEmail(magicLink), unsubscribe: null });
+  const result = await sendEmail({
+    to,
+    audience: 'platform',
+    content: renderMagicLinkEmail(magicLink, expiresAt, timeZone),
+    unsubscribe: null,
+  });
   if (!result.ok) throw new Error(`Failed to send magic-link email: ${result.reason}`);
   if (result.delivery === 'dry-run') console.log(`\n[DEV] Magic link for ${to}: ${magicLink}\n`);
 }

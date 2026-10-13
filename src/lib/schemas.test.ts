@@ -1553,6 +1553,9 @@ const UNBOUNDED_STRING_ALLOWED: Record<string, string> = {
   'updateStudentSchema.birthday': 'refine-bounded: parseBirthday accepts only a calendar date',
   'teacherProfileSchema.defaultTimezone': 'refine-bounded: only a recognised IANA zone is kept',
   'updateTeacherSchema.defaultTimezone': 'refine-bounded: only a recognised IANA zone is accepted',
+  'magicLinkSendSchema.timeZone': 'refine-bounded: only a recognised IANA zone is kept',
+  'studentSignupSchema.timeZone': 'refine-bounded: only a recognised IANA zone is kept',
+  'teacherSignupSchema.timeZone': 'refine-bounded: only a recognised IANA zone is kept',
 };
 
 /**
@@ -1572,6 +1575,9 @@ const HIDDEN_CHARACTERS_ALLOWED: Record<string, string> = {
   'archiveStudentBodySchema.waivePaymentIds[*]': 'never stored or shown: matched against payment ids',
   'updateStudentSchema.birthday': 'transform-checked: parseBirthday accepts only a calendar date',
   'teacherProfileSchema.defaultTimezone': 'transform-checked: only a recognised IANA zone is kept',
+  'magicLinkSendSchema.timeZone': 'transform-checked: only a recognised IANA zone is kept',
+  'studentSignupSchema.timeZone': 'transform-checked: only a recognised IANA zone is kept',
+  'teacherSignupSchema.timeZone': 'transform-checked: only a recognised IANA zone is kept',
 };
 
 const BOUNDED_FORMATS = new Set(['uuid', 'datetime']);
@@ -1915,5 +1921,34 @@ describe('what the money cap is decided against (#769)', () => {
 
   it('pins the currencies MONEY_MAX was decided for, so a new one forces a re-decision', () => {
     expect(Object.values(Currency).sort()).toEqual(['CHF', 'DKK', 'EUR', 'GBP', 'NOK', 'SEK', 'USD']);
+  });
+});
+
+describe('sign-in request timeZone (#825)', () => {
+  const SIGN_IN_SCHEMAS = {
+    magicLinkSendSchema: schemas.magicLinkSendSchema,
+    teacherSignupSchema: schemas.teacherSignupSchema,
+    studentSignupSchema: schemas.studentSignupSchema,
+  } as const;
+  const names = Object.keys(SIGN_IN_SCHEMAS) as (keyof typeof SIGN_IN_SCHEMAS)[];
+
+  it.each(names)('%s keeps a zone the server knows', (name) => {
+    const parsed = SIGN_IN_SCHEMAS[name].safeParse({ email: 'a@b.test', timeZone: 'Europe/Amsterdam' });
+    expect(parsed.success && parsed.data.timeZone).toBe('Europe/Amsterdam');
+  });
+
+  it.each(names)('%s modernises a renamed zone', (name) => {
+    const parsed = SIGN_IN_SCHEMAS[name].safeParse({ email: 'a@b.test', timeZone: 'Europe/Kiev' });
+    expect(parsed.success && parsed.data.timeZone).toBe('Europe/Kyiv');
+  });
+
+  it.each(names)('%s drops an unknown zone instead of refusing', (name) => {
+    const parsed = SIGN_IN_SCHEMAS[name].safeParse({ email: 'a@b.test', timeZone: 'Mars/Olympus_Mons' });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.timeZone).toBeUndefined();
+  });
+
+  it.each(names)('%s accepts a body without a zone', (name) => {
+    expect(SIGN_IN_SCHEMAS[name].safeParse({ email: 'a@b.test' }).success).toBe(true);
   });
 });

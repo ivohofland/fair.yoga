@@ -17,6 +17,8 @@ import {
 } from './email-templates';
 import { STUDENT_INVITATION_PATH, STUDENT_BOOKINGS_PATH, TEACHER_INVITATION_PATH } from './notification-links';
 
+const SUMMER_EXPIRY = new Date('2026-10-13T20:29:37Z');
+
 describe('email templates', () => {
   it('uses the reminder footer, not the unread-fallback one, when given (#721)', () => {
     const { html } = renderNotificationEmail(
@@ -311,10 +313,41 @@ describe('email templates', () => {
   });
 
   it('magic-link email carries the link and the expiry note', () => {
-    const { html, subject } = renderMagicLinkEmail('https://example.test/verify?token=abc');
-    expect(subject).toBe('Sign in to fair.yoga');
+    const { html } = renderMagicLinkEmail('https://example.test/verify?token=abc', SUMMER_EXPIRY, 'Europe/Amsterdam');
     expect(html).toContain('https://example.test/verify?token=abc');
     expect(html).toContain('expires in 15 minutes');
+  });
+
+  it('magic-link subject names the expiry, to the second, in the requester zone', () => {
+    const { subject } = renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'Europe/Amsterdam');
+    expect(subject).toBe('Sign in to fair.yoga · valid until 22:29:37 CEST');
+  });
+
+  it('magic-link subject follows the zone across a DST change', () => {
+    const { subject } = renderMagicLinkEmail('https://x', new Date('2026-12-13T21:29:37Z'), 'Europe/Amsterdam');
+    expect(subject).toBe('Sign in to fair.yoga · valid until 22:29:37 CET');
+  });
+
+  it('magic-link subject reads UTC, labelled, without a zone', () => {
+    const { subject } = renderMagicLinkEmail('https://x', SUMMER_EXPIRY, undefined);
+    expect(subject).toBe('Sign in to fair.yoga · valid until 20:29:37 UTC');
+  });
+
+  it('magic-link subject reads UTC for a zone Intl does not know, rather than throwing', () => {
+    const { subject } = renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'Mars/Olympus_Mons');
+    expect(subject).toBe('Sign in to fair.yoga · valid until 20:29:37 UTC');
+  });
+
+  it('two magic-link emails a second apart never share a subject (#825)', () => {
+    const later = new Date(SUMMER_EXPIRY.getTime() + 1000);
+    expect(renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'Europe/Amsterdam').subject).not.toBe(
+      renderMagicLinkEmail('https://x', later, 'Europe/Amsterdam').subject,
+    );
+  });
+
+  it('magic-link heading stays plain: the expiry is for the inbox list only', () => {
+    const { html } = renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'Europe/Amsterdam');
+    expect(html).not.toContain('valid until');
   });
 
   it('escapeHtml handles all special characters', () => {
@@ -609,8 +642,8 @@ describe('wrapEmail', () => {
   });
 
   it('renders no unsubscribe link without one', () => {
-    expect(renderMagicLinkEmail('https://x').html).not.toContain('Unsubscribe');
-    expect(renderMagicLinkEmail('https://x').text).not.toContain('Unsubscribe');
+    expect(renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'UTC').html).not.toContain('Unsubscribe');
+    expect(renderMagicLinkEmail('https://x', SUMMER_EXPIRY, 'UTC').text).not.toContain('Unsubscribe');
   });
 
   it('joins paragraph lines with <br> in html and newlines in text', () => {
@@ -630,7 +663,7 @@ describe('text parts', () => {
   const at = new Date('2026-10-10T09:30:00Z');
 
   it('magic link: link in text, account footer, no unread/settings claim', () => {
-    const email = renderMagicLinkEmail('https://fair.yoga/verify?token=abc&x=1');
+    const email = renderMagicLinkEmail('https://fair.yoga/verify?token=abc&x=1', SUMMER_EXPIRY, 'UTC');
     expect(email.text).toContain('Sign in: https://fair.yoga/verify?token=abc&x=1');
     expect(email.text).toContain('expires in 15 minutes');
     expect(email.text).toContain('You get this email because of activity on your fair.yoga account.');
