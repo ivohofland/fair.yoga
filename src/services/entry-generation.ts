@@ -980,7 +980,8 @@ export type EditLogNoun = FamilyMetadataMap[ClassFamily]['editNoun'];
 /**
  * The probe behind each family's `firstEffective`
  * (`UpdateClassTemplateResult`, #194; `UpdateStudioClassTemplateResult`,
- * #284): the first candidate date in `horizon` that `generateEntriesForRule`
+ * #284), and through `candidate` behind `updateRule`'s `lateFirstClass`
+ * (#849): the first candidate date in `horizon` that `generateEntriesForRule`
  * would actually fill (`candidate`), and the Monday of its week (`week`),
  * GIVEN that the template is eligible to generate at all.
  *

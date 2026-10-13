@@ -52,7 +52,8 @@ export type TemplateToggleResponse =
 /**
  * The `data` payload of a successful PATCH on a *studio* class template (#93, #119, #206).
  *
- * Differs from `TemplateToggleResponse` in `templateKind: 'studio'`.
+ * Differs from `TemplateToggleResponse` in `templateKind: 'studio'` and in its
+ * `active` arm carrying no `lateFirstClass`.
  */
 export type StudioTemplateToggleResponse =
   | { action: 'paused'; lastScheduled: { date: string; startTime: string } | null }
@@ -92,8 +93,9 @@ export interface StudioTemplateCreateResponse {
 }
 
 /**
- * The prediction fields carried on the `data` payload of a successful PUT editing
- * a recurring class template (#194, #206).
+ * The prediction fields carried on the `data` payload of a successful PUT on a
+ * recurring template (#194, #206): the studio edit's prediction, and the base
+ * `ClassTemplateEditResponse` extends.
  *
  * `firstEffective` is an ISO string on the wire (Monday of the first week the
  * new schedule reaches), or `null` when there is no such week to name (#194/#284).
@@ -117,7 +119,7 @@ export interface TemplateEditResponse {
 /**
  * The `data` payload of a successful PUT on a recurring class template: the
  * edit's prediction plus whether the first class it may add starts inside its
- * cancellation deadline (#849). The studio edit answers `TemplateEditResponse`.
+ * cancellation deadline (#849).
  */
 export type ClassTemplateEditResponse = TemplateEditResponse & {
   lateFirstClass: LateFirstClass | null;

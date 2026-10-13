@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@prisma/client';
 import {
   archiveOrUnarchiveRule,
   pauseOrResumeRule,
+  updateRule,
   type ArchiveRuleResult,
   type PauseRuleResult,
   type UpdateRuleResult,
@@ -15,6 +16,7 @@ import { STUDIO_FAMILY } from './studio-class-template-lifecycle';
 import { CLASS_GENERATOR } from './class-generator';
 import { STUDIO_GENERATOR } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { log } from '@/lib/log';
 
 const prisma = new PrismaClient();
 const uniqueSuffix = Date.now();
@@ -474,5 +476,38 @@ describe('the shared lifecycle verbs (DB)', () => {
     await expect(
       pauseOrResumeRule(throwing, CLASS_FAMILY, template.id, teacherId, 'active'),
     ).rejects.toBe(checkViolation);
+  });
+
+  /**
+   * `updateRule` judges the late first class after the edit has committed, so
+   * a throw there must answer `null` rather than turn a saved edit into a 500.
+   * A family whose hook throws is the only way to reach that `catch`: the
+   * shipped hook does not throw on any row this fixture can build.
+   */
+  it('answers lateFirstClass null, and logs, when the late-first-class check throws after the edit commits', async () => {
+    const template = await makeTemplate();
+    const thrown = new Error('late-first-class hook exploded');
+    const family: TemplateFamily<ClassTemplate> = {
+      ...CLASS_FAMILY,
+      lateFirstClass: () => {
+        throw thrown;
+      },
+    };
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    try {
+      const result = await updateRule(prisma, family, template.id, teacherId, { maxStudents: 7 });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.lateFirstClass).toBeNull();
+      // The edit itself stands: the throw came after the commit.
+      expect(result.template.maxStudents).toBe(7);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: thrown, templateId: template.id }),
+        expect.stringContaining('late-first-class check threw'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

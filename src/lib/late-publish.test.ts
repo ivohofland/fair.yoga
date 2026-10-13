@@ -139,6 +139,7 @@ describe('isLateFirstClass', () => {
     ['null', null],
     ['a string', 'past_deadline'],
     ['state none', { ...ok, state: 'none' }],
+    ['an inherited key as state', { ...ok, state: 'toString' }],
     ['a malformed date', { ...ok, date: '10-11-2026' }],
     ['zero students', { ...ok, minStudents: 0 }],
     ['fractional students', { ...ok, minStudents: 1.5 }],

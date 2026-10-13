@@ -290,13 +290,13 @@ export const PUT = withErrorHandler(async (
     throw e;
   }
 
-  // `firstEffective` and `generationState` ride alongside the template row
-  // rather than replacing it: `TemplateForm` reads nothing else from this
-  // body, and the integration suite's "the success body is the bare template"
-  // case pins that no propagation REPORT came back — two PREDICTION fields are
-  // the opposite of that, and are what let the form say when the edit takes
-  // hold (#194). `firstEffective` is serialized as an ISO string (converted
-  // explicitly above for `respondTyped`) and the form converts it back;
+  // `firstEffective`, `generationState` and `lateFirstClass` ride alongside
+  // the template row rather than replacing it: the integration suite's "the
+  // success body is the bare template" case pins that no propagation REPORT
+  // came back, and these are PREDICTIONS, the opposite of that — they are
+  // what let the form say when the edit takes hold (#194, #849).
+  // `firstEffective` is serialized as an ISO string (converted explicitly
+  // above for `respondTyped`) and the form converts it back;
   // `generationState` is already a string.
   //
   // `generationState` is not redundant with the `isActive`/`isArchived`

@@ -98,14 +98,14 @@ it log the fallback.
   for free, and the class goes ahead however few book. If {shortfall}, you
   cover what {missing} would have paid." (same singular/plural rule as publish)
 
-## Template path: decided (c), filed separately
+## Template path: filed separately as #849
+
+Changed to (b) on 2026-10-13 — warn the teacher in the template's save answer instead of skipping the candidate: see `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`.
 
 Decision (by the issue author, 2026-10-12): **(c)**, skip generating a candidate
 that is already inside its cancellation deadline. It changes the generator's
 rules, so it gets its own issue and spec: #849. This branch does not touch the
 generator.
-
-Changed to (b) on 2026-10-13 — warn the teacher in the template's save answer instead of skipping the candidate: see `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`.
 
 ## Not done
 

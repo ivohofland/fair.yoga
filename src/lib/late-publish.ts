@@ -78,7 +78,17 @@ export function moveWarningFor(cls: {
 /** What a template's first class faces when it starts inside the template's cancellation window. */
 export type LateFirstClassState = Exclude<LatePublishState, 'none'>;
 
+/**
+ * The states `isLateFirstClass` accepts. `satisfies` makes a state added to or
+ * dropped from `LateFirstClassState` a compile error here.
+ */
+const LATE_FIRST_CLASS_STATES = {
+  past_deadline: true,
+  past_check: true,
+} satisfies Record<LateFirstClassState, true>;
+
 export interface LateFirstClass {
+  /** The class's calendar date, `YYYY-MM-DD`. */
   date: string;
   state: LateFirstClassState;
   minStudents: number;
@@ -90,7 +100,8 @@ export function isLateFirstClass(value: unknown): value is LateFirstClass {
   return (
     typeof date === 'string' &&
     /^\d{4}-\d{2}-\d{2}$/.test(date) &&
-    (state === 'past_deadline' || state === 'past_check') &&
+    typeof state === 'string' &&
+    Object.hasOwn(LATE_FIRST_CLASS_STATES, state) &&
     typeof minStudents === 'number' &&
     Number.isInteger(minStudents) &&
     minStudents > 0
