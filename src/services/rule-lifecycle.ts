@@ -1858,10 +1858,10 @@ export async function updateRule<TChild>(
   // The latest instant the next nominal sweep runs. The horizon, the probe's
   // `past_cancel_check` decline and the late-first-class judgement are all
   // judged at it, so they cannot disagree. A sweep running earlier may still
-  // fill a candidate the answer skipped, and the class then arrives a week
-  // before the answer named it — the tolerated direction. A sweep running
-  // later than nominal can still miss the named candidate, bounded by how
-  // late it runs.
+  // fill a candidate the answer skipped, and the class then arrives before the
+  // week the answer named — the tolerated direction, since the answer never
+  // names a week too early. A sweep running later than nominal can miss the
+  // named candidate when it runs after that candidate's start.
   const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
   const horizon = probeHorizon(updatedRule, timeZone, at);
 

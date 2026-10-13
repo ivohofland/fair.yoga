@@ -548,11 +548,11 @@ describe('updateClassTemplate (DB)', () => {
    * next sweep's latest instant, the predicate the generator applies to its
    * own candidates at its run instant. Without it the probe would name a week
    * the sweep never fills, which is the dishonest direction.
-   * `class-templates-api.test.ts` drives both of
-   * its probe cases through `sameWeekDayPair()`, whose docblock states outright
-   * that neither day is ever today, and this file's own fixtures pin
-   * `dayOfWeek: 3`, so the template's weekday is today on one day in seven and
-   * the class hour was never arranged to have passed.
+   * `class-templates-api.test.ts` drives both of its probe cases through
+   * `sameWeekDayPair()`, whose docblock states outright that neither day is
+   * ever today, and this file's own fixtures pin `dayOfWeek: 3`, so the
+   * template's weekday is today on one day in seven and the class hour was
+   * never arranged to have passed.
    *
    * The arrangement is deliberate on all three inputs and none of them can
    * drift with the calendar:

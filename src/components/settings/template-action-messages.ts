@@ -350,9 +350,10 @@ export type TemplateCopyNoun = 'recurring class' | 'template';
  * Shown after a template edit (#194). The edit changes nothing that already
  * exists, so this sentence carries the whole of what happened.
  *
- * `firstEffective` is the Monday of the week the sentence names;
- * `probeFirstEffectiveWeek` (`services/entry-generation.ts`) says what that
- * week predicts and how. `null` from that probe has two meanings
+ * `firstEffective` is the Monday of the week the sentence names, a prediction
+ * of when the sweep first adds a class; `probeFirstEffectiveWeek`
+ * (`services/entry-generation.ts`) owns what it predicts. `null` from that
+ * probe has two meanings
  * (#287): no free week inside the probe's horizon, or the probe failed (read
  * fault or arithmetic fault). Both drop the clause rather than invent a date —
  * this file's rule that saying nothing beats saying something unfounded holds
