@@ -104,6 +104,18 @@ export function PricingPreviewTable({
     );
   }
 
+  // Placed after the gates so a field mid-edit — cleared, or briefly below the
+  // other bound — cannot move the size; only a range the preview prices can.
+  const lowest = Math.ceil(effectiveMin);
+  const highest = Math.max(lowest, Math.floor(effectiveMax));
+  const clamped = Math.min(highest, Math.max(lowest, studentCount));
+  if (clamped !== studentCount) {
+    // Adjusting state during render: React re-renders before committing, so the
+    // stale size never reaches the screen.
+    setStudentCount(clamped);
+    updateDistribution(clamped, mode);
+  }
+
   return (
     <div className="mt-6 flex flex-col gap-6">
       {/* Slider */}

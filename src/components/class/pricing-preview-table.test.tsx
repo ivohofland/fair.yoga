@@ -212,4 +212,85 @@ describe('PricingPreviewTable', () => {
     expect(screen.getByText('1 min')).toBeTruthy();
     expect(screen.getByText('12 max')).toBeTruthy();
   });
+
+  describe('when the form narrows the class-size range', () => {
+    const TIERS = ['1 · Getting by', '2 · Managing', '3 · Comfortable', '4 · Doing well', '5 · Plenty to share'];
+    const seated = (): number => TIERS.map((l) => Number(row(l)[0])).reduce((a, b) => a + b, 0);
+
+    it('moves a size above the new maximum down to it and prices that size', () => {
+      // Oracle: the same range rendered fresh with its slider at 6.
+      const fresh = render(<PricingPreviewTable {...EXAMPLE} maxStudents={6} />);
+      setStudents(6);
+      const expected = fresh.container.textContent;
+      fresh.unmount();
+
+      const { rerender, container } = render(<PricingPreviewTable {...EXAMPLE} />);
+      expect(screen.getByText('8 students')).toBeTruthy();
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={6} />);
+
+      expect(screen.getByText('6 students')).toBeTruthy();
+      expect((screen.getByRole('slider') as HTMLInputElement).value).toBe('6');
+      // 6 students fill a 4–6 class: the target rate, 90, plus the room, 20.
+      expect(screen.getByText('€110.00')).toBeTruthy();
+      expect(seated()).toBe(6);
+      expect(container.textContent).toBe(expected);
+    });
+
+    it('moves a size below the new minimum up to it', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} minStudents={10} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
+      // 10 students at the minimum of a 10–12 class: the min rate, 40, plus the room, 20.
+      expect(screen.getByText('€60.00')).toBeTruthy();
+      expect(seated()).toBe(10);
+    });
+
+    it('leaves a size still inside the new range alone', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      setStudents(10);
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={11} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
+      expect(seated()).toBe(10);
+    });
+
+    it('keeps the size through the states a bound passes while being retyped', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      setStudents(10);
+      // Backspacing 12 to type 15: cleared, then "1" (below the minimum), then "15".
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={Number.NaN} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={1} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={15} />);
+
+      expect(screen.getByText('10 students')).toBeTruthy();
+    });
+
+    it('lands on a whole number when a bound is not one', () => {
+      const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+      rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={6.5} />);
+
+      expect(screen.getByText('6 students')).toBeTruthy();
+      expect(seated()).toBe(6);
+    });
+
+    describe('with a fixed random source', () => {
+      // Math.random() = 0.5 puts every draw at tier 2 (see the block above).
+      beforeEach(() => {
+        vi.spyOn(Math, 'random').mockReturnValue(0.5);
+      });
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('redraws a shuffled mix at the new size', () => {
+        const { rerender } = render(<PricingPreviewTable {...EXAMPLE} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Shuffle mix' }));
+        rerender(<PricingPreviewTable {...EXAMPLE} maxStudents={6} />);
+
+        expect(screen.getByText('6 students')).toBeTruthy();
+        expect(row('2 · Managing')[0]).toBe('6');
+      });
+    });
+  });
 });
