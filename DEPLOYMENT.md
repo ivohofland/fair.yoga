@@ -237,12 +237,13 @@ would leave the site down. A failed build or migration, or a signal that ends
 the run before the swap, puts the checkout back and leaves the running app
 alone. After a dropped connection the run either stops the same way or
 finishes; either way `/opt/fairyoga/.deployed` holds the deployed commit. A
-failed container replacement or health check leaves the new commit checked out and turns the CI run red:
-`<new> is checked out, <old> was before it`, naming the commit to roll back
-to. Either can leave the site down. The script records the commit that last
-passed its health check in `/opt/fairyoga/.deployed`, so running it again for
-the failed commit, or re-running the CI job, deploys it again; or roll back.
-The app is unreachable for the few seconds the container swap takes.
+failed container replacement or health check leaves the new commit checked
+out and turns the CI run red: `<new> is checked out, <old> was before it`,
+naming the commit to roll back to. Either can leave the site down. The
+script records the commit that last passed its health check in
+`/opt/fairyoga/.deployed`, so running it again for the failed commit, or
+re-running the CI job, deploys it again; or roll back. The app is
+unreachable for the few seconds the container swap takes.
 
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
@@ -252,8 +253,8 @@ no deployed code reads it.
 
 It only moves forward along `origin/main`. A commit already deployed (the one
 recorded in `.deployed`; the first run, with no such file, records the
-checkout's HEAD), or an older one, answers success and changes nothing, so two runs finishing out of
-order cannot roll the server back.
+checkout's HEAD), or an older one, answers success and changes nothing, so
+two runs finishing out of order cannot roll the server back.
 
 ### Setting it up
 
