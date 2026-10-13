@@ -26,7 +26,7 @@
 
 1. A candidate exactly at `at`: excluded (strict `>`, matching the generator). Pinned in Task 1.
 2. A non-UTC teacher zone: the boundary is judged on the zone-resolved start instant, not UTC wall time. Pinned in Task 1.
-3. `now` and `at` on different UTC dates: occurrences still enumerate from `now`, so no candidate on `now`'s date is lost to the enumeration. Pinned in Task 1.
+3. `now` and `at` on different UTC dates: occurrences enumerate from `at`, as a sweep running at `at` enumerates from its own run instant's UTC date, so a candidate dated `now`'s UTC date that such a sweep never sees is not named. Pinned in Task 1.
 4. A studio candidate just past the interval (≈90 min out) is still named. Pinned in Task 2.
 5. The class family's answer is unchanged — the existing #859 cases in `class-template-lifecycle.test.ts` must stay green untouched.
 
@@ -39,14 +39,14 @@
 - Test: `src/services/entry-generation.test.ts` (new `describe('probeHorizon')`)
 
 **Interfaces:**
-- Produces: `export function probeHorizon(rule: { dayOfWeek: number; startTime: Date }, timeZone: string, now: Date, at: Date): Date[]` — the next `DEFAULT_WEEKS * 2` occurrences of `rule.dayOfWeek` enumerated from `now`, keeping only those whose `classStartInstant({ date, startTime: rule.startTime }, timeZone)` is strictly after `at`.
+- Produces: `export function probeHorizon(rule: { dayOfWeek: number; startTime: Date }, timeZone: string, at: Date): Date[]` — the next `DEFAULT_WEEKS * 2` occurrences of `rule.dayOfWeek` enumerated from `at`, keeping only those whose `classStartInstant({ date, startTime: rule.startTime }, timeZone)` is strictly after `at`.
 
 - [ ] **Step 1: Write the failing tests.** In `entry-generation.test.ts`, import `probeHorizon` and `hhmmToTime` (`@/lib/time-of-day`). Use a Tuesday occurrence, `2026-10-20` (schema `dayOfWeek: 1`), `startTime: hhmmToTime('10:00')`, zone `'UTC'`, so the candidate's start `S = 2026-10-20T10:00:00.000Z`. For each case set `now = at - 60 min`:
   - `at = S - 1 ms` → horizon[0] is `2026-10-20`.
   - `at = S` → horizon[0] is `2026-10-27`.
   - `at = S + 1 ms` → horizon[0] is `2026-10-27`.
   - Zone `'Europe/Amsterdam'` (CEST, UTC+2 on that date), same rule: start instant is `2026-10-20T08:00:00.000Z`; `at` 1 ms before it keeps `2026-10-20`, `at` equal to it drops it.
-  - `now = 2026-10-19T23:30:00.000Z`, `at = now + 60 min` (next UTC date), rule Tuesday `10:00` UTC: horizon[0] is `2026-10-20` (enumeration from `now` loses nothing).
+  - `now = 2026-10-19T23:30:00.000Z`, `at = now + 60 min` (next UTC date), zone `America/Los_Angeles`, rule Monday `20:00` local (starts `2026-10-20T03:00Z`, after `at`): horizon[0] is `2026-10-26`, because a sweep running at `at` enumerates from `2026-10-20` and never sees `2026-10-19`.
   - `now` well before (`2026-10-13T00:00Z`), `at = now + 60 min`: horizon has `DEFAULT_WEEKS * 2` members, all Tuesdays, ascending.
 
 - [ ] **Step 2: Run, see them fail** — `pnpm exec vitest run --project unit src/services/entry-generation.test.ts` . Expected: `probeHorizon` is not exported.
@@ -57,16 +57,15 @@
 export function probeHorizon(
   rule: { dayOfWeek: number; startTime: Date },
   timeZone: string,
-  now: Date,
   at: Date,
 ): Date[] {
-  return getNextOccurrences(rule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+  return getNextOccurrences(rule.dayOfWeek, at, DEFAULT_WEEKS * 2).filter(
     (date) => classStartInstant({ date, startTime: rule.startTime }, timeZone) > at,
   );
 }
 ```
 
-  With a docblock stating: the candidates an edit's probe considers; strictly after `at`, the same strict comparison the generator's own window applies at its run instant, so a candidate a sweep running at `at` would skip is not named; enumerated from `now` rather than `at` so that a candidate on `now`'s date is not lost when `at` falls on the next UTC date; `DEFAULT_WEEKS * 2` for the reason `DEFAULT_WEEKS`'s own docblock gives. The caller owns `at` (point at `updateRule`).
+  With a docblock stating: the candidates an edit's probe considers; strictly after `at`, the same strict comparison the generator's own window applies at its run instant, so a candidate a sweep running at `at` would skip is not named; enumerated from `at`, so the list is the one a sweep running at `at` builds and an earlier sweep sees a superset (the tolerated direction); `DEFAULT_WEEKS * 2` for the reason `DEFAULT_WEEKS`'s own docblock gives. The caller owns `at` (point at `updateRule`).
 
 - [ ] **Step 4: Run, see them pass.** Then **prove the strictness bites**: change `> at` to `>= at`, re-run, record the failing case's exact assertion text (the `at = S` case), restore, re-run green.
 
@@ -80,7 +79,7 @@ export function probeHorizon(
 - Test: `src/services/studio-class-template-lifecycle.test.ts` (`updateStudioClassTemplate (DB)`)
 
 **Interfaces:**
-- Consumes: `probeHorizon(rule, timeZone, now, at)` from Task 1.
+- Consumes: `probeHorizon(rule, timeZone, at)` from Task 1.
 
 - [ ] **Step 1: Write the failing tests.** In `studio-class-template-lifecycle.test.ts`:
   - Invert the existing case "still names the near week for a candidate starting within the hour": rename it to say the answer names the following week, and assert `result.firstEffective` equals `mondayOf(near) + 7 days`. Rewrite its leading comment to state the current rule: a candidate starting before the next nominal sweep may never be generated, so the answer names the week after (#860).
@@ -89,7 +88,7 @@ export function probeHorizon(
 
 - [ ] **Step 2: Run, see the inverted case fail** — `pnpm exec vitest run --project unit src/services/studio-class-template-lifecycle.test.ts -t "near"` (the `unit` project includes `src/**/*.test.ts`, DB-backed service tests among them, against the worktree's own test database). Expected: the 40-minute case answers `mondayOf(near)`.
 
-- [ ] **Step 3: Implement.** In `updateRule`: move the `at` declaration above the horizon, and replace the inline `getNextOccurrences(...).filter(... > now)` with `probeHorizon(updatedRule, timeZone, now, at)`. Drop `getNextOccurrences`'s import from `rule-lifecycle.ts` if nothing else there uses it. Rewrite the `at` comment so it states what is true now: `at` is the latest instant the next nominal sweep runs; the horizon, the probe's `past_cancel_check` decline and the late-first-class judgement are all judged at it, so they cannot disagree; a sweep earlier than nominal may fill a candidate the answer skipped (class arrives a week earlier than named — the tolerated direction); a sweep later than nominal can still miss the named candidate, bounded by how late it runs. Remove the "#860's imprecision" sentence.
+- [ ] **Step 3: Implement.** In `updateRule`: move the `at` declaration above the horizon, and replace the inline `getNextOccurrences(...).filter(... > now)` with `probeHorizon(updatedRule, timeZone, at)`. Drop `getNextOccurrences`'s import from `rule-lifecycle.ts` if nothing else there uses it. Rewrite the `at` comment so it states what is true now: `at` is the latest instant the next nominal sweep runs; the horizon, the probe's `past_cancel_check` decline and the late-first-class judgement are all judged at it, so they cannot disagree; a sweep earlier than nominal may fill a candidate the answer skipped (class arrives a week earlier than named — the tolerated direction); a sweep later than nominal can still miss the named candidate, bounded by how late it runs. Remove the "#860's imprecision" sentence.
 
 - [ ] **Step 4: Run, see green**, then the whole `class-template-lifecycle.test.ts` and `rule-lifecycle.test.ts` too (Review Focus 5: unchanged). **Prove it bites**: revert `updateRule` to pass `now` as `at` to `probeHorizon`, re-run the studio file, record the exact failing assertion, restore.
 
