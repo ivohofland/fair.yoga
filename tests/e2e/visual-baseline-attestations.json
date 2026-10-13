@@ -16,10 +16,10 @@
     "verifiedAt": "2026-10-13"
   },
   "public-page": {
-    "sourceSha256": "b837d640db11ad4a93441b52c65f2f57154a03fbd7b83111b2378a348231965c",
+    "sourceSha256": "7b1133ad0177003fd223e1437374321a18e05f0ea060171f893833a6f8b90744",
     "baselineSha256": "c405c17f0442fd3639744797ccb1862397606368e1994c8ff757e793fc446be9",
-    "verifiedAt": "2026-10-06",
-    "note": "Currency threaded through ClassPriceLine; EUR output is byte-identical"
+    "verifiedAt": "2026-10-13",
+    "note": "Task 3 added the VAT line to the booking-page price data; the public page itself renders the same"
   },
   "schedule": {
     "sourceSha256": "4e385e13c2a7fde59e7b07c98b53ae382ed631fa72379552dabffc5baf8a43d1",
