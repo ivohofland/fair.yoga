@@ -90,9 +90,12 @@ describe('probeHorizon', () => {
   });
 
   it("enumerates from now so a candidate on now's date survives when at is the next UTC date", () => {
+    // Monday 20:00 PDT is 2026-10-20T03:00Z: dated 10-19, starting after `at`.
+    const mondayEvening = { dayOfWeek: 0, startTime: hhmmToTime('20:00') };
     const now = new Date('2026-10-19T23:30:00.000Z');
-    const at = new Date(now.getTime() + 60 * 60_000);
-    expect(horizonAt('UTC', at, now)[0]).toBe('2026-10-20');
+    const at = new Date('2026-10-20T00:30:00.000Z');
+    const dates = probeHorizon(mondayEvening, 'America/Los_Angeles', now, at);
+    expect(dates[0]!.toISOString().slice(0, 10)).toBe('2026-10-19');
   });
 
   it('returns DEFAULT_WEEKS * 2 ascending Tuesdays when nothing is cut', () => {
