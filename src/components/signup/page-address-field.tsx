@@ -57,21 +57,30 @@ interface Answer {
 
 const DEBOUNCE_MS = 400;
 
+/**
+ * A refusal the server issued at submit, carrying the address it refused —
+ * the shape a caller keeps for `error`. Pass its `message` only while `value`
+ * is still its `slug`: an edit then retires it without a clear, and typing
+ * that address back brings it back.
+ */
+export interface SlugRejection {
+  slug: string;
+  message: string;
+}
+
 interface PageAddressFieldProps {
   value: string;
   onChange: (value: string) => void;
   /**
-   * A field error the SERVER decided — the 409 `SLUG_TAKEN` at submit. It
-   * outranks anything the live check has to say, because a live check that
-   * disagrees is by definition the stale one.
+   * A field error the server decided at submit. It outranks anything the live
+   * check has to say, because a live check that disagrees is by definition the
+   * stale one.
    */
   error?: string;
   /**
-   * The address to treat as the teacher's own, on a form that edits a saved
-   * one — the one they hold, or one a save in flight is claiming for them.
-   * While the field shows it, nothing is asked and no verdict is drawn: the
-   * endpoint cannot tell who is asking and would call the teacher's own
-   * address taken.
+   * The address to treat as the teacher's own. While the field shows it,
+   * nothing is asked and no verdict is drawn: the endpoint cannot tell who is
+   * asking and would call an address this teacher holds taken.
    */
   currentSlug?: string;
   /** Passed through to the input. */
@@ -82,6 +91,8 @@ interface PageAddressFieldProps {
 
 /**
  * The public page address, checked as it is typed.
+ *
+ * The teacher's own address (`currentSlug`) is neither checked nor judged.
  *
  * The check is ADVISORY. There is always a gap between an answer and a
  * submit, and another teacher can claim the address inside it — the 409 the
@@ -108,9 +119,9 @@ export function PageAddressField({
   // one — a spinner on every keystroke is motion this design does not have.
   const parsed = value === '' ? null : pageSlugField.safeParse(value);
   const localError = parsed && !parsed.success ? parsed.error.issues[0]?.message : undefined;
-  // The teacher's own address draws nothing even when an answer about it is
-  // stored — one fetched before it was saved would otherwise linger as a
-  // claim about an address the teacher already holds.
+  // `currentSlug` draws nothing even when an answer about it is stored — one
+  // fetched before it became `currentSlug` would otherwise linger as a claim
+  // about the teacher's own address.
   const isOwn = currentSlug !== undefined && value === currentSlug;
   const verdict = !isOwn && answer !== null && answer.slug === value ? answer.available : null;
 
@@ -119,8 +130,8 @@ export function PageAddressField({
     // route would answer `available: false` for both, which reads as "someone
     // has it" when the truth is "this is not an address".
     if (value === '' || !pageSlugField.safeParse(value).success) return;
-    // Nor is the teacher's own address: the route would answer "taken",
-    // because this teacher holds it.
+    // Nor is `currentSlug`: the route cannot tell who is asking, and calls an
+    // address this teacher holds taken.
     if (value === currentSlug) return;
 
     let cancelled = false;
@@ -165,9 +176,9 @@ export function PageAddressField({
       <p className="type-caption">
         Your booking page: fair.yoga/{value || 'your-name'}
       </p>
-      {/* Silent unless there is something to say: a check still running, and
-          one that failed, both draw nothing. An error outranks the verdict,
-          because a verdict that disagrees with the server is the stale one. */}
+      {/* Silent whenever `verdict` is null. Either error outranks the verdict:
+          the server's because a verdict that disagrees with it is the stale
+          one, the validator's because no address was asked about. */}
       {!error && !localError && verdict === true && (
         <p role="status" className="type-caption text-teal flex items-center gap-1">
           <Icon name="check" size={14} />

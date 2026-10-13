@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { PageAddressField, slugFromName } from './page-address-field';
+import { PageAddressField, slugFromName, type SlugRejection } from './page-address-field';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { SignOutButton } from '@/components/account/sign-out-button';
 import { AlreadyTeachingPanel } from './already-teaching-panel';
@@ -85,21 +85,6 @@ function isStoredDraft(value: unknown): value is StoredDraft {
 }
 
 /**
- * A rejection the SERVER issued, carrying the address it was about.
- *
- * Keyed for the same reason `PageAddressField`'s `Answer` is: the address can
- * move out from under a verdict. A name edit re-derives `pageSlug` while
- * `slugEdited` is still false, so an unkeyed "that address is taken" would
- * survive onto an address nobody has ever checked — and, because the field
- * suppresses its own live check whenever an error is showing, it would sit
- * there unchallenged.
- */
-interface SlugRejection {
-  slug: string;
-  message: string;
-}
-
-/**
  * `expired` and `expired-stuck` are the same event told honestly two ways: the
  * ticket aged out mid-typing, and the replacement link either went out or did
  * not. Saying "we've emailed you a fresh link" when that request failed is
@@ -146,6 +131,10 @@ interface ProfileSetupFormProps {
 export function ProfileSetupForm({ email, mode, accountId }: ProfileSetupFormProps) {
   const [form, setForm] = useState<Draft>(EMPTY_DRAFT);
   const [status, setStatus] = useState<Status>('idle');
+  // Keyed to the address it refused: a name edit re-derives `pageSlug` while
+  // `slugEdited` is still false, so an unkeyed "that address is taken" would
+  // survive onto an address nobody has ever checked — and, with an error
+  // showing, the field draws no live verdict to challenge it.
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
   const [formError, setFormError] = useState('');
 
