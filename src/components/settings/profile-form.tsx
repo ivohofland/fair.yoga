@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { PageAddressField } from '@/components/signup/page-address-field';
+import { PageAddressField, type SlugRejection } from '@/components/signup/page-address-field';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { CURRENCIES, currencyLabel } from '@/lib/format';
@@ -51,16 +51,6 @@ void _formHasNoExtras;
 
 /** The body a save sends: `currency` and `pageSlug` only when the teacher changed them. */
 type ProfileFormWire = Omit<ProfileFormValues, 'currency' | 'pageSlug'> & { currency?: Currency; pageSlug?: string };
-
-/**
- * A 409 `SLUG_TAKEN` from a save, carrying the slug it refused. Keyed so the
- * refusal shows only while the field still holds that slug: an edit retires
- * it with nothing having to remember to clear it.
- */
-interface SlugRejection {
-  slug: string;
-  message: string;
-}
 
 /**
  * The form-level line for a save the page address stopped. The field says
@@ -136,14 +126,15 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   // The slug the server last confirmed. The warning below names it while the
   // field differs, and a save names `pageSlug` only then, so a save from a tab
   // opened before a slug change made elsewhere does not move the page back. It
-  // is also the field's own address, which the live check neither asks about
-  // nor judges.
+  // is also the field's `currentSlug`, except while a save is in flight (below).
   const [savedSlug, setSavedSlug] = useState(initial.pageSlug);
-  // The slug a save in flight is sending. The field treats it as the teacher's
-  // own until the save answers: the server may already hold it for them, and
-  // the live check would call it taken.
+  // The slug a save in flight is sending, passed as the field's `currentSlug`
+  // until the save answers: the server may already hold it for this teacher,
+  // and a check of it now would report their own address taken.
   const [pendingSlug, setPendingSlug] = useState<string | null>(null);
   const slugWarningId = useId();
+  // A 409 `SLUG_TAKEN` from a save, shown on the field only while it still
+  // holds the slug refused: an edit retires it without a clear.
   const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
