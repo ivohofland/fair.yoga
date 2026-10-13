@@ -9,7 +9,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaClient, ClassFamily, ClassTemplate, StudioClassTemplate } from '@prisma/client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
-import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
+import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm, hhmmToTime } from '@/lib/time-of-day';
 import {
   CLASS_GENERATION_INTERVAL_MS,
@@ -28,9 +28,8 @@ import {
   type ChildWithRule,
   type GeneratorFamily,
   type FamilyMetadataMap,
-  DEFAULT_WEEKS,
-  getNextOccurrences,
   probeFirstEffectiveWeek,
+  probeHorizon,
 } from './entry-generation';
 import {
   templateGenerationState,
@@ -1855,21 +1854,19 @@ export async function updateRule<TChild>(
 
   const now = new Date();
   const timeZone = template.scheduleRule.teacher.defaultTimezone;
-  const horizon = getNextOccurrences(updatedRule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
-    (date) => classStartInstant({ date, startTime: updatedRule.startTime }, timeZone) > now,
-  );
+
+  // The latest instant the next nominal sweep runs. The horizon, the probe's
+  // `past_cancel_check` decline and the late-first-class judgement are all
+  // judged at it, so they cannot disagree. A sweep running earlier may still
+  // fill a candidate the answer skipped, and the class then arrives a week
+  // before the answer named it — the tolerated direction. A sweep running
+  // later than nominal can still miss the named candidate, bounded by how
+  // late it runs.
+  const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
+  const horizon = probeHorizon(updatedRule, timeZone, now, at);
 
   const generationState = templateGenerationState(updatedRule);
 
-  // The latest instant the next nominal sweep runs: what the probe and the
-  // late-first-class judgement are both judged at, so they cannot disagree.
-  // A sweep running earlier may still fill a candidate the probe declined, and
-  // the class then arrives a week before the answer named it — the tolerated
-  // direction. A sweep running later than nominal declines a candidate whose
-  // check falls between `at` and that sweep, so the named week stays empty,
-  // bounded by how late it runs. The nominal interval itself is #860's
-  // imprecision.
-  const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
   const pastCancelCheck = family.pastCancelCheck;
   const declines =
     pastCancelCheck === null

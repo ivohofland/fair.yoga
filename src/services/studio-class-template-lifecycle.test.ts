@@ -2025,10 +2025,11 @@ describe('updateStudioClassTemplate (DB)', () => {
     }
   });
 
-  // The class family's edit skips a candidate already past its auto-cancel
-  // check by the next sweep (#859). A studio class has no check, so the sweep
-  // fills a candidate starting within the hour and the answer names its week.
-  it('still names the near week for a candidate starting within the hour', async () => {
+  // A candidate starting before the next nominal sweep may never be generated:
+  // that sweep's window already excludes it. A studio class has no auto-cancel
+  // check to drop it, so the horizon itself does, and the answer names the
+  // week after (#860).
+  it('names the following week for a candidate starting within the hour', async () => {
     const own = await seedTeacher('update-near');
     onTestFinished(async () => {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: own.teacherId } });
@@ -2037,6 +2038,45 @@ describe('updateStudioClassTemplate (DB)', () => {
       await prisma.account.delete({ where: { id: own.accountId } });
     });
     const target = new Date(Date.now() + 40 * 60 * 1000);
+    const near = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate()));
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: own.teacherId,
+            kind: 'studio',
+            classType: 'Near Probe',
+            dayOfWeek: (near.getUTCDay() + 6) % 7,
+            startTime: hhmmToTime(
+              `${String(target.getUTCHours()).padStart(2, '0')}:${String(target.getUTCMinutes()).padStart(2, '0')}`,
+            ),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const result = await updateStudioClassTemplate(prisma, t.id, own.teacherId, {
+      classType: 'Near Probe, Renamed',
+    });
+
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.firstEffective).toEqual(new Date(mondayOf(near) + 7 * 24 * 60 * 60 * 1000));
+  });
+
+  // A candidate starting after the next nominal sweep is one that sweep fills,
+  // so the answer names its week.
+  it('names the near week for a candidate starting after the next sweep', async () => {
+    const own = await seedTeacher('update-near-past-sweep');
+    onTestFinished(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: own.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: own.teacherId } });
+      await prisma.teacher.delete({ where: { id: own.teacherId } });
+      await prisma.account.delete({ where: { id: own.accountId } });
+    });
+    const target = new Date(Date.now() + 90 * 60 * 1000);
     const near = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate()));
     const t = await prisma.studioClassTemplate.create({
       data: {
