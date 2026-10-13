@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import type { Currency } from '@prisma/client';
@@ -115,9 +115,16 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   // the select differs from it, so a save from a tab opened before a switch
   // made elsewhere leaves that switch standing.
   const [savedCurrency, setSavedCurrency] = useState(initial.currency);
+  // The slug the server last confirmed, so the warning below names the address
+  // that is live now and goes away once a new one is saved.
+  const [savedSlug, setSavedSlug] = useState(initial.pageSlug);
+  const slugWarningId = useId();
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Nothing redirects from an old slug (#826): a link shared before the change 404s.
+  const slugChanged = form.pageSlug.trim() !== savedSlug;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -174,6 +181,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       const saved = (await res.json()) as { data?: { currencySwitch?: CurrencySwitchResult } };
       const switched = saved.data?.currencySwitch;
       if (sentCurrency !== undefined) setSavedCurrency(sentCurrency);
+      setSavedSlug(payload.pageSlug);
       setSuccess((switched && sentCurrency !== undefined && currencySwitchLine(switched, sentCurrency)) || 'Saved');
       router.refresh();
     } catch (err) {
@@ -226,11 +234,17 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           label="Page slug"
           value={form.pageSlug}
           maxLength={PAGE_SLUG_MAX}
+          aria-describedby={slugChanged ? slugWarningId : undefined}
           onChange={(e) => update('pageSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
         />
         <p className="type-caption">
           Your booking page: fair.yoga/{form.pageSlug}
         </p>
+        {slugChanged && (
+          <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
+            Links you’ve already shared to fair.yoga/{savedSlug} will stop working.
+          </p>
+        )}
       </section>
 
       {/* Preferences */}

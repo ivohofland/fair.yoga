@@ -357,6 +357,70 @@ describe('ProfileForm', () => {
     });
   });
 
+  describe('page slug change', () => {
+    const warning = (slug: string): string =>
+      `Links you’ve already shared to fair.yoga/${slug} will stop working.`;
+
+    function slugField(): HTMLInputElement {
+      return screen.getByLabelText('Page slug') as HTMLInputElement;
+    }
+
+    it('shows no warning while the slug is unchanged', () => {
+      renderForm();
+      expect(screen.queryByText(warning('anna'))).toBeNull();
+    });
+
+    it('warns that links to the saved slug will stop working, and ties the warning to the field', () => {
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      const caption = screen.getByText(warning('anna'));
+      expect(slugField().getAttribute('aria-describedby')?.split(' ')).toContain(caption.id);
+    });
+
+    it('drops the warning when the teacher types the saved slug back', () => {
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      fireEvent.change(slugField(), { target: { value: 'anna' } });
+      expect(screen.queryByText(warning('anna'))).toBeNull();
+      expect(slugField()).not.toHaveAttribute('aria-describedby');
+    });
+
+    it('clears the warning once the new slug is saved', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(screen.queryByText(warning('anna'))).toBeNull();
+    });
+
+    it('names the slug saved last when the teacher changes it again', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      fireEvent.change(slugField(), { target: { value: 'anna-flow' } });
+      expect(screen.getByText(warning('anna-yoga'))).toBeInTheDocument();
+    });
+
+    it('keeps the warning when the save fails', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+      save();
+      expect(await screen.findByText('That page slug is already taken.')).toBeInTheDocument();
+      expect(screen.getByText(warning('anna'))).toBeInTheDocument();
+    });
+  });
+
   it('offers every Currency, in declaration order', () => {
     renderForm();
     const options = (screen.getByLabelText('Currency') as HTMLSelectElement).querySelectorAll('option');
