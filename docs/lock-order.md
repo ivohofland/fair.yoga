@@ -2102,7 +2102,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   for an erasure finds the row erased and answers 404. The other fields'
   write keeps the `deletedAt: null` scope above.
 - The transactions that create a row under no existing template:
-  `lockTeacherForShare` as their first lock, stamping the currency it returns.
+  `lockTeacherForShare` as their first lock, stamping the values it returns
+  that the new row carries.
   `POST /api/classes` (`src/app/api/classes/route.ts`, ahead of its room's
   `FOR KEY SHARE`), `POST /api/studio-classes`
   (`src/app/api/studio-classes/route.ts`), and template creation in both
@@ -4241,7 +4242,7 @@ reaches is one it already holds (the second bullet below):
   (`class-lifecycle.ts`) both hold a `Class` row lock, and neither writes
   `teacherRoomId` or `roomArchived`: `transitionClass`'s CAS writes only
   `status`; `completeClass`'s terminal write additionally sets
-  `effectiveTeacherRate`, `totalStudents` and `totalRevenue`. Neither set
+  the completion snapshot columns (see `completeClass`). Neither set
   touches the room mirror, so neither takes a room lock despite the hold.
 - `switchToSharedRoom`'s step 5 writes `Class.teacherRoomId`, unlike
   `transitionClass` and `completeClass` above. Writing it takes `KEY SHARE` on

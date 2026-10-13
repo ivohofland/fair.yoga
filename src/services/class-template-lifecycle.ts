@@ -1066,8 +1066,8 @@ export async function createClassTemplate(
       // arms `setLockTimeout` before it locks. It is also the transaction's
       // first lock (`docs/lock-order.md`, "The `Teacher` row is the first
       // lock (#758)"), held while the first window generated below reads the
-      // teacher's currency and stamps it. A new write or lock in this
-      // transaction moves `CREATE_TEMPLATE_TIMEOUT_MS`.
+      // teacher's values under that lock (currency and default VAT %) and
+      // stamps them. A new write or lock in this transaction moves `CREATE_TEMPLATE_TIMEOUT_MS`.
       const teacher = await lockTeacherForShare(tx, teacherId);
       if (!teacher) return { ok: false as const, reason: 'teacher_gone' as const };
       const [rule] = await tx.scheduleRule.createManyAndReturn({

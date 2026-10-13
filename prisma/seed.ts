@@ -1179,7 +1179,6 @@ async function main() {
   // Priced by the engine rather than typed in, so the stored totals satisfy
   // totalRevenue - roomCost - vatTotal = effectiveTeacherRate by construction.
   const vatEconomics = { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 4, maxStudents: 12, vatPercent: 9 };
-  // Students 0, 2, 4, 5, 6, 8 hold tiers 1, 2, 3, 3, 4, 5.
   const vatRoster = [0, 2, 4, 5, 6, 8].map((i) => students[i]!);
   const vatBill = billAtLeastMinimum(
     vatEconomics,
