@@ -241,7 +241,10 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
         <p className="type-caption">
           Your booking page: fair.yoga/{form.pageSlug}
         </p>
-        {/* Always mounted, so the caption is announced as it appears while the field has focus. */}
+        {/* Always mounted, so the caption is announced as it appears while the field
+            has focus — and sr-only, not hidden, while empty: a display:none region
+            leaves the accessibility tree, and the caption must arrive into one
+            already there. No jsdom test can see the difference. */}
         <div aria-live="polite" className="empty:sr-only">
           {slugChanged && (
             <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
