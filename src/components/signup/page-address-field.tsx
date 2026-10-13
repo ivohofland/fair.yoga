@@ -67,7 +67,8 @@ interface PageAddressFieldProps {
    */
   error?: string;
   /**
-   * The address the teacher already holds, on a form that edits a saved one.
+   * The address to treat as the teacher's own, on a form that edits a saved
+   * one — the one they hold, or one a save in flight is claiming for them.
    * While the field shows it, nothing is asked and no verdict is drawn: the
    * endpoint cannot tell who is asking and would call the teacher's own
    * address taken.
@@ -101,9 +102,9 @@ export function PageAddressField({
 }: PageAddressFieldProps) {
   const [answer, setAnswer] = useState<Answer | null>(null);
 
-  // Both derived on render rather than stored: each is a pure function of
-  // `value`, and a second copy in state is a second thing that can disagree
-  // with it. Nothing here is a "checking" state, because nothing is drawn for
+  // Derived on render rather than stored: each follows from the props and the
+  // last answer, and a second copy in state is a second thing that can disagree
+  // with them. Nothing here is a "checking" state, because nothing is drawn for
   // one — a spinner on every keystroke is motion this design does not have.
   const parsed = value === '' ? null : pageSlugField.safeParse(value);
   const localError = parsed && !parsed.success ? parsed.error.issues[0]?.message : undefined;
@@ -138,8 +139,9 @@ export function PageAddressField({
       if (!cancelled) setAnswer({ slug: value, available });
     }, DEBOUNCE_MS);
 
-    // Every keystroke supersedes the check before it: the timer is cleared,
-    // and `cancelled` silences a response that is already in flight.
+    // Every change of value or of the teacher's own address supersedes the
+    // check before it: the timer is cleared, and `cancelled` silences a
+    // response that is already in flight.
     return () => {
       cancelled = true;
       clearTimeout(timer);
