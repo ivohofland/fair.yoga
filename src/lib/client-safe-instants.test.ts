@@ -18,6 +18,7 @@ const CLIENT_IMPORTED = [
   'src/lib/cancel-check.ts',
   'src/lib/late-publish.ts',
   'src/components/class/class-edit-form.tsx',
+  'src/components/settings/late-first-class-notice.tsx',
 ];
 
 // Exempt from the "nothing under src/services" rule only: the walk still reads

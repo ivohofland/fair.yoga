@@ -100,6 +100,48 @@ describe('ToggleTemplateButton', () => {
     await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
   });
 
+  describe('late first class (#849)', () => {
+    function resumeOk(lateFirstClass: unknown) {
+      return {
+        ok: true,
+        json: async () => ({
+          data: {
+            action: 'active',
+            templateKind: 'class',
+            scheduled: 4,
+            added: 4,
+            counts: { blockedByCancelled: 0, slotTaken: 0, alreadyThisWeek: 0, blockedByOverlap: 0 },
+            lateFirstClass,
+          },
+        }),
+      };
+    }
+
+    it('shows the added-copy notice under the resume sentence', async () => {
+      stubFetch(resumeOk({ date: '2026-11-10', state: 'past_check', minStudents: 3 }));
+      render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Your first class, on Tuesday, 10 Nov, starts inside its cancellation deadline and past its auto-cancel check. Students who book it can't cancel for free, and the class goes ahead however few book. If fewer than 3 students book, you cover what the missing students would have paid. You can cancel it from your schedule.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('shows no notice when the first class is not late', async () => {
+      stubFetch(resumeOk(null));
+      render(<ToggleTemplateButton templateId="tpl-1" isActive={false} />);
+
+      fireEvent.click(screen.getByRole('button'));
+
+      expect(await screen.findByText('4 classes on your schedule.')).toBeInTheDocument();
+      expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
+    });
+  });
+
   it('sends state=paused when the template is active', async () => {
     stubFetch(pausedOk);
     render(<ToggleTemplateButton templateId="tpl-1" isActive={true} />);

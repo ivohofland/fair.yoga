@@ -1,5 +1,13 @@
 import type { LatePublishState } from '@/lib/late-publish';
 
+/** What the teacher covers when a class that goes ahead however few book falls short of `minStudents`. */
+export function shortfallSentence(minStudents: number): string {
+  const single = minStudents === 1;
+  const shortfall = single ? 'nobody books' : `fewer than ${minStudents} students book`;
+  const missing = single ? 'that student' : 'the missing students';
+  return `If ${shortfall}, you cover what ${missing} would have paid.`;
+}
+
 /**
  * The warning shown when a class's first bookers would land inside its
  * cancellation window. `publish` is a draft's page, where publishing now would
@@ -14,11 +22,8 @@ export function LatePublishNotice({
   state: LatePublishState;
   minStudents: number;
 }) {
-  const single = minStudents === 1;
-  const shortfall = single ? 'nobody books' : `fewer than ${minStudents} students book`;
-  const missing = single ? 'that student' : 'the missing students';
   const verb = action === 'publish' ? 'publish' : 'save';
-  const cover = `Students who book after you ${verb} can't cancel for free, and the class goes ahead however few book. If ${shortfall}, you cover what ${missing} would have paid.`;
+  const cover = `Students who book after you ${verb} can't cancel for free, and the class goes ahead however few book. ${shortfallSentence(minStudents)}`;
   let text: string;
   switch (state) {
     case 'none':

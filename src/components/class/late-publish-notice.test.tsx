@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import { LatePublishNotice } from './late-publish-notice';
+import { LatePublishNotice, shortfallSentence } from './late-publish-notice';
+
+describe('shortfallSentence', () => {
+  it('reads exactly for a minimum of one', () => {
+    expect(shortfallSentence(1)).toBe('If nobody books, you cover what that student would have paid.');
+  });
+
+  it('reads exactly for a minimum above one', () => {
+    expect(shortfallSentence(3)).toBe(
+      'If fewer than 3 students book, you cover what the missing students would have paid.',
+    );
+  });
+});
 
 describe('LatePublishNotice', () => {
   it('renders nothing for none', () => {
