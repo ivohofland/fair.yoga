@@ -34,6 +34,7 @@ import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { getNextOccurrences } from './entry-generation';
 import { log } from '@/lib/log';
 import { mondayOf } from '@/lib/timezone';
+import { CLASS_GENERATION_INTERVAL_MS } from '@/lib/generation';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
 
@@ -1971,9 +1972,9 @@ describe('updateStudioClassTemplate (DB)', () => {
    *   - `startTime` is `'00:00'` and this block's teacher is pinned to UTC, so
    *     the start instant for today is today's midnight UTC, never strictly
    *     after the next sweep's instant. Today is dropped on every run, at every
-   *     hour, rather than only after some cutoff. It is also the opposite arrangement from the
-   *     two cross-family cases above, which pick `23:59` to keep today's
-   *     occurrence alive.
+   *     hour, rather than only after some cutoff. It is also the opposite
+   *     arrangement from the two cross-family cases above, which pick `23:59`
+   *     to keep today's occurrence alive.
    *   - No entry exists for this rule, so no week is held and the answer is
    *     simply the first surviving candidate's week. Nothing else can be
    *     responsible for the difference.
@@ -2020,10 +2021,9 @@ describe('updateStudioClassTemplate (DB)', () => {
     }
   });
 
-  // A candidate starting before the next nominal sweep may never be generated:
-  // that sweep's window already excludes it. A studio class has no auto-cancel
-  // check to drop it, so the horizon itself does, and the answer names the
-  // week after (#860).
+  // A candidate starting before the latest instant the next sweep can run is
+  // skipped by the horizon (a studio class has no auto-cancel check to do it),
+  // so the answer names the week after (#860).
   it('names the following week for a candidate starting within the hour', async () => {
     const own = await seedTeacher('update-near');
     onTestFinished(async () => {
@@ -2061,8 +2061,10 @@ describe('updateStudioClassTemplate (DB)', () => {
     expect(result.firstEffective).toEqual(new Date(mondayOf(near) + 7 * 24 * 60 * 60 * 1000));
   });
 
-  // A candidate starting after the next nominal sweep is one that sweep fills,
-  // so the answer names its week.
+  // A candidate starting after the next nominal sweep is one even the latest
+  // nominal sweep fills, so the answer names its week — and a sweep run now
+  // fills that same week first (#860: the probe must not name a week the
+  // sweep leaves empty).
   it('names the near week for a candidate starting after the next sweep', async () => {
     const own = await seedTeacher('update-near-past-sweep');
     onTestFinished(async () => {
@@ -2098,6 +2100,74 @@ describe('updateStudioClassTemplate (DB)', () => {
 
     if (!result.ok) throw new Error('expected ok');
     expect(result.firstEffective).toEqual(new Date(mondayOf(near)));
+
+    const withZone = await prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: t.id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
+    });
+    await generateStudioInstancesForTemplate(prisma, withZone);
+    const first = await prisma.calendarEntry.findFirstOrThrow({
+      where: { scheduleRuleId: t.scheduleRuleId },
+      orderBy: { date: 'asc' },
+    });
+    expect(result.firstEffective!.getTime()).toBe(mondayOf(first.date));
+  });
+
+  // #860's boundary, pinned at `updateStudioClassTemplate` rather than only at
+  // `probeHorizon`: a candidate starting 1 ms after now + the sweep interval
+  // is named; one starting exactly then or 1 ms before is not, and the answer
+  // is the following week. Only `Date` is faked — Prisma needs real timers.
+  it('names a candidate starting just after now + the sweep interval, and not one at or before it', async () => {
+    const own = await seedTeacher('update-boundary');
+    onTestFinished(async () => {
+      vi.useRealTimers();
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: own.teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: own.teacherId } });
+      await prisma.teacher.delete({ where: { id: own.teacherId } });
+      await prisma.account.delete({ where: { id: own.accountId } });
+    });
+    const minute = 60 * 1000;
+    const start = new Date(Math.floor((Date.now() + 3 * 24 * 60 * minute) / minute) * minute);
+    const t = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: own.teacherId,
+            kind: 'studio',
+            classType: 'Boundary Probe',
+            dayOfWeek: (start.getUTCDay() + 6) % 7,
+            startTime: hhmmToTime(
+              `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`,
+            ),
+            durationMinutes: 60,
+          },
+        },
+        location: 'Update Studio',
+        hourlyRate: 45,
+      },
+    });
+
+    const startWeek = mondayOf(start);
+    const followingWeek = startWeek + 7 * 24 * 60 * minute;
+    const cases = [
+      { label: 'start at now + interval + 1 ms', offset: 1, week: startWeek },
+      { label: 'start at now + interval', offset: 0, week: followingWeek },
+      { label: 'start at now + interval - 1 ms', offset: -1, week: followingWeek },
+    ];
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const named: Array<{ label: string; week: number | null }> = [];
+    for (const c of cases) {
+      vi.setSystemTime(start.getTime() - CLASS_GENERATION_INTERVAL_MS - c.offset);
+      const result = await updateStudioClassTemplate(prisma, t.id, own.teacherId, {
+        classType: `Boundary Probe ${c.offset}`,
+      });
+      if (!result.ok) throw new Error('expected ok');
+      named.push({ label: c.label, week: result.firstEffective?.getTime() ?? null });
+    }
+    vi.useRealTimers();
+
+    expect(named).toEqual(cases.map((c) => ({ label: c.label, week: c.week })));
   });
 
   /**
