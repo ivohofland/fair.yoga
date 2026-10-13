@@ -8,8 +8,12 @@ recovers from is logged with the worker's `[sw]` prefix.
 `existing.focus().then((client) => client.navigate(url)).catch(() => self.clients.openWindow(url))`.
 A rejected `focus()` therefore skips `navigate()` entirely and goes to
 `openWindow`, and the `.catch` discards the error. Both claims in the issue
-hold. No page under `docs/` describes this handler; the only other file naming
-`notificationclick` is `src/lib/sw.test.ts`.
+hold. Outside `docs/superpowers/`, no page under `docs/` describes this
+handler, and the only source file naming `notificationclick` besides the worker
+is `src/lib/sw.test.ts`. The web-push design spec
+(`docs/superpowers/specs/2026-10-02-web-push-design.md`) describes it as
+"focus an open fair.yoga window and navigate it to `url`, else
+`openWindow(url)`", which stays true after this change.
 
 **Design (decided, no alternatives worth carrying):**
 
@@ -64,3 +68,14 @@ the current worker.
 
 No whole-branch review step of its own: with one task, the task review sees the
 whole branch.
+
+## Folded from review
+
+- A test that an `openWindow` rejection in the fallback reaches the outer
+  `console.error` (*"logs a fallback window that fails to open, rather than
+  failing the event"*), proven by replacing the outer catch with
+  `.catch(() => {})`.
+- The happy-path order case asserts no `console.warn`; the navigate-refused
+  case pins the warn count to one.
+- The comment and the navigate-refusal log say `openWindow(url)` is *asked*:
+  on an app already running it may only bring the app forward.
