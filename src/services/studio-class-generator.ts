@@ -63,6 +63,8 @@ export const STUDIO_GENERATOR: GeneratorFamily<StudioClassTemplate, 'studio'> = 
       })),
     });
   },
+  // A studio class has no auto-cancel check, so the sweep declines nothing here.
+  pastCancelCheck: null,
 };
 
 /**
@@ -82,7 +84,7 @@ export const generateStudioInstancesForTemplate = (
   db: PrismaClient | Prisma.TransactionClient,
   template: StudioTemplateWithTimezone,
   from?: Date,
-): Promise<GenerationResult> => generateEntriesForRule(db, STUDIO_GENERATOR, template, from);
+): Promise<GenerationResult> => generateEntriesForRule(db, STUDIO_GENERATOR, template, 'teacher', from);
 
 /**
  * Claims a studio template for generation, or reports it is no longer eligible
@@ -216,7 +218,7 @@ export async function generateStudioClassInstances(
 
           // `fresh`, not `template`: the loop variable is the pre-filter's
           // snapshot and may be minutes old. #102.
-          const result = await generateStudioInstancesForTemplate(tx, fresh, startDate);
+          const result = await generateEntriesForRule(tx, STUDIO_GENERATOR, fresh, 'sweep', startDate);
           return result.created;
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres

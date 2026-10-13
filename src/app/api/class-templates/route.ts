@@ -192,17 +192,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // candidate date is taken. That used to be impossible, so 201 with no
   // counts was a complete answer; it no longer is. The same counts the PATCH
   // `active` arm carries — `countSkipReasons` (`@/lib/generation`) is the one
-  // place both reductions live, so a SEVENTH
-  // `SkipReason` fails the build here rather than vanishing silently. Seventh,
-  // not sixth: the union has had six members since #296 added
-  // `blocked_by_overlap`, and the number is `countSkipReasons`' own
-  // docblock's — cited rather than recounted here, so the two do not drift.
-  // This line said fifth after the #194 branch's own correction pass, because
-  // the phrase WRAPS ACROSS A LINE BREAK: the line-oriented grep that found the
-  // sibling in `class-template-lifecycle.ts` could not match it. It is wrapped
-  // the same way now, so the grep that finds this one is
-  // `grep -rn -A1 'SIXTH\|SEVENTH' src/` or a `tr -d '\n'` first — the hazard
-  // did not go away by being written down.
+  // place both reductions live, so a new `SkipReason` fails the build there
+  // rather than vanishing silently here — `countSkipReasons`' own docblock
+  // says how, cited rather than restated so the two do not drift.
   //
   // `added` and `lateFirstClass` ride the answer so the create form can stay
   // on the page and say so (`template-form.tsx`); see the note at that read.

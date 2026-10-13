@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant, startOfLocalDay } from '@/lib/timezone';
@@ -8,8 +8,10 @@ import {
   generateInstancesForTemplate,
   claimTemplateForGeneration,
   runClassGenerationTick,
+  CLASS_GENERATOR,
 } from './class-generator';
-import { getNextOccurrences } from './entry-generation';
+import { generateEntriesForRule, getNextOccurrences } from './entry-generation';
+import { cancelCheckInstant } from '@/lib/auto-cancel-check';
 import {
   createContentionStreaks,
   GenerationContendedError,
@@ -20,8 +22,8 @@ import {
   pauseOrResumeTemplate,
   updateClassTemplate,
 } from './class-template-lifecycle';
-import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
-import { anyBlocked, countSkipReasons } from '@/lib/generation';
+import { createClassFixture, createStudioClassFixture, wallSlotAt } from '../../tests/class-fixtures';
+import { anyBlocked, countSkipReasons, type SkippedSlot } from '@/lib/generation';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -115,8 +117,11 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it('generates 4 class instances from a template', async () => {
-    // Use Monday 2026-04-06 as the starting date
-    const from = new Date('2026-04-06T00:00:00.000Z');
+    // Use Monday 2037-04-06 as the starting date. A future year in every sweep
+    // case here, deliberately: the sweep judges each candidate's check at the
+    // wall clock, not at `from`, so a past window would be declined whole as
+    // `past_cancel_check` (#859).
+    const from = new Date('2037-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
@@ -150,7 +155,7 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it('is idempotent — running again creates no duplicates', async () => {
-    const from = new Date('2026-04-06T00:00:00.000Z');
+    const from = new Date('2037-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -169,7 +174,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
 
-    const from = new Date('2026-04-06T00:00:00.000Z');
+    const from = new Date('2037-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -196,7 +201,7 @@ describe('generateClassInstances (DB)', () => {
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
 
-    const from = new Date('2026-04-06T00:00:00.000Z');
+    const from = new Date('2037-04-06T00:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(0);
@@ -210,40 +215,40 @@ describe('generateClassInstances (DB)', () => {
   });
 
   it("skips today's occurrence when its start has already passed", async () => {
-    // Tuesday 2026-04-07 at 18:00 UTC — hours after the template's 09:00
+    // Tuesday 2037-04-07 at 18:00 UTC — hours after the template's 09:00
     // Amsterdam start. The run must not create a class earlier the same
     // day; the window slides to the next four Tuesdays instead.
     await prisma.calendarEntry.deleteMany({
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
-    const from = new Date('2026-04-07T18:00:00.000Z');
+    const from = new Date('2037-04-07T18:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
-      '2026-04-14T00:00:00.000Z',
-      '2026-04-21T00:00:00.000Z',
-      '2026-04-28T00:00:00.000Z',
-      '2026-05-05T00:00:00.000Z',
+      '2037-04-14T00:00:00.000Z',
+      '2037-04-21T00:00:00.000Z',
+      '2037-04-28T00:00:00.000Z',
+      '2037-05-05T00:00:00.000Z',
     ]);
   });
 
   it("includes today's occurrence while its start is still ahead", async () => {
-    // Tuesday 2026-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
+    // Tuesday 2037-04-07 at 05:00 UTC — before the 09:00 Amsterdam start.
     await prisma.calendarEntry.deleteMany({
       where: { scheduleRule: { classTemplates: { some: { id: templateId } } } },
     });
-    const from = new Date('2026-04-07T05:00:00.000Z');
+    const from = new Date('2037-04-07T05:00:00.000Z');
     const count = await generateClassInstances(prisma, { streaks: createContentionStreaks(), from, teacherId });
 
     expect(count).toBe(4);
     const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } }, orderBy: { calendarEntry: { date: 'asc' } }, include: { calendarEntry: true } });
     expect(classes.map((c) => c.calendarEntry.date.toISOString())).toEqual([
-      '2026-04-07T00:00:00.000Z',
-      '2026-04-14T00:00:00.000Z',
-      '2026-04-21T00:00:00.000Z',
-      '2026-04-28T00:00:00.000Z',
+      '2037-04-07T00:00:00.000Z',
+      '2037-04-14T00:00:00.000Z',
+      '2037-04-21T00:00:00.000Z',
+      '2037-04-28T00:00:00.000Z',
     ]);
   });
 
@@ -1555,11 +1560,14 @@ describe('generateClassInstances (per-template isolation)', () => {
 // #836 — a candidate generated inside its own check window is born decided
 // ===========================================================================
 
-describe('generateClassInstances — the auto-cancel decision (#836)', () => {
+describe('generateClassInstances — the auto-cancel decision (#836, #859)', () => {
   const suffix = `gen836-${Date.now()}`;
+  // Next candidate starts 90 minutes from now, with a two-hour check.
+  const start = new Date(Date.now() + 90 * 60_000);
   let teacherId: string;
   let roomId: string;
   let teacherRoomId: string;
+  let templateId: string;
   let scheduleRuleId: string;
 
   beforeAll(async () => {
@@ -1594,8 +1602,6 @@ describe('generateClassInstances — the auto-cancel decision (#836)', () => {
     });
     teacherRoomId = teacherRoom.id;
 
-    // Next candidate starts 90 minutes from now, with a two-hour check.
-    const start = new Date(Date.now() + 90 * 60_000);
     const startTime = hhmmToTime(
       `${String(start.getUTCHours()).padStart(2, '0')}:${String(start.getUTCMinutes()).padStart(2, '0')}`,
     );
@@ -1614,6 +1620,7 @@ describe('generateClassInstances — the auto-cancel decision (#836)', () => {
         autoCancelCheck: 'HOURS_2',
       },
     });
+    templateId = template.id;
     scheduleRuleId = template.scheduleRuleId;
   });
 
@@ -1625,21 +1632,165 @@ describe('generateClassInstances — the auto-cancel decision (#836)', () => {
     await prisma.teacher.delete({ where: { id: teacherId } });
   });
 
-  it('stamps the class that starts inside its check window and leaves the later ones undecided', async () => {
-    const count = await generateClassInstances(prisma, {
-      streaks: createContentionStreaks(),
-      from: new Date(),
-      teacherId,
-    });
-    expect(count).toBeGreaterThan(1);
+  it('declines the candidate already past its check, logs it, and fills the later weeks undecided', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    try {
+      const count = await generateClassInstances(prisma, {
+        streaks: createContentionStreaks(),
+        from: new Date(),
+        teacherId,
+      });
+      expect(count).toBeGreaterThan(0);
 
-    const classes = await prisma.class.findMany({
-      where: { calendarEntry: { scheduleRuleId } },
-      orderBy: { calendarEntry: { date: 'asc' } },
+      const classes = await prisma.class.findMany({
+        where: { calendarEntry: { scheduleRuleId } },
+        include: { calendarEntry: { select: { date: true } } },
+        orderBy: { calendarEntry: { date: 'asc' } },
+      });
+      // The candidate 90 minutes out (check at -30 min) produced no row at all.
+      const nearDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+      expect(classes.some((c) => c.calendarEntry.date.getTime() === nearDate.getTime())).toBe(false);
+      for (const cls of classes) expect(cls.autoCancelDecidedAt).toBeNull();
+
+      const line = warn.mock.calls.find(([, msg]) => msg === 'recurring class generation could not fill every date in the window');
+      expect(line?.[0]).toMatchObject({
+        templateId,
+        skipped: [{ date: nearDate.toISOString().slice(0, 10), reason: 'past_cancel_check' }],
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// ===========================================================================
+// #859 — where the sweep's decline sits among the other reasons, and its edge
+// ===========================================================================
+
+describe('generateEntriesForRule — the sweep declines past its check (#859)', () => {
+  const suffix = `gen859-${Date.now()}`;
+  const MINUTE = 60_000;
+
+  /** One teacher, room and template per case, torn down with its case. */
+  const seedNear = async (
+    label: string,
+    target: Date,
+    timeZone: string,
+    autoCancelCheck: 'HOURS_2' | 'HOURS_4',
+  ) => {
+    const slug = `${suffix}-${label}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Declined',
+        lastName: 'Generator',
+        email: `${slug}@test.local`,
+        account: { create: { email: `${slug}@test.local` } },
+        bio: 'Test teacher for the sweep declining past its check',
+        pageSlug: slug,
+        defaultTimezone: timeZone,
+      },
     });
-    const [first, ...later] = classes;
-    expect(first?.autoCancelDecidedAt).not.toBeNull();
-    expect(later.length).toBeGreaterThan(0);
-    for (const cls of later) expect(cls.autoCancelDecidedAt).toBeNull();
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Declined Studio', address: `${slug} St`, city: 'Amsterdam',
+        postcode: '1234GN', floor: '1', roomName: 'Main', maxCapacity: 20,
+        createdById: teacher.id,
+      },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 40 },
+    });
+    onTestFinished(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: teacher.id } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId: teacher.id } });
+      await prisma.teacherRoom.delete({ where: { id: teacherRoom.id } });
+      await prisma.room.delete({ where: { id: room.id } });
+      await prisma.teacher.delete({ where: { id: teacher.id } });
+    });
+
+    const slot = wallSlotAt(target, timeZone);
+    const created = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: teacher.id, kind: 'regular', classType: 'Vinyasa',
+            dayOfWeek: (slot.date.getUTCDay() + 6) % 7,
+            startTime: slot.startTime, durationMinutes: 60, isActive: true,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
+        roomCost: 40, minRate: 15, targetRate: 30, minStudents: 4, maxStudents: 12,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck,
+      },
+    });
+    const fresh = await prisma.classTemplate.findUniqueOrThrow({
+      where: { id: created.id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
+    });
+    return { teacherId: teacher.id, teacherRoomId: teacherRoom.id, fresh, candidate: slot };
+  };
+
+  const reasonOn = (skipped: readonly SkippedSlot[], date: Date) =>
+    skipped.find((s) => s.date.getTime() === date.getTime())?.reason;
+
+  it('steady state: a near candidate the teacher path already inserted is already_generated, never past_cancel_check', async () => {
+    const { fresh, candidate } = await seedNear('steady', new Date(Date.now() + 90 * MINUTE), 'UTC', 'HOURS_2');
+
+    const teacherPath = await generateInstancesForTemplate(prisma, fresh);
+    expect(teacherPath.firstCreated?.date.getTime()).toBe(candidate.date.getTime());
+
+    const sweep = await generateEntriesForRule(prisma, CLASS_GENERATOR, fresh, 'sweep');
+    expect(reasonOn(sweep.skipped, candidate.date)).toBe('already_generated');
+  });
+
+  it('a near candidate another class already holds is reported by that holder, never past_cancel_check', async () => {
+    const { teacherId, teacherRoomId, fresh, candidate } = await seedNear(
+      'blocked',
+      new Date(Date.now() + 90 * MINUTE),
+      'UTC',
+      'HOURS_2',
+    );
+    await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId,
+      scheduleRuleId: null,
+      classType: 'Manual',
+      date: candidate.date,
+      startTime: candidate.startTime,
+      durationMinutes: 60,
+      roomCost: 40,
+      minRate: 15,
+      targetRate: 30,
+      minStudents: 4,
+      maxStudents: 12,
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+      status: 'open',
+    });
+
+    const sweep = await generateEntriesForRule(prisma, CLASS_GENERATOR, fresh, 'sweep');
+    expect(reasonOn(sweep.skipped, candidate.date)).toBe('slot_taken');
+  });
+
+  it("declines from the check instant itself, in the teacher's own zone, and fills 1 ms before it", async () => {
+    const timeZone = 'Europe/Amsterdam';
+    const { fresh, candidate } = await seedNear('boundary', new Date(Date.now() + 3 * 60 * MINUTE), timeZone, 'HOURS_2');
+    const check = cancelCheckInstant(candidate, 'HOURS_2', timeZone);
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(check.getTime() - 1));
+      const before = await generateEntriesForRule(prisma, CLASS_GENERATOR, fresh, 'sweep', new Date(check.getTime() - 1));
+      expect(reasonOn(before.skipped, candidate.date)).toBeUndefined();
+      expect(before.firstCreated?.date.getTime()).toBe(candidate.date.getTime());
+      await prisma.calendarEntry.deleteMany({ where: { scheduleRuleId: fresh.scheduleRuleId } });
+
+      vi.setSystemTime(check);
+      const at = await generateEntriesForRule(prisma, CLASS_GENERATOR, fresh, 'sweep', check);
+      expect(reasonOn(at.skipped, candidate.date)).toBe('past_cancel_check');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

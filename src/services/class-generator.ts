@@ -36,6 +36,18 @@ type TemplateWithTimezone = Prisma.ClassTemplateGetPayload<{
 }>;
 
 /**
+ * Whether a class of `template` on `entry` is past its auto-cancel check at
+ * `at`. One spelling for the sweep's decline and `createChildren`'s stamp, so
+ * the two cannot judge the same class differently.
+ */
+const classPastCancelCheck = (
+  template: ClassTemplate,
+  entry: { date: Date; startTime: Date },
+  timeZone: string,
+  at: Date,
+): boolean => isPastCancelCheck(entry, template.autoCancelCheck, timeZone, at);
+
+/**
  * The class family's half of the shared claim and generator
  * (`claimRuleForGeneration` and `generateEntriesForRule`,
  * `entry-generation.ts`), and — spread into `CLASS_FAMILY`
@@ -74,12 +86,15 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
         // Inserted inside its own check window, or after its start has passed:
-        // the generator is not asking the sweep to judge a class that was
-        // never given the chance to fill. Judged and stamped at `at`, the
-        // instant the generator passes in, never a fresh read of the clock.
-        autoCancelDecidedAt: isPastCancelCheck(
+        // the generator is not asking
+        // the auto-cancel sweep to judge a class that was never given the
+        // chance to fill. The class-generation sweep declines such a candidate
+        // before insert, so only a teacher-path call (create, resume) reaches
+        // this stamp. Judged and stamped at `at`, the instant the generator
+        // passes in, never a fresh read of the clock.
+        autoCancelDecidedAt: classPastCancelCheck(
+          template,
           entry,
-          template.autoCancelCheck,
           template.scheduleRule.teacher.defaultTimezone,
           at,
         )
@@ -89,6 +104,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
       })),
     });
   },
+  pastCancelCheck: classPastCancelCheck,
 };
 
 /**
@@ -100,12 +116,16 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
  * named from outside this file: `TemplateWithTimezone` is what
  * `claimTemplateForGeneration` below hands back, and several call sites and
  * comments name this function.
+ *
+ * The teacher path (create, resume): it passes `'teacher'`, so a candidate
+ * already past its check is inserted and stamped rather than declined. The
+ * sweep below calls `generateEntriesForRule` itself, as `'sweep'`.
  */
 export const generateInstancesForTemplate = (
   db: PrismaClient | Prisma.TransactionClient,
   template: TemplateWithTimezone,
   from?: Date,
-): Promise<GenerationResult> => generateEntriesForRule(db, CLASS_GENERATOR, template, from);
+): Promise<GenerationResult> => generateEntriesForRule(db, CLASS_GENERATOR, template, 'teacher', from);
 
 /**
  * Claims a class template for generation, or reports it is no longer eligible
@@ -256,7 +276,7 @@ export async function generateClassInstances(
           if (!fresh) return 0;
           // `fresh`, not `template`: the loop variable is the pre-filter's
           // stale snapshot.
-          const result = await generateInstancesForTemplate(tx, fresh, startDate);
+          const result = await generateEntriesForRule(tx, CLASS_GENERATOR, fresh, 'sweep', startDate);
           return result.created;
         },
         // Comfortably above the claim's own 2s lock_timeout, so Postgres
