@@ -30,7 +30,7 @@ function htmlResponse(status = 502): Response {
  * reach the API, and that is what these tests hold.
  *
  * The `settingsLocked` fork is the reason this file exists. It decides whether
- * five economic fields are sent, and getting it wrong means either a teacher
+ * the `ECONOMIC_FIELDS` and the schedule are sent, and getting it wrong means either a teacher
  * silently cannot edit their pricing, or a locked class accepts an edit the
  * route will reject with a 400.
  */
@@ -85,7 +85,7 @@ describe('ClassEditForm', () => {
   });
 
   /**
-   * Pins that the five economic keys do not reach the API when settings are
+   * Pins that every `ECONOMIC_FIELDS` member does not reach the API when settings are
    * locked, by whatever mechanism the component uses to leave them out.
    *
    * This does not distinguish `delete payload[f]` from a hypothetical
