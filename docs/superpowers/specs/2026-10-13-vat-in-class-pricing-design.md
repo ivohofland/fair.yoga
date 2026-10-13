@@ -70,8 +70,9 @@ displays. The decisions comment on #819 is part of the brief:
     columns do not guarantee `room + earnings = total`; the subtraction does.
   - It also already disagrees with the subtraction in one case. A class
     completed with no charged registrations stores `0`, while reporting and
-    `PricingBreakdown` show `0 − roomCost`. That is pre-existing and stays as
-    it is (see Out of scope).
+    `PricingBreakdown` show `0 − roomCost`. Task 1 makes that branch call the
+    earnings function too (Decision 1). No live classes exist yet, so there
+    are no stored rows to backfill.
 - **Not in the issue: currency is the wrong pattern to copy.**
   - `Class.currency` is stamped by the server (`api/classes/route.ts`,
     `class-generator.ts`). It is in no zod schema and no form, and
@@ -96,8 +97,11 @@ displays. The decisions comment on #819 is part of the brief:
 ## Decisions
 
 1. **Extract the earnings subtraction first** into one pure function. All four
-   sites call it. It lands as its own behaviour-preserving task with no test
-   expectation changes, before any VAT code.
+   sites call it, and so does `completeClass`'s zero-charge branch, which
+   today stores `effectiveTeacherRate: 0` while every display shows
+   `−roomCost`. It lands as its own task before any VAT code. The zero-charge
+   value is its only behaviour change, and only the GDPR export reads that
+   column.
 2. **A `Class.vatTotal` snapshot** is written beside `totalRevenue` at
    completion. `totalRevenue` keeps meaning "what students were billed, incl.
    VAT", and reporting keeps its #47 semantics. Option C (derive from
@@ -172,7 +176,8 @@ field, so the compiler finds every caller.
   - writes `Class.vatTotal = vatCents / 100`
   - writes `effectiveTeacherRate` as the earnings above
 
-  The zero-charge branch writes `vatTotal: 0` beside `totalRevenue: 0`. The
+  The zero-charge branch writes `vatTotal: 0` beside `totalRevenue: 0`, and
+  `effectiveTeacherRate` via `teacherEarningsCents` (so `−roomCost`). The
   completion notification's earnings figure is excl. VAT with no copy change.
 - Every type that repeats the economic fields gains `vatPercent`. The compiler
   then finds every page that builds one from a class row:
@@ -315,7 +320,9 @@ New tests by layer:
 
 The order is load-bearing:
 
-1. Extract `teacherEarningsCents`, with no expectation changes.
+1. Extract `teacherEarningsCents`. The only expectation change allowed is the
+   zero-charge branch's `effectiveTeacherRate`, which goes from 0 to
+   `−roomCost`.
 2. Schema, migration, CHECKs, and the `vat.ts` helpers.
 3. Engine, `billAtLeastMinimum`, and `completeClass` writing VAT. This makes
    `vatCents` required on the earnings function.
@@ -333,8 +340,5 @@ The order is load-bearing:
   business (the issue).
 - Showing `Payment.vatAmount` or a VAT total anywhere (the issue comment:
   store, don't show yet).
-- The zero-charge `effectiveTeacherRate: 0` versus the displays' `−roomCost`.
-  This is pre-existing and only the GDPR export reads the column. This change
-  neither widens nor narrows it.
 - The `roomCost + minRate ≥ 0` fix the issue comment proposes. It already
   exists (see Premise check).
