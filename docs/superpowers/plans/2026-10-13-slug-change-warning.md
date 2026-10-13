@@ -8,6 +8,8 @@
 
 **Tech Stack:** React 19 client component, Vitest + Testing Library (`components` project).
 
+> **As built:** review added to Steps 1 and 3 — the live region, a save that sends `pageSlug` only when it changed, and the tests pinning both. PR #863 records each change and the mutation that proves it; the code blocks below are the plan as written.
+
 **Spec:** none — single file, one obvious approach. Direction was set on the issue: warning only, no redirect (a `PreviousSlug` table and redirects add reservation, erasure and availability surface to maintain). No confirm-on-save either: the caption sits beside the field being edited, and a modal would be a second interruption for the same fact.
 
 ## Premise, as measured
@@ -21,13 +23,14 @@
 - Copy, exactly: `Links you’ve already shared to fair.yoga/{savedSlug} will stop working.` (typographic apostrophe `’`, as `currencySwitchLine` in the same file uses).
 - Styling follows the in-settings attention precedent `late-first-class-notice.tsx`: `type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3` (no `mb-4`; the section's `gap-4` spaces it). Gold is never body text on cream — the tint background is what makes `text-gold-deep` legible.
 - The caption is tied to the input with `aria-describedby` so a screen reader hears it on the field, not only when it appears.
-- The caption sits in an always-mounted `aria-live="polite"` region (`empty:hidden`, so it adds no gap while empty): `aria-describedby` is read on focus, and the caption appears while the field already has it. Added after the branch review, with a network-error test (`fetch` rejects → warning stays).
+- The caption sits in an always-mounted `aria-live="polite"` region (`empty:sr-only`, so it takes no flex gap while empty yet stays in the accessibility tree): `aria-describedby` is read on focus, and the caption appears while the field already has it.
+- A save sends `pageSlug` only when it differs from `savedSlug`, as it already does `currency`, so a save from a stale tab cannot move the page back to an old slug.
 - Comments describe this file's code only (CLAUDE.md, *Comment Discipline*).
 
 ## Review Focus
 
 1. **Warning persisting after a successful save** — `useState(initial)` ignores the refreshed `initial` prop after `router.refresh()`, so without `savedSlug` the warning would stay up naming a slug that is already gone. Pinned by the "clears after save" test.
-2. **Failed save (409 `SLUG_TAKEN`, network error)** — the slug was not saved, so the warning must stay. Pinned by the "keeps the warning when the save fails" test.
+2. **Failed save (409 `SLUG_TAKEN`, network error)** — the slug was not saved, so the warning must stay. Pinned by "keeps the warning when the save fails" (409) and "keeps the warning when the save cannot reach the server" (network error).
 3. **Typing back to the saved slug** — no change, no warning. Pinned.
 4. **A second change after a saved one** — the warning names the slug saved most recently, not the one the page loaded with. Pinned.
 5. **Untouched form** — no warning on load. Pinned.
