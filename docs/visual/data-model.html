@@ -3,615 +3,360 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ethical Yoga App — Data Model (ERD)</title>
+<title>fair.yoga Data Model</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: Arial, sans-serif;
-    background: #F7F4EF;
-    color: #2D2D2D;
-    padding: 32px;
-    max-width: 1200px;
-    margin: 0 auto;
-  }
-  h1 {
-    font-family: Georgia, serif;
-    color: #1A5653;
-    font-size: 28px;
-    margin-bottom: 8px;
-  }
-  .subtitle {
-    color: #6B5B4E;
-    font-size: 14px;
-    margin-bottom: 32px;
-  }
-  .legend {
-    display: flex;
-    gap: 24px;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-  }
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: #6B5B4E;
-  }
-  .legend-dot {
-    width: 14px;
-    height: 14px;
-    border-radius: 4px;
-  }
+/* Layout: one 1340px column — a full-width relationship map (own horizontal scroll), then reference cards in a two-column grid, then enums. */
+:root {
+  --bg: #F7F4EF; --surface: #F0E9DC; --surface-2: #E8DFCD; --line: #DDD2BE;
+  --ink: #2B2622; --text: #6B5B4E; --muted: #8C7D70; --accent: #1A5653; --gold: #C4A96A;
+  --edge: #A89A8B; --edge-hi: #1A5653;
+  --d-auth: #5B6B7A; --d-people: #1A5653; --d-roster: #8C7230; --d-payout: #8A5A44;
+  --d-spaces: #4F7A5A; --d-schedule: #2F6688; --d-booking: #7B5C8C; --d-comms: #A0674B;
+  --f-display: Georgia, "Times New Roman", serif;
+  --f-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161A19; --surface: #1F2523; --surface-2: #28302D; --line: #33403C;
+  --ink: #EDE6DA; --text: #C9BDAE; --muted: #8F877C; --accent: #6FB7B1; --gold: #D4BC80;
+  --edge: #5A6662; --edge-hi: #6FB7B1;
+  --d-auth: #9AAABA; --d-people: #6FB7B1; --d-roster: #CDB26A; --d-payout: #CF9A80;
+  --d-spaces: #8DBB97; --d-schedule: #7FB0D2; --d-booking: #B99AC9; --d-comms: #D9A387;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #161A19; --surface: #1F2523; --surface-2: #28302D; --line: #33403C;
+  --ink: #EDE6DA; --text: #C9BDAE; --muted: #8F877C; --accent: #6FB7B1; --gold: #D4BC80;
+  --edge: #5A6662; --edge-hi: #6FB7B1;
+  --d-auth: #9AAABA; --d-people: #6FB7B1; --d-roster: #CDB26A; --d-payout: #CF9A80;
+  --d-spaces: #8DBB97; --d-schedule: #7FB0D2; --d-booking: #B99AC9; --d-comms: #D9A387;
+  color-scheme: dark; }
 
-  .domain-section {
-    margin-bottom: 32px;
-  }
-  .domain-label {
-    font-family: Georgia, serif;
-    font-size: 18px;
-    color: #6B5B4E;
-    margin-bottom: 16px;
-    padding-bottom: 8px;
-    border-bottom: 2px solid #D4C9B8;
-  }
-  .entity-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 20px;
-    margin-bottom: 16px;
-  }
+*, *::before, *::after { box-sizing: border-box; }
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--f-body); font-size: 14px; line-height: 1.5; padding: 0 16px; }
+.wrap { max-width: 1340px; margin: 0 auto; padding-block: 32px 64px; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--f-display); color: var(--ink); margin: 0; text-wrap: balance; }
+h1 { font-size: 30px; }
+h2 { font-size: 21px; }
+h3 { font-size: 16px; }
+p { margin: 0; max-width: 72ch; }
+code, .mono { font-family: var(--f-mono); font-size: 12px; }
+.lede { display: grid; gap: 8px; }
+.meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 
-  .entity {
-    background: #fff;
-    border: 2px solid #D4C9B8;
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .entity-header {
-    padding: 10px 14px;
-    font-family: Georgia, serif;
-    font-weight: bold;
-    font-size: 15px;
-    color: #fff;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .entity-header .badge {
-    font-family: Arial, sans-serif;
-    font-size: 10px;
-    font-weight: normal;
-    background: rgba(255,255,255,0.25);
-    padding: 2px 7px;
-    border-radius: 8px;
-  }
-  .entity-body {
-    padding: 8px 14px 12px;
-  }
-  .field {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 3px 0;
-    font-size: 12.5px;
-    border-bottom: 1px solid #f0ebe3;
-    gap: 12px;
-  }
-  .field:last-child { border-bottom: none; }
-  .field-name {
-    color: #2D2D2D;
-    font-weight: 500;
-    white-space: nowrap;
-  }
-  .field-name.pk {
-    color: #1A5653;
-    font-weight: 700;
-  }
-  .field-name.fk {
-    color: #8B6914;
-    font-style: italic;
-  }
-  .field-type {
-    color: #9a8d7f;
-    font-size: 11.5px;
-    text-align: right;
-    white-space: nowrap;
-  }
-  .field-note {
-    font-size: 10.5px;
-    color: #B09E8A;
-    padding: 2px 0 4px;
-    line-height: 1.4;
-  }
-  .section-label {
-    font-size: 11px;
-    color: #C4A96A;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    padding: 8px 0 2px;
-    font-weight: 600;
-  }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; display: inline-flex; align-items: center; gap: 7px; }
+.chip:hover { background: var(--surface-2); }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--ink); background: var(--surface-2); }
+.chip:focus-visible, .node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
 
-  .cat-people .entity-header { background: #1A5653; }
-  .cat-space .entity-header { background: #6B5B4E; }
-  .cat-class .entity-header { background: #3A7A76; }
-  .cat-booking .entity-header { background: #C4A96A; color: #2D2D2D; }
-  .cat-payment .entity-header { background: #8B6914; }
-  .cat-comms .entity-header { background: #7A8B6B; }
+.map-box { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow-x: auto; }
+.map-box svg { display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 12px; color: var(--muted); padding: 10px 16px; border-top: 1px solid var(--line); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
 
-  .relationship-arrow {
-    display: inline-block;
-    color: #1A5653;
-    font-weight: bold;
-    margin: 0 4px;
-  }
+.node rect.box { fill: var(--bg); stroke: var(--c); stroke-width: 1.25; }
+.node text { font-family: var(--f-body); font-size: 12.5px; fill: var(--ink); }
+.node .count { font-family: var(--f-mono); font-size: 10.5px; fill: var(--muted); }
+.node rect.tab { fill: var(--c); }
+.node { cursor: pointer; }
+.node:hover rect.box { fill: var(--surface-2); }
+.edge { fill: none; stroke: var(--edge); stroke-width: 1.2; }
+.edge.logical { stroke-dasharray: 4 4; }
+.edge.composite { stroke-width: 2.4; }
+.end { fill: var(--edge); }
+svg.focus .node:not(.on) { opacity: .22; }
+svg.focus .edge:not(.on) { opacity: .08; }
+svg.focus .end:not(.on) { opacity: .08; }
+.edge.on { stroke: var(--edge-hi); }
+.end.on { fill: var(--edge-hi); }
+.region { fill: none; }
 
-  .summary-box {
-    padding: 24px;
-    background: #E8DCC8;
-    border-radius: 12px;
-    margin-top: 32px;
-  }
-  .summary-box h2 {
-    font-family: Georgia, serif;
-    color: #1A5653;
-    font-size: 20px;
-    margin-bottom: 12px;
-  }
-  .rel-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    font-size: 13px;
-    color: #6B5B4E;
-  }
-  .notes-box {
-    padding: 24px;
-    background: #E8F0EF;
-    border-radius: 12px;
-    margin-top: 24px;
-  }
-  .notes-box h2 {
-    font-family: Georgia, serif;
-    color: #1A5653;
-    font-size: 20px;
-    margin-bottom: 12px;
-  }
-  .notes-box p {
-    font-size: 13px;
-    color: #6B5B4E;
-    line-height: 1.7;
-    margin-top: 8px;
-  }
-  .notes-box p:first-of-type { margin-top: 0; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); gap: 16px; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 12px; min-width: 0; scroll-margin-top: 16px; }
+.card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.card-head .dom { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--c); display: inline-flex; align-items: center; gap: 6px; }
+.card-head .n { margin-left: auto; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.blurb { font-size: 13px; }
+.fields { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.fields td { padding: 4px 8px 4px 0; border-top: 1px solid var(--line); vertical-align: top; }
+.fields td:first-child { font-family: var(--f-mono); font-size: 12px; color: var(--ink); white-space: nowrap; }
+.fields td:nth-child(2) { font-family: var(--f-mono); font-size: 11.5px; color: var(--text); }
+.fields td:last-child { text-align: right; padding-right: 0; }
+.tag { display: inline-block; font-size: 10.5px; line-height: 1; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); margin-left: 4px; white-space: nowrap; }
+.tag.pk { color: var(--ink); border-color: var(--ink); }
+.tag.fk { color: var(--accent); border-color: var(--accent); }
+.tag.gen, .tag.mirror { color: var(--gold); border-color: var(--gold); }
+.table-scroll { overflow-x: auto; }
+.sub { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.rels { display: grid; gap: 3px; font-size: 12.5px; }
+.rels a { color: var(--accent); text-decoration: none; }
+.rels a:hover { text-decoration: underline; }
 
-  .tabs {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 24px;
-    flex-wrap: wrap;
-  }
-  .tab {
-    padding: 8px 16px;
-    border-radius: 20px;
-    border: 1.5px solid #D4C9B8;
-    background: #fff;
-    font-size: 13px;
-    color: #6B5B4E;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .tab:hover { border-color: #1A5653; color: #1A5653; }
-  .tab.active { background: #1A5653; color: #fff; border-color: #1A5653; }
+.enums { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.enum { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.enum h3 { font-size: 14px; margin-bottom: 6px; }
+.enum .vals { font-family: var(--f-mono); font-size: 11.5px; color: var(--text); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.enum .used { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.note { font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 </style>
 </head>
 <body>
 
-<h1>Data Model — Entity Relationship Diagram</h1>
-<p class="subtitle">Ethical Yoga App — 11 entities across 6 domains</p>
+<div class="wrap">
+  <header class="lede">
+    <h1>fair.yoga data model</h1>
+    <p>Every model and enum in <code>prisma/schema.prisma</code>, drawn from the schema itself. Columns, types and foreign keys are parsed from the file. Domains, layout, unenforced references are curated.</p>
+    <p class="meta" id="stats"></p>
+  </header>
 
-<div class="legend">
-  <div class="legend-item"><div class="legend-dot" style="background:#1A5653"></div> People</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#6B5B4E"></div> Spaces</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#3A7A76"></div> Classes</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#C4A96A"></div> Bookings</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#8B6914"></div> Payments</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#7A8B6B"></div> Communication</div>
-  <div class="legend-item" style="margin-left:24px"><span style="font-weight:700;color:#1A5653">PK</span> = primary key</div>
-  <div class="legend-item"><span style="font-style:italic;color:#8B6914">FK</span> = foreign key</div>
-</div>
+  <div class="chips" id="chips" role="toolbar" aria-label="Filter by domain"></div>
 
-<div class="tabs">
-  <div class="tab active" onclick="filter('all', this)">All</div>
-  <div class="tab" onclick="filter('people', this)">People</div>
-  <div class="tab" onclick="filter('space', this)">Spaces</div>
-  <div class="tab" onclick="filter('class', this)">Classes</div>
-  <div class="tab" onclick="filter('booking', this)">Bookings</div>
-  <div class="tab" onclick="filter('payment', this)">Payments</div>
-  <div class="tab" onclick="filter('comms', this)">Communication</div>
-</div>
-
-<!-- ==================== PEOPLE ==================== -->
-<div class="domain-section" data-domain="people">
-  <div class="domain-label">People — who uses the system</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-people">
-      <div class="entity-header">Teacher <span class="badge">core</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name">first_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">last_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">email</span><span class="field-type">string, unique</span></div>
-        <div class="field"><span class="field-name">bio</span><span class="field-type">string(250)</span></div>
-        <div class="field"><span class="field-name">page_slug</span><span class="field-type">string, unique</span></div>
-        <div class="field"><span class="field-name">custom_domain</span><span class="field-type">string, nullable</span></div>
-        <div class="section-label">Defaults</div>
-        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, default EUR</span></div>
-        <div class="field"><span class="field-name">default_timezone</span><span class="field-type">string, e.g. 'Europe/Amsterdam'</span></div>
-        <div class="field"><span class="field-name">default_vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
-        <div class="section-label">Notifications</div>
-        <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off, default morning_of</span></div>
-        <div class="field"><span class="field-name">class_reminder_channel</span><span class="field-type">enum: inbox, email, inbox_and_email, default inbox_and_email</span></div>
-        <div class="field"><span class="field-name">booking_notifications</span><span class="field-type">enum: inbox_and_email, inbox_only, off, default inbox_and_email</span></div>
-        <div class="field"><span class="field-name">email_on_class_completed</span><span class="field-type">boolean, default true</span></div>
-        <div class="field"><span class="field-name">email_on_invitation</span><span class="field-type">boolean, default true</span></div>
-        <div class="section-label">Payment settings</div>
-        <div class="field"><span class="field-name">payment_level</span><span class="field-type">enum: 1, 2</span></div>
-        <div class="field"><span class="field-name">processor_type</span><span class="field-type">enum: mollie, stripe</span></div>
-        <div class="field"><span class="field-name">processor_account_id</span><span class="field-type">string, nullable</span></div>
-        <div class="section-label">Timestamps</div>
-        <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
-      </div>
+  <section class="map-box" aria-label="Relationship map">
+    <svg id="map" role="img" aria-label="Entity relationship map"></svg>
+    <div class="legend">
+      <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" class="edge"/></svg>foreign key</span>
+      <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" class="edge composite"/></svg>composite key (id, kind[, live / isArchived])</span>
+      <span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" class="edge logical"/></svg>reference the database does not enforce</span>
+      <span>● child end &nbsp;▸ parent end</span>
+      <span>Click a model to trace it.</span>
     </div>
+  </section>
 
-    <div class="entity cat-people">
-      <div class="entity-header">TeacherBankAccount <span class="badge">per currency</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name">id (PK)</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name">teacher_id (FK)</span><span class="field-type">→ Teacher, unique with currency</span></div>
-        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency</span></div>
-        <div class="field"><span class="field-name">holder_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">iban</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">bic</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">sort_code</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">account_number</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">routing_number</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">created_at, updated_at</span><span class="field-type">datetime</span></div>
-      </div>
-    </div>
+  <section style="display:grid;gap:14px">
+    <h2>Models</h2>
+    <div class="cards" id="cards"></div>
+  </section>
 
-    <div class="entity cat-people">
-      <div class="entity-header">Student <span class="badge">core</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name">first_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">last_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">email</span><span class="field-type">string, unique</span></div>
-        <div class="field"><span class="field-name">income_tier</span><span class="field-type">int (1-5)</span></div>
-        <div class="section-label">Optional fields</div>
-        <div class="field"><span class="field-name">phone</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">birthday</span><span class="field-type">date, nullable</span></div>
-        <div class="field"><span class="field-name">address</span><span class="field-type">string, nullable</span></div>
-        <div class="section-label">Preferences</div>
-        <div class="field"><span class="field-name">class_reminder</span><span class="field-type">enum: evening_before, morning_of, one_hour_before, off, default morning_of</span></div>
-        <div class="field"><span class="field-name">class_reminder_channel</span><span class="field-type">enum: inbox, email, inbox_and_email, default inbox_and_email</span></div>
-        <div class="field"><span class="field-name">email_notifications</span><span class="field-type">boolean, default true</span></div>
-        <div class="section-label">Timestamps</div>
-        <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
-      </div>
-    </div>
+  <section style="display:grid;gap:14px">
+    <h2>Enums</h2>
+    <div class="enums" id="enums"></div>
+  </section>
 
-    <div class="entity cat-people">
-      <div class="entity-header">StudentPrivacy <span class="badge">per-teacher</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">student_id</span><span class="field-type">&#8594; Student</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name">share_full_name</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">share_email</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">share_phone</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">share_birthday</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">share_age</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">share_address</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">receive_comms</span><span class="field-type">boolean, default true</span></div>
-        <div class="field-note">Not created on booking. Written by the student's own privacy PUT (opt-in) or by unlinking a teacher (force-silenced). Default = max privacy.</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== SPACES ==================== -->
-<div class="domain-section" data-domain="space">
-  <div class="domain-label">Spaces — where classes happen</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-space">
-      <div class="entity-header">Room <span class="badge">shared library</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name">venue_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">address</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">city</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">postcode</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">floor</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">room_name</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">max_capacity</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">equipment</span><span class="field-type">json[]</span></div>
-        <div class="field"><span class="field-name">notes</span><span class="field-type">text, nullable</span></div>
-        <div class="field"><span class="field-name">is_public</span><span class="field-type">boolean</span></div>
-        <div class="field"><span class="field-name fk">created_by</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field-note">Base properties are read-only after creation. Changes via admin only.</div>
-      </div>
-    </div>
-
-    <div class="entity cat-space">
-      <div class="entity-header">TeacherRoom <span class="badge">per-teacher override</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name fk">room_id</span><span class="field-type">&#8594; Room</span></div>
-        <div class="field"><span class="field-name">capacity_override</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">rental_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">equipment_notes</span><span class="field-type">text, nullable</span></div>
-        <div class="field-note">Each teacher sets their own capacity and rate for a room. Rate is private.</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== CLASSES ==================== -->
-<div class="domain-section" data-domain="class">
-  <div class="domain-label">Classes — the core object</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-class">
-      <div class="entity-header">ClassTemplate <span class="badge">recurring</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name fk">teacher_room_id</span><span class="field-type">&#8594; TeacherRoom</span></div>
-        <div class="field"><span class="field-name">class_type</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">description</span><span class="field-type">text, nullable</span></div>
-        <div class="field"><span class="field-name">day_of_week</span><span class="field-type">int (0-6)</span></div>
-        <div class="field"><span class="field-name">start_time</span><span class="field-type">time</span></div>
-        <div class="field"><span class="field-name">duration_minutes</span><span class="field-type">int</span></div>
-        <div class="section-label">Economics (copied to instances)</div>
-        <div class="field"><span class="field-name">room_cost</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">min_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">target_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">min_students</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">max_students</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
-        <div class="section-label">Policies</div>
-        <div class="field"><span class="field-name">cancel_deadline</span><span class="field-type">enum: 48h, 24h, 12h, 6h</span></div>
-        <div class="field"><span class="field-name">auto_cancel_check</span><span class="field-type">enum: 4h, 2h, 1h</span></div>
-        <div class="field"><span class="field-name">is_active</span><span class="field-type">boolean</span></div>
-        <div class="field-note">Instances generated on rolling 4-week basis. Runs until teacher stops it.</div>
-      </div>
-    </div>
-
-    <div class="entity cat-class">
-      <div class="entity-header">Class <span class="badge">instance</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name fk">teacher_room_id</span><span class="field-type">&#8594; TeacherRoom</span></div>
-        <div class="field"><span class="field-name fk">template_id</span><span class="field-type">&#8594; ClassTemplate, nullable</span></div>
-        <div class="field"><span class="field-name">class_type</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">description</span><span class="field-type">text, nullable</span></div>
-        <div class="field"><span class="field-name">date</span><span class="field-type">date</span></div>
-        <div class="field"><span class="field-name">start_time</span><span class="field-type">time</span></div>
-        <div class="field"><span class="field-name">duration_minutes</span><span class="field-type">int</span></div>
-        <div class="section-label">Economics (locked after first registration)</div>
-        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, snapshot of the teacher's</span></div>
-        <div class="field"><span class="field-name">room_cost</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">min_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">target_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">min_students</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">max_students</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">vat_percent</span><span class="field-type">decimal(6,3), default 0</span></div>
-        <div class="section-label">Policies</div>
-        <div class="field"><span class="field-name">cancel_deadline</span><span class="field-type">enum: 48h, 24h, 12h, 6h</span></div>
-        <div class="field"><span class="field-name">auto_cancel_check</span><span class="field-type">enum: 4h, 2h, 1h</span></div>
-        <div class="section-label">State</div>
-        <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
-        <div class="field"><span class="field-name">settings_locked</span><span class="field-type">boolean</span></div>
-        <div class="field"><span class="field-name">teacher_reminder_sent_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="section-label">Calculated (after class ends)</div>
-        <div class="field"><span class="field-name">effective_teacher_rate</span><span class="field-type">decimal, nullable</span></div>
-        <div class="field"><span class="field-name">total_students</span><span class="field-type">int, nullable</span></div>
-        <div class="field"><span class="field-name">total_revenue</span><span class="field-type">decimal, nullable</span></div>
-        <div class="field"><span class="field-name">vat_total</span><span class="field-type">decimal(10,2), nullable</span></div>
-        <div class="field-note">Status: draft &#8594; open &#8594; in_progress &#8594; completed. Full is derived from registrations reaching max_students; cancellation is cancelled_at on the calendar entry, not a status.</div>
-      </div>
-    </div>
-
-    <div class="entity cat-class">
-      <div class="entity-header">StudioClass <span class="badge">simple tracking</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name">date</span><span class="field-type">date</span></div>
-        <div class="field"><span class="field-name">start_time</span><span class="field-type">time</span></div>
-        <div class="field"><span class="field-name">duration_minutes</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">location</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">student_count</span><span class="field-type">int, nullable</span></div>
-        <div class="field"><span class="field-name">hourly_rate</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">currency</span><span class="field-type">enum Currency, snapshot of the teacher's</span></div>
-        <div class="field-note">No pricing engine. No individual registration. Just calendar + income tracking.</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== BOOKINGS ==================== -->
-<div class="domain-section" data-domain="booking">
-  <div class="domain-label">Bookings — students joining classes</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-booking">
-      <div class="entity-header">Registration <span class="badge">student &#8596; class</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">class_id</span><span class="field-type">&#8594; Class</span></div>
-        <div class="field"><span class="field-name fk">student_id</span><span class="field-type">&#8594; Student</span></div>
-        <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
-        <div class="field"><span class="field-name">is_walk_in</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">tier_at_booking</span><span class="field-type">int (1-5)</span></div>
-        <div class="section-label">Calculated (after class ends)</div>
-        <div class="field"><span class="field-name">price</span><span class="field-type">decimal, nullable</span></div>
-        <div class="field"><span class="field-name">tier_ratio</span><span class="field-type">decimal, nullable</span></div>
-        <div class="section-label">Timestamps</div>
-        <div class="field"><span class="field-name">registered_at</span><span class="field-type">datetime</span></div>
-        <div class="field"><span class="field-name">cancelled_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field"><span class="field-name">class_reminder_sent_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field-note">Status: registered &#8594; attended / no_show / late_cancel / cancelled</div>
-      </div>
-    </div>
-
-    <div class="entity cat-booking">
-      <div class="entity-header">WaitlistEntry <span class="badge">overflow</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">class_id</span><span class="field-type">&#8594; Class</span></div>
-        <div class="field"><span class="field-name fk">student_id</span><span class="field-type">&#8594; Student</span></div>
-        <div class="field"><span class="field-name">position</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
-        <div class="field"><span class="field-name">promoted_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field"><span class="field-name fk">registration_id</span><span class="field-type">&#8594; Registration, nullable</span></div>
-        <div class="section-label">Timestamps</div>
-        <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
-        <div class="field-note">Status: waiting &#8594; promoted &#8594; claimed &#8594; expired &#8594; removed</div>
-        <div class="field-note">Promoted = auto (until the final hour before class). Claimed = first-come (final hour).</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== PAYMENTS ==================== -->
-<div class="domain-section" data-domain="payment">
-  <div class="domain-label">Payments — tracking money</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-payment">
-      <div class="entity-header">Payment <span class="badge">per registration</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">registration_id</span><span class="field-type">&#8594; Registration</span></div>
-        <div class="field"><span class="field-name">amount</span><span class="field-type">decimal</span></div>
-        <div class="field"><span class="field-name">vat_amount</span><span class="field-type">decimal(10,2), default 0</span></div>
-        <div class="field"><span class="field-name">status</span><span class="field-type">enum (see note)</span></div>
-        <div class="field"><span class="field-name">method</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">processor_ref</span><span class="field-type">string, nullable</span></div>
-        <div class="field"><span class="field-name">reminder_sent_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="section-label">Timestamps</div>
-        <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
-        <div class="field"><span class="field-name">paid_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field"><span class="field-name">not_charged_at</span><span class="field-type">datetime, nullable</span></div>
-        <div class="field-note">Status: pending &#8594; paid / overdue / not_charged; paid and not_charged both reopen to pending</div>
-        <div class="field-note">Level 1: teacher marks paid manually. Level 2: auto via processor.</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== COMMUNICATION ==================== -->
-<div class="domain-section" data-domain="comms">
-  <div class="domain-label">Communication — notifications and announcements</div>
-  <div class="entity-grid">
-
-    <div class="entity cat-comms">
-      <div class="entity-header">Notification <span class="badge">inbox item</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name">recipient_type</span><span class="field-type">enum: teacher, student</span></div>
-        <div class="field"><span class="field-name fk">recipient_id</span><span class="field-type">&#8594; Teacher or Student</span></div>
-        <div class="field"><span class="field-name">type</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">title</span><span class="field-type">string</span></div>
-        <div class="field"><span class="field-name">body</span><span class="field-type">text</span></div>
-        <div class="field"><span class="field-name fk">related_class_id</span><span class="field-type">&#8594; Class, nullable</span></div>
-        <div class="field"><span class="field-name">is_read</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">email_sent</span><span class="field-type">boolean, default false</span></div>
-        <div class="field"><span class="field-name">created_at</span><span class="field-type">datetime</span></div>
-        <div class="field-note">Types: booking_confirmed, class_cancelled, payment_received, waitlist_promoted, spot_available, spot_taken, reminder, announcement</div>
-      </div>
-    </div>
-
-    <div class="entity cat-comms">
-      <div class="entity-header">Announcement <span class="badge">teacher &#8594; students</span></div>
-      <div class="entity-body">
-        <div class="field"><span class="field-name pk">id</span><span class="field-type">uuid</span></div>
-        <div class="field"><span class="field-name fk">teacher_id</span><span class="field-type">&#8594; Teacher</span></div>
-        <div class="field"><span class="field-name fk">class_id</span><span class="field-type">&#8594; Class, nullable</span></div>
-        <div class="field"><span class="field-name">message</span><span class="field-type">text</span></div>
-        <div class="field"><span class="field-name">recipient_count</span><span class="field-type">int</span></div>
-        <div class="field"><span class="field-name">audience_student_ids</span><span class="field-type">text[], default {}</span></div>
-        <div class="field"><span class="field-name">sent_at</span><span class="field-type">datetime</span></div>
-        <div class="field-note">class_id null = sent to all teacher's students or a chosen subset, or its class has since been deleted. Creates one Notification per recipient not already told this message inside the dedupe window.</div>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- ==================== SUMMARIES ==================== -->
-
-<div class="summary-box">
-  <h2>Relationships</h2>
-  <div class="rel-grid">
-    <div><strong>Teacher</strong> &#8594; has many <strong>TeacherRooms</strong></div>
-    <div><strong>Teacher</strong> &#8594; has many <strong>Classes</strong></div>
-    <div><strong>Teacher</strong> &#8594; has many <strong>ClassTemplates</strong></div>
-    <div><strong>Teacher</strong> &#8594; has many <strong>StudioClasses</strong></div>
-    <div><strong>Teacher</strong> &#8594; has many <strong>Announcements</strong></div>
-    <div><strong>Room</strong> &#8594; has many <strong>TeacherRooms</strong></div>
-    <div><strong>TeacherRoom</strong> &#8594; has many <strong>Classes</strong></div>
-    <div><strong>ClassTemplate</strong> &#8594; has many <strong>Classes</strong> (instances)</div>
-    <div><strong>Class</strong> &#8594; has many <strong>Registrations</strong></div>
-    <div><strong>Class</strong> &#8594; has many <strong>WaitlistEntries</strong></div>
-    <div><strong>Student</strong> &#8594; has many <strong>Registrations</strong></div>
-    <div><strong>Student</strong> &#8594; has many <strong>StudentPrivacy</strong> (per teacher)</div>
-    <div><strong>Registration</strong> &#8594; has one <strong>Payment</strong></div>
-    <div><strong>WaitlistEntry</strong> &#8594; has one <strong>Registration</strong> (when promoted)</div>
-    <div><strong>Announcement</strong> &#8594; creates many <strong>Notifications</strong></div>
-  </div>
-</div>
-
-<div class="notes-box">
-  <h2>Design Notes</h2>
-  <p><strong>tier_at_booking</strong> on Registration captures the student's tier at the moment they booked. The student's global tier on the Student table can change anytime, but the tier used for pricing is the one at booking time. This also serves as the income history — no separate tracking needed.</p>
-  <p><strong>settings_locked</strong> on Class flips to true when the first Registration is created. After that, the fields <code>LOCKED_FIELDS</code> names (<code>src/lib/class-fields.ts</code>) become immutable.</p>
-  <p><strong>WaitlistEntry</strong> is separate from Registration to cleanly model the hybrid promotion rules. When promoted, a Registration is created and linked via registration_id.</p>
-  <p><strong>StudioClass</strong> is intentionally disconnected from Room and Student. It's a simple log entry for the teacher's calendar and income reporting.</p>
-  <p><strong>Notification</strong> uses a polymorphic recipient (teacher or student) so both share the same inbox infrastructure.</p>
-  <p><strong>rental_rate</strong> on TeacherRoom is private to each teacher — never shown to other teachers using the same room.</p>
+  <p class="note">Not drawn: the constraints and triggers Prisma cannot express — the <code>EXCLUDE</code> slot constraints, <code>kind</code> checks, partial unique indexes and guard triggers. Each model’s docblock in <code>prisma/schema.prisma</code> names its own, and <code>docs/data-model.md</code> explains them.</p>
 </div>
 
 <script>
-function filter(domain, el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  document.querySelectorAll('.domain-section').forEach(s => {
-    if (domain === 'all') {
-      s.style.opacity = '1';
-      s.style.display = 'block';
-    } else if (s.dataset.domain === domain) {
-      s.style.opacity = '1';
-      s.style.display = 'block';
-    } else {
-      s.style.opacity = '0.12';
-      s.style.display = 'block';
-    }
-  });
-}
-</script>
+const SCHEMA = {"models":[{"kind":"model","name":"Account","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teachers","type":"Teacher","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"students","type":"Student","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"adminGrants","type":"AdminGrant","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"AdminGrant","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"grantedAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"grantedBy","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"revokedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"revokedBy","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"account","type":"Account","list":false,"optional":false,"attrs":"@relation(fields: [accountId], references: [id])","fk":{"fields":["accountId"],"references":["id"],"onDelete":null},"isRelation":true}],"blockAttrs":["@@index([accountId])"]},{"kind":"model","name":"Teacher","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"firstName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"lastName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"bio","type":"String","list":false,"optional":false,"attrs":"@db.VarChar(250)","isRelation":false},{"name":"pageSlug","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"customDomain","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"paymentLink","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"currency","type":"Currency","list":false,"optional":false,"attrs":"@default(EUR)","isRelation":false},{"name":"defaultVatPercent","type":"Decimal","list":false,"optional":false,"attrs":"@default(0) @db.Decimal(6, 3)","isRelation":false},{"name":"defaultTimezone","type":"String","list":false,"optional":false,"attrs":"@default(\"Europe/Amsterdam\")","isRelation":false},{"name":"classReminder","type":"ReminderTiming","list":false,"optional":false,"attrs":"@default(morning_of)","isRelation":false},{"name":"classReminderChannel","type":"ReminderChannel","list":false,"optional":false,"attrs":"@default(inbox_and_email)","isRelation":false},{"name":"bookingNotifications","type":"TeacherBookingNotifications","list":false,"optional":false,"attrs":"@default(inbox_and_email)","isRelation":false},{"name":"emailOnClassCompleted","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"emailOnInvitation","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"pushAutoCancelled","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"pushBookings","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushClassCompleted","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushClassReminders","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushInvitations","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"skippedOnboarding","type":"OnboardingStep","list":true,"optional":false,"attrs":"@default([])","isRelation":false},{"name":"paymentLevel","type":"PaymentLevel","list":false,"optional":false,"attrs":"@default(LEVEL_1)","isRelation":false},{"name":"processorType","type":"ProcessorType","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"processorAccountId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"deletedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"paymentsPausedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"paymentsResumedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"pauseWindowStart","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"pausePasskeyCutoff","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"account","type":"Account","list":false,"optional":false,"attrs":"@relation(fields: [accountId], references: [id])","fk":{"fields":["accountId"],"references":["id"],"onDelete":null},"isRelation":true},{"name":"teacherRooms","type":"TeacherRoom","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"calendarEntries","type":"CalendarEntry","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"announcements","type":"Announcement","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"studentPrivacy","type":"StudentPrivacy","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"createdRooms","type":"Room","list":true,"optional":false,"attrs":"@relation(\"RoomCreator\")","isRelation":true},{"name":"teacherStudents","type":"TeacherStudent","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"invitations","type":"Invitation","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"teacherBlocks","type":"TeacherBlock","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"scheduleRules","type":"ScheduleRule","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"photo","type":"TeacherPhoto","list":false,"optional":true,"attrs":"","isRelation":true},{"name":"bankAccounts","type":"TeacherBankAccount","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"payoutChanges","type":"PayoutChangeEvent","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"payoutPauseTokens","type":"PayoutPauseToken","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"TeacherBankAccount","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"currency","type":"Currency","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"holderName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"iban","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"bic","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"sortCode","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"accountNumber","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"routingNumber","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@unique([teacherId, currency])"]},{"kind":"model","name":"PayoutChangeEvent","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"kind","type":"PayoutChangeKind","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"accountCurrency","type":"Currency","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"before","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"after","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"identifierChanged","type":"Boolean","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"pauseTokens","type":"PayoutPauseToken","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@index([teacherId, createdAt])"]},{"kind":"model","name":"PayoutPauseToken","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"tokenHash","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"eventId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"expiresAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"event","type":"PayoutChangeEvent","list":false,"optional":false,"attrs":"@relation(fields: [eventId], references: [id], onDelete: Cascade)","fk":{"fields":["eventId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@index([teacherId])"]},{"kind":"model","name":"PasskeyRevokeToken","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"tokenHash","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"credentialId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"expiresAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false}],"blockAttrs":["@@index([accountId])"]},{"kind":"model","name":"TeacherPhoto","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"bytes","type":"Bytes","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"Student","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"firstName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"lastName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"incomeTier","type":"Int","list":false,"optional":false,"attrs":"@default(3)","isRelation":false},{"name":"phone","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"birthday","type":"DateTime","list":false,"optional":true,"attrs":"@db.Date","isRelation":false},{"name":"address","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"classReminder","type":"ReminderTiming","list":false,"optional":false,"attrs":"@default(morning_of)","isRelation":false},{"name":"classReminderChannel","type":"ReminderChannel","list":false,"optional":false,"attrs":"@default(inbox_and_email)","isRelation":false},{"name":"emailNotifications","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"pushWaitlist","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"pushClassChanges","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"pushPayments","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushClassReminders","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushAnnouncements","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushInvitations","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"dismissedPushCard","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"claimedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"tierSelectedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"deletedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"account","type":"Account","list":false,"optional":true,"attrs":"@relation(fields: [accountId], references: [id])","fk":{"fields":["accountId"],"references":["id"],"onDelete":null},"isRelation":true},{"name":"registrations","type":"Registration","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"waitlistEntries","type":"WaitlistEntry","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"studentPrivacy","type":"StudentPrivacy","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"teacherStudents","type":"TeacherStudent","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"StudentPrivacy","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"studentId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"shareFullName","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"shareEmail","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"sharePhone","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"shareBirthday","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"shareAge","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"shareAddress","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"receiveComms","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"student","type":"Student","list":false,"optional":false,"attrs":"@relation(fields: [studentId], references: [id], onDelete: Cascade)","fk":{"fields":["studentId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@unique([studentId, teacherId])"]},{"kind":"model","name":"TeacherStudent","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"studentId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"isArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"student","type":"Student","list":false,"optional":false,"attrs":"@relation(fields: [studentId], references: [id], onDelete: Cascade)","fk":{"fields":["studentId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@unique([teacherId, studentId])"]},{"kind":"model","name":"Invitation","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"firstName","type":"String","list":false,"optional":false,"attrs":"@default(\"\")","isRelation":false},{"name":"lastName","type":"String","list":false,"optional":false,"attrs":"@default(\"\")","isRelation":false},{"name":"status","type":"InvitationStatus","list":false,"optional":false,"attrs":"@default(pending)","isRelation":false},{"name":"isArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"respondedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"lastNotifiedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"lastNotifiedEmail","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"lastNotifyFailedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"teacherInboxNotifiedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"delivered","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@unique([teacherId, email])","@@index([email])"]},{"kind":"model","name":"TeacherBlock","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@unique([teacherId, email])"]},{"kind":"model","name":"Room","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"venueName","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"address","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"city","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"postcode","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"floor","type":"String","list":false,"optional":false,"attrs":"@default(\"\")","isRelation":false},{"name":"roomName","type":"String","list":false,"optional":false,"attrs":"@default(\"\")","isRelation":false},{"name":"maxCapacity","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"equipment","type":"Json","list":false,"optional":false,"attrs":"@default(\"[]\")","isRelation":false},{"name":"notes","type":"String","list":false,"optional":true,"attrs":"@db.Text","isRelation":false},{"name":"isPublic","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"createdById","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"createdBy","type":"Teacher","list":false,"optional":false,"attrs":"@relation(\"RoomCreator\", fields: [createdById], references: [id])","fk":{"fields":["createdById"],"references":["id"],"onDelete":null},"isRelation":true},{"name":"teacherRooms","type":"TeacherRoom","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@index([address, floor, roomName])"]},{"kind":"model","name":"TeacherRoom","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"roomId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"capacityOverride","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"rentalRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"equipmentNotes","type":"String","list":false,"optional":true,"attrs":"@db.Text","isRelation":false},{"name":"isArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"room","type":"Room","list":false,"optional":false,"attrs":"@relation(fields: [roomId], references: [id], onDelete: Cascade)","fk":{"fields":["roomId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"classTemplates","type":"ClassTemplate","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"classes","type":"Class","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@unique([teacherId, roomId])","@@unique([id, isArchived])"]},{"kind":"model","name":"ClassTemplate","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"scheduleRuleId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"teacherRoomId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"ruleLive","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"roomArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"description","type":"String","list":false,"optional":true,"attrs":"@db.Text","isRelation":false},{"name":"roomCost","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"minRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"targetRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"minStudents","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"maxStudents","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"vatPercent","type":"Decimal","list":false,"optional":false,"attrs":"@default(0) @db.Decimal(6, 3)","isRelation":false},{"name":"cancelDeadline","type":"CancelDeadline","list":false,"optional":false,"attrs":"@default(HOURS_24)","isRelation":false},{"name":"autoCancelCheck","type":"AutoCancelCheck","list":false,"optional":false,"attrs":"@default(HOURS_2)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"scheduleRule","type":"ScheduleRule","list":false,"optional":false,"attrs":"@relation(fields: [scheduleRuleId, kind, ruleLive], references: [id, kind, live], onDelete: Cascade)","fk":{"fields":["scheduleRuleId","kind","ruleLive"],"references":["id","kind","live"],"onDelete":"Cascade"},"isRelation":true},{"name":"teacherRoom","type":"TeacherRoom","list":false,"optional":false,"attrs":"@relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])","fk":{"fields":["teacherRoomId","roomArchived"],"references":["id","isArchived"],"onDelete":null},"isRelation":true}],"blockAttrs":["@@index([teacherRoomId, roomArchived])"]},{"kind":"model","name":"Class","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"calendarEntryId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"teacherRoomId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"entryLive","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"roomArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"description","type":"String","list":false,"optional":true,"attrs":"@db.Text","isRelation":false},{"name":"currency","type":"Currency","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"roomCost","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"minRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"targetRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"minStudents","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"maxStudents","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"vatPercent","type":"Decimal","list":false,"optional":false,"attrs":"@default(0) @db.Decimal(6, 3)","isRelation":false},{"name":"cancelDeadline","type":"CancelDeadline","list":false,"optional":false,"attrs":"@default(HOURS_24)","isRelation":false},{"name":"autoCancelCheck","type":"AutoCancelCheck","list":false,"optional":false,"attrs":"@default(HOURS_2)","isRelation":false},{"name":"status","type":"ClassStatus","list":false,"optional":false,"attrs":"@default(draft)","isRelation":false},{"name":"settingsLocked","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"effectiveTeacherRate","type":"Decimal","list":false,"optional":true,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"totalStudents","type":"Int","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"totalRevenue","type":"Decimal","list":false,"optional":true,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"vatTotal","type":"Decimal","list":false,"optional":true,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"spotBroadcastAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"autoCancelDecidedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"teacherReminderSentAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"calendarEntry","type":"CalendarEntry","list":false,"optional":false,"attrs":"@relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)","fk":{"fields":["calendarEntryId","kind","entryLive"],"references":["id","kind","live"],"onDelete":"Cascade"},"isRelation":true},{"name":"teacherRoom","type":"TeacherRoom","list":false,"optional":false,"attrs":"@relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])","fk":{"fields":["teacherRoomId","roomArchived"],"references":["id","isArchived"],"onDelete":null},"isRelation":true},{"name":"registrations","type":"Registration","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"waitlistEntries","type":"WaitlistEntry","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"notifications","type":"Notification","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"announcements","type":"Announcement","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@index([teacherRoomId, roomArchived])","@@index([status])"]},{"kind":"model","name":"StudioClassTemplate","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"scheduleRuleId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"location","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"hourlyRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"scheduleRule","type":"ScheduleRule","list":false,"optional":false,"attrs":"@relation(fields: [scheduleRuleId, kind], references: [id, kind], onDelete: Cascade)","fk":{"fields":["scheduleRuleId","kind"],"references":["id","kind"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"ScheduleRule","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"classType","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"dayOfWeek","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"startTime","type":"DateTime","list":false,"optional":false,"attrs":"@db.Time","isRelation":false},{"name":"durationMinutes","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"slot","type":"Unsupported(\"int4range\")","list":false,"optional":true,"attrs":"@default(dbgenerated())","isRelation":false},{"name":"isActive","type":"Boolean","list":false,"optional":false,"attrs":"@default(true)","isRelation":false},{"name":"isArchived","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"live","type":"Boolean","list":false,"optional":false,"attrs":"@default(dbgenerated())","isRelation":false},{"name":"archivedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"withdrawnCount","type":"Int","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"classTemplates","type":"ClassTemplate","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"studioClassTemplates","type":"StudioClassTemplate","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"calendarEntries","type":"CalendarEntry","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@unique([id, kind])","@@unique([id, kind, live])","@@index([teacherId, dayOfWeek])"]},{"kind":"model","name":"CalendarEntry","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"classType","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"date","type":"DateTime","list":false,"optional":false,"attrs":"@db.Date","isRelation":false},{"name":"startTime","type":"DateTime","list":false,"optional":false,"attrs":"@db.Time","isRelation":false},{"name":"durationMinutes","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"cancelledAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"live","type":"Boolean","list":false,"optional":false,"attrs":"@default(dbgenerated())","isRelation":false},{"name":"classCompletedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"scheduleRuleId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"span","type":"Unsupported(\"tsrange\")","list":false,"optional":true,"attrs":"@default(dbgenerated())","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"scheduleRule","type":"ScheduleRule","list":false,"optional":true,"attrs":"@relation(fields: [scheduleRuleId], references: [id], onDelete: SetNull)","fk":{"fields":["scheduleRuleId"],"references":["id"],"onDelete":"SetNull"},"isRelation":true},{"name":"classes","type":"Class","list":true,"optional":false,"attrs":"","isRelation":true},{"name":"studioClasses","type":"StudioClass","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@unique([id, kind])","@@unique([id, kind, live])","@@unique([scheduleRuleId, date])","@@index([teacherId, date])"]},{"kind":"model","name":"StudioClass","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"calendarEntryId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"kind","type":"ClassFamily","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"location","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"studentCount","type":"Int","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"currency","type":"Currency","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"hourlyRate","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"calendarEntry","type":"CalendarEntry","list":false,"optional":false,"attrs":"@relation(fields: [calendarEntryId, kind], references: [id, kind], onDelete: Cascade)","fk":{"fields":["calendarEntryId","kind"],"references":["id","kind"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"Registration","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"classId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"studentId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"status","type":"RegistrationStatus","list":false,"optional":false,"attrs":"@default(registered)","isRelation":false},{"name":"isWalkIn","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"tierAtBooking","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"price","type":"Decimal","list":false,"optional":true,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"tierRatio","type":"Decimal","list":false,"optional":true,"attrs":"@db.Decimal(5, 4)","isRelation":false},{"name":"registeredAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"cancelledAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"classReminderSentAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"class","type":"Class","list":false,"optional":false,"attrs":"@relation(fields: [classId], references: [id], onDelete: Cascade)","fk":{"fields":["classId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"student","type":"Student","list":false,"optional":false,"attrs":"@relation(fields: [studentId], references: [id], onDelete: Cascade)","fk":{"fields":["studentId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"payment","type":"Payment","list":false,"optional":true,"attrs":"","isRelation":true},{"name":"waitlistEntry","type":"WaitlistEntry","list":false,"optional":true,"attrs":"","isRelation":true}],"blockAttrs":["@@unique([classId, studentId])","@@index([studentId, status])"]},{"kind":"model","name":"WaitlistEntry","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"classId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"studentId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"position","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"status","type":"WaitlistStatus","list":false,"optional":false,"attrs":"@default(waiting)","isRelation":false},{"name":"promotedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"registrationId","type":"String","list":false,"optional":true,"attrs":"@unique","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"class","type":"Class","list":false,"optional":false,"attrs":"@relation(fields: [classId], references: [id], onDelete: Cascade)","fk":{"fields":["classId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"student","type":"Student","list":false,"optional":false,"attrs":"@relation(fields: [studentId], references: [id], onDelete: Cascade)","fk":{"fields":["studentId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"registration","type":"Registration","list":false,"optional":true,"attrs":"@relation(fields: [registrationId], references: [id])","fk":{"fields":["registrationId"],"references":["id"],"onDelete":null},"isRelation":true}],"blockAttrs":["@@unique([classId, studentId])","@@index([classId, position])","@@index([status])"]},{"kind":"model","name":"Payment","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"registrationId","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"amount","type":"Decimal","list":false,"optional":false,"attrs":"@db.Decimal(10, 2)","isRelation":false},{"name":"vatAmount","type":"Decimal","list":false,"optional":false,"attrs":"@default(0) @db.Decimal(10, 2)","isRelation":false},{"name":"status","type":"PaymentStatus","list":false,"optional":false,"attrs":"@default(pending)","isRelation":false},{"name":"method","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"processorRef","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"reminderSentAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"paidAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"notChargedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"registration","type":"Registration","list":false,"optional":false,"attrs":"@relation(fields: [registrationId], references: [id], onDelete: Cascade)","fk":{"fields":["registrationId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true}],"blockAttrs":["@@index([status, createdAt])"]},{"kind":"model","name":"Notification","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"recipientType","type":"RecipientType","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"recipientId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"type","type":"NotificationType","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"title","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"body","type":"String","list":false,"optional":false,"attrs":"@db.Text","isRelation":false},{"name":"relatedClassId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"isRead","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"emailSent","type":"Boolean","list":false,"optional":false,"attrs":"@default(false)","isRelation":false},{"name":"pushHandledAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"updatedAt","type":"DateTime","list":false,"optional":false,"attrs":"@updatedAt","isRelation":false},{"name":"relatedClass","type":"Class","list":false,"optional":true,"attrs":"@relation(fields: [relatedClassId], references: [id], onDelete: SetNull)","fk":{"fields":["relatedClassId"],"references":["id"],"onDelete":"SetNull"},"isRelation":true}],"blockAttrs":["@@index([recipientType, recipientId, isRead])","@@index([pushHandledAt, createdAt])"]},{"kind":"model","name":"PushSubscription","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"endpoint","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"p256dh","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"auth","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"lastUsedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false}],"blockAttrs":["@@index([accountId])"]},{"kind":"model","name":"DegradationEvent","fields":[{"name":"code","type":"String","list":false,"optional":false,"attrs":"@id","isRelation":false},{"name":"occurrences","type":"Int","list":false,"optional":false,"attrs":"@default(1)","isRelation":false},{"name":"firstSeenAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"lastSeenAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"lastNotifiedAt","type":"DateTime","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"sample","type":"Json","list":false,"optional":false,"attrs":"","isRelation":false}],"blockAttrs":[]},{"kind":"model","name":"Announcement","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"teacherId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"classId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"message","type":"String","list":false,"optional":false,"attrs":"@db.Text","isRelation":false},{"name":"recipientCount","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"sentAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"audienceStudentIds","type":"String","list":true,"optional":false,"attrs":"@default([])","isRelation":false},{"name":"teacher","type":"Teacher","list":false,"optional":false,"attrs":"@relation(fields: [teacherId], references: [id], onDelete: Cascade)","fk":{"fields":["teacherId"],"references":["id"],"onDelete":"Cascade"},"isRelation":true},{"name":"class","type":"Class","list":false,"optional":true,"attrs":"@relation(fields: [classId], references: [id], onDelete: SetNull)","fk":{"fields":["classId"],"references":["id"],"onDelete":"SetNull"},"isRelation":true}],"blockAttrs":[]},{"kind":"model","name":"Session","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"expiresAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"passkeyCredentialId","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"passkeyCredential","type":"PasskeyCredential","list":false,"optional":true,"attrs":"@relation(fields: [passkeyCredentialId], references: [id], onDelete: SetNull)","fk":{"fields":["passkeyCredentialId"],"references":["id"],"onDelete":"SetNull"},"isRelation":true}],"blockAttrs":["@@index([accountId])"]},{"kind":"model","name":"MagicLinkToken","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"tokenHash","type":"String","list":false,"optional":false,"attrs":"@unique","isRelation":false},{"name":"email","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"redirectTo","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"purpose","type":"MagicLinkPurpose","list":false,"optional":false,"attrs":"@default(sign_in)","isRelation":false},{"name":"expiresAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"originBrowserHash","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"handoffCode","type":"String","list":false,"optional":true,"attrs":"","isRelation":false},{"name":"handoffAttempts","type":"Int","list":false,"optional":false,"attrs":"@default(0)","isRelation":false}],"blockAttrs":["@@index([originBrowserHash])"]},{"kind":"model","name":"HandoffAttemptBudget","fields":[{"name":"email","type":"String","list":false,"optional":false,"attrs":"@id","isRelation":false},{"name":"windowStartsAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"attempts","type":"Int","list":false,"optional":false,"attrs":"","isRelation":false}],"blockAttrs":[]},{"kind":"model","name":"PasskeyCredential","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"publicKey","type":"Bytes","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"counter","type":"BigInt","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"transports","type":"String","list":true,"optional":false,"attrs":"","isRelation":false},{"name":"createdAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false},{"name":"sessions","type":"Session","list":true,"optional":false,"attrs":"","isRelation":true}],"blockAttrs":["@@index([accountId])"]},{"kind":"model","name":"RemovedPasskey","fields":[{"name":"id","type":"String","list":false,"optional":false,"attrs":"@id @default(uuid())","isRelation":false},{"name":"accountId","type":"String","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"credentialCreatedAt","type":"DateTime","list":false,"optional":false,"attrs":"","isRelation":false},{"name":"removedAt","type":"DateTime","list":false,"optional":false,"attrs":"@default(now())","isRelation":false}],"blockAttrs":["@@index([accountId])"]}],"enums":[{"kind":"enum","name":"Currency","values":["EUR","GBP","USD","CHF","SEK","NOK","DKK"]},{"kind":"enum","name":"ReminderTiming","values":["evening_before","morning_of","one_hour_before","off"]},{"kind":"enum","name":"ReminderChannel","values":["inbox","email","inbox_and_email"]},{"kind":"enum","name":"PaymentLevel","values":["LEVEL_1","LEVEL_2"]},{"kind":"enum","name":"ProcessorType","values":["mollie","stripe"]},{"kind":"enum","name":"TeacherBookingNotifications","values":["inbox_and_email","inbox_only","off"]},{"kind":"enum","name":"CancelDeadline","values":["HOURS_48","HOURS_24","HOURS_12","HOURS_6"]},{"kind":"enum","name":"AutoCancelCheck","values":["HOURS_4","HOURS_2","HOURS_1"]},{"kind":"enum","name":"ClassStatus","values":["draft","open","in_progress","completed"]},{"kind":"enum","name":"RegistrationStatus","values":["registered","attended","no_show","late_cancel","cancelled"]},{"kind":"enum","name":"WaitlistStatus","values":["waiting","promoted","claimed","expired","removed"]},{"kind":"enum","name":"PaymentStatus","values":["pending","paid","overdue","not_charged"]},{"kind":"enum","name":"RecipientType","values":["teacher","student"]},{"kind":"enum","name":"NotificationType","values":["booking_confirmed","booking_cancelled","booking_removed","class_cancelled","payment_received","payment_request","waitlist_promoted","spot_available","spot_taken","reminder","announcement","teacher_invitation","walk_in_added","class_reminder"]},{"kind":"enum","name":"InvitationStatus","values":["pending","accepted","declined"]},{"kind":"enum","name":"OnboardingStep","values":["profile","bank","share","install","push"]},{"kind":"enum","name":"MagicLinkPurpose","values":["sign_in","teacher_signup","teacher_profile_pending","student_signup","student_profile_pending"]},{"kind":"enum","name":"PayoutChangeKind","values":["bank_account_added","bank_account_changed","bank_account_removed","payment_link_added","payment_link_changed","payment_link_removed"]},{"kind":"enum","name":"ClassFamily","values":["regular","studio"]}]};
+const SOURCE = "prisma/schema.prisma at 8cb3cfcd";
 
+const DOMAINS = {
+  auth:     { label: 'Identity & sign-in', blurb: 'Accounts, sessions, passkeys and one-time tokens. Keyed by account, not by profile.' },
+  people:   { label: 'People', blurb: 'The two profiles an account can hold, and what a student shares with each teacher.' },
+  roster:   { label: 'Roster & consent', blurb: 'Who a teacher may reach. The link forms only when the student accepts.' },
+  payout:   { label: 'Payouts', blurb: 'Where students pay, and the audit trail when that changes.' },
+  spaces:   { label: 'Spaces', blurb: 'Rooms, and each teacher’s private rate for one.' },
+  schedule: { label: 'Schedule', blurb: 'Two parents hold the calendar for both families; four children hold only economics.' },
+  booking:  { label: 'Bookings & payments', blurb: 'Students joining classes, and what they owe after.' },
+  comms:    { label: 'Communication & ops', blurb: 'Inbox, push devices, announcements, and the degradation log.' },
+};
+
+// [domain, col, row, one-line purpose]
+const LAYOUT = {
+  MagicLinkToken:       ['auth', 0, 0, 'A hashed sign-in or sign-up link; purpose says which.'],
+  HandoffAttemptBudget: ['auth', 0, 1, 'Rate budget for cross-browser handoff codes, per address.'],
+  AdminGrant:           ['auth', 0, 3, 'An account’s authority to use the admin surface.'],
+  Session:              ['auth', 0, 5, 'A signed-in browser. Remembers which passkey opened it.'],
+  PasskeyCredential:    ['auth', 0, 6, 'A WebAuthn credential belonging to an account.'],
+  RemovedPasskey:       ['auth', 0, 8, 'A removed passkey, kept so a payout pause still requires one.'],
+  PasskeyRevokeToken:   ['auth', 0, 9, 'The “This wasn’t me” link in a passkey-added email.'],
+  TeacherBankAccount:   ['payout', 1, 0, 'One bank account per teacher per currency.'],
+  PayoutChangeEvent:    ['payout', 1, 1, 'One masked before/after change to where students pay.'],
+  PayoutPauseToken:     ['payout', 1, 2, 'The “This wasn’t me” link in a payout-change email.'],
+  Account:              ['auth', 1, 4, 'One per human: the email identity both profiles hang off.'],
+  Invitation:           ['roster', 1, 6, 'A teacher’s CRM contact and its consent state. Not a Student row.'],
+  TeacherBlock:         ['roster', 1, 7, 'A student’s standing refusal of one teacher.'],
+  PushSubscription:     ['comms', 1, 10, 'One browser’s push endpoint for one account.'],
+  TeacherPhoto:         ['people', 2, 2, 'A teacher’s avatar. A new upload gets a new id and URL.'],
+  Teacher:              ['people', 2, 4, 'The teacher profile: page, currency, defaults, notification and payout settings.'],
+  TeacherStudent:       ['roster', 2, 7, 'The accepted link between a teacher and a student.'],
+  StudentPrivacy:       ['people', 2, 8, 'What one student shares with one teacher. Defaults to nothing.'],
+  Student:              ['people', 2, 10, 'The student profile and income tier. May be unclaimed (a walk-in).'],
+  Room:                 ['spaces', 3, 0, 'A physical room. Public or private to its creator.'],
+  TeacherRoom:          ['spaces', 3, 2, 'A teacher’s private rental rate and capacity for one room.'],
+  ScheduleRule:         ['schedule', 3, 4, 'The recurring calendar slot both template families share.'],
+  CalendarEntry:        ['schedule', 3, 7, 'A dated calendar slot both entry families share. Holds liveness.'],
+  ClassTemplate:        ['schedule', 4, 3, 'Economics for a recurring regular class. A stamp, not a live link.'],
+  StudioClassTemplate:  ['schedule', 4, 5, 'Economics for a recurring studio class.'],
+  Class:                ['schedule', 4, 7, 'A regular class: economics, lifecycle status, completion snapshot. Settings lock on the first booking.'],
+  StudioClass:          ['schedule', 4, 9, 'A studio class: income tracking only, no registrations.'],
+  DegradationEvent:     ['comms', 5, 0, 'An operational degradation, counted and rate-limited by code.'],
+  Announcement:         ['comms', 5, 2, 'A teacher’s message to a class, all students, or a chosen subset.'],
+  Notification:         ['comms', 5, 4, 'One inbox row for one recipient, with email and push bookkeeping.'],
+  Payment:              ['booking', 5, 6, 'What one registration owes, created at completion.'],
+  Registration:         ['booking', 5, 8, 'A student in a class. Tier and price frozen per booking.'],
+  WaitlistEntry:        ['booking', 5, 10, 'A queued student, promoted or claimed into a registration.'],
+};
+
+// References carried by a column with no foreign key behind it.
+const LOGICAL = [
+  ['Session', 'accountId', 'Account', 'no FK'],
+  ['PasskeyCredential', 'accountId', 'Account', 'no FK'],
+  ['RemovedPasskey', 'accountId', 'Account', 'no FK; erasure deletes these rows itself'],
+  ['PasskeyRevokeToken', 'accountId', 'Account', 'no FK; erasure deletes these rows itself'],
+  ['PasskeyRevokeToken', 'credentialId', 'PasskeyCredential', 'no FK; the credential may be gone when the link is used'],
+  ['PushSubscription', 'accountId', 'Account', 'no FK'],
+  ['MagicLinkToken', 'email', 'Account', 'by address; the account may not exist yet'],
+  ['HandoffAttemptBudget', 'email', 'Account', 'by address'],
+  ['Notification', 'recipientId', 'Teacher', 'polymorphic: recipientType = teacher'],
+  ['Notification', 'recipientId', 'Student', 'polymorphic: recipientType = student'],
+  ['Announcement', 'audienceStudentIds', 'Student', 'array of ids, no FK'],
+];
+
+const MIRRORS = { ruleLive: 'ScheduleRule.live', entryLive: 'CalendarEntry.live', roomArchived: 'TeacherRoom.isArchived' };
+
+// ---------- derived ----------
+const models = SCHEMA.models;
+const byName = Object.fromEntries(models.map(m => [m.name, m]));
+const missing = models.filter(m => !LAYOUT[m.name]).map(m => m.name);
+const stale = Object.keys(LAYOUT).filter(n => !byName[n]);
+const edges = [];
+for (const m of models) for (const f of m.fields) if (f.fk) edges.push({ from: m.name, to: f.type, cols: f.fk.fields, refs: f.fk.references, onDelete: f.fk.onDelete, composite: f.fk.fields.length > 1 });
+for (const [from, col, to, why] of LOGICAL) edges.push({ from, to, cols: [col], logical: true, why });
+const columns = m => m.fields.filter(f => !f.isRelation);
+const totalCols = models.reduce((a, m) => a + columns(m).length, 0);
+
+document.getElementById('stats').textContent =
+  `${models.length} models · ${SCHEMA.enums.length} enums · ${totalCols} columns · ${edges.filter(e => !e.logical).length} foreign keys · ${LOGICAL.length} unenforced references · source ${SOURCE}` +
+  (missing.length ? ` · NOT PLACED: ${missing.join(', ')}` : '') + (stale.length ? ` · NOT IN SCHEMA: ${stale.join(', ')}` : '');
+
+// ---------- map ----------
+const NS = 'http://www.w3.org/2000/svg';
+const W = 186, H = 34, CW = 212, RH = 54, PAD = 22;
+const cols = Math.max(...Object.values(LAYOUT).map(l => l[1])) + 1;
+const rows = Math.max(...Object.values(LAYOUT).map(l => l[2])) + 1;
+const svg = document.getElementById('map');
+const SW = PAD * 2 + (cols - 1) * CW + W + 36, SH = PAD * 2 + (rows - 1) * RH + H;
+svg.setAttribute('viewBox', `0 0 ${SW} ${SH}`);
+svg.setAttribute('width', SW); svg.setAttribute('height', SH);
+const pos = n => { const [, c, r] = LAYOUT[n]; return { x: PAD + c * CW, y: PAD + r * RH }; };
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; };
+const color = n => `var(--d-${LAYOUT[n][0]})`;
+
+const gEdges = el('g', {}), gNodes = el('g', {});
+const edgeEls = [];
+const pairCount = {};
+for (const e of edges) {
+  if (!LAYOUT[e.from] || !LAYOUT[e.to]) continue;
+  const key = [e.from, e.to].sort().join('|');
+  const k = (pairCount[key] = (pairCount[key] || 0) + 1) - 1;
+  const a = pos(e.from), b = pos(e.to);
+  const off = (k - 0) * 6;
+  let d, sx, sy, tx, ty;
+  if (LAYOUT[e.from][1] === LAYOUT[e.to][1]) {
+    sx = a.x + W; sy = a.y + H / 2 + off; tx = b.x + W; ty = b.y + H / 2 + off;
+    const bulge = 18 + 7 * Math.abs(LAYOUT[e.from][2] - LAYOUT[e.to][2]);
+    d = `M${sx},${sy} C${sx + bulge},${sy} ${tx + bulge},${ty} ${tx},${ty}`;
+  } else {
+    const right = b.x > a.x;
+    sx = right ? a.x + W : a.x; tx = right ? b.x : b.x + W;
+    sy = a.y + H / 2 + off; ty = b.y + H / 2 + off;
+    const dx = Math.max(40, Math.abs(tx - sx) / 2) * (right ? 1 : -1);
+    d = `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
+  }
+  const p = el('path', { d, class: 'edge' + (e.logical ? ' logical' : '') + (e.composite ? ' composite' : '') }, gEdges);
+  const t = el('title', {}, p);
+  t.textContent = `${e.from}.${e.cols.join(' + ')} → ${e.to}${e.refs ? '.' + e.refs.join(' + ') : ''}` + (e.onDelete ? ` · on delete ${e.onDelete}` : '') + (e.why ? ` · ${e.why}` : '');
+  const dot = el('circle', { cx: sx, cy: sy, r: 2.6, class: 'end' }, gEdges);
+  const into = (LAYOUT[e.from][1] === LAYOUT[e.to][1]) ? -1 : (b.x > a.x ? 1 : -1);
+  const arrow = el('path', { d: `M${tx},${ty} l${-6 * into},-3.5 l0,7 z`, class: 'end' }, gEdges);
+  edgeEls.push({ e, parts: [p, dot, arrow] });
+}
+const nodeEls = {};
+for (const name of Object.keys(LAYOUT)) {
+  if (!byName[name]) continue;
+  const { x, y } = pos(name);
+  const g = el('g', { class: 'node', transform: `translate(${x},${y})`, tabindex: 0, role: 'button', 'aria-label': name, style: `--c:${color(name)}` }, gNodes);
+  el('rect', { class: 'box', width: W, height: H, rx: 8 }, g);
+  el('rect', { class: 'tab', x: 8, y: 11, width: 4, height: 12, rx: 2 }, g);
+  const t = el('text', { x: 20, y: 21.5 }, g); t.textContent = name;
+  const c = el('text', { class: 'count', x: W - 10, y: 21.5, 'text-anchor': 'end' }, g); c.textContent = columns(byName[name]).length;
+  g.addEventListener('click', () => select(name, true));
+  g.addEventListener('keydown', ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(name, true); } });
+  nodeEls[name] = g;
+}
+
+// ---------- cards ----------
+const cardsEl = document.getElementById('cards');
+const uniques = m => {
+  const s = new Set();
+  for (const a of m.blockAttrs) { const mm = a.match(/^@@unique\(\[([^\]]*)\]/); if (mm) { const cs = mm[1].split(',').map(x => x.trim()); if (cs.length === 1) s.add(cs[0]); } }
+  return s;
+};
+const fkCols = m => { const map = {}; for (const f of m.fields) if (f.fk) f.fk.fields.forEach(c => (map[c] = map[c] || []).push(f.type)); return map; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const cardEls = {};
+for (const [dom] of Object.entries(DOMAINS)) {
+  for (const name of Object.keys(LAYOUT).filter(n => LAYOUT[n][0] === dom && byName[n])) {
+    const m = byName[name], u = uniques(m), fks = fkCols(m);
+    const logicalHere = LOGICAL.filter(l => l[0] === name);
+    const rows = columns(m).map(f => {
+      const tags = [];
+      if (/@id\b/.test(f.attrs)) tags.push('<span class="tag pk">PK</span>');
+      if (fks[f.name]) tags.push(`<span class="tag fk">FK → ${[...new Set(fks[f.name])].join(', ')}</span>`);
+      else if (logicalHere.some(l => l[1] === f.name)) tags.push(`<span class="tag">ref → ${logicalHere.filter(l => l[1] === f.name).map(l => l[2]).join(' / ')}</span>`);
+      if (/@unique\b/.test(f.attrs) || u.has(f.name)) tags.push('<span class="tag">unique</span>');
+      if (/dbgenerated\(\)/.test(f.attrs)) tags.push('<span class="tag gen">generated</span>');
+      if (MIRRORS[f.name]) tags.push(`<span class="tag mirror">mirrors ${MIRRORS[f.name]}</span>`);
+      const def = (f.attrs.match(/@default\(((?:[^()]|\([^()]*\))*)\)/) || [])[1];
+      const ty = f.type + (f.list ? '[]' : '') + (f.optional ? '?' : '') + ((f.attrs.match(/@db\.(\w+(?:\([^)]*\))?)/) || [])[1] ? ' · ' + f.attrs.match(/@db\.(\w+(?:\([^)]*\))?)/)[1] : '') + (def && def !== 'dbgenerated()' ? ` = ${def}` : '');
+      return `<tr><td>${esc(f.name)}</td><td>${esc(ty)}</td><td>${tags.join('')}</td></tr>`;
+    }).join('');
+    const out = edges.filter(e => e.from === name);
+    const inc = edges.filter(e => e.to === name);
+    const link = n => `<a href="#m-${n}" data-go="${n}">${n}</a>`;
+    const outHtml = out.map(e => `<div>→ ${link(e.to)} <span class="mono">(${e.cols.join(', ')})</span>${e.onDelete ? ` · on delete ${e.onDelete}` : ''}${e.logical ? ` · ${esc(e.why)}` : ''}</div>`).join('');
+    const incNames = [...new Set(inc.map(e => e.from))];
+    const incHtml = incNames.length ? `<div>← ${incNames.map(link).join(', ')}</div>` : '';
+    const idx = m.blockAttrs.filter(a => /^@@(unique|index)/.test(a)).map(a => `<code>${esc(a.replace(/\s*\/\/.*$/, ''))}</code>`).join(' ');
+    const card = document.createElement('article');
+    card.className = 'card'; card.id = 'm-' + name; card.dataset.domain = dom; card.style.setProperty('--c', color(name));
+    card.innerHTML = `
+      <div class="card-head"><h3>${name}</h3><span class="dom"><span class="dot"></span>${DOMAINS[dom].label}</span><span class="n">${columns(m).length} columns</span></div>
+      <p class="blurb">${LAYOUT[name][3]}</p>
+      <div class="table-scroll"><table class="fields"><tbody>${rows}</tbody></table></div>
+      ${idx ? `<div><div class="sub">Keys & indexes</div><div class="rels">${idx}</div></div>` : ''}
+      ${(outHtml || incHtml) ? `<div><div class="sub">Relationships</div><div class="rels">${outHtml}${incHtml}</div></div>` : ''}`;
+    cardsEl.appendChild(card);
+    cardEls[name] = card;
+  }
+}
+cardsEl.addEventListener('click', ev => { const a = ev.target.closest('[data-go]'); if (a) { ev.preventDefault(); select(a.dataset.go, false); cardEls[a.dataset.go].scrollIntoView({ block: 'start' }); } });
+
+// ---------- enums ----------
+const usedBy = {};
+for (const m of models) for (const f of m.fields) if (SCHEMA.enums.some(e => e.name === f.type)) (usedBy[f.type] = usedBy[f.type] || []).push(`${m.name}.${f.name}`);
+document.getElementById('enums').innerHTML = SCHEMA.enums.map(e => `
+  <div class="enum"><h3>${e.name}</h3><div class="vals">${e.values.map(v => `<span>${v}</span>`).join('')}</div>
+  <div class="used">${(usedBy[e.name] || []).join(', ') || 'unused'}</div></div>`).join('');
+
+// ---------- interaction ----------
+let selected = null, domain = 'all';
+function select(name, scroll) {
+  selected = selected === name && scroll ? null : name;
+  paint();
+  if (selected && scroll) cardEls[selected].scrollIntoView({ block: 'start' });
+}
+function paint() {
+  const on = new Set();
+  if (selected) { on.add(selected); for (const { e } of edgeEls) if (e.from === selected || e.to === selected) { on.add(e.from); on.add(e.to); } }
+  else if (domain !== 'all') for (const n in LAYOUT) if (LAYOUT[n][0] === domain) on.add(n);
+  svg.classList.toggle('focus', on.size > 0);
+  for (const n in nodeEls) nodeEls[n].classList.toggle('on', on.has(n));
+  for (const { e, parts } of edgeEls) {
+    const lit = selected ? (e.from === selected || e.to === selected) : (on.has(e.from) || on.has(e.to));
+    parts.forEach(p => p.classList.toggle('on', lit));
+  }
+  for (const n in cardEls) { cardEls[n].classList.toggle('sel', n === selected); cardEls[n].hidden = domain !== 'all' && LAYOUT[n][0] !== domain; }
+}
+const chips = document.getElementById('chips');
+const mk = (key, label) => { const b = document.createElement('button'); b.className = 'chip'; b.type = 'button'; b.id = 'chip-' + key; b.setAttribute('aria-pressed', key === 'all'); b.innerHTML = key === 'all' ? label : `<span class="dot" style="--c:var(--d-${key})"></span>${label}`; b.onclick = () => { domain = key; selected = null; chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c === b)); paint(); }; chips.appendChild(b); };
+mk('all', `All ${models.length}`);
+for (const [k, d] of Object.entries(DOMAINS)) mk(k, `${d.label} · ${Object.values(LAYOUT).filter(l => l[0] === k).length}`);
+</script>
 </body>
 </html>
