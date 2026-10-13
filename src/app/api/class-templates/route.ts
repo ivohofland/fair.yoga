@@ -214,6 +214,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // spread already carried a new count automatically; nesting means the
       // FORM that reads this payload does too, which the spread did not give.
       counts: countSkipReasons(result.generation.skipped),
+      lateFirstClass: result.lateFirstClass,
     },
     201,
   );
