@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 interface SignupFormProps {
   /** Heading above the field. */
@@ -40,7 +41,7 @@ export function SignupForm({ title, intro, sentMessage, initialEmail = '' }: Sig
       const res = await fetch('/api/auth/teacher-signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, timeZone: detectTimeZone() }),
       });
       if (res.ok) {
         setStatus('sent');

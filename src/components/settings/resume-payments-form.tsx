@@ -8,6 +8,7 @@ import { SignOutButton } from '@/components/account/sign-out-button';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { logRequestFailure, readError } from '@/lib/client-errors';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 type LinkState = 'needed' | 'sending' | 'sent' | 'error';
 
@@ -136,7 +137,7 @@ export function ResumePaymentsForm({
       const res = await fetch('/api/auth/magic-link/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirect: RESUME_PATH }),
+        body: JSON.stringify({ email, redirect: RESUME_PATH, timeZone: detectTimeZone() }),
       });
       if (!res.ok) {
         const { code } = await readError(res, 'send-link');

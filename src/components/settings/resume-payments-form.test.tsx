@@ -24,6 +24,8 @@ async function settle(): Promise<void> {
   });
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('ResumePaymentsForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -92,7 +94,7 @@ describe('ResumePaymentsForm', () => {
 
     const [url, init] = fetchMock.mock.calls[1] ?? [];
     expect(url).toBe('/api/auth/magic-link/send');
-    expect(JSON.parse(String(init?.body))).toEqual({ email: 'anna@test.local', redirect: '/settings/resume-payments' });
+    expect(JSON.parse(String(init?.body))).toEqual({ email: 'anna@test.local', redirect: '/settings/resume-payments', timeZone: BROWSER_ZONE });
     expect(screen.getByText(/Check anna@test\.local for a sign-in link/)).toBeInTheDocument();
   });
 

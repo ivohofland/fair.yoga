@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { logRequestFailure } from '@/lib/client-errors';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 interface BookingSignInProps {
   /** Where sign-in — magic link or passkey — lands the student: this booking page. */
@@ -30,12 +31,12 @@ export function BookingSignIn({ redirect }: BookingSignInProps) {
           ? await fetch('/api/auth/student-signup', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, redirect }),
+              body: JSON.stringify({ email, redirect, timeZone: detectTimeZone() }),
             })
           : await fetch('/api/auth/magic-link/send', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email, redirect }),
+              body: JSON.stringify({ email, redirect, timeZone: detectTimeZone() }),
             });
       setStatus(res.ok ? 'sent' : 'error');
     } catch (err) {

@@ -13,6 +13,8 @@ function submit(email = 'anna@example.com') {
   fireEvent.click(screen.getByRole('button', { name: /Send me the link/i }));
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('SignupForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -39,7 +41,7 @@ describe('SignupForm', () => {
     await screen.findByText('Check your inbox');
     const [url, init] = mock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/auth/teacher-signup');
-    expect(JSON.parse(init.body as string)).toEqual({ email: 'teacher@example.com' });
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'teacher@example.com', timeZone: BROWSER_ZONE });
   });
 
   /**
