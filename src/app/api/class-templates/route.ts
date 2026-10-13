@@ -204,8 +204,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `grep -rn -A1 'SIXTH\|SEVENTH' src/` or a `tr -d '\n'` first — the hazard
   // did not go away by being written down.
   //
-  // The create form reads these and stays on the page to say so when the
-  // window isn't full (`template-form.tsx`); see the note at that read.
+  // `added` and `lateFirstClass` ride the answer so the create form can stay
+  // on the page and say so (`template-form.tsx`); see the note at that read.
   return respondTyped<CreateResponse>(
     {
       ...result.template,

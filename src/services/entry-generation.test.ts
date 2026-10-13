@@ -98,10 +98,11 @@ describe('firstFreeWeek', () => {
  * The probe runs AFTER its caller's transaction has committed, so its contract
  * is `null` on failure rather than a throw: a template the teacher already
  * saved must not come back as a 500 because the sentence naming its first
- * effective week could not be composed. Two guards carry that, and these two
- * cases are one each — read fault and arithmetic fault — asserted through the
- * warn line, because `null` alone cannot tell them apart and the whole reason
- * there are two guards is that an operator has to.
+ * effective week could not be composed. The block holds the probe's answer
+ * (the week and the candidate date it names) and a case per guard that keeps
+ * the failure from escaping — read fault and arithmetic fault — asserted
+ * through the warn line, because `null` alone cannot tell them apart and an
+ * operator has to.
  *
  * Stubbed rather than seeded: what is under test is the shape of the failure
  * path, and both branches need a read that misbehaves in a way no real query

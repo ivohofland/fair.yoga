@@ -105,7 +105,7 @@ that is already inside its cancellation deadline. It changes the generator's
 rules, so it gets its own issue and spec: #849. This branch does not touch the
 generator.
 
-Changed to (b) on 2026-10-13: see `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`.
+Changed to (b) on 2026-10-13 — warn the teacher in the template's save answer instead of skipping the candidate: see `docs/superpowers/specs/2026-10-13-template-late-first-class-design.md`.
 
 ## Not done
 
