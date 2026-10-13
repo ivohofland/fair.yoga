@@ -128,6 +128,16 @@ describe('TemplateForm', () => {
    * pre-switch room back. Every other field is sent; this `toEqual` pins that
    * for #85.
    */
+
+  it('refuses a create without its VAT default and an edit without its template or values at compile time (#874)', () => {
+    // @ts-expect-error a create seeds its VAT % from the teacher's default
+    const createWithoutVat = <TemplateForm mode="create" currency="EUR" />;
+    // @ts-expect-error an edit saves to a template id
+    const editWithoutId = <TemplateForm mode="edit" currency="EUR" initial={{ ...initial }} />;
+    // @ts-expect-error an edit starts from the saved values
+    const editWithoutInitial = <TemplateForm mode="edit" currency="EUR" templateId="tpl-1" />;
+    expect([createWithoutVat, editWithoutId, editWithoutInitial]).toHaveLength(3);
+  });
   it('leaves the room out of an edit whose room field was not changed', async () => {
     stubFetch();
     render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
