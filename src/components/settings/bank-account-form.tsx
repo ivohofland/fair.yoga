@@ -211,7 +211,6 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
       error: removeError?.currency === target ? removeError.message : '',
       onAsk: () => ask(target),
       onCancel: () => setConfirming(null),
-      onConfirm: () => void handleRemove(target),
     };
   }
 
@@ -249,7 +248,7 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
         </Button>
       </form>
 
-      {hasAccount && <RemoveControl {...removeControlProps(currency)} />}
+      {hasAccount && <RemoveControl {...removeControlProps(currency)} onConfirm={() => void handleRemove(currency)} />}
 
       {others.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -257,7 +256,10 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
           <ul className="flex flex-col">
             {others.map((other) => (
               <li key={other.currency} className={listRowClass({ className: 'flex flex-col justify-center' })}>
-                <RemoveControl {...removeControlProps(other.currency)}>
+                <RemoveControl
+                  {...removeControlProps(other.currency)}
+                  onConfirm={() => void handleRemove(other.currency)}
+                >
                   <span className="type-body">
                     {other.currency} <span className="type-number">{other.masked}</span>
                   </span>
