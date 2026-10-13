@@ -9,8 +9,8 @@ export interface EarningsInput {
 
 /**
  * What the teacher keeps from a class: what was billed, less the room and the
- * VAT. A subtraction rather than a stored
- * column, so the lines a screen shows always add up to its total; see
+ * VAT. Screens derive it from these lines rather than reading a stored figure,
+ * so the lines shown always add up to the total; see
  * docs/superpowers/specs/2026-09-14-past-class-payment-breakdown-design.md.
  */
 export function teacherEarningsCents({ totalCents, roomCents, vatCents }: EarningsInput): number {

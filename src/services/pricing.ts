@@ -87,7 +87,7 @@ export function calculateEffectiveTeacherRate(
  *
  * Formulas:
  *   effective_teacher_rate = interpolated between min and target based on count (per-class total, not per-student)
- *   total_class_cost = (room_cost + effective_teacher_rate) × (1 + VAT)
+ *   total_class_cost = (room_cost + effective_teacher_rate) × (1 + vatPercent / 100)
  *   base_unit = total_class_cost / sum_of_all_tier_ratios
  *   student_price = base_unit × student_tier_ratio
  */
