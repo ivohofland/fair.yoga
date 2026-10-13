@@ -367,6 +367,29 @@ describe('public/sw.js', () => {
     }
   });
 
+  it('logs a fallback window that fails to open, rather than failing the event', async () => {
+    const w = fakeWindow({
+      navigate: vi.fn(async () => {
+        throw new TypeError('This service worker is not the client\'s active service worker.');
+      }),
+    });
+    const { self, listeners } = loadWorker([w]);
+    const failure = new Error('openWindow refused');
+    self.clients.openWindow.mockRejectedValueOnce(failure);
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const e = { ...extendable(), notification: { close: vi.fn(), data: { url: '/inbox?n=n10' } } };
+      listeners.notificationclick!(e);
+      await expect(e.done()).resolves.toBeUndefined();
+      expect(self.clients.openWindow).toHaveBeenCalledWith('/inbox?n=n10');
+      expect(consoleError).toHaveBeenCalledWith(expect.stringMatching(/^\[sw\] /), failure);
+    } finally {
+      consoleWarn.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
   it('takes control of open windows when it activates, and keeps the event alive for it', async () => {
     const { self, listeners } = loadWorker([]);
     const e = extendable();

@@ -400,7 +400,7 @@ self.addEventListener('notificationclick', (event) => {
         // navigated. `navigate` rejects for a window this worker does not
         // control. `clients.claim()` on activation takes every window already
         // open, so that is one loaded by a hard reload, which bypasses the
-        // worker; a new window opens at `url` instead.
+        // worker; that refusal is logged and `openWindow(url)` is asked instead.
         if (existing) {
           return existing
             .focus()
