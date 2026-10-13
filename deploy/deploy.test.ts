@@ -218,7 +218,7 @@ describe('deploy/deploy.sh', () => {
     expect(head()).toBe(before);
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
     expect(result.stderr).toContain('migrate');
-    expect(result.stderr).toContain(before);
+    expect(result.stderr).toContain('no container was replaced');
     expect(recorded()).toBe(before);
   });
 
@@ -301,6 +301,41 @@ describe('deploy/deploy.sh', () => {
     expect(recorded()).toBe(v1);
     expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
   }, 20_000);
+
+  it('puts the checkout back where it found it, not on the record, when a later deploy fails before the swap, so the recorded commit still refuses', () => {
+    const v1 = head();
+    const v2 = commitToOrigin('v2');
+    const v3 = commitToOrigin('v3');
+    fs.writeFileSync(deployedFile, `${v1}\n`);
+    expect(run({ sshCommand: v2, env: { FAKE_HEALTH: '{"status":"degraded","db":"down"}' } }).status).not.toBe(0);
+    expect(head()).toBe(v2);
+    expect(recorded()).toBe(v1);
+
+    const failedBuild = run({ sshCommand: v3, env: { FAKE_BUILD_FAIL: '1' } });
+    expect(failedBuild.status).not.toBe(0);
+    expect(head()).toBe(v2);
+    expect(recorded()).toBe(v1);
+    fs.rmSync(callLog);
+
+    const result = run({ sshCommand: v1 });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toMatch(/already/i);
+    expect(result.stderr).toContain(v1);
+    expect(result.stderr).toContain(v2);
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  }, 20_000);
+
+  it('refuses an empty record, moving nothing', () => {
+    const v2 = commitToOrigin('v2');
+    const before = head();
+    fs.writeFileSync(deployedFile, '');
+    const result = run({ sshCommand: v2 });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(deployedFile);
+    expect(head()).toBe(before);
+    expect(recorded()).toBe('');
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  });
 
   it('refuses a record that does not hold a full commit hash, moving nothing', () => {
     const v2 = commitToOrigin('v2');
