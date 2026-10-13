@@ -564,6 +564,7 @@ const PAYMENT_ROW_KEYS = [
   'reminderSentAt',
   'status',
   'updatedAt',
+  'vatAmount',
 ];
 
 describe('POST /api/payments/[id]/paid', () => {
