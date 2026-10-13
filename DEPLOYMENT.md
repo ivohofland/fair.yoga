@@ -228,12 +228,14 @@ reports success for a run in which a sweep did not run.
 A commit on `main` deploys itself once every CI test job has passed: the
 `deploy` job in `.github/workflows/ci.yml` connects over SSH and runs
 `deploy/deploy.sh` with that commit's hash. The script checks the commit out,
-builds while the old containers keep serving, replaces them (`migrate` runs
-first, as on every `up`), and waits up to two minutes for `/api/health` to
-report `"status":"ok"`. A failed build puts the checkout back and replaces
-nothing; a failed health check leaves the new commit running and turns the
-CI run red. The app is unreachable for the few seconds the container swap
-takes.
+builds while the old containers keep serving, applies the migrations as a step
+of its own (`docker compose run --rm migrate`), then replaces the containers
+and waits up to two minutes for `/api/health` to report `"status":"ok"`. A
+failed build or migration puts the checkout back and replaces nothing. A
+failed container replacement or health check leaves the new commit checked
+out and turns the CI run red: `<new> is checked out, <old> was before it`,
+the two commits *Rolling back* needs. The app is unreachable for the few
+seconds the container swap takes.
 
 It only moves forward along `origin/main`. A commit already deployed, or an
 older one, answers success and changes nothing, so two runs finishing out of
@@ -243,7 +245,8 @@ order cannot roll the server back.
 
 1. **Install the script where the key will point.** A root-owned copy, so a
    commit that changes `deploy/deploy.sh` changes nothing the key can run
-   until you have read it and installed it again:
+   until you have read it and installed it again. Rerun this after every
+   change to `deploy/deploy.sh`:
 
    ```bash
    sudo install -m 755 -o root -g root /opt/fairyoga/deploy/deploy.sh /usr/local/bin/fairyoga-deploy
@@ -302,6 +305,32 @@ cd /opt/fairyoga && git fetch -q origin main && fairyoga-deploy "$(git rev-parse
 
 The checkout is left detached at the deployed commit, so `git pull` there no
 longer applies; `git fetch` and the script replace it.
+
+### A failed migration
+
+`prisma migrate deploy` applies pending migrations in order and stops at the
+first that fails. The ones before it in the same deploy stay applied. The
+failed one runs as a single transaction, so its own statements roll back,
+unless its file commits partway through. The old code keeps serving against
+that schema.
+
+Prisma records the failed migration as failed, and refuses every later
+`migrate deploy` (error P3009) until it is resolved, so every later deploy
+fails at its migrate step too. Resolve it on the VPS:
+
+```bash
+cd /opt/fairyoga
+# nothing of it remains: mark it rolled back, so the next deploy retries it
+docker compose -f docker-compose.prod.yml run --rm migrate pnpm exec prisma migrate resolve --rolled-back <migration name>
+# you finished it by hand: mark it applied, so no deploy runs it again
+docker compose -f docker-compose.prod.yml run --rm migrate pnpm exec prisma migrate resolve --applied <migration name>
+```
+
+The migration name is the folder name in `prisma/migrations/`, and the
+deploy's output names it. A migration marked rolled back runs again as
+written, so if the migration itself was wrong, merge the fix to `main` after
+resolving and let that commit deploy. If the cause was outside it, such as
+data it could not handle, fix that and deploy the same commit again by hand.
 
 ### Rolling back
 
