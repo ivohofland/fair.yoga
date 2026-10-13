@@ -27,6 +27,7 @@ import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { createClassFixture, slotDate, slotTime, wallSlotAt } from '../../tests/class-fixtures';
 import { estimateTierPrices } from '@/lib/tier-estimates';
 import { calculateClassPricing } from './pricing';
+import { includedVatCents } from '@/lib/vat';
 import type { IncomeTier } from '@/lib/tiers';
 
 // We use string literals matching the Prisma ClassStatus enum values.
@@ -995,7 +996,7 @@ describe('completeClass (DB)', () => {
   // deliberately: the wording this replaces named two, and the block has held
   // more than that for some time without anything noticing.
   let makeClassCounter = 0;
-  const makeClass = ({ status, durationMinutes = 75, currency }: { status: ClassStatus; durationMinutes?: number; currency?: Currency }) => {
+  const makeClass = ({ status, durationMinutes = 75, currency, vatPercent }: { status: ClassStatus; durationMinutes?: number; currency?: Currency; vatPercent?: number }) => {
     makeClassCounter += 1;
     return createClassFixture(prisma, {
         teacherId,
@@ -1018,6 +1019,7 @@ describe('completeClass (DB)', () => {
         status,
         settingsLocked: true,
         ...(currency !== undefined ? { currency } : {}),
+        ...(vatPercent !== undefined ? { vatPercent } : {}),
       });
   };
 
@@ -1441,7 +1443,7 @@ describe('completeClass (DB)', () => {
 
   describe('pricing below the minimum (#836)', () => {
     // `makeClass`: roomCost 35, minRate 15, targetRate 25, minStudents 4.
-    const economics = { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12 };
+    const economics = { roomCost: 35, minRate: 15, targetRate: 25, minStudents: 4, maxStudents: 12, vatPercent: 0 };
 
     const completeWith = async (tiers: readonly IncomeTier[]) => {
       const cls = await makeClass({ status: 'in_progress' });
@@ -1483,6 +1485,29 @@ describe('completeClass (DB)', () => {
       expect(after.totalStudents).toBe(2);
       expect(Number(after.effectiveTeacherRate)).toBe(-10);
       expect(teacherNote.body).toContain('completed — −€10.00 earnings, 2 payment requests sent.');
+    });
+
+    it('records each payment\'s VAT, the class total, and earnings excl. VAT', async () => {
+      const cls = await makeClass({ status: 'in_progress', vatPercent: 9 });
+      for (const [i, tier] of ([1, 3, 5] as const).entries()) {
+        await prisma.registration.create({
+          data: { classId: cls.id, studentId: studentIds[i]!, status: 'registered', tierAtBooking: tier },
+        });
+      }
+      expect((await completeClass(prisma, cls.id, { finishedEarly: true })).ok).toBe(true);
+      const payments = await prisma.payment.findMany({ where: { registration: { classId: cls.id } } });
+      const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      await prisma.notification.deleteMany({ where: { relatedClassId: cls.id } });
+
+      const vatCents = payments.reduce((s, p) => s + Math.round(Number(p.vatAmount) * 100), 0);
+      expect(vatCents).toBeGreaterThan(0);
+      for (const p of payments) {
+        expect(Math.round(Number(p.vatAmount) * 100)).toBe(includedVatCents(Math.round(Number(p.amount) * 100), 9000));
+      }
+      expect(Math.round(Number(after.vatTotal) * 100)).toBe(vatCents);
+      expect(Math.round(Number(after.effectiveTeacherRate) * 100)).toBe(
+        Math.round(Number(after.totalRevenue) * 100) - Math.round(Number(after.roomCost) * 100) - vatCents,
+      );
     });
 
     it('prices a class at its minimum exactly as the engine does unpadded', async () => {

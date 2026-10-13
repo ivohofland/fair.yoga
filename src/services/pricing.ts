@@ -6,6 +6,7 @@
  */
 
 import { TIER_RATIOS, type IncomeTier } from '@/lib/tiers';
+import { includedVatCents, vatThousandths, withVat } from '@/lib/vat';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,6 +26,8 @@ export interface ClassPricingInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  /** VAT as a percentage added on top of room + teacher rate; 0 for none. */
+  vatPercent: number;
   /** One tier per charged student. */
   studentTiers: IncomeTier[];
 }
@@ -36,6 +39,8 @@ export interface PricedStudent {
   ratio: number;
   /** This student's price, after largest-remainder allocation. */
   price: number;
+  /** The VAT contained in `price`. */
+  vat: number;
 }
 
 export interface PricingResult {
@@ -82,7 +87,7 @@ export function calculateEffectiveTeacherRate(
  *
  * Formulas:
  *   effective_teacher_rate = interpolated between min and target based on count (per-class total, not per-student)
- *   total_class_cost = room_cost + effective_teacher_rate
+ *   total_class_cost = (room_cost + effective_teacher_rate) × (1 + VAT)
  *   base_unit = total_class_cost / sum_of_all_tier_ratios
  *   student_price = base_unit × student_tier_ratio
  */
@@ -95,6 +100,7 @@ export function calculateClassPricing(
     targetRate,
     minStudents,
     maxStudents,
+    vatPercent,
     studentTiers,
   } = input;
 
@@ -118,8 +124,10 @@ export function calculateClassPricing(
     targetRate,
   });
 
-  // 2. Total class cost (teacher rate is per-class, not per-student)
-  const totalCost = roomCost + effectiveTeacherRate;
+  // 2. Total class cost: VAT is added on top of room + rate (the teacher rate
+  // is per-class, not per-student)
+  const t = vatThousandths(vatPercent);
+  const totalCost = withVat(roomCost + effectiveTeacherRate, t);
 
   // 3. Look up tier ratios for each student. Total by construction —
   // TIER_RATIOS is keyed by IncomeTier, so there is no undefined branch and
@@ -159,6 +167,7 @@ export function calculateClassPricing(
     tier: a.tier,
     ratio: a.ratio,
     price: a.cents / 100,
+    vat: includedVatCents(a.cents, t) / 100,
   }));
 
   return {

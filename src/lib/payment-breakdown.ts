@@ -19,6 +19,7 @@ export interface ResolvePaymentBreakdownInput {
   classStatus: ClassStatus;
   roomCost: Prisma.Decimal;
   totalRevenue: Prisma.Decimal | null;
+  vatTotal: Prisma.Decimal | null;
   totalStudents: number | null;
   payment: { status: PaymentStatus; amount: Prisma.Decimal } | null;
 }
@@ -50,19 +51,20 @@ function toCents(value: Prisma.Decimal): number {
  * hidden row: docs/superpowers/specs/2026-09-14-past-class-payment-breakdown-design.md.
  */
 export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): PaymentBreakdownResult {
-  const { classStatus, roomCost, totalRevenue, totalStudents, payment } = input;
+  const { classStatus, roomCost, totalRevenue, vatTotal, totalStudents, payment } = input;
 
   if (classStatus !== 'completed') return { kind: 'hidden' };
-  if (totalRevenue === null || totalStudents === null) return { kind: 'snapshot_missing' };
+  if (totalRevenue === null || vatTotal === null || totalStudents === null) return { kind: 'snapshot_missing' };
   if (payment === null || !SHOWS_BREAKDOWN[payment.status]) return { kind: 'hidden' };
 
   const roomCents = toCents(roomCost);
   const totalCents = toCents(totalRevenue);
+  const vatCents = toCents(vatTotal);
   return {
     kind: 'shown',
     lines: {
       roomCents,
-      teacherCents: teacherEarningsCents({ totalCents, roomCents }),
+      teacherCents: teacherEarningsCents({ totalCents, roomCents, vatCents }),
       totalCents,
       students: totalStudents,
       shareCents: toCents(payment.amount),

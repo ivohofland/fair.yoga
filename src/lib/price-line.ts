@@ -26,6 +26,7 @@ export interface ResolvePriceLineInput {
   targetRate: number;
   minStudents: number;
   maxStudents: number;
+  vatPercent: number;
   /** Charged-status registrations for this class — see CHARGED_STATUSES (lib/registration-status.ts). */
   registrations: PriceLineRegistration[];
   /** null when signed out, or signed in without a student profile. */
@@ -39,7 +40,7 @@ export interface ResolvePriceLineInput {
  * docs/superpowers/specs/2026-09-11-price-line-unification-design.md.
  */
 export function resolvePriceLine(input: ResolvePriceLineInput): PriceLineResult {
-  const { roomCost, minRate, targetRate, minStudents, maxStudents, registrations, viewer } = input;
+  const { roomCost, minRate, targetRate, minStudents, maxStudents, vatPercent, registrations, viewer } = input;
 
   const ownRegistration = viewer
     ? (registrations.find((r) => r.studentId === viewer.studentId) ?? null)
@@ -63,6 +64,7 @@ export function resolvePriceLine(input: ResolvePriceLineInput): PriceLineResult 
       targetRate,
       minStudents,
       maxStudents,
+      vatPercent,
       registeredTiers: registrations
         .filter((r) => r !== ownRegistration)
         .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),
@@ -81,6 +83,7 @@ export function resolvePriceLine(input: ResolvePriceLineInput): PriceLineResult 
     targetRate,
     minStudents,
     maxStudents,
+    vatPercent,
     registeredTiers: registrations
       .filter((r) => r !== ownRegistration)
       .map((r) => toIncomeTier(r.tierAtBooking, { registrationId: r.id })),

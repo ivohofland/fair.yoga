@@ -839,7 +839,7 @@ export async function completeClass(
         data: {
           status: 'completed',
           effectiveTeacherRate:
-            teacherEarningsCents({ totalCents: 0, roomCents: Math.round(Number(cls.roomCost) * 100) }) / 100,
+            teacherEarningsCents({ totalCents: 0, roomCents: Math.round(Number(cls.roomCost) * 100), vatCents: 0 }) / 100,
           totalStudents: 0,
           totalRevenue: 0,
           vatTotal: 0,
@@ -852,13 +852,14 @@ export async function completeClass(
     // through the same padding as the booking page's quote, so no student is
     // billed above the share that quote was built on. The padding seats come
     // after the real ones and bill no one; the teacher absorbs the shortfall.
-    const { billed, billedCents, earningsCents } = billAtLeastMinimum(
+    const { billed, billedCents, vatCents, earningsCents } = billAtLeastMinimum(
       {
         roomCost: Number(cls.roomCost),
         minRate: Number(cls.minRate),
         targetRate: Number(cls.targetRate),
         minStudents: cls.minStudents,
         maxStudents: cls.maxStudents,
+        vatPercent: Number(cls.vatPercent),
       },
       chargedRegistrations.map((r) => toIncomeTierOrThrow(r.tierAtBooking, { registrationId: r.id })),
     );
@@ -872,7 +873,7 @@ export async function completeClass(
         effectiveTeacherRate: teacherEarnings,
         totalStudents: chargedRegistrations.length,
         totalRevenue,
-        vatTotal: 0,
+        vatTotal: vatCents / 100,
       },
     });
 
@@ -887,7 +888,7 @@ export async function completeClass(
         data: { price: s.price, tierRatio: s.ratio },
       });
       await tx.payment.create({
-        data: { registrationId: reg.id, amount: s.price, status: 'pending' },
+        data: { registrationId: reg.id, amount: s.price, vatAmount: s.vat, status: 'pending' },
       });
     }
 

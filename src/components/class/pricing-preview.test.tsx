@@ -126,7 +126,7 @@ describe('PricingPreview', () => {
       ],
     });
     const { billed } = billAtLeastMinimum(
-      { roomCost: 20, minRate: 40, targetRate: 80, minStudents: 2, maxStudents: 10 },
+      { roomCost: 20, minRate: 40, targetRate: 80, minStudents: 2, maxStudents: 10, vatPercent: 0 },
       [2, 4],
     );
     render(<PricingPreview cls={cls} />);

@@ -7,6 +7,7 @@ const BASE = {
   targetRate: 120,
   minStudents: 4,
   maxStudents: 8,
+  vatPercent: 0,
 };
 
 describe('resolvePriceLine', () => {

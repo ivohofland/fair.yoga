@@ -179,6 +179,7 @@ export default async function TeacherBookingPage({
                     targetRate: Number(cls.targetRate),
                     minStudents: cls.minStudents,
                     maxStudents: cls.maxStudents,
+                    vatPercent: Number(cls.vatPercent),
                     registrations: cls.registrations,
                     viewer,
                   })}

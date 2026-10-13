@@ -8,6 +8,7 @@ const COMPLETED: ResolvePaymentBreakdownInput = {
   classStatus: 'completed',
   roomCost: d('40.00'),
   totalRevenue: d('56.25'),
+  vatTotal: d('0'),
   totalStudents: 9,
   payment: { status: 'pending', amount: d('7.50') },
 };
@@ -39,6 +40,15 @@ describe('resolvePaymentBreakdown', () => {
 
   it('hides the breakdown when the registration has no payment', () => {
     expect(resolvePaymentBreakdown({ ...COMPLETED, payment: null })).toEqual({ kind: 'hidden' });
+  });
+
+  it('reports a completed class with no vatTotal as a missing snapshot', () => {
+    expect(resolvePaymentBreakdown({ ...COMPLETED, vatTotal: null })).toEqual({ kind: 'snapshot_missing' });
+  });
+
+  it('takes the class VAT out of the teacher line', () => {
+    const result = resolvePaymentBreakdown({ ...COMPLETED, roomCost: d('30.00'), totalRevenue: d('119.90'), vatTotal: d('9.90') });
+    expect(result).toMatchObject({ kind: 'shown', lines: { teacherCents: 8000, totalCents: 11990 } });
   });
 
   it('reports a completed class with no totalRevenue as a missing snapshot', () => {
