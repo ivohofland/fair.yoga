@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { currencyLabel, formatRoomLocation, formatDateWithYear, formatMoney } from '@/lib/format';
-import { START_TIME_STEP_SECONDS } from '@/lib/time-of-day';
+import { startTimeInputProps } from '@/lib/time-of-day';
 import { useTodayLocal } from '@/lib/use-today-local';
 import {
   CANCEL_DEADLINE_OPTIONS,
@@ -580,7 +580,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
             id="startTime"
             label="Start time"
             type="time"
-            step={START_TIME_STEP_SECONDS}
+            {...startTimeInputProps()}
             value={form.startTime}
             onChange={(e) => updateField('startTime', e.target.value)}
             error={errors.startTime}

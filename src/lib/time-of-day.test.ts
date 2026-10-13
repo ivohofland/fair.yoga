@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { timeToHHmm, hhmmToTime, startTimeStep, START_TIME_STEP_SECONDS } from './time-of-day';
+import { timeToHHmm, hhmmToTime, startTimeInputProps } from './time-of-day';
 
 describe('hhmmToTime / timeToHHmm', () => {
   it('round-trips an ordinary time', () => {
@@ -33,19 +33,18 @@ describe('hhmmToTime / timeToHHmm', () => {
   });
 });
 
-describe('startTimeStep', () => {
-  it('steps a new start time by five minutes', () => {
-    expect(startTimeStep()).toBe(START_TIME_STEP_SECONDS);
-    expect(START_TIME_STEP_SECONDS).toBe(300);
+describe('startTimeInputProps', () => {
+  it('steps a new start time by five minutes from midnight', () => {
+    expect(startTimeInputProps()).toEqual({ min: '00:00', step: 300 });
   });
 
   it('keeps the five-minute step for a saved time on the grid', () => {
-    expect(startTimeStep('18:45')).toBe(START_TIME_STEP_SECONDS);
-    expect(startTimeStep('00:00')).toBe(START_TIME_STEP_SECONDS);
+    expect(startTimeInputProps('18:45').step).toBe(300);
+    expect(startTimeInputProps('00:00').step).toBe(300);
   });
 
-  it('falls back to one minute for a saved time off the grid, so it still saves unchanged', () => {
-    expect(startTimeStep('18:37')).toBe(60);
-    expect(startTimeStep('23:59')).toBe(60);
+  it('falls back to one minute for a saved time off the grid', () => {
+    expect(startTimeInputProps('18:37')).toEqual({ min: '00:00', step: 60 });
+    expect(startTimeInputProps('23:59').step).toBe(60);
   });
 });

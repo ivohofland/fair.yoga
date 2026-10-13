@@ -149,9 +149,13 @@ describe('ClassEditForm', () => {
     expect(screen.queryByText(/cancel it and create a new one/)).not.toBeInTheDocument();
   });
 
-  it('steps the start time by five minutes', () => {
+  it('steps the start time by five minutes from midnight, whatever is typed', () => {
     render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
-    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('min', '00:00');
+    fireEvent.change(input, { target: { value: '14:37' } });
+    expect(input).toHaveAttribute('step', '300');
+    expect(input.checkValidity()).toBe(false);
   });
 
   it('keeps a saved start time off the five-minute grid valid', () => {

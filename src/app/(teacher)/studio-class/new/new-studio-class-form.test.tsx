@@ -47,9 +47,15 @@ describe('NewStudioClassPage', () => {
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  it('steps the start time by five minutes', () => {
+  it('steps the start time by five minutes from midnight', () => {
     render(<NewStudioClassForm currency="EUR" />);
-    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('min', '00:00');
+    expect(input).toHaveAttribute('step', '300');
+    fireEvent.change(input, { target: { value: '14:37' } });
+    expect(input.checkValidity()).toBe(false);
+    fireEvent.change(input, { target: { value: '14:35' } });
+    expect(input.checkValidity()).toBe(true);
   });
 
   it('sends exactly these six fields', async () => {

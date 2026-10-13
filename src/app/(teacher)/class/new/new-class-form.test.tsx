@@ -131,6 +131,19 @@ describe('NewClassPage', () => {
     return submit();
   }
 
+  it('steps the start time by five minutes from midnight', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+    await screen.findByLabelText('Room');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('min', '00:00');
+    expect(input).toHaveAttribute('step', '300');
+    fireEvent.change(input, { target: { value: '14:37' } });
+    expect(input.checkValidity()).toBe(false);
+    fireEvent.change(input, { target: { value: '14:35' } });
+    expect(input.checkValidity()).toBe(true);
+  });
+
   /**
    * A key-set assertion alone cannot see a value transposed between two
    * same-typed fields — e.g. `minRate` and `targetRate` swapped — because
@@ -149,13 +162,6 @@ describe('NewClassPage', () => {
    * above — and everything else is `INITIAL_FORM`'s default, untouched by
    * step 2 and step 3's no-op "Next" clicks.
    */
-  it('steps the start time by five minutes', async () => {
-    stubFetch();
-    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
-    await screen.findByLabelText('Room');
-    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
-  });
-
   it('sends exactly these fields, with the values the wizard actually produces', async () => {
     stubFetch();
     const { url, method, body } = await fillAndSubmit();

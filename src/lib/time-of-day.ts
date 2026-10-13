@@ -8,17 +8,19 @@ export function hhmmToTime(s: string): Date {
   return new Date(`1970-01-01T${s}:00Z`);
 }
 
-/** A start-time input's `step`, in seconds: five minutes, the grid classes start on. */
-export const START_TIME_STEP_SECONDS = 300;
+const START_TIME_STEP_SECONDS = 300;
 
 /**
- * The `step` for a start-time input opened on `saved` — the row's stored
- * `"HH:MM"`, never the value being typed. Off the five-minute grid it falls
- * back to one minute, so the browser does not refuse a row saved before the
- * step existed.
+ * The `min` and `step` for a start-time input, given the stored `"HH:MM"` it
+ * opens on (absent for a new row). Five-minute steps counted from midnight:
+ * without `min`, the browser counts steps from the `value` attribute, so the
+ * grid would follow whatever time the field holds. A stored time off that
+ * grid gets a one-minute step, so the browser does not refuse to submit it
+ * unchanged. Pass the stored value, not the field's live one: the step must
+ * not change while the teacher edits.
  */
-export function startTimeStep(saved?: string): number {
-  if (!saved) return START_TIME_STEP_SECONDS;
-  const minutes = Number(saved.slice(3, 5));
-  return minutes % (START_TIME_STEP_SECONDS / 60) === 0 ? START_TIME_STEP_SECONDS : 60;
+export function startTimeInputProps(saved?: string): { min: string; step: number } {
+  const minutes = saved ? Number(saved.slice(3, 5)) : 0;
+  const onGrid = minutes % (START_TIME_STEP_SECONDS / 60) === 0;
+  return { min: '00:00', step: onGrid ? START_TIME_STEP_SECONDS : 60 };
 }

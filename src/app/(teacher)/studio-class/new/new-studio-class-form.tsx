@@ -8,7 +8,7 @@ import type { Currency } from '@prisma/client';
 import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
-import { START_TIME_STEP_SECONDS } from '@/lib/time-of-day';
+import { startTimeInputProps } from '@/lib/time-of-day';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
@@ -210,7 +210,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
         <Input label="Class type" value={classType} maxLength={CLASS_TYPE_MAX} onChange={updateField(setClassType)} placeholder="e.g. Vinyasa, Hatha, Yin" />
         <Input label="Location" value={location} maxLength={LOCATION_MAX} onChange={updateField(setLocation)} placeholder="e.g. Yoga Studio Centrum, Amsterdam" />
         <Input label="Date" type="date" value={date} onChange={updateField(setDate)} />
-        <Input label="Start time" type="time" step={START_TIME_STEP_SECONDS} value={startTime} onChange={updateField(setStartTime)} />
+        <Input label="Start time" type="time" {...startTimeInputProps()} value={startTime} onChange={updateField(setStartTime)} />
         <Input label="Duration (minutes)" type="number" max={DURATION_MAX_MINUTES} value={durationMinutes} onChange={updateField(setDurationMinutes)} />
         <Input label={`Hourly rate (${currencyLabel(currency)})`} type="text" inputMode="decimal" value={hourlyRate} onChange={updateField(setHourlyRate)} />
 

@@ -69,9 +69,19 @@ describe('StudioTemplateForm', () => {
     hourlyRate: 20,
   };
 
-  it('steps the start time by five minutes', () => {
+  it('steps the start time by five minutes from midnight', () => {
     render(<StudioTemplateForm currency="EUR" mode="create" />);
-    expect(screen.getByLabelText('Start time')).toHaveAttribute('step', '300');
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    expect(input).toHaveAttribute('min', '00:00');
+    expect(input).toHaveAttribute('step', '300');
+  });
+
+  it('keeps the five-minute step on an edit, whatever is typed', () => {
+    render(<StudioTemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...EDIT_INITIAL }} />);
+    const input = screen.getByLabelText<HTMLInputElement>('Start time');
+    fireEvent.change(input, { target: { value: '14:37' } });
+    expect(input).toHaveAttribute('step', '300');
+    expect(input.checkValidity()).toBe(false);
   });
 
   it('keeps a saved start time off the five-minute grid valid', () => {

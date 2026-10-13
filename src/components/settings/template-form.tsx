@@ -14,7 +14,7 @@ import {
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';
-import { startTimeStep } from '@/lib/time-of-day';
+import { startTimeInputProps } from '@/lib/time-of-day';
 import { vatPercentViolation } from '@/lib/vat';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { Input } from '@/components/ui/input';
@@ -693,7 +693,7 @@ export function TemplateForm({ mode, templateId, currency, defaultVatPercent, in
       <Input
         label="Start time"
         type="time"
-        step={startTimeStep(initial?.startTime)}
+        {...startTimeInputProps(initial?.startTime)}
         value={form.startTime}
         onChange={(e) => update('startTime', e.target.value)}
       />
