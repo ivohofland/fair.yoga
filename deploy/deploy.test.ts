@@ -301,7 +301,7 @@ describe('deploy/deploy.sh', () => {
     expect(recorded()).toBe(v3);
   });
 
-  it.each(['SIGTERM', 'SIGPIPE'] as const)('puts the checkout back and starts nothing when it receives %s during the build', async (signal) => {
+  it('puts the checkout back and starts nothing when it is terminated during the build', async () => {
     const before = head();
     const v2 = commitToOrigin('v2');
     const child: ChildProcess = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2' } }), stdio: ['ignore', 'ignore', 'ignore'] });
@@ -311,10 +311,30 @@ describe('deploy/deploy.sh', () => {
     while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
     expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
     expect(head()).toBe(v2);
-    child.kill(signal);
+    child.kill('SIGTERM');
 
     const code = await closed;
     expect(code).not.toBe(0);
+    expect(head()).toBe(before);
+    expect(recorded()).toBeNull();
+    expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
+  }, 20_000);
+
+  it('puts the checkout back and starts nothing when the output is closed mid-deploy', async () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    const child = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2', FAKE_BUILD_FAIL: '1' } }), stdio: ['ignore', 'pipe', 'pipe'] });
+    const closed = new Promise<void>((resolve) => child.on('close', () => resolve()));
+
+    const deadline = Date.now() + 10_000;
+    while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
+    expect(head()).toBe(v2);
+    // Nothing reads the pipes any more, as when the SSH connection drops; the failed build's message is then written to a closed pipe.
+    child.stdout.destroy();
+    child.stderr.destroy();
+
+    await closed;
     expect(head()).toBe(before);
     expect(recorded()).toBeNull();
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
