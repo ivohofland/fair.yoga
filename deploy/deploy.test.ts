@@ -90,10 +90,18 @@ beforeEach(() => {
   commitToOrigin('v1');
   git(root, 'clone', '-q', origin, app);
 
-  // `docker compose … build|up …`: logged; `build` fails when FAKE_BUILD_FAIL is set.
+  // `docker compose … build|run|up …`: logged; each fails when its FAKE_*_FAIL is set.
   writeStub(
     'docker',
-    `echo "docker $*" >> "${callLog}"\ncase " $* " in *" build "*) [ -n "\${FAKE_BUILD_FAIL:-}" ] && exit 1;; esac\nexit 0`,
+    [
+      `echo "docker $*" >> "${callLog}"`,
+      'case " $* " in',
+      '  *" build "*) [ -n "${FAKE_BUILD_FAIL:-}" ] && exit 1;;',
+      '  *" run "*) [ -n "${FAKE_MIGRATE_FAIL:-}" ] && exit 1;;',
+      '  *" up "*) [ -n "${FAKE_UP_FAIL:-}" ] && exit 1;;',
+      'esac',
+      'exit 0',
+    ].join('\n'),
   );
   if (!HAS_FLOCK) writeStub('flock', 'exit 0');
   // The health probe answers ok unless FAKE_HEALTH is set to something else.
@@ -105,7 +113,7 @@ afterEach(() => {
 });
 
 describe('deploy/deploy.sh', () => {
-  it('deploys a newer main commit: checks it out, builds, then starts, and passes the health check', () => {
+  it('deploys a newer main commit: checks it out, builds, migrates, then starts, and passes the health check', () => {
     const v2 = commitToOrigin('v2');
     const result = run({ sshCommand: v2 });
 
@@ -113,9 +121,11 @@ describe('deploy/deploy.sh', () => {
     expect(head()).toBe(v2);
     const docker = calls().filter((c) => c.startsWith('docker'));
     const buildAt = docker.findIndex((c) => / build( |$)/.test(c));
+    const migrateAt = docker.findIndex((c) => / run --rm migrate( |$)/.test(c));
     const upAt = docker.findIndex((c) => / up -d/.test(c));
     expect(buildAt).toBeGreaterThanOrEqual(0);
-    expect(upAt).toBeGreaterThan(buildAt);
+    expect(migrateAt).toBeGreaterThan(buildAt);
+    expect(upAt).toBeGreaterThan(migrateAt);
     expect(calls()).toContain('curl');
   });
 
@@ -180,7 +190,32 @@ describe('deploy/deploy.sh', () => {
 
     expect(result.status).not.toBe(0);
     expect(head()).toBe(before);
+    expect(calls().some((c) => / run /.test(c))).toBe(false);
     expect(calls().some((c) => / up -d/.test(c))).toBe(false);
+  });
+
+  it('puts the checkout back and replaces no container when the migration fails', () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    const result = run({ sshCommand: v2, env: { FAKE_MIGRATE_FAIL: '1' } });
+
+    expect(result.status).not.toBe(0);
+    expect(head()).toBe(before);
+    expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
+    expect(result.stderr).toContain('migrate');
+    expect(result.stderr).toContain(before);
+  });
+
+  it('names both commits and the rollback when replacing the containers fails', () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    const result = run({ sshCommand: v2, env: { FAKE_UP_FAIL: '1' } });
+
+    expect(result.status).not.toBe(0);
+    expect(calls()).not.toContain('curl');
+    expect(result.stderr).toContain(before);
+    expect(result.stderr).toContain(v2);
+    expect(result.stderr).toContain('rolling back');
   });
 
   it('fails when the app does not report ok within the health timeout', () => {
