@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addedVatCents, includedVatCents, vatPercentViolation, vatThousandths, withVat } from './vat';
+import { includedVatCents, vatPercentViolation, vatThousandths, withVat } from './vat';
 
 describe('vatPercentViolation', () => {
   it.each([0, 9, 21, 8.1, 1.001, 14.975, 100])('accepts %s', (v) => {
@@ -42,11 +42,6 @@ describe('withVat', () => {
   it('adds 14.975%', () => {
     expect(Math.round(withVat(100, 14975) * 100)).toBe(11498); // 114.975 → 11497.5 → half up
   });
-});
-
-describe('addedVatCents', () => {
-  it('is 0 at 0%', () => expect(addedVatCents(11000, 0)).toBe(0));
-  it('is 990 cents on €110 at 9%', () => expect(addedVatCents(11000, 9000)).toBe(990));
 });
 
 describe('includedVatCents', () => {

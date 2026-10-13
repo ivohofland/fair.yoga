@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { PricingPreviewResult } from './pricing-preview-result';
+import { calculateClassPricing } from '@/services/pricing';
+import { formatMoney } from '@/lib/format';
 
 const EXAMPLE = {
   currency: 'EUR',
@@ -94,6 +96,29 @@ describe('PricingPreviewResult', () => {
       expect(after('VAT (9%)')).toBe('€9.90');
       expect(after('Total class cost')).toBe('€119.90');
       expect(screen.getByText('What students pay (incl. VAT)')).toBeTruthy();
+    });
+
+    it('shows the total the engine bills when the rate falls between cents, and the VAT as what completes it', () => {
+      // 5 of 4-12 students on 12-29: the rate is 14.125, so room + rate is 44.125
+      // and 21% on it rounds differently from 21% on the rounded base.
+      const input = { currency: 'EUR', roomCost: 30, minRate: 12, targetRate: 29, minStudents: 4, maxStudents: 12, vatPercent: 21 } as const;
+      const distribution = { 1: 0, 2: 0, 3: 5, 4: 0, 5: 0 };
+      const billed = calculateClassPricing({
+        roomCost: input.roomCost,
+        minRate: input.minRate,
+        targetRate: input.targetRate,
+        minStudents: input.minStudents,
+        maxStudents: input.maxStudents,
+        vatPercent: input.vatPercent,
+        studentTiers: [3, 3, 3, 3, 3],
+      });
+      const billedCents = Math.round(billed.totalCost * 100);
+
+      render(<PricingPreviewResult {...input} distribution={distribution} />);
+
+      expect(after('Total class cost')).toBe(formatMoney(billedCents / 100, 'EUR'));
+      const baseCents = Math.round((input.roomCost + billed.effectiveTeacherRate) * 100);
+      expect(after('VAT (21%)')).toBe(formatMoney((billedCents - baseCents) / 100, 'EUR'));
     });
   });
 });

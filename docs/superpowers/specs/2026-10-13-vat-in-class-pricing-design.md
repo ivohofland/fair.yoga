@@ -152,8 +152,6 @@ thousandths (14.975 → 14975):
   bit for bit. This is deliberate: rounding the total to cents first would
   shift the engine's exact shares, and with them which student gets a
   leftover cent, even at 0%.
-- `addedVatCents(baseCents, t)`: `Math.round(baseCents × t / 100000)`, the
-  form preview's VAT line
 - `includedVatCents(priceCents, t)`:
   `Math.round(priceCents × t / (100000 + t))`, each student's VAT
 
@@ -278,7 +276,7 @@ New tests by layer:
 
 - **Unit, `vat.ts`:**
   - the helpers at `t = 0`
-  - `withVat(110, 9000)` rounds to 11990 cents, and `addedVatCents(11000, 9000) = 990`
+  - `withVat(110, 9000)` rounds to 11990 cents
   - 14.975 and 8.1 convert exactly
   - included VAT ≤ price across a sweep of prices
 - **Unit, engine:**
