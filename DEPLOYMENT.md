@@ -233,14 +233,15 @@ of its own (`docker compose run --rm migrate`), then replaces the containers
 and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
-would leave the site down. A failed build or migration puts the checkout back
-and leaves the running app alone. A failed container replacement or health
+would leave the site down. A failed build or migration, or a run cut off
+before the swap (a signal, a dropped connection), puts the checkout back and
+leaves the running app alone. A failed container replacement or health
 check leaves the new commit checked out and turns the CI run red:
 `<new> is checked out, <old> was before it`, naming the commit to roll back
-to. Either can leave the site down. Running the script again for the same
-commit then answers that it is already there and retries nothing: retry with
-`docker compose -f docker-compose.prod.yml up -d`, or roll back. The app is
-unreachable for the few seconds the container swap takes.
+to. Either can leave the site down. The script records the commit that last
+passed its health check in `/opt/fairyoga/.deployed`, so running it again for
+the failed commit, or re-running the CI job, deploys it again; or roll back.
+The app is unreachable for the few seconds the container swap takes.
 
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
@@ -248,7 +249,8 @@ running against it: a new column is nullable or has a default (the old code's
 inserts leave it out), and a column or table is renamed or removed only once
 no deployed code reads it.
 
-It only moves forward along `origin/main`. A commit already deployed, or an
+It only moves forward along `origin/main`. A commit already deployed (the one
+recorded in `.deployed`; without that file, the checkout's HEAD), or an
 older one, answers success and changes nothing, so two runs finishing out of
 order cannot roll the server back.
 
@@ -302,8 +304,8 @@ order cannot roll the server back.
    With none of the three set, the job warns that deploy is not configured
    and succeeds; with only some set, it fails.
 
-Test it by re-running the `deploy` job of the latest `main` run: the script
-answers that it is already there, which proves the key, the host key and the
+Test it by re-running the `deploy` job of the latest `main` run. If that run's
+deploy succeeded, the script answers that it is already there, which proves the key, the host key and the
 forced command without changing anything.
 
 ### By hand
@@ -314,7 +316,7 @@ The same script, as the deploy user on the VPS:
 cd /opt/fairyoga && git fetch -q origin main && fairyoga-deploy "$(git rev-parse origin/main)"
 ```
 
-The checkout is left detached at the deployed commit, so `git pull` there no
+The checkout is left detached at the commit the script last checked out, so `git pull` there no
 longer applies; `git fetch` and the script replace it.
 
 ### A failed migration
@@ -369,7 +371,13 @@ too. On the VPS:
 cd /opt/fairyoga
 git checkout --detach <good commit>
 docker compose -f docker-compose.prod.yml up -d --build
+# once /api/health reports "status":"ok":
+git rev-parse HEAD > .deployed
 ```
+
+Record the commit because otherwise the script still counts the newer commit
+as deployed, and a re-run of it answers that it is already there while the
+older one serves.
 
 Migrations do not roll back: the older code runs against the newer schema, so
 a migration that dropped or renamed something the older code reads needs a
