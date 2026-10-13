@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { act } from 'react';
 import { Currency } from '@prisma/client';
 import { routerRefresh } from '../../../tests/setup/components';
 import { ProfileForm } from './profile-form';
@@ -18,13 +19,36 @@ const initial = {
 };
 
 describe('ProfileForm', () => {
+  /** Every request but the live slug check: in these tests, the save. */
   const fetchMock = vi.fn();
+  /** The live slug check's answer for the slug it is asked about. */
+  const slugCheck = vi.fn((_slug: string): boolean => true);
 
   afterEach(() => {
     fetchMock.mockReset();
+    slugCheck.mockReset();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
+
+  /**
+   * Routes by URL: the page-address field checks a changed slug on its own
+   * schedule, so its requests interleave with the save's in no fixed order.
+   */
+  function stubFetch(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: unknown, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost');
+        if (url.pathname === '/api/teachers/slug-available') {
+          const available = slugCheck(url.searchParams.get('slug') ?? '');
+          return Promise.resolve({ ok: true, json: async () => ({ data: { available } }) });
+        }
+        return fetchMock(input, init);
+      }),
+    );
+  }
 
   const NOW = new Date('2026-01-15T12:00:00Z');
 
@@ -48,7 +72,8 @@ describe('ProfileForm', () => {
   }
 
   function sentBody(): Record<string, unknown> {
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const put = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT');
+    const init = put?.[1] as RequestInit;
     return JSON.parse(init.body as string) as Record<string, unknown>;
   }
 
@@ -58,7 +83,7 @@ describe('ProfileForm', () => {
 
   it('PUTs the profile and refreshes on success', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
     save();
 
@@ -70,20 +95,20 @@ describe('ProfileForm', () => {
     expect(routerRefresh).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the server sentence for a page slug another teacher holds, and does not refresh', async () => {
+  it('shows the server sentence for a page address another teacher holds, and does not refresh', async () => {
     fetchMock.mockResolvedValue({
       ok: false,
       status: 409,
       json: async () => ({
-        error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' },
+        error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' },
       }),
     });
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
-    fireEvent.change(screen.getByLabelText('Page slug'), { target: { value: 'taken-slug' } });
+    fireEvent.change(screen.getByLabelText('Page address'), { target: { value: 'taken-slug' } });
     save();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('That page slug is already taken.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('That page address is already taken.');
     expect(screen.queryByText('Saved')).toBeNull();
     expect(routerRefresh).not.toHaveBeenCalled();
   });
@@ -98,7 +123,7 @@ describe('ProfileForm', () => {
         throw new SyntaxError('Unexpected token <');
       },
     });
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
     save();
 
@@ -109,7 +134,7 @@ describe('ProfileForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const offline = new Error('offline');
     fetchMock.mockRejectedValue(offline);
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
     save();
 
@@ -136,7 +161,7 @@ describe('ProfileForm', () => {
 
   it('sends the zone the teacher picks', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
     fireEvent.change(timezoneSelect(), { target: { value: 'Pacific/Auckland' } });
     save();
@@ -162,7 +187,7 @@ describe('ProfileForm', () => {
         ok: true,
         json: async () => ({ data: { currency: 'GBP', currencySwitch: { relabelled, kept } } }),
       });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
       save();
@@ -224,7 +249,7 @@ describe('ProfileForm', () => {
   describe('sends currency only when the teacher changed it (#758)', () => {
     it('sends no currency key when only the bio changed', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Bio (max 250 characters)'), { target: { value: 'New bio.' } });
       save();
@@ -236,7 +261,7 @@ describe('ProfileForm', () => {
 
     it('sends the currency the teacher picked', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'CHF' } });
       save();
@@ -247,7 +272,7 @@ describe('ProfileForm', () => {
 
     it('does not resend a switched currency on the next save from the same form', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'GBP' } });
       save();
@@ -274,7 +299,7 @@ describe('ProfileForm', () => {
 
     it('sends the rate as a number', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '9' } });
       save();
@@ -285,7 +310,7 @@ describe('ProfileForm', () => {
 
     it('sends 0 when the field is cleared', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm({ defaultVatPercent: 21 });
       fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '' } });
       save();
@@ -296,7 +321,7 @@ describe('ProfileForm', () => {
 
     it('sends 4.5 for a rate typed as 4,5', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '4,5' } });
       save();
@@ -307,7 +332,7 @@ describe('ProfileForm', () => {
 
     it('refuses a rate that is not one number, rather than saving 0', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm({ defaultVatPercent: 21 });
       fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '4,5,6' } });
       save();
@@ -318,7 +343,7 @@ describe('ProfileForm', () => {
 
     it('stays empty when cleared, so a new rate replaces the 0 instead of landing after it', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm({ defaultVatPercent: 0 });
       const input = screen.getByLabelText('Default VAT %') as HTMLInputElement;
       fireEvent.change(input, { target: { value: '' } });
@@ -332,7 +357,7 @@ describe('ProfileForm', () => {
 
     it('leaves a decimal the teacher is still typing alone', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       const input = screen.getByLabelText('Default VAT %') as HTMLInputElement;
       fireEvent.change(input, { target: { value: '5.0' } });
@@ -347,7 +372,7 @@ describe('ProfileForm', () => {
 
     it('refuses four decimals before sending', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('Default VAT %'), { target: { value: '8.1234' } });
       save();
@@ -364,7 +389,7 @@ describe('ProfileForm', () => {
     const anyWarning = /^Links you’ve already shared to fair\.yoga\/.* will stop working\.$/;
 
     function slugField(): HTMLInputElement {
-      return screen.getByLabelText('Page slug') as HTMLInputElement;
+      return screen.getByLabelText('Page address') as HTMLInputElement;
     }
 
     function liveRegion(): Element | null {
@@ -405,7 +430,7 @@ describe('ProfileForm', () => {
 
     it('clears the warning once the new slug is saved', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       save();
@@ -415,7 +440,7 @@ describe('ProfileForm', () => {
 
     it('names the slug saved last when the teacher changes it again', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       save();
@@ -428,7 +453,7 @@ describe('ProfileForm', () => {
 
     it('neither warns nor sends the slug when only another field changed', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Anneke' } });
       expect(screen.queryByText(anyWarning)).toBeNull();
@@ -440,7 +465,7 @@ describe('ProfileForm', () => {
 
     it('sends the slug when the teacher changed it', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       save();
@@ -450,7 +475,7 @@ describe('ProfileForm', () => {
 
     it('keeps the warning when the save cannot reach the server', async () => {
       fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       vi.spyOn(console, 'error').mockImplementation(() => {});
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
@@ -463,14 +488,156 @@ describe('ProfileForm', () => {
       fetchMock.mockResolvedValue({
         ok: false,
         status: 409,
-        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' } }),
+        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
       });
-      vi.stubGlobal('fetch', fetchMock);
+      stubFetch();
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
       save();
-      expect(await screen.findByText('That page slug is already taken.')).toBeInTheDocument();
+      expect(await screen.findByText('That page address is already taken.')).toBeInTheDocument();
       expect(screen.getByText(warning('anna'))).toBeInTheDocument();
+    });
+
+    it('labels the field as signup does', () => {
+      renderForm();
+      expect(slugField()).toHaveValue('anna');
+      expect(screen.queryByLabelText('Page slug')).toBeNull();
+    });
+
+    it('asks for a page address when the field is emptied, without sending', () => {
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: '' } });
+      save();
+      expect(screen.getByRole('alert')).toHaveTextContent('Page address is required');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    describe('live availability check (#827)', () => {
+      /** Runs the field's debounce out and lets its answer arrive. */
+      async function afterDebounce(): Promise<void> {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+      }
+
+      function checkedSlugs(): string[] {
+        return slugCheck.mock.calls.map(([slug]) => slug);
+      }
+
+      it('checks a changed slug and says it is available', async () => {
+        vi.useFakeTimers();
+        stubFetch();
+        renderForm();
+        fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        await afterDebounce();
+        expect(checkedSlugs()).toEqual(['anna-yoga']);
+        expect(screen.getByText('Available')).toBeInTheDocument();
+      });
+
+      it('says a changed slug another teacher holds is taken', async () => {
+        vi.useFakeTimers();
+        slugCheck.mockReturnValue(false);
+        stubFetch();
+        renderForm();
+        fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+        await afterDebounce();
+        expect(checkedSlugs()).toEqual(['taken-slug']);
+        expect(screen.getByText('That address is taken')).toBeInTheDocument();
+      });
+
+      // The endpoint cannot tell who asks: it calls the teacher's own slug taken.
+      it('neither checks nor judges the saved slug, as loaded or typed back', async () => {
+        vi.useFakeTimers();
+        slugCheck.mockImplementation((slug) => slug !== 'anna');
+        stubFetch();
+        renderForm();
+        await afterDebounce();
+        fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        fireEvent.change(slugField(), { target: { value: 'anna' } });
+        await afterDebounce();
+        expect(slugCheck).not.toHaveBeenCalled();
+        expect(screen.queryByText('That address is taken')).toBeNull();
+        expect(screen.queryByText('Available')).toBeNull();
+      });
+
+      it('neither checks nor judges a slug once it is saved', async () => {
+        vi.useFakeTimers();
+        fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+        stubFetch();
+        renderForm();
+        fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+        await afterDebounce();
+        expect(screen.getByText('Available')).toBeInTheDocument();
+
+        // Saved, the endpoint calls it taken: this teacher holds it now.
+        slugCheck.mockReturnValue(false);
+        save();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+        expect(screen.getByText('Saved')).toBeInTheDocument();
+        expect(screen.queryByText('Available')).toBeNull();
+        await afterDebounce();
+        expect(checkedSlugs()).toEqual(['anna-yoga']);
+        expect(screen.queryByText('That address is taken')).toBeNull();
+      });
+    });
+
+    it('shows a SLUG_TAKEN refusal on the field rather than the form, until the slug is edited', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
+      });
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+      save();
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('That page address is already taken.');
+      expect(slugField()).toHaveAttribute('aria-invalid', 'true');
+      expect(slugField().getAttribute('aria-describedby')?.split(' ')).toContain(alert.id);
+
+      fireEvent.change(slugField(), { target: { value: 'taken-slug-2' } });
+      expect(screen.queryByText('That page address is already taken.')).toBeNull();
+      expect(slugField()).not.toHaveAttribute('aria-invalid');
+    });
+
+    it('drops a SLUG_TAKEN refusal when a resubmit of the same slug saves', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
+      });
+      fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: {} }) });
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'taken-slug' } });
+      save();
+      expect(await screen.findByText('That page address is already taken.')).toBeInTheDocument();
+
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(screen.queryByText('That page address is already taken.')).toBeNull();
+    });
+
+    it('keeps any other refusal of a slug change at the form level', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: { message: 'This slug is reserved' } }),
+      });
+      stubFetch();
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      save();
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('This slug is reserved');
+      expect(slugField()).not.toHaveAttribute('aria-invalid');
+      expect(slugField().getAttribute('aria-describedby')?.split(' ') ?? []).not.toContain(alert.id);
     });
   });
 
@@ -483,7 +650,7 @@ describe('ProfileForm', () => {
   // `updateTeacherSchema` names no bank field, so the form neither shows nor sends one.
   it('neither shows nor sends bank fields', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetch();
     renderForm();
     expect(screen.queryByLabelText('Bank IBAN')).toBeNull();
     expect(screen.queryByText('Students are shown your bank details only for euro payments.')).toBeNull();

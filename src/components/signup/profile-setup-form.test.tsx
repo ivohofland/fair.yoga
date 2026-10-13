@@ -355,7 +355,7 @@ describe('ProfileSetupForm', () => {
     stubFetch(() => ({
       ok: false,
       status: 409,
-      json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page slug is already taken.' } }),
+      json: async () => ({ error: { code: 'SLUG_TAKEN', message: 'That page address is already taken.' } }),
     }));
     render(<ProfileSetupForm email="anna@example.com" mode="ticket" accountId={null} />);
 

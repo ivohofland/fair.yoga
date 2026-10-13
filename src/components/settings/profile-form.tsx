@@ -6,13 +6,14 @@ import type { z } from 'zod';
 import type { Currency } from '@prisma/client';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { NotificationPrefsBody } from '@/components/settings/notification-prefs-form';
-import { NAME_MAX, PAGE_SLUG_MAX } from '@/lib/input-bounds';
+import { NAME_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
-import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { PageAddressField } from '@/components/signup/page-address-field';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
 import { CURRENCIES, currencyLabel } from '@/lib/format';
 import { vatPercentViolation } from '@/lib/vat';
@@ -50,6 +51,16 @@ void _formHasNoExtras;
 
 /** The body a save sends: `currency` and `pageSlug` only when the teacher changed them. */
 type ProfileFormWire = Omit<ProfileFormValues, 'currency' | 'pageSlug'> & { currency?: Currency; pageSlug?: string };
+
+/**
+ * A 409 `SLUG_TAKEN` from a save, carrying the slug it refused. Keyed so the
+ * refusal shows only while the field still holds that slug: an edit retires
+ * it with nothing having to remember to clear it.
+ */
+interface SlugRejection {
+  slug: string;
+  message: string;
+}
 
 interface ProfileFormProps {
   teacherId: string;
@@ -120,11 +131,14 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   // opened before a slug change made elsewhere does not move the page back.
   const [savedSlug, setSavedSlug] = useState(initial.pageSlug);
   const slugWarningId = useId();
+  const [slugRejection, setSlugRejection] = useState<SlugRejection | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const slugChanged = form.pageSlug.trim() !== savedSlug;
+  const slugError =
+    slugRejection !== null && slugRejection.slug === form.pageSlug.trim() ? slugRejection.message : undefined;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -143,7 +157,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       return;
     }
     if (!form.pageSlug.trim()) {
-      setError('Page slug is required');
+      setError('Page address is required');
       return;
     }
     const vatMessage = vatPercentViolation(form.defaultVatPercent);
@@ -154,6 +168,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
 
     setSubmitting(true);
     setError('');
+    setSlugRejection(null);
     setSuccess('');
 
     try {
@@ -175,7 +190,12 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       });
 
       if (!res.ok) {
-        setError(await readErrorMessage(res, 'Failed to save'));
+        const { code, message } = await readError(res, 'Failed to save');
+        if (code === 'SLUG_TAKEN' && sentSlug !== undefined) {
+          setSlugRejection({ slug: sentSlug, message });
+        } else {
+          setError(message);
+        }
         return;
       }
 
@@ -231,27 +251,25 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       {/* Public page */}
       <section className="flex flex-col gap-4">
         <h2 className="type-subtitle">Public page</h2>
-        <Input
-          label="Page slug"
+        <PageAddressField
           value={form.pageSlug}
-          maxLength={PAGE_SLUG_MAX}
+          onChange={(value) => update('pageSlug', value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+          currentSlug={savedSlug}
+          error={slugError}
           aria-describedby={slugChanged ? slugWarningId : undefined}
-          onChange={(e) => update('pageSlug', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-        />
-        <p className="type-caption">
-          Your booking page: fair.yoga/{form.pageSlug}
-        </p>
-        {/* Always mounted, so the caption is announced as it appears while the field
-            has focus — and sr-only, not hidden, while empty: a display:none region
-            leaves the accessibility tree, and the caption must arrive into one
-            already there. No jsdom test can see the difference. */}
-        <div aria-live="polite" className="empty:sr-only">
-          {slugChanged && (
-            <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
-              Links you’ve already shared to fair.yoga/{savedSlug} will stop working.
-            </p>
-          )}
-        </div>
+        >
+          {/* Always mounted, so the caption is announced as it appears while the field
+              has focus — and sr-only, not hidden, while empty: a display:none region
+              leaves the accessibility tree, and the caption must arrive into one
+              already there. No jsdom test can see the difference. */}
+          <div aria-live="polite" className="empty:sr-only">
+            {slugChanged && (
+              <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
+                Links you’ve already shared to fair.yoga/{savedSlug} will stop working.
+              </p>
+            )}
+          </div>
+        </PageAddressField>
       </section>
 
       {/* Preferences */}
