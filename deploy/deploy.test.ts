@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +21,7 @@ let origin: string;
 let app: string;
 let binDir: string;
 let callLog: string;
+let deployedFile: string;
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
@@ -52,22 +53,29 @@ function commitToOrigin(label: string): string {
   return git(work, 'rev-parse', 'HEAD');
 }
 
-function run(input: { sshCommand?: string; arg?: string; env?: Record<string, string> } = {}) {
-  return spawnSync('bash', input.arg === undefined ? [SCRIPT] : [SCRIPT, input.arg], {
-    encoding: 'utf8',
-    env: {
-      NODE_ENV: 'test',
-      PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      HOME: root,
-      APP_DIR: app,
-      COMPOSE_FILE,
-      HEALTH_URL: 'http://127.0.0.1:3000/api/health',
-      HEALTH_TIMEOUT: '2',
-      LOCK_FILE: path.join(root, 'deploy.lock'),
-      ...(input.sshCommand === undefined ? {} : { SSH_ORIGINAL_COMMAND: input.sshCommand }),
+function scriptEnv(input: { sshCommand?: string; env?: Record<string, string> }): NodeJS.ProcessEnv {
+return {
+    NODE_ENV: 'test',
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HOME: root,
+    APP_DIR: app,
+    COMPOSE_FILE,
+    HEALTH_URL: 'http://127.0.0.1:3000/api/health',
+    HEALTH_TIMEOUT: '2',
+    LOCK_FILE: path.join(root, 'deploy.lock'),
+    DEPLOYED_FILE: deployedFile,
+    ...(input.sshCommand === undefined ? {} : { SSH_ORIGINAL_COMMAND: input.sshCommand }),
       ...input.env,
-    },
-  });
+  };
+}
+
+function run(input: { sshCommand?: string; arg?: string; env?: Record<string, string> } = {}) {
+  return spawnSync('bash', input.arg === undefined ? [SCRIPT] : [SCRIPT, input.arg], { encoding: 'utf8', env: scriptEnv(input) });
+}
+
+/** The recorded deployed commit, or null when the script has not written one. */
+function recorded(): string | null {
+  return fs.existsSync(deployedFile) ? fs.readFileSync(deployedFile, 'utf8').trim() : null;
 }
 
 function calls(): string[] {
@@ -84,6 +92,7 @@ beforeEach(() => {
   app = path.join(root, 'app');
   binDir = path.join(root, 'bin');
   callLog = path.join(root, 'calls');
+  deployedFile = path.join(root, 'deployed');
   fs.mkdirSync(binDir);
 
   git(root, 'init', '-q', '--bare', '-b', 'main', origin);
@@ -93,13 +102,13 @@ beforeEach(() => {
   git(root, 'clone', '-q', origin, app);
 
   // `docker compose … build|run|up …`: logged; each fails when FAKE_BUILD_FAIL /
-  // FAKE_MIGRATE_FAIL / FAKE_UP_FAIL is set.
+  // FAKE_MIGRATE_FAIL / FAKE_UP_FAIL is set, and a build first sleeps FAKE_BUILD_SLEEP seconds.
   writeStub(
     'docker',
     [
       `echo "docker $*" >> "${callLog}"`,
       'case " $* " in',
-      '  *" build "*) [ -n "${FAKE_BUILD_FAIL:-}" ] && exit 1;;',
+      '  *" build "*) [ -n "${FAKE_BUILD_SLEEP:-}" ] && sleep "$FAKE_BUILD_SLEEP"; [ -n "${FAKE_BUILD_FAIL:-}" ] && exit 1;;',
       '  *" run "*) [ -n "${FAKE_MIGRATE_FAIL:-}" ] && exit 1;;',
       '  *" up "*) [ -n "${FAKE_UP_FAIL:-}" ] && exit 1;;',
       'esac',
@@ -131,6 +140,7 @@ describe('deploy/deploy.sh', () => {
     expect(upAt).toBeGreaterThan(migrateAt);
     for (const call of docker.filter((c) => c.startsWith('docker compose'))) expect(call).toMatch(new RegExp(`^docker compose -f ${COMPOSE_FILE} `));
     expect(calls()).toContain('curl');
+    expect(recorded()).toBe(v2);
   });
 
   it('takes the commit as an argument when run by hand', () => {
@@ -196,6 +206,7 @@ describe('deploy/deploy.sh', () => {
     expect(head()).toBe(before);
     expect(calls().some((c) => / run /.test(c))).toBe(false);
     expect(calls().some((c) => / up -d/.test(c))).toBe(false);
+    expect(recorded()).toBeNull();
   });
 
   it('puts the checkout back and replaces no container when the migration fails', () => {
@@ -208,6 +219,7 @@ describe('deploy/deploy.sh', () => {
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
     expect(result.stderr).toContain('migrate');
     expect(result.stderr).toContain(before);
+    expect(recorded()).toBeNull();
   });
 
   it('names both commits and the rollback when replacing the containers fails', () => {
@@ -234,6 +246,79 @@ describe('deploy/deploy.sh', () => {
     expect(result.stderr).toContain(v2);
     expect(result.stderr).toContain('rolling back');
   });
+
+  it('leaves the record alone when replacing the containers fails, and runs the whole deploy again on a retry', () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    expect(run({ sshCommand: v2, env: { FAKE_UP_FAIL: '1' } }).status).not.toBe(0);
+    expect(recorded()).toBeNull();
+    expect(head()).toBe(v2);
+    fs.writeFileSync(deployedFile, `${before}\n`);
+    fs.rmSync(callLog);
+
+    const retry = run({ sshCommand: v2 });
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(retry.stdout).not.toMatch(/already/i);
+    const docker = calls().filter((c) => c.startsWith('docker'));
+    expect(docker.some((c) => / build( |$)/.test(c))).toBe(true);
+    expect(docker.some((c) => / run --rm migrate( |$)/.test(c))).toBe(true);
+    expect(docker.some((c) => / up -d/.test(c))).toBe(true);
+    expect(recorded()).toBe(v2);
+  });
+
+  it('leaves the record alone when the health check fails, and runs the whole deploy again on a retry', () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    fs.writeFileSync(deployedFile, `${before}\n`);
+    expect(run({ sshCommand: v2, env: { FAKE_HEALTH: '{"status":"degraded","db":"down"}' } }).status).not.toBe(0);
+    expect(recorded()).toBe(before);
+    expect(head()).toBe(v2);
+    fs.rmSync(callLog);
+
+    const retry = run({ sshCommand: v2 });
+    expect(retry.status, retry.stderr).toBe(0);
+    expect(retry.stdout).not.toMatch(/already/i);
+    const docker = calls().filter((c) => c.startsWith('docker'));
+    expect(docker.some((c) => / build( |$)/.test(c))).toBe(true);
+    expect(docker.some((c) => / run --rm migrate( |$)/.test(c))).toBe(true);
+    expect(docker.some((c) => / up -d/.test(c))).toBe(true);
+    expect(recorded()).toBe(v2);
+  }, 20_000);
+
+  it('creates the record from HEAD when there is none, and compares against the record when there is one', () => {
+    const v1 = head();
+    const v2 = commitToOrigin('v2');
+    const v3 = commitToOrigin('v3');
+    expect(recorded()).toBeNull();
+    const first = run({ sshCommand: v2 });
+    expect(first.status, first.stderr).toBe(0);
+    expect(first.stdout).toContain(`deploying ${v1} -> ${v2}`);
+    expect(recorded()).toBe(v2);
+
+    const second = run({ sshCommand: v3 });
+    expect(second.status, second.stderr).toBe(0);
+    expect(second.stdout).toContain(`deploying ${v2} -> ${v3}`);
+    expect(recorded()).toBe(v3);
+  });
+
+  it('puts the checkout back and starts nothing when it is terminated during the build', async () => {
+    const before = head();
+    const v2 = commitToOrigin('v2');
+    const child: ChildProcess = spawn('bash', [SCRIPT], { env: scriptEnv({ sshCommand: v2, env: { FAKE_BUILD_SLEEP: '2' } }), stdio: ['ignore', 'ignore', 'ignore'] });
+    const closed = new Promise<number | null>((resolve) => child.on('close', (code: number | null) => resolve(code)));
+
+    const deadline = Date.now() + 10_000;
+    while (!calls().some((c) => / build( |$)/.test(c)) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    expect(calls().some((c) => / build( |$)/.test(c))).toBe(true);
+    expect(head()).toBe(v2);
+    child.kill('SIGTERM');
+
+    const code = await closed;
+    expect(code).not.toBe(0);
+    expect(head()).toBe(before);
+    expect(recorded()).toBeNull();
+    expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
+  }, 20_000);
 
   it.skipIf(!HAS_FLOCK)('refuses to run while another deploy holds the lock', () => {
     const v2 = commitToOrigin('v2');
