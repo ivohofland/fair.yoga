@@ -38,18 +38,18 @@ export interface ProfileFormValues {
  * dropped fails the build too — `.strict()` would 400 it at runtime; this
  * catches it at compile time. Both pins reach the wire body because
  * `handleSubmit` builds it as a `payload` literal typed `ProfileFormWire` —
- * the same keys, `currency` optional — and stringifies that literal directly:
- * the excess-property check on that literal guards every key of the object
- * actually sent but `currency`, which enters through a spread, where no such
- * check applies; `ProfileFormWire` types its value.
+ * the same keys, `currency` and `pageSlug` optional — and stringifies that
+ * literal directly: the excess-property check on that literal guards every key
+ * of the object actually sent but the optional ones, which enter through
+ * spreads, where no such check applies; `ProfileFormWire` types their values.
  */
 const _formCoversSchema: NoneOf<Exclude<Exclude<keyof UpdateTeacherWire, keyof NotificationPrefsBody>, keyof ProfileFormValues>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof ProfileFormValues, keyof UpdateTeacherWire>> = true;
 void _formCoversSchema;
 void _formHasNoExtras;
 
-/** The body a save sends: `currency` only when the teacher changed it. */
-type ProfileFormWire = Omit<ProfileFormValues, 'currency'> & { currency?: Currency };
+/** The body a save sends: `currency` and `pageSlug` only when the teacher changed them. */
+type ProfileFormWire = Omit<ProfileFormValues, 'currency' | 'pageSlug'> & { currency?: Currency; pageSlug?: string };
 
 interface ProfileFormProps {
   teacherId: string;
@@ -115,8 +115,9 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
   // the select differs from it, so a save from a tab opened before a switch
   // made elsewhere leaves that switch standing.
   const [savedCurrency, setSavedCurrency] = useState(initial.currency);
-  // The slug the server last confirmed, so the warning below names the address
-  // that is live now and goes away once a new one is saved.
+  // The slug the server last confirmed. The warning below names it while the
+  // field differs, and a save names `pageSlug` only then, so a save from a tab
+  // opened before a slug change made elsewhere does not move the page back.
   const [savedSlug, setSavedSlug] = useState(initial.pageSlug);
   const slugWarningId = useId();
   const [error, setError] = useState('');
@@ -157,11 +158,12 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
 
     try {
       const sentCurrency = form.currency !== savedCurrency ? form.currency : undefined;
+      const sentSlug = slugChanged ? form.pageSlug.trim() : undefined;
       const payload: ProfileFormWire = {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
         bio: form.bio.trim(),
-        pageSlug: form.pageSlug.trim(),
+        ...(sentSlug !== undefined ? { pageSlug: sentSlug } : {}),
         ...(sentCurrency !== undefined ? { currency: sentCurrency } : {}),
         defaultVatPercent: form.defaultVatPercent,
         defaultTimezone: form.defaultTimezone,
@@ -180,7 +182,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
       const saved = (await res.json()) as { data?: { currencySwitch?: CurrencySwitchResult } };
       const switched = saved.data?.currencySwitch;
       if (sentCurrency !== undefined) setSavedCurrency(sentCurrency);
-      setSavedSlug(payload.pageSlug);
+      if (sentSlug !== undefined) setSavedSlug(sentSlug);
       setSuccess((switched && sentCurrency !== undefined && currencySwitchLine(switched, sentCurrency)) || 'Saved');
       router.refresh();
     } catch (err) {
@@ -240,7 +242,7 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
           Your booking page: fair.yoga/{form.pageSlug}
         </p>
         {/* Always mounted, so the caption is announced as it appears while the field has focus. */}
-        <div aria-live="polite" className="empty:hidden">
+        <div aria-live="polite" className="empty:sr-only">
           {slugChanged && (
             <p id={slugWarningId} className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3">
               Links you’ve already shared to fair.yoga/{savedSlug} will stop working.

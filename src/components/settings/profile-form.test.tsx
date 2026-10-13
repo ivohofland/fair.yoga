@@ -367,6 +367,10 @@ describe('ProfileForm', () => {
       return screen.getByLabelText('Page slug') as HTMLInputElement;
     }
 
+    function liveRegion(): Element | null {
+      return document.querySelector('[aria-live="polite"]');
+    }
+
     it('shows no warning while the slug is unchanged', () => {
       renderForm();
       expect(screen.queryByText(anyWarning)).toBeNull();
@@ -377,15 +381,26 @@ describe('ProfileForm', () => {
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
       const caption = screen.getByText(warning('anna'));
       expect(slugField().getAttribute('aria-describedby')?.split(' ')).toContain(caption.id);
-      expect(caption.closest('[aria-live="polite"]')).not.toBeNull();
+    });
+
+    // A region mounted together with its text is often not announced, so the
+    // region must already be there, empty, when the caption arrives.
+    it('puts the warning into a live region that was mounted before it', () => {
+      renderForm();
+      const region = liveRegion();
+      expect(region).toBeEmptyDOMElement();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      expect(liveRegion()).toBe(region);
+      expect(region).toContainElement(screen.getByText(warning('anna')));
     });
 
     it('drops the warning when the teacher types the saved slug back', () => {
       renderForm();
       fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      const captionId = screen.getByText(warning('anna')).id;
       fireEvent.change(slugField(), { target: { value: 'anna' } });
       expect(screen.queryByText(anyWarning)).toBeNull();
-      expect(slugField()).not.toHaveAttribute('aria-describedby');
+      expect(slugField().getAttribute('aria-describedby')?.split(' ') ?? []).not.toContain(captionId);
     });
 
     it('clears the warning once the new slug is saved', async () => {
@@ -407,6 +422,30 @@ describe('ProfileForm', () => {
       expect(await screen.findByText('Saved')).toBeInTheDocument();
       fireEvent.change(slugField(), { target: { value: 'anna-flow' } });
       expect(screen.getByText(warning('anna-yoga'))).toBeInTheDocument();
+      fireEvent.change(slugField(), { target: { value: 'anna' } });
+      expect(screen.getByText(warning('anna-yoga'))).toBeInTheDocument();
+    });
+
+    it('neither warns nor sends the slug when only another field changed', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(screen.getByLabelText('First name'), { target: { value: 'Anneke' } });
+      expect(screen.queryByText(anyWarning)).toBeNull();
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody()).not.toHaveProperty('pageSlug');
+      expect(screen.queryByText(anyWarning)).toBeNull();
+    });
+
+    it('sends the slug when the teacher changed it', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderForm();
+      fireEvent.change(slugField(), { target: { value: 'anna-yoga' } });
+      save();
+      expect(await screen.findByText('Saved')).toBeInTheDocument();
+      expect(sentBody().pageSlug).toBe('anna-yoga');
     });
 
     it('keeps the warning when the save cannot reach the server', async () => {
