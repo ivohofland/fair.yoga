@@ -2032,6 +2032,17 @@ describe('TemplateForm', () => {
       ).toBeInTheDocument();
     });
 
+    it('shows no notice under the edit confirmation for a past_check answer', async () => {
+      stubSaves([
+        { data: { id: 'tpl-1', firstEffective: '2026-11-09T00:00:00.000Z', lateFirstClass: { ...LATE, state: 'past_check' } } },
+      ]);
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByRole('button', { name: /save/i }));
+
+      expect(await screen.findByText(/^Template updated\./)).toBeInTheDocument();
+      expect(screen.queryByText(/cancellation deadline/)).not.toBeInTheDocument();
+    });
+
     it('drops the notice when a later save answers no late first class', async () => {
       stubSaves([
         { data: { id: 'tpl-1', firstEffective: '2026-11-09T00:00:00.000Z', lateFirstClass: LATE } },
