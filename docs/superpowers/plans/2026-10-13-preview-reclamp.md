@@ -19,24 +19,32 @@ updated per keystroke, with no `key` that would remount the preview.
 Two things the issue does not mention, both because the fields update per keystroke:
 
 1. **Transient states.** Clearing a field gives `NaN`; backspacing max from 12 to
-   type 10 passes through max 1, which is `min > max`. Both already hit an early
-   return (the NaN gate, then `economicsViolations`). The clamp must run only
-   after those gates, or retyping a bound wipes the teacher's slider choice.
+   type 10 passes through max 1, which is `min > max`. The gates (the NaN check,
+   then `economicsViolations`) catch the cleared and below-minimum values; the
+   derivation below makes every other prefix harmless, such as "5" on the way to
+   "50", which is a valid range.
 2. **Non-integer bounds.** A bound can read `6.5` while typing. A plain clamp
    would show "6.5 students", and `normalSpread(6.5)` seats 7. The clamp lands
    on whole numbers: `ceil(effectiveMin)` … `floor(effectiveMax)`.
 
 ## Design decisions
 
-- **Persist the clamp** (write it to state), as the issue's acceptance reads:
-  narrowing max to 6 and widening back to 12 leaves the size at 6.
-- **Adjust during render, not in an effect.** React's "adjusting some state when
-  a prop changes" pattern: compare, and `setState` during render when they
-  differ. React discards that render's output and re-renders before committing,
-  so the stale size never reaches the screen; an effect would commit it for a
-  frame. The guard is idempotent (a clamped size clamps to itself), so it cannot
-  loop.
-- **Recompute in the current mode** through the existing `updateDistribution`.
+- **A chosen size in state, the shown size derived.** The slider alone writes
+  `chosenCount`; what is shown is that choice clamped to the whole-number range
+  (`ceil(effectiveMin)` … `floor(effectiveMax)`), so widening the range gives the
+  choice back. The clamp is not persisted: the props arrive per keystroke, so a
+  gate-passing prefix ("5" on the way to "50") would otherwise move the size for
+  good.
+- **Normal spread is derived** from the shown size at render; only a shuffled
+  draw is state.
+- **A shuffled draw is redrawn during render** when its head count differs from
+  the shown size, after the gates (React's "adjusting some state when a prop
+  changes" pattern: React re-renders before committing, so a stale mix never
+  reaches the screen). Past the gates the size is a finite whole number, so the
+  redraw settles in one pass.
+- **One whole-number range** feeds the slider, its captions and the table.
+- **A NaN choice** (seeded while a bound was cleared) falls back to the range's
+  midpoint.
 
 ## Global constraints
 
@@ -142,46 +150,66 @@ in the test file, after the last `it` (`'treats a minimum below one as one…'`)
 ```
 
 Run `pnpm exec vitest run --project components src/components/class/pricing-preview-table.test.tsx`.
-Expected: the three narrowing tests, the whole-number test and the shuffle test
+Expected: the two narrowing tests, the whole-number test and the shuffle test
 fail (the label still reads "8 students"); `leaves a size still inside the new
 range alone` and `keeps the size through the states…` pass already (nothing
 moves the size today). Record the failure output in the report.
 
 ### Step 2 — implementation
 
-In `pricing-preview-table.tsx`, insert immediately after the `violations` early
-return (the `if (violations.length > 0) { … }` block) and before the final
-`return (`:
+In `pricing-preview-table.tsx`, replace `studentCount`, `distribution`,
+`updateDistribution` and `handleSliderChange` with the derivation, and the clamp
+block with the after-gates redraw. Keep the three gates as they are.
 
 ```tsx
-  // Placed after the gates so a field mid-edit — cleared, or briefly below the
-  // other bound — cannot move the size; only a range the preview prices can.
   const lowest = Math.ceil(effectiveMin);
   const highest = Math.max(lowest, Math.floor(effectiveMax));
-  const clamped = Math.min(highest, Math.max(lowest, studentCount));
-  if (clamped !== studentCount) {
-    // Adjusting state during render: React re-renders before committing, so the
-    // stale size never reaches the screen.
-    setStudentCount(clamped);
-    updateDistribution(clamped, mode);
+  const [chosenCount, setChosenCount] = useState(
+    Math.round((effectiveMin + effectiveMax) / 2),
+  );
+  const [mode, setMode] = useState<'normal' | 'shuffle'>('normal');
+  const [shuffled, setShuffled] = useState<TierCounts>(emptyCounts);
+  const chosen = Number.isFinite(chosenCount) ? chosenCount : Math.round((lowest + highest) / 2);
+  const shownCount = Math.min(highest, Math.max(lowest, chosen));
+
+  function handleModeChange(newMode: 'normal' | 'shuffle') {
+    setMode(newMode);
+    if (newMode === 'shuffle') setShuffled(shuffleMix(shownCount));
   }
+
+  // ...gates, unchanged...
+
+  if (mode === 'shuffle' && studentsIn(shuffled) !== shownCount) {
+    setShuffled(shuffleMix(shownCount));
+  }
+  const distribution = mode === 'normal' ? normalSpread(shownCount) : shuffled;
 ```
 
-Re-run the same command. Expected: every test in the file passes.
+The label, slider (`min={lowest}` `max={highest}` `value={shownCount}`, `onChange`
+calling `setChosenCount`), captions and `PricingPreviewResult` read `shownCount`,
+`lowest` and `highest`. Re-run the same command. Expected: every test passes.
 
-### Step 3 — prove the guard bites
+Tests added in review, one line each:
+- `gives the choice back when a narrowed bound widens again`
+- `keeps the size while a bound is retyped through a range it can price`
+- `lands on a whole number when the minimum is not one`
+- `starts from the midpoint when it mounted on a cleared count`
+- `keeps a shuffled mix when the size is still inside the new range`
+- `shows the count message from a shuffled mix while a bound is cleared`
+- `lands on a whole number when a bound is not one` also asserts the `6 max` caption.
 
-1. Move the inserted block to directly after the `useState`/`useCallback`
-   declarations (before the first gate). Run the file: `keeps the size through
-   the states a bound passes while being retyped` must fail ("10 students" not
-   found — max 1 clamps the size to 4). Record the exact error text. Restore.
-2. Replace `Math.ceil(effectiveMin)` with `effectiveMin` and
-   `Math.floor(effectiveMax)` with `effectiveMax`. `lands on a whole number…`
-   must fail. Record the error. Restore.
-3. Replace `updateDistribution(clamped, mode);` with
-   `updateDistribution(clamped, 'normal');`. `redraws a shuffled mix…` must fail.
-   Record the error. Restore.
-4. Re-run the file; all pass.
+### Step 3 — prove each guard bites
+
+Apply each mutation, run the file, confirm the named test fails, restore:
+
+- **M1, persist the clamp:** after the gates, `if (shownCount !== chosenCount) setChosenCount(shownCount);`. `gives the choice back…` and `keeps the size while a bound is retyped through a range it can price` fail.
+- **M2, drop the shuffle redraw:** delete the `if (mode === 'shuffle' …)` block. `redraws a shuffled mix at the new size` fails.
+- **M3, move the shuffle redraw above the first gate:** `shows the count message from a shuffled mix…` fails.
+- **M4, ceil removed:** `const lowest = effectiveMin;`. `lands on a whole number when the minimum is not one` fails.
+- **M5, NaN fallback removed:** `const chosen = chosenCount;`. `starts from the midpoint…` fails.
+- **M6, redraw on every bound change:** a `useEffect` that calls `setShuffled(shuffleMix(shownCount))` on `[minStudents, maxStudents]`. `keeps a shuffled mix when the size is still inside the new range` fails.
+
+Then re-run with no mutation; all pass.
 
 ### Step 4 — checks and commit
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { normalSpread, emptyCounts, type TierCounts } from '@/lib/pricing-preview';
+import { useState } from 'react';
+import { normalSpread, emptyCounts, studentsIn, type TierCounts } from '@/lib/pricing-preview';
 import { isIncomeTier } from '@/lib/tiers';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
@@ -44,32 +44,26 @@ export function PricingPreviewTable({
 }: PricingPreviewInputs) {
   const effectiveMin = Math.max(1, minStudents);
   const effectiveMax = Math.max(effectiveMin, maxStudents);
+  // The whole-number range the preview prices: the slider, its captions and the table read it.
+  const lowest = Math.ceil(effectiveMin);
+  const highest = Math.max(lowest, Math.floor(effectiveMax));
 
-  const [studentCount, setStudentCount] = useState(
+  // The size the teacher chose on the slider. What is shown is this clamped to the range,
+  // so a bound narrowed past it, even mid-typing, and widened again gives the choice back.
+  const [chosenCount, setChosenCount] = useState(
     Math.round((effectiveMin + effectiveMax) / 2),
   );
   const [mode, setMode] = useState<'normal' | 'shuffle'>('normal');
-  const [distribution, setDistribution] = useState<TierCounts>(() =>
-    normalSpread(Math.round((effectiveMin + effectiveMax) / 2)),
-  );
+  // The last shuffled mix, holding as many students as the size it was drawn for.
+  const [shuffled, setShuffled] = useState<TierCounts>(emptyCounts);
 
-  const updateDistribution = useCallback(
-    (count: number, newMode: 'normal' | 'shuffle') => {
-      setDistribution(
-        newMode === 'normal' ? normalSpread(count) : shuffleMix(count),
-      );
-    },
-    [],
-  );
-
-  function handleSliderChange(value: number) {
-    setStudentCount(value);
-    updateDistribution(value, mode);
-  }
+  // A choice seeded while a bound was cleared is NaN; the range's midpoint stands in.
+  const chosen = Number.isFinite(chosenCount) ? chosenCount : Math.round((lowest + highest) / 2);
+  const shownCount = Math.min(highest, Math.max(lowest, chosen));
 
   function handleModeChange(newMode: 'normal' | 'shuffle') {
     setMode(newMode);
-    updateDistribution(studentCount, newMode);
+    if (newMode === 'shuffle') setShuffled(shuffleMix(shownCount));
   }
 
   if (![roomCost, minRate, targetRate].every(Number.isFinite)) {
@@ -104,19 +98,14 @@ export function PricingPreviewTable({
     );
   }
 
-  // Placed after the gates so a field mid-edit — cleared, or briefly below the
-  // other bound — cannot move the size; only a range the preview prices can.
-  const lowest = Math.ceil(effectiveMin);
-  const highest = Math.max(lowest, Math.floor(effectiveMax));
-  // A count that mounted as NaN has no place in the range; the midpoint stands in.
-  const current = Number.isFinite(studentCount) ? studentCount : Math.round((lowest + highest) / 2);
-  const clamped = Math.min(highest, Math.max(lowest, current));
-  if (clamped !== studentCount) {
-    // Adjusting state during render: React re-renders before committing, so the
-    // stale size never reaches the screen.
-    setStudentCount(clamped);
-    updateDistribution(clamped, mode);
+  // Past the gates `shownCount` is a finite whole number, so the redraw below settles in one
+  // pass; above them a NaN size would never match its own draw and loop.
+  if (mode === 'shuffle' && studentsIn(shuffled) !== shownCount) {
+    // Adjusting state during render: React re-renders before committing, so a mix drawn for
+    // another size never reaches the screen.
+    setShuffled(shuffleMix(shownCount));
   }
+  const distribution = mode === 'normal' ? normalSpread(shownCount) : shuffled;
 
   return (
     <div className="mt-6 flex flex-col gap-6">
@@ -124,19 +113,19 @@ export function PricingPreviewTable({
       <div>
         <div className="flex items-center justify-between mb-2">
           <span className="type-label text-ink">Explore class size</span>
-          <span className="type-caption tabular-nums">{studentCount} students</span>
+          <span className="type-caption tabular-nums">{shownCount} students</span>
         </div>
         <input
           type="range"
-          min={effectiveMin}
-          max={effectiveMax}
-          value={studentCount}
-          onChange={(e) => handleSliderChange(Number(e.target.value))}
+          min={lowest}
+          max={highest}
+          value={shownCount}
+          onChange={(e) => setChosenCount(Number(e.target.value))}
           className="w-full accent-teal"
         />
         <div className="flex justify-between type-caption mt-1">
-          <span>{effectiveMin} min</span>
-          <span>{effectiveMax} max</span>
+          <span>{lowest} min</span>
+          <span>{highest} max</span>
         </div>
       </div>
 
@@ -145,8 +134,8 @@ export function PricingPreviewTable({
         roomCost={roomCost}
         minRate={minRate}
         targetRate={targetRate}
-        minStudents={effectiveMin}
-        maxStudents={effectiveMax}
+        minStudents={lowest}
+        maxStudents={highest}
         distribution={distribution}
         distributionControl={
           <div className="flex items-center gap-2 mb-4">
