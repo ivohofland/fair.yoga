@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Deploy one commit of main to this VPS: check it out, build, restart, and
-# wait for /api/health to report ok. DEPLOYMENT.md §6.
+# Deploy one commit of main to this VPS: check it out, build, migrate, restart,
+# and wait for /api/health to report ok. DEPLOYMENT.md §6.
 #
 # CI calls it over SSH with a key whose authorized_keys entry forces this
 # script (`command="…",restrict`), so the commit arrives in
@@ -46,19 +46,34 @@ git merge-base --is-ancestor "$PREVIOUS" "$SHA" \
 echo "deploying $PREVIOUS -> $SHA"
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
-# Build while the running containers keep serving; only `up` replaces them.
-# A failed build puts the checkout back, so the tree matches what runs.
+# Build and migrate while the running containers keep serving; only `up`
+# replaces them. A failed build or migration puts the checkout back, so the
+# tree matches what runs.
 if ! docker compose -f "$COMPOSE_FILE" build; then
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
   fail "build failed; still running $PREVIOUS"
 fi
-docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+# Its own step, because `up` replaces `app` before a failing `migrate` it
+# depends on could stop it. The `migrate` inside `up` then has nothing to apply.
+if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
+  git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
+  fail "migrate failed; still running $PREVIOUS"
+fi
+
+# Past this point containers may have been replaced, so the checkout stays on
+# $SHA and a failure is rolled back by hand.
+deploy_failed() {
+  echo "deploy failed: $*; $SHA is checked out, $PREVIOUS was before it (DEPLOYMENT.md §6, rolling back)" >&2
+  exit 1
+}
+
+docker compose -f "$COMPOSE_FILE" up -d --remove-orphans \
+  || deploy_failed "replacing the containers failed"
 
 deadline=$((SECONDS + HEALTH_TIMEOUT))
 until curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; do
   if (( SECONDS >= deadline )); then
-    echo "deploy failed: $HEALTH_URL did not report ok within ${HEALTH_TIMEOUT}s; $SHA is running, $PREVIOUS was before it (DEPLOYMENT.md §6, rolling back)" >&2
-    exit 1
+    deploy_failed "$HEALTH_URL did not report ok within ${HEALTH_TIMEOUT}s"
   fi
   sleep 2
 done
