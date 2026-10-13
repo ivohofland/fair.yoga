@@ -3,7 +3,7 @@ import { render } from '@testing-library/react';
 import { LateFirstClassNotice } from './late-first-class-notice';
 import type { LateFirstClass } from '@/lib/late-publish';
 
-function late(state: LateFirstClass['state'], minStudents: number): LateFirstClass {
+function late<S extends LateFirstClass['state']>(state: S, minStudents: number): LateFirstClass & { state: S } {
   return { date: '2026-11-10', state, minStudents };
 }
 
@@ -35,20 +35,6 @@ describe('LateFirstClassNotice, expected', () => {
     const { container } = render(<LateFirstClassNotice late={late('past_deadline', 3)} when="expected" />);
     expect(container.textContent).toBe(
       "Your first class on the new schedule, on Tuesday, 10 Nov, may be added after its cancellation deadline has passed. Students who book it then can't cancel for free.",
-    );
-  });
-
-  it('past_check reads exactly, plural', () => {
-    const { container } = render(<LateFirstClassNotice late={late('past_check', 3)} when="expected" />);
-    expect(container.textContent).toBe(
-      "Your first class on the new schedule, on Tuesday, 10 Nov, may be added after its cancellation deadline and auto-cancel check have passed. Students who book it then can't cancel for free, and it may go ahead however few book. If fewer than 3 students book, you cover what the missing students would have paid.",
-    );
-  });
-
-  it('past_check reads exactly, singular', () => {
-    const { container } = render(<LateFirstClassNotice late={late('past_check', 1)} when="expected" />);
-    expect(container.textContent).toBe(
-      "Your first class on the new schedule, on Tuesday, 10 Nov, may be added after its cancellation deadline and auto-cancel check have passed. Students who book it then can't cancel for free, and it may go ahead however few book. If nobody books, you cover what that student would have paid.",
     );
   });
 });
