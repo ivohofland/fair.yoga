@@ -86,12 +86,11 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
         // Inserted inside its own check window, or after its start has passed:
-        // the generator is not asking
-        // the auto-cancel sweep to judge a class that was never given the
-        // chance to fill. The class-generation sweep declines such a candidate
-        // before insert, so only a teacher-path call (create, resume) reaches
-        // this stamp. Judged and stamped at `at`, the instant the generator
-        // passes in, never a fresh read of the clock.
+        // the generator is not asking the auto-cancel sweep to judge a class
+        // that was never given the chance to fill. Judged and stamped at `at`,
+        // the instant the generator passes in, never a fresh read of the
+        // clock — with the same `classPastCancelCheck` the sweep's decline
+        // uses.
         autoCancelDecidedAt: classPastCancelCheck(
           template,
           entry,
@@ -117,9 +116,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
  * `claimTemplateForGeneration` below hands back, and several call sites and
  * comments name this function.
  *
- * The teacher path (create, resume): it passes `'teacher'`, so a candidate
- * already past its check is inserted and stamped rather than declined. The
- * sweep below calls `generateEntriesForRule` itself, as `'sweep'`.
+ * `'teacher'`: a candidate already past its check is inserted and stamped.
  */
 export const generateInstancesForTemplate = (
   db: PrismaClient | Prisma.TransactionClient,

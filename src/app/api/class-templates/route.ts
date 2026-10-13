@@ -193,8 +193,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // counts was a complete answer; it no longer is. The same counts the PATCH
   // `active` arm carries — `countSkipReasons` (`@/lib/generation`) is the one
   // place both reductions live, so a new `SkipReason` fails the build there
-  // rather than vanishing silently here — `countSkipReasons`' own docblock
-  // says how, cited rather than restated so the two do not drift.
+  // (see its docblock).
   //
   // `added` and `lateFirstClass` ride the answer so the create form can stay
   // on the page and say so (`template-form.tsx`); see the note at that read.

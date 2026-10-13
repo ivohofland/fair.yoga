@@ -1863,6 +1863,12 @@ export async function updateRule<TChild>(
 
   // The latest instant the next nominal sweep runs: what the probe and the
   // late-first-class judgement are both judged at, so they cannot disagree.
+  // A sweep running earlier may still fill a candidate the probe declined, and
+  // the class then arrives a week before the answer named it — the tolerated
+  // direction. A sweep running later than nominal declines a candidate whose
+  // check falls between `at` and that sweep, so the named week stays empty,
+  // bounded by how late it runs. The nominal interval itself is #860's
+  // imprecision.
   const at = new Date(now.getTime() + CLASS_GENERATION_INTERVAL_MS);
   const pastCancelCheck = family.pastCancelCheck;
   const declines =

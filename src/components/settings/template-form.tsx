@@ -778,7 +778,9 @@ export function TemplateForm({ mode, templateId, currency, initial }: TemplateFo
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
       {late && mode === 'create' && <LateFirstClassNotice late={late} when="added" />}
-      {/* An edit's answer is never `past_check`: `UpdateRuleResult.lateFirstClass` (rule-lifecycle.ts). */}
+      {/* The response type is the full `LateFirstClass` union, but an edit's
+          answer can only be `past_deadline` (`UpdateRuleResult.lateFirstClass`,
+          rule-lifecycle.ts); any other state renders nothing. */}
       {late && mode !== 'create' && late.state === 'past_deadline' && (
         <LateFirstClassNotice late={{ ...late, state: late.state }} when="expected" />
       )}
