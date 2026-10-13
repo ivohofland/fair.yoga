@@ -133,4 +133,49 @@ describe('PricingPreview', () => {
     expect(screen.getByText('€40.00')).toBeInTheDocument();
     expect(screen.getByText(formatMoney(billed[0]!.price, 'EUR'))).toBeInTheDocument();
   });
+
+  describe('VAT', () => {
+    const VAT_CLS = {
+      roomCost: new Prisma.Decimal('30.00'),
+      minRate: new Prisma.Decimal('10.00'),
+      targetRate: new Prisma.Decimal('40.00'),
+      minStudents: 4,
+      maxStudents: 10,
+      registrations: [
+        { id: 'r1', status: 'registered' as const, tierAtBooking: 1 },
+        { id: 'r2', status: 'registered' as const, tierAtBooking: 3 },
+      ],
+    };
+
+    function valueFor(label: string): string | null {
+      return screen.getByText(label).nextElementSibling?.textContent ?? null;
+    }
+
+    it('names no VAT at 0%', () => {
+      render(<PricingPreview cls={makePreviewClass(VAT_CLS)} />);
+      expect(screen.queryByText(/VAT/)).toBeNull();
+    });
+
+    it('labels earnings and rate excl. VAT and shows the VAT row at 9%', () => {
+      const cls = makePreviewClass({ ...VAT_CLS, vatPercent: new Prisma.Decimal('9') });
+      const { earningsCents, vatCents } = billAtLeastMinimum(
+        {
+          roomCost: 30,
+          minRate: 10,
+          targetRate: 40,
+          minStudents: 4,
+          maxStudents: 10,
+          vatPercent: 9,
+        },
+        [1, 3],
+      );
+      render(<PricingPreview cls={cls} />);
+
+      expect(screen.getByText('Estimated earnings (excl. VAT)').nextElementSibling?.textContent).toBe(
+        formatMoney(earningsCents / 100, 'EUR'),
+      );
+      expect(valueFor('VAT')).toBe(formatMoney(vatCents / 100, 'EUR'));
+      expect(screen.getByText('Rate (excl. VAT)')).toBeInTheDocument();
+    });
+  });
 });

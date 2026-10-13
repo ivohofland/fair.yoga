@@ -9,6 +9,7 @@ const COMPLETED = {
   roomCost: d('40.00'),
   totalRevenue: d('56.25'),
   vatTotal: d('0'),
+  vatPercent: 0,
   totalStudents: 9,
   payment: { status: 'pending' as const, amount: d('7.50') },
 };

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { normalSpread, emptyCounts, studentsIn, type TierCounts } from '@/lib/pricing-preview';
 import { isIncomeTier } from '@/lib/tiers';
+import { vatPercentViolation } from '@/lib/vat';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
 
@@ -41,6 +42,7 @@ export function PricingPreviewTable({
   targetRate,
   minStudents,
   maxStudents,
+  vatPercent,
 }: PricingPreviewInputs) {
   const effectiveMin = Math.max(1, minStudents);
   const effectiveMax = Math.max(effectiveMin, maxStudents);
@@ -98,6 +100,12 @@ export function PricingPreviewTable({
     );
   }
 
+  // A VAT percentage no write path accepts is named in place of the prices it would produce.
+  const vatViolation = vatPercentViolation(vatPercent);
+  if (vatViolation !== null) {
+    return <p className="text-sm text-brown py-2">{vatViolation}</p>;
+  }
+
   // Past the gates `shownCount` is a finite whole number, so the redraw below settles in one
   // pass; above them a NaN size would never match its own draw and loop.
   if (mode === 'shuffle' && studentsIn(shuffled) !== shownCount) {
@@ -136,6 +144,7 @@ export function PricingPreviewTable({
         targetRate={targetRate}
         minStudents={lowest}
         maxStudents={highest}
+        vatPercent={vatPercent}
         distribution={distribution}
         distributionControl={
           <div className="flex items-center gap-2 mb-4">

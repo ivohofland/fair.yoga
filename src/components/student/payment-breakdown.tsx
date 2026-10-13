@@ -16,6 +16,9 @@ interface PaymentBreakdownProps {
 export function PaymentBreakdown({ lines, classType, date, currency }: PaymentBreakdownProps) {
   const rows: ReadonlyArray<{ label: string; value: string; emphasis: boolean }> = [
     { label: 'Room', value: formatMoneyCents(lines.roomCents, currency), emphasis: false },
+    ...(lines.vatCents > 0
+      ? [{ label: 'VAT', value: formatMoneyCents(lines.vatCents, currency), emphasis: false }]
+      : []),
     { label: 'Teacher', value: formatMoneyCents(lines.teacherCents, currency), emphasis: false },
     { label: 'Class total', value: formatMoneyCents(lines.totalCents, currency), emphasis: false },
     { label: 'Students', value: String(lines.students), emphasis: false },

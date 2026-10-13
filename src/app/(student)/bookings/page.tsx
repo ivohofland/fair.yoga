@@ -380,6 +380,7 @@ export default async function StudentBookingsPage() {
                 roomCost: cls.roomCost,
                 totalRevenue: cls.totalRevenue,
                 vatTotal: cls.vatTotal,
+                vatPercent: Number(cls.vatPercent),
                 totalStudents: cls.totalStudents,
                 payment,
               },
