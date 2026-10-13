@@ -2,10 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { BookingSignIn } from './booking-sign-in';
 
+vi.mock('@/components/booking/passkey-sign-in', () => ({ PasskeySignIn: () => null }));
+
 function fillAndSubmitNew() {
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'anna@example.com' } });
   fireEvent.click(screen.getByRole('button', { name: /Send me the link/i }));
 }
+
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 describe('BookingSignIn', () => {
   afterEach(() => {
@@ -35,6 +39,20 @@ describe('BookingSignIn', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/auth/student-signup');
-    expect(JSON.parse(init.body as string)).toEqual({ email: 'anna@example.com', redirect: '/book/class-1' });
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'anna@example.com', redirect: '/book/class-1', timeZone: BROWSER_ZONE });
+  });
+
+  it('on the returning path, posts the email, redirect and zone to magic-link/send', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<BookingSignIn redirect="/book/class-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Already have an account?' }));
+    fillAndSubmitNew();
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/auth/magic-link/send');
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'anna@example.com', redirect: '/book/class-1', timeZone: BROWSER_ZONE });
   });
 });

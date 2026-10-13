@@ -64,6 +64,8 @@ function renderIt() {
   return render(<AccountSecurity email="ada@example.test" redirectPath="/settings/profile" />);
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('AccountSecurity', () => {
   let consoleError: ReturnType<typeof vi.spyOn>;
   const realLocation = window.location;
@@ -318,6 +320,7 @@ describe('AccountSecurity', () => {
       expect(JSON.parse(String(send?.[1]?.body))).toEqual({
         email: 'ada@example.test',
         redirect: '/settings/profile',
+        timeZone: BROWSER_ZONE,
       });
     });
 

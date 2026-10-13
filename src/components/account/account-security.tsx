@@ -8,6 +8,7 @@ import { logRequestFailure, readError } from '@/lib/client-errors';
 import { formatDateWithYear } from '@/lib/format';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { disablePush } from '@/lib/push-client';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 interface PasskeyRow {
   id: string;
@@ -131,7 +132,7 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
       const res = await fetch('/api/auth/magic-link/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, redirect: redirectPath }),
+        body: JSON.stringify({ email, redirect: redirectPath, timeZone: detectTimeZone() }),
       });
       if (!res.ok) throw new RefusedError('send-link', (await readError(res, 'send-link')).code);
       setStepUp('sent');

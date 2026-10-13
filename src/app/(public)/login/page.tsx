@@ -9,6 +9,7 @@ import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 import { HandoffCodeEntry } from '@/components/auth/handoff-code-entry';
 import { logRequestFailure } from '@/lib/client-errors';
 import { isLoginRedirectTarget } from '@/lib/schemas';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -27,7 +28,7 @@ function LoginForm() {
       const res = await fetch('/api/auth/magic-link/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, ...(redirect ? { redirect } : {}) }),
+        body: JSON.stringify({ email, ...(redirect ? { redirect } : {}), timeZone: detectTimeZone() }),
       });
       if (res.ok) {
         setStatus('sent');

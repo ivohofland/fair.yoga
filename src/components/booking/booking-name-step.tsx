@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceForSignIn } from '@/lib/push-client';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 interface BookingNameStepProps {
   /** The verified address, from the signup ticket. Display only: the route
@@ -89,7 +90,7 @@ export function BookingNameStep({ email, redirect }: BookingNameStepProps) {
         resendRes = await fetch('/api/auth/student-signup', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, redirect }),
+          body: JSON.stringify({ email, redirect, timeZone: detectTimeZone() }),
         });
       } catch (err) {
         logRequestFailure('booking-name-step-resend', { redirect }, err);

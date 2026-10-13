@@ -19,6 +19,8 @@ function fillAndSubmit() {
   fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('BookingNameStep', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -110,6 +112,7 @@ describe('BookingNameStep', () => {
     expect(JSON.parse(resendInit.body as string)).toEqual({
       email: 'anna@example.com',
       redirect: '/t/book/c1',
+      timeZone: BROWSER_ZONE,
     });
   });
 

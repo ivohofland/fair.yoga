@@ -57,6 +57,8 @@ function fillForm() {
   fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'de Vries' } });
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('ProfileSetupForm', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -381,9 +383,11 @@ describe('ProfileSetupForm', () => {
 
   it('ticket mode: a 401 at submit resends a link and reports the recoverable "expired" state, keeping the typed values', async () => {
     const calls: string[] = [];
-    const mock = vi.fn((input: unknown) => {
+    let resendBody: unknown;
+    const mock = vi.fn((input: unknown, init?: RequestInit) => {
       const url = String(input);
       calls.push(url);
+      if (url === '/api/auth/teacher-signup') resendBody = JSON.parse(String(init?.body));
       if (url.startsWith('/api/teachers/slug-available')) {
         return Promise.resolve({ ok: true, json: async () => ({ data: { available: true } }) });
       }
@@ -403,6 +407,7 @@ describe('ProfileSetupForm', () => {
 
     expect(await screen.findByText(/we've emailed you a fresh link/i)).toBeInTheDocument();
     expect(calls).toContain('/api/auth/teacher-signup');
+    expect(resendBody).toEqual({ email: 'anna@example.com', timeZone: BROWSER_ZONE });
     // Nothing is lost: the fields are still populated for a retry.
     expect(screen.getByLabelText('First name')).toHaveValue('Anna');
     expect(screen.getByLabelText('Code')).toBeInTheDocument();

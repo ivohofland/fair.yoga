@@ -27,6 +27,8 @@ function submit(email = 'anna@example.com') {
   fireEvent.click(screen.getByRole('button', { name: /Send me the link/i }));
 }
 
+const BROWSER_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 describe('LoginPage', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -60,7 +62,7 @@ describe('LoginPage', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/auth/magic-link/send');
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ email: 'anna@example.com' });
+    expect(body).toEqual({ email: 'anna@example.com', timeZone: BROWSER_ZONE });
     expect(body).not.toHaveProperty('redirect');
   });
 
@@ -80,7 +82,7 @@ describe('LoginPage', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/auth/magic-link/send');
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy' });
+    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy', timeZone: BROWSER_ZONE });
   });
 
   it('passes valid redirect to PasskeySignIn for protected routes like /students/s-1', () => {
@@ -108,7 +110,7 @@ describe('LoginPage', () => {
     expect(await screen.findByText('Check your inbox for the link.')).toBeInTheDocument();
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy?tab=invitations' });
+    expect(body).toEqual({ email: 'anna@example.com', redirect: '/account/privacy?tab=invitations', timeZone: BROWSER_ZONE });
   });
 
   it.each([
@@ -135,7 +137,7 @@ describe('LoginPage', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/auth/magic-link/send');
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ email: 'anna@example.com' });
+    expect(body).toEqual({ email: 'anna@example.com', timeZone: BROWSER_ZONE });
     expect(body).not.toHaveProperty('redirect');
   });
 

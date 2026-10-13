@@ -14,6 +14,7 @@ import { clearOfflinePages } from '@/lib/offline-client';
 import { recordPushDeviceBeforeNavigation } from '@/lib/push-client';
 import { NAME_MAX } from '@/lib/input-bounds';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import { detectTimeZone } from '@/lib/detect-time-zone';
 
 const BIO_MAX = 250;
 
@@ -96,26 +97,6 @@ function isStoredDraft(value: unknown): value is StoredDraft {
 interface SlugRejection {
   slug: string;
   message: string;
-}
-
-/**
- * The device's zone, or nothing (#258).
- *
- * Called from the submit handler, never from render. A `'use client'`
- * component still server-renders, and React 19 keeps that server value through
- * hydration — so a zone read during render is the SERVER's zone, which under
- * the Dockerfile's absent `TZ` is UTC: not the teacher's, not the device's,
- * nobody's. That is worse than the Amsterdam fallback the route applies when
- * this returns nothing, because it looks like it worked. Same trap
- * `src/lib/use-today-local.ts` documents at length for the date pickers.
- */
-function detectTimeZone(): string | undefined {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
-    // eslint-disable-next-line no-restricted-syntax -- an undefined zone is a supported answer (see the docblock)
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -296,7 +277,7 @@ export function ProfileSetupForm({ email, mode, accountId }: ProfileSetupFormPro
       const resent = await fetch('/api/auth/teacher-signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, timeZone: detectTimeZone() }),
       })
         .then((r) => r.ok)
         .catch((err: unknown) => {
