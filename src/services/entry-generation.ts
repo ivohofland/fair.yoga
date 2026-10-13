@@ -115,6 +115,28 @@ export function getNextOccurrences(
 }
 
 /**
+ * The candidates an edit's probe considers: the next `DEFAULT_WEEKS * 2`
+ * occurrences of the rule's weekday, kept only when the class would start
+ * strictly after `at`.
+ *
+ * Strictly after is the comparison the generator's own window applies at its
+ * run instant, so a candidate a sweep running at `at` would skip is not named.
+ * Enumerated from `now` rather than `at`, so a candidate on `now`'s date is
+ * not lost when `at` falls on the next UTC date. `DEFAULT_WEEKS * 2` for the
+ * reason `DEFAULT_WEEKS` gives. The caller owns `at`.
+ */
+export function probeHorizon(
+  rule: { dayOfWeek: number; startTime: Date },
+  timeZone: string,
+  now: Date,
+  at: Date,
+): Date[] {
+  return getNextOccurrences(rule.dayOfWeek, now, DEFAULT_WEEKS * 2).filter(
+    (date) => classStartInstant({ date, startTime: rule.startTime }, timeZone) > at,
+  );
+}
+
+/**
  * Whether a class of this template already holds the WEEK containing `date`
  * (#194).
  *
