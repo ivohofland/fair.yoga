@@ -13,6 +13,8 @@ import path from 'node:path';
 const SCRIPT = path.resolve(__dirname, 'deploy.sh');
 /** The server and CI have util-linux `flock`; macOS does not, so there it is stubbed and the lock case skipped. */
 const HAS_FLOCK = spawnSync('sh', ['-c', 'command -v flock']).status === 0;
+/** Not the script's default, so a call that drops `-f "$COMPOSE_FILE"` or hardcodes the name shows. */
+const COMPOSE_FILE = 'compose.under-test.yml';
 
 let root: string;
 let origin: string;
@@ -58,7 +60,7 @@ function run(input: { sshCommand?: string; arg?: string; env?: Record<string, st
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HOME: root,
       APP_DIR: app,
-      COMPOSE_FILE: 'docker-compose.prod.yml',
+      COMPOSE_FILE,
       HEALTH_URL: 'http://127.0.0.1:3000/api/health',
       HEALTH_TIMEOUT: '2',
       LOCK_FILE: path.join(root, 'deploy.lock'),
@@ -90,7 +92,8 @@ beforeEach(() => {
   commitToOrigin('v1');
   git(root, 'clone', '-q', origin, app);
 
-  // `docker compose … build|run|up …`: logged; each fails when its FAKE_*_FAIL is set.
+  // `docker compose … build|run|up …`: logged; each fails when FAKE_BUILD_FAIL /
+  // FAKE_MIGRATE_FAIL / FAKE_UP_FAIL is set.
   writeStub(
     'docker',
     [
@@ -126,6 +129,7 @@ describe('deploy/deploy.sh', () => {
     expect(buildAt).toBeGreaterThanOrEqual(0);
     expect(migrateAt).toBeGreaterThan(buildAt);
     expect(upAt).toBeGreaterThan(migrateAt);
+    for (const call of docker.filter((c) => c.startsWith('docker compose'))) expect(call).toMatch(new RegExp(`^docker compose -f ${COMPOSE_FILE} `));
     expect(calls()).toContain('curl');
   });
 
@@ -225,6 +229,7 @@ describe('deploy/deploy.sh', () => {
     const result = run({ sshCommand: v2, env: { FAKE_HEALTH: '{"status":"degraded","db":"down"}' } });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/health/i);
+    expect(head()).toBe(v2);
     expect(result.stderr).toContain(before);
     expect(result.stderr).toContain(v2);
     expect(result.stderr).toContain('rolling back');

@@ -52,18 +52,18 @@ git merge-base --is-ancestor "$PREVIOUS" "$SHA" \
 echo "deploying $PREVIOUS -> $SHA"
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
-# Build and migrate while the running containers keep serving; only `up`
-# replaces them. A failed build or migration puts the checkout back, so the
-# tree matches what runs.
+# Build and migrate while the running app keeps serving; only `up` replaces
+# it. A failed build or migration puts the checkout back, so the tree matches
+# what serves.
 if ! docker compose -f "$COMPOSE_FILE" build; then
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
   fail "build failed; still running $PREVIOUS"
 fi
-# Migrations run on their own so a failing one replaces nothing; the `migrate`
-# that `up` runs again then has nothing to apply. Why: DEPLOYMENT.md §6.
+# Migrations run as their own step so a failing one leaves the app alone.
+# Why: DEPLOYMENT.md §6.
 if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
   git -c advice.detachedHead=false checkout --quiet --detach "$PREVIOUS"
-  fail "migrate failed; still running $PREVIOUS"
+  fail "migrate failed; still running $PREVIOUS (DEPLOYMENT.md §6, a failed migration)"
 fi
 
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans \
