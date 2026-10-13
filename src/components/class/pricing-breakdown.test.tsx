@@ -26,6 +26,8 @@ function makeClass(overrides: Partial<Class> = {}): Class {
     settingsLocked: false,
     effectiveTeacherRate: null,
     totalRevenue: new Prisma.Decimal('90.00'),
+    vatTotal: new Prisma.Decimal(0),
+    vatPercent: new Prisma.Decimal(0),
     totalStudents: 6,
     spotBroadcastAt: null,
     autoCancelDecidedAt: null,

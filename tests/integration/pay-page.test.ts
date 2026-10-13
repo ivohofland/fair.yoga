@@ -145,6 +145,7 @@ describe('GET /bookings/[classId]/pay', () => {
       effectiveTeacherRate: 10,
       totalStudents: 4,
       totalRevenue: 30,
+      vatTotal: 0,
       ...(c.currency ? { currency: c.currency } : {}),
     });
     const registration = await prisma.registration.create({

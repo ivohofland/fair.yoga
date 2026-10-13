@@ -28,6 +28,8 @@ function makePreviewClass(overrides: Partial<PricingPreviewCls> = {}): PricingPr
     settingsLocked: false,
     effectiveTeacherRate: null,
     totalRevenue: null,
+    vatTotal: null,
+    vatPercent: new Prisma.Decimal(0),
     totalStudents: null,
     spotBroadcastAt: null,
     autoCancelDecidedAt: null,

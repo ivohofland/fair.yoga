@@ -842,6 +842,7 @@ export async function completeClass(
             teacherEarningsCents({ totalCents: 0, roomCents: Math.round(Number(cls.roomCost) * 100) }) / 100,
           totalStudents: 0,
           totalRevenue: 0,
+          vatTotal: 0,
         },
       });
       return { ok: true, newStatus: 'completed' as ClassStatus };
@@ -871,6 +872,7 @@ export async function completeClass(
         effectiveTeacherRate: teacherEarnings,
         totalStudents: chargedRegistrations.length,
         totalRevenue,
+        vatTotal: 0,
       },
     });
 

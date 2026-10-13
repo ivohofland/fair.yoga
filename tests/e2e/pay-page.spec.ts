@@ -83,6 +83,7 @@ test.describe('Pay page — the method chooser keeps one row open', () => {
       effectiveTeacherRate: 10,
       totalStudents: 4,
       totalRevenue: 30,
+      vatTotal: 0,
     });
     classId = cls.id;
 
