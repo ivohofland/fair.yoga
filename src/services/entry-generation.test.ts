@@ -2,7 +2,15 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { mondayOf } from '@/lib/timezone';
 import { log } from '@/lib/log';
-import { getNextOccurrences, isWeekHeld, firstFreeWeek, probeFirstEffectiveWeek } from './entry-generation';
+import {
+  getNextOccurrences,
+  isWeekHeld,
+  firstFreeWeek,
+  probeFirstEffectiveWeek,
+  probeHorizon,
+  DEFAULT_WEEKS,
+} from './entry-generation';
+import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
  * Compile-time assertion that `isWeekHeld` and `firstFreeWeek` require branded
@@ -53,6 +61,47 @@ describe('getNextOccurrences', () => {
     expect(dates[1]!.toISOString()).toBe('2026-04-14T00:00:00.000Z');
     expect(dates[2]!.toISOString()).toBe('2026-04-21T00:00:00.000Z');
     expect(dates[3]!.toISOString()).toBe('2026-04-28T00:00:00.000Z');
+  });
+});
+
+describe('probeHorizon', () => {
+  // Tuesday 2026-10-20 at 10:00; schema dayOfWeek 1 is Tuesday.
+  const rule = { dayOfWeek: 1, startTime: hhmmToTime('10:00') };
+  const horizonAt = (zone: string, at: Date, now: Date = new Date(at.getTime() - 60 * 60_000)) =>
+    probeHorizon(rule, zone, now, at).map((d) => d.toISOString().slice(0, 10));
+  const S = new Date('2026-10-20T10:00:00.000Z');
+
+  it('keeps a candidate starting 1 ms after the sweep instant', () => {
+    expect(horizonAt('UTC', new Date(S.getTime() - 1))[0]).toBe('2026-10-20');
+  });
+
+  it('drops a candidate starting exactly at the sweep instant', () => {
+    expect(horizonAt('UTC', S)[0]).toBe('2026-10-27');
+  });
+
+  it('drops a candidate that started before the sweep instant', () => {
+    expect(horizonAt('UTC', new Date(S.getTime() + 1))[0]).toBe('2026-10-27');
+  });
+
+  it('judges the start instant in the teacher zone', () => {
+    const start = new Date('2026-10-20T08:00:00.000Z');
+    expect(horizonAt('Europe/Amsterdam', new Date(start.getTime() - 1))[0]).toBe('2026-10-20');
+    expect(horizonAt('Europe/Amsterdam', start)[0]).toBe('2026-10-27');
+  });
+
+  it("enumerates from now so a candidate on now's date survives when at is the next UTC date", () => {
+    const now = new Date('2026-10-19T23:30:00.000Z');
+    const at = new Date(now.getTime() + 60 * 60_000);
+    expect(horizonAt('UTC', at, now)[0]).toBe('2026-10-20');
+  });
+
+  it('returns DEFAULT_WEEKS * 2 ascending Tuesdays when nothing is cut', () => {
+    const now = new Date('2026-10-13T00:00:00.000Z');
+    const dates = probeHorizon(rule, 'UTC', now, new Date(now.getTime() + 60 * 60_000));
+    expect(dates).toHaveLength(DEFAULT_WEEKS * 2);
+    expect(dates.every((d) => d.getUTCDay() === 2)).toBe(true);
+    const times = dates.map((d) => d.getTime());
+    expect(times).toEqual([...times].sort((a, b) => a - b));
   });
 });
 
