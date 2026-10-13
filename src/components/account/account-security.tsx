@@ -51,7 +51,7 @@ const REMOVE_ERROR_COPY = {
 } as const;
 
 // The account's passkeys, or null when the list could not be read. Touches
-// no state, so the mount effect and the handlers each apply it themselves.
+// no state: callers hand the result to `applyPasskeys` once it settles.
 async function fetchPasskeys(): Promise<PasskeyRow[] | null> {
   try {
     const res = await fetch('/api/auth/passkey');
@@ -79,8 +79,7 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState(false);
 
-  async function loadPasskeys() {
-    const rows = await fetchPasskeys();
+  function applyPasskeys(rows: PasskeyRow[] | null) {
     if (rows === null) {
       setListError(true);
       return;
@@ -89,16 +88,14 @@ export function AccountSecurity({ email, redirectPath }: AccountSecurityProps) {
     setListError(false);
   }
 
+  async function loadPasskeys() {
+    applyPasskeys(await fetchPasskeys());
+  }
+
   useEffect(() => {
     let cancelled = false;
     void fetchPasskeys().then((rows) => {
-      if (cancelled) return;
-      if (rows === null) {
-        setListError(true);
-        return;
-      }
-      setPasskeys(rows);
-      setListError(false);
+      if (!cancelled) applyPasskeys(rows);
     });
     return () => {
       cancelled = true;
