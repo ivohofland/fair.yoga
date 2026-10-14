@@ -1182,12 +1182,17 @@ export async function handleSpotFreed(
     // deletes its future classes): no seat is left to fill, so nothing was
     // lost. Checked against the row itself, so a missing record of any
     // other kind is still a failure.
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === 'P2025' &&
-      (await db.class.count({ where: { id: classId } })) === 0
-    ) {
-      return { action: 'none' };
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+      // A failure of this check is logged, not thrown: the hook's own failure
+      // below is the one its callers classify and report.
+      const gone = await db.class
+        .count({ where: { id: classId } })
+        .then((n) => n === 0)
+        .catch((checkErr: unknown) => {
+          log.warn({ err: checkErr, classId }, 'spot-freed hook could not check whether its class still exists');
+          return false;
+        });
+      if (gone) return { action: 'none' };
     }
     throw new SpotFreedError(classId, branch, err);
   }

@@ -2460,6 +2460,32 @@ describe('handleSpotFreed (DB)', () => {
     });
   });
 
+  // The existence check is a second query on a failure path; if it fails too,
+  // the hook's own failure is what gets reported, with its branch.
+  it('reports the original failure when the class-gone check itself fails', async () => {
+    const id = await seedFreeSeat('2099-06-15');
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id },
+      select: { calendarEntryId: true },
+    });
+    const original = dbLocks.lockClassRow;
+    const lockSpy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, lockedId) => {
+      await prisma.calendarEntry.delete({ where: { id: calendarEntryId } });
+      return original(tx, lockedId);
+    });
+    const countSpy = vi.spyOn(prisma.class, 'count').mockRejectedValue(new Error('pool exhausted'));
+    onTestFinished(() => {
+      lockSpy.mockRestore();
+      countSpy.mockRestore();
+    });
+
+    const failure = await handleSpotFreed(prisma, id, new Date('2099-06-15T07:00:00Z')).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(SpotFreedError);
+    expect((failure as SpotFreedError).window).toBe('auto_promote');
+    expect((failure as SpotFreedError).cause).toMatchObject({ code: 'P2025' });
+  });
+
   it('tells the teacher about a promotion, as a booking would', async () => {
     const id = await seedFreeSeat('2099-06-13');
 
