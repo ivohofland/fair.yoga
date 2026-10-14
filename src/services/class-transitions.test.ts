@@ -997,13 +997,14 @@ describe('class transitions (DB, timezone-aware)', () => {
    * `autoCancelCheck` and `minStudents` all still came from the sweep's outer
    * `findMany`.
    *
-   * `date` and `startTime` are not economic fields, so `settingsLocked` does
-   * not freeze them — a teacher can reschedule an `open` class that already
-   * has registrations, at any moment, including while this sweep is in
-   * flight. The consequence is not cosmetic: the class is cancelled against a
-   * window it is no longer in, every registered student is emailed that it is
-   * off, and `cancelled` is terminal in Postgres since this branch, so the
-   * teacher cannot put it back from inside the app.
+   * A booked class's `date` and `startTime` are locked (`LOCKED_FIELDS`,
+   * `lib/class-fields.ts`), but an unbooked `open` class can be moved while
+   * this sweep is in flight, and the decision must come from the row under
+   * the lock either way. The fixture writes the entry directly, past
+   * `updateClass`'s lock, so the registration it holds is what makes a wrong
+   * cancellation observable: the student would be told a class is off that is
+   * not, and a cancelled class is terminal, so the teacher could not put it
+   * back from inside the app.
    *
    * Reproduced the same way the two tests above reproduce their races — the
    * reschedule lands strictly between the outer read and the transaction, not

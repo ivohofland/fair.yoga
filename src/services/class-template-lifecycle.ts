@@ -722,9 +722,7 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), which reads its
       // write set straight out of the ids `lockClassRowsOrdered` handed back
       // — `classId: { in: classIds }`, a structural subset, not a predicate
-      // re-evaluated later. (The example was the template sync's own
-      // pre-lock, issue 180 task 2, until #194 deleted the function; the
-      // shape outlived it.) This one instead relies on the
+      // re-evaluated later. This one instead relies on the
       // delete's predicate (`scheduledWhere` plus `registrations: { none:
       // … }`) being a strict narrowing of this pre-lock's predicate
       // (`scheduledWhere` alone), so a row already matching the delete's
@@ -738,33 +736,22 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // that statement, and the #95 reasoning for it, are in
       // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), not the CAS, which
       // writes `ScheduleRule` and which no sweep touches. But it is not the
-      // only one. `updateClass` (`class-lifecycle.ts`) issues a bare
-      // `db.class.updateMany({ where:
-      // { id } })` with `date` in its teacher-editable set, taking neither
-      // the `ClassTemplate` lock nor any `Class` lock this pre-lock holds.
-      // A same-day instance — outside `e.date > ${today}` above, so never
-      // locked here — rescheduled into the future between this pre-lock
-      // and the `deleteMany` below (whose predicate is re-evaluated at
-      // execution time, by design — see its own comment in
-      // `rule-lifecycle.ts`) can still be matched and deleted without ever
-      // having been held by this
-      // statement. So the ascending-order guarantee at this site is not
-      // total: the AB-BA cycle against `deleteStudentAccount` can still
-      // form through this window. Measured, not just reasoned: template
-      // with class A dated today and class B two weeks out, one student
-      // waitlisted on both; a hook on the candidate read below moves A to
-      // +21 days from outside this transaction, mid-transaction. The
-      // pre-lock covered only B; the archive returned `{ ok: true, deleted:
-      // 2 }` — it locked and deleted a row the ordered pre-lock never held.
-      // Narrow (it needs a concurrent reschedule of a same-day instance AND
-      // an erasure of a student waitlisted across both classes, timed into
-      // the same gap) and no worse than the pre-branch state, which had no
-      // ordering at all. Tracked as a residual, not closed here — see spec
-      // §7 risk 3. `withdrawWaitingEntriesForTeacher` does not share this
-      // exposure, for the structural reason given above: its write set is a
-      // subset of the ids the pre-lock itself returned, not a predicate
-      // argument re-evaluated against whatever the table looks like when the
-      // write finally runs.
+      // only one. `updateClass` (`class-lifecycle.ts`) can move an unbooked
+      // same-day instance — outside `e.date > ${today}` above, so never
+      // locked here — into the future between this pre-lock and the
+      // `deleteMany` below (whose predicate is re-evaluated at execution
+      // time, by design — see its own comment in `rule-lifecycle.ts`), and
+      // that row can be matched and deleted without ever having been held by
+      // this statement. It cannot close an AB-BA cycle against
+      // `deleteStudentAccount`: that needs the moved class to hold a waitlist
+      // entry, a waitlist needs a registration, and a registration locks
+      // `date` and `startTime` for good (`LOCKED_FIELDS`,
+      // `lib/class-fields.ts`). The chain is in `docs/lock-order.md`
+      // ("One escape survives"). `withdrawWaitingEntriesForTeacher` does
+      // not share even the escape, for the structural reason given above: its
+      // write set is a subset of the ids the pre-lock itself returned, not a
+      // predicate argument re-evaluated against whatever the table looks like
+      // when the write finally runs.
       //
       // The delete cannot instead be scoped to exactly the ids this
       // pre-lock returns, the way that function's write is: that would undo the

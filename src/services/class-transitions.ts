@@ -148,11 +148,10 @@ export async function autoTransitionToInProgress(
         // CAS-only one. See `docs/lock-order.md`.
         await lockClassRow(tx, cls.id);
 
-        // Re-read HERE and decide from THIS row. `date` and `startTime` are
-        // NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so `settingsLocked`
-        // does not freeze them and a teacher can reschedule an `open` class
-        // with registrations at any time, including while this sweep is
-        // mid-flight. Deciding from the paged snapshot (`readStartCandidatePage`)
+        // Re-read HERE and decide from THIS row. A booked class's `date` and
+        // `startTime` are locked (`LOCKED_FIELDS`, `lib/class-fields.ts`), but
+        // an unbooked `open` class can still be moved, including while this
+        // sweep is mid-flight. Deciding from the paged snapshot (`readStartCandidatePage`)
         // would start a class against a time it no longer had — and
         // `in_progress` can only go to `completed`, so the teacher cannot undo
         // it in the app.
@@ -411,11 +410,11 @@ export async function autoCancelClasses(
         await lockClassRow(tx, cls.id);
 
         // Re-read HERE, under the lock, and decide from THIS row — not from
-        // the snapshot the loop is walking. `date` and `startTime` are not
-        // economic fields, so a teacher can reschedule an `open` class with
-        // registrations at any time, including while this sweep is
-        // mid-flight; a window decided from the snapshot would cancel a class
-        // rescheduled out of it and tell every student. `autoCancelDecidedAt`
+        // the snapshot the loop is walking. A booked class's `date` and
+        // `startTime` are locked (`LOCKED_FIELDS`, `lib/class-fields.ts`), but
+        // an unbooked `open` class can still be moved, including while this
+        // sweep is mid-flight; a window decided from the snapshot would cancel
+        // a class moved out of it. `autoCancelDecidedAt`
         // is re-read for the same reason: another writer may have stamped it
         // since the snapshot, and a decided class is never judged again.
         //

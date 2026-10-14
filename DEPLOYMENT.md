@@ -499,8 +499,9 @@ it descends from the one you rolled back to.
   (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
   `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an
   unbroken hold. "Every class" means every class the tick actually **invoked**:
-  candidates it skipped (already full, a broadcast already standing, past the
-  cancel deadline) count neither way. So a class stuck behind siblings that are
+  candidates it skipped (any `SkipReason` in
+  `src/services/waitlist-reconciliation.ts`: already full, a broadcast already
+  standing, or the class already started) count neither way. So a class stuck behind siblings that are
   genuinely being reconciled in the same tick does **not** flip the flag on its
   own — while a tick in which the stuck class was the only one invoked, because
   everything else was skipped for an unrelated reason, contributes to the
