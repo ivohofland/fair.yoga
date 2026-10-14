@@ -77,12 +77,41 @@ describe('WaitlistEntryActions', () => {
   });
 
   describe('leave', () => {
+    /** The trigger, then the confirmation's own Leave button. */
+    function leave(): void {
+      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    }
+
+    it('asks before leaving, says the place is lost, and sends nothing on the first tap', () => {
+      vi.stubGlobal('fetch', fetchMock);
+      renderActions(false);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+
+      expect(screen.getByText("Leave the waitlist? You'll lose your place in the queue.")).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Leave' })).toHaveFocus();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps the place when the student changes their mind', () => {
+      vi.stubGlobal('fetch', fetchMock);
+      renderActions(false);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Stay on the waitlist' }));
+
+      expect(screen.queryByRole('button', { name: 'Leave' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Leave waitlist' })).toHaveFocus();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('leaves and refreshes', async () => {
       fetchMock.mockResolvedValue(reply(200, { data: { message: 'Removed from waitlist' } }));
       vi.stubGlobal('fetch', fetchMock);
       renderActions(false);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      leave();
 
       await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
       expect(fetchMock).toHaveBeenCalledWith('/api/waitlist/entry-1', { method: 'DELETE' });
@@ -95,7 +124,7 @@ describe('WaitlistEntryActions', () => {
       vi.stubGlobal('fetch', fetchMock);
       renderActions(false);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      leave();
 
       await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -108,7 +137,7 @@ describe('WaitlistEntryActions', () => {
       vi.stubGlobal('fetch', fetchMock);
       renderActions(false);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      leave();
 
       await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -126,11 +155,11 @@ describe('WaitlistEntryActions', () => {
       vi.stubGlobal('fetch', fetchMock);
       renderActions(false);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Leave waitlist' }));
+      leave();
 
       expect(await screen.findByRole('alert')).toHaveTextContent('no longer active');
       expect(routerRefresh).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Leave waitlist' })).not.toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Leave' })).not.toBeDisabled();
     });
   });
 });
