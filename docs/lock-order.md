@@ -26,21 +26,19 @@ than one of these tables also holds `Class`'s row lock before touching any of
 the tables after it, *when it touches `Class` at all*. Two different
 statements take that lock and both count: `lockClassRow` (or `lockClassRowsOrdered`), and a
 compare-and-swap `class.updateMany` (an `UPDATE` locks the rows it matches).
-No site in `src/` relies on the second alone any more — `transitionClass`
-(`class-lifecycle.ts`) was the last, until #327 gave its CAS a second table and
-`lockClassRow` with it, and `deleteTeacherAccount` before that, until #237
-folded its per-class CAS behind its own `lockClassRowsOrdered` pre-lock. The
-sentence still names both, because a CAS added tomorrow takes the lock whether
-or not its author meant to. Those are the two that take it
+No site in `src/` relies on the second alone — `transitionClass`
+(`class-lifecycle.ts`) takes `lockClassRow` ahead of its CAS (#327), and
+`deleteTeacherAccount` runs its per-class CAS behind its own
+`lockClassRowsOrdered` pre-lock (#237). The sentence still names both, because
+a CAS added tomorrow takes the lock whether or not its author meant to. Those
+are the two that take it
 *deliberately*, which is not the same as being the only two statements that
 take it: plain DML on `Class` locks the rows it matches as well, and
 `archiveOrUnarchiveTemplate`'s `class.deleteMany` is the example. It is not a
 third category today, and the reason is placement rather than kind — it runs
 behind an ordered `lockClassRowsOrdered` pre-lock over a superset of the rows
 it can match, so it acquires nothing its transaction is not already holding.
-There were two of these until #194: the template edit's same-day
-`class.updateMany` was the other, and it had the same placement and the same
-answer. A bare
+A bare
 `class.updateMany` or `class.deleteMany` added OUTSIDE such a pre-lock joins
 this rule as a full member and has to be ordered like one. `POST
 /api/registrations` writes `Registration` before `WaitlistEntry`;
@@ -49,22 +47,17 @@ conditionally (the stale-head-drop loop — it runs only when the current queue
 head already holds an active registration, not the common case); `claimSpot`
 never writes `WaitlistEntry` before `Registration` at all — its `WaitlistEntry`
 writes are the promotion `update` and the `reorderWaitingEntries` call after
-it, both after `activateRegistration`. (Not "its only `WaitlistEntry` write":
-the reorder is a second one, and it issues an `UPDATE` per remaining queue
-member.) An earlier version of this document claimed otherwise for both, first
-corrected in round 1 review. None of
-that is a bug regardless: all three of those sites lock `Class` first, so only
+it, both after `activateRegistration`. (The reorder issues an `UPDATE` per
+remaining queue member.) None of that is a bug regardless: all three of those sites lock `Class` first, so only
 one of them can ever be past that lock for a given class at a time — they
 cannot hold conflicting `WaitlistEntry`/`Registration` locks concurrently
 regardless of which table each reaches for second, or whether it reaches for
 it at all. That protection is real but conditional twice over — on the `Class`
 lock actually being taken, and on it covering the rows the transaction goes on
-to write. `deleteStudentAccount` under "Known conformance" is where the second
-condition used to fail for `WaitlistEntry` — its `Class` lock set smaller than
-its `WaitlistEntry` write set, with the cycle outside that set reproduced — and
-that entry records what closed it (#183). Its `Registration` writes still reach
-classes it never locked, so do not read this section as a blanket escape. The
-first condition is why the
+to write. `deleteStudentAccount` under "Known conformance" is the case for the
+second condition: its `Class` lock set covers its `WaitlistEntry` write set
+(#183), but its `Registration` writes reach classes it never locked, so do not
+read this section as a blanket escape. The first condition is why the
 entries further down this list matter: several
 sites reach `StudentPrivacy`, `TeacherStudent`, `Invitation` or `TeacherBlock`
 for a (teacher, student) or (teacher, email) pair with **no** `Class` row in
@@ -134,18 +127,15 @@ number to weigh against the erasure's flat `{ timeout: 20_000 }` budget.
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
-of the SAME table, and `Class` is the one table where that matters: **five**
+of the SAME table, and `Class` is the one table where that matters: **six**
 sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
-**Five until #194**, which deleted the template edit's propagation and with it
-the fifth site; five again since #259, whose `switchToSharedRoom`
-(`room-switch.ts`) locks every upcoming class on the private link. Re-derived
-by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
-helper's definition plus five callers — rather than incremented, because this
-document's own history is of counts that stayed plausible while their
-membership moved. Since #464 a test holds the other half:
+Re-derived on 2026-10-14 by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
+helper's definition plus six callers — rather than incremented, because a
+count stays plausible while its membership moves. A test holds the other half
+(#464):
 `src/lib/db-locks-verdict-census.test.ts` requires every production call site
 (not the defining module, which it excludes) to carry a `VERDICT (#327)` comment
 immediately above it, and every such comment to have a call under it. **It does
@@ -162,30 +152,24 @@ through it, and it is the only production `SELECT … FOR UPDATE OF c` **on
       | grep -v '\.test\.ts' \
       | grep -vE ':[0-9]+: *(//|\*|/\*)'
 
-**That claimed to return exactly one line, and Task 3 (#315, issue 298)
-falsified it — measured, not merely noticed: it returns six today.** The point
-was never the count of exactly one; it was that every multi-row `Class` lock
-goes through this one helper, and that is still true. `src/lib/db-locks.ts`
-(`lockClassRowsOrdered`) is the only line locking `Class`. The other five lock
-a DIFFERENT row entirely, in three groups. Two are #327's `FOR UPDATE OF e`
-companions on the `CalendarEntry` side, one inside `lockClassRow` and one
-inside `lockClassRowsOrdered` — same file, same convention, a second row per
-class rather than a second class. One is `claimRuleForGeneration`
-(`entry-generation.ts`), whose `FOR UPDATE OF tpl` takes a single
-`ClassTemplate` / `StudioClassTemplate` row with the table name spliced from
-the family descriptor: ONE line serving both families, where
-`class-generator.ts` and `studio-class-generator.ts` each had one of their own
-(`FOR UPDATE OF ct` / `FOR UPDATE OF sct`) until issue 284 merged them. The
-last two are `deleteTeacherAccount`'s bulk archive (`gdpr.ts`), the ordered
-multi-row form of that same lock, one per family. "The child row is the lock
-node for the template families" below is the section that names and explains
-the template-side three.
-
-Re-run for issue 758 on 2026-10-06 it returns eight: the six above, and the
+**It returns eight lines (re-run 2026-10-14).** The count is not the point;
+the point is that every multi-row `Class` lock goes through this one helper.
+`src/lib/db-locks.ts` (`lockClassRowsOrdered`) is the only line locking
+`Class`. The other seven lock a DIFFERENT row entirely, in four groups. Two
+are #327's `FOR UPDATE OF e` companions on the `CalendarEntry` side, one
+inside `lockClassRow` and one inside `lockClassRowsOrdered` — same file, same
+convention, a second row per class rather than a second class. One is
+`claimRuleForGeneration` (`entry-generation.ts`), whose `FOR UPDATE OF tpl`
+takes a single `ClassTemplate` / `StudioClassTemplate` row with the table name
+spliced from the family descriptor: ONE line serving both families (#284).
+Two are `deleteTeacherAccount`'s bulk archive (`gdpr.ts`), the ordered
+multi-row form of that same lock, one per family. The last two are the
 currency switch's ordered pre-lock (`switchTeacherCurrency`,
-`currency-switch.ts`), the same two-line shape as `deleteTeacherAccount`'s —
-`FOR UPDATE OF ct` then `FOR UPDATE OF sct` over every template of one
-teacher. `db-locks.ts` is still the only file locking `Class`.
+`currency-switch.ts`, #758), the same two-line shape as
+`deleteTeacherAccount`'s — `FOR UPDATE OF ct` then `FOR UPDATE OF sct` over
+every template of one teacher. "The child row is the lock node for the
+template families" below is the section that names and explains the
+template-side locks.
 
 The regression this check exists to catch is a line locking `Class` or
 `CalendarEntry` from outside `db-locks.ts`, not a rising count by itself —
@@ -198,16 +182,16 @@ comment says so.
 
 `lockClassRowsOrdered` owns the order, the `FOR UPDATE OF c` lock mode, the
 shared 2s bound and the dedupe for `Class`; a new `Class` site inherits all
-FIVE by calling it: the order, the lock mode, the timeout, the dedupe, and —
-since #245 — the fragment screen that refuses a caller's own `ORDER BY`/
+FIVE by calling it: the order, the lock mode, the timeout, the dedupe, and
+the fragment screen (#245) that refuses a caller's own `ORDER BY`/
 locking clause/`LIMIT`/`OFFSET`/`;` (`ILLEGAL_IN_FRAGMENT`, `db-locks.ts`).
 
 ## Ordering BETWEEN `Class` and its `CalendarEntry` (#327)
 
 **`Class` first, then `CalendarEntry`. Always.** A class's calendar identity —
 `classType`, `date`, `startTime`, `durationMinutes`, `cancelledAt` — lives on
-its entry since #327, so a transaction that decides from one and writes the
-other now touches two rows where it used to touch one. Two such transactions
+its entry, so a transaction that decides from one and writes the other
+touches two rows. Two such transactions
 taking the pair in opposite sequences is an AB-BA cycle exactly like any other.
 
 Three things take both, and all three take them in this order:
@@ -224,8 +208,8 @@ Three things take both, and all three take them in this order:
   `Class`" above); each carries its own written verdict at the call site.
 - **`class_sync_entry_completed`**, the trigger function that stamps
   `CalendarEntry.classCompletedAt`. Two triggers fire it — `AFTER UPDATE OF
-  status ON "Class"` and, since
-  `20260826140000_entry_guard_restorations`, `AFTER INSERT ON "Class"` — and
+  status ON "Class"` and `AFTER INSERT ON "Class"`
+  (`20260826140000_entry_guard_restorations`) — and
   both take the same order: the statement already holds the `Class` tuple it
   wrote when the function updates the entry, so it is `Class` then entry,
   inside the writing transaction. That is why terminality reaches the entry as
@@ -243,7 +227,7 @@ Three things take both, and all three take them in this order:
   unlocked read cannot see an uncommitted sibling. A guard is not a substitute
   for a constraint.
 
-  That is why one terminality arm was never closed with a trigger: a cancelled
+  That is why one terminality arm is not closed with a trigger: a cancelled
   class's `Class.status` is still not frozen at the database, and freezing it
   needs exactly that read. It is closed by a CONSTRAINT instead —
   `CalendarEntry_not_cancelled_and_completed`
@@ -296,8 +280,8 @@ rewriting each statement onto one line, which nothing else wants. Any ELEVENTH
 line is the real signal — a site that took a `Class` or `CalendarEntry` row
 lock without going through either helper.
 
-The last alternative, `family\.childTable`, is the one this command was missing
-until issue 336. `archiveOrUnarchiveRule` and `pauseOrResumeRule`
+The last alternative, `family\.childTable`, covers the spliced template locks.
+`archiveOrUnarchiveRule` and `pauseOrResumeRule`
 (`rule-lifecycle.ts`) each lock the child template row for BOTH families from
 one statement, splicing the table name in from the family descriptor, so the
 literal table names never appear at those sites. Without the alternative both
@@ -311,31 +295,23 @@ bounded by its type rather than by this filter: `TemplateFamily.childTable` is
 (`src/services/rule-lifecycle.ts`), so no descriptor can splice `Class` or
 `CalendarEntry` in here at all — pinned by an `@ts-expect-error` in
 `src/services/rule-lifecycle.test.ts`. The two copies differ only in shell
-quoting; their FILTERS must stay identical, and both times they have drifted it
-was this one that was missing an alternative.
+quoting; their FILTERS must stay identical.
 
 `tpl` in the FIRST alternative is the same problem one statement further on,
-and it is why `claimRuleForGeneration` (`entry-generation.ts`) may not go back
-to calling its child row `c`. Issue 284 merged the two claims into one spliced
-statement whose table name sits several lines above its `FOR UPDATE OF`, out
-of reach of every filter here; the alias is the only thing left on that line
-to match on, and `c` is `Class`'s. `ct` and `sct` are the aliases the two
-per-family claims used before the merge, still issued by `gdpr.ts`'s bulk
-archive.
+and it is why `claimRuleForGeneration` (`entry-generation.ts`) may not call its
+child row `c`. Its one spliced statement serves both families (#284), and its
+table name sits several lines above its `FOR UPDATE OF`, out of reach of every
+filter here; the alias is the only thing left on that line to match on, and
+`c` is `Class`'s. `ct` and `sct` are the aliases of the per-family ordered
+locks in `gdpr.ts`'s bulk archive and `currency-switch.ts`'s pre-lock.
 
-The third filter is not optional, and leaving it off is how this check shipped
-broken. Drop it and the same command returns **99** lines across twenty-one files
-where it returns ten with it — this codebase discusses `FOR UPDATE` far more
-often than it issues it, so a reader running the unfiltered version concludes
-on first use that the convention is already abandoned. Caught by #239's
-review, which is to say: after it shipped. The two figures are the same command
+The third filter is not optional. Drop it and the same command returns **102**
+lines across twenty-one files (re-run 2026-10-14) where it returns ten with it
+— this codebase discusses `FOR UPDATE` far more often than it issues it, so a
+reader running the unfiltered version concludes on first use that the
+convention is already abandoned (#239). The two figures are the same command
 run with and without that one filter; do not carry either forward without
 re-running both.
-
-**Before #237 this section was a five-row table**, and it was corrected about
-its own membership four times — the last of them by the round that filed the
-issue, which added `deleteStudentAccount`'s statement to the table and not to
-the derivation below it. The table is gone rather than corrected a fifth time.
 
 **One escape survives, about a predicate rather than an order.**
 `archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`) call covers
@@ -366,9 +342,21 @@ matches only classes with no charged registration) and the promotion that
 cancel triggers fails to take the seat, and the erasure's pre-lock takes the
 class. Nothing in the lock order refuses that; what keeps it off the table is
 that four independent requests have to land inside the archive's own
-transaction. If it ever happens, it is a deadlock Postgres detects and resolves
-by aborting one of the two transactions (or a `lock_timeout` fires first), not
-a write that lands unheld.
+transaction. The cycle also needs the moved class's id to sort below a class
+the archive pre-locked, since the erasure's pre-lock takes its classes in
+ascending id order.
+
+If it ever happens, the erasure is the transaction aborted, never the archive,
+and the delete never lands unheld. The erasure always starts waiting first —
+the archive's delete has nothing to wait on until the erasure holds the moved
+class — and Postgres runs one deadlock check per wait, `deadlock_timeout` (1s)
+after it begins, so the erasure's check runs first: it finds the cycle
+(`40P01`) if the delete has queued by then, and otherwise its own 2s
+`lock_timeout` (`55P03`) fires before the delete's check can. The delete then
+runs once the erasure has rolled back. Both outcomes are pinned in
+`gdpr-lock-order.test.ts` ("the archive escape against a student erasure ends
+in an abort, not an unheld delete"), which stages the four requests inside a
+parked archive rather than racing them.
 
 `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) does not share it: its write
 set is keyed on the ids its own `lockClassRowsOrdered` call handed back, a
@@ -376,23 +364,14 @@ structural subset rather than a predicate re-evaluated when the write runs.
 That is the contrast `lockClassRowsOrdered`'s docblock (`db-locks.ts`) points
 back at this document for.
 
-**The template EDIT has left this graph entirely (#194).** A paragraph stood
-here describing its pre-lock, and it is worth keeping what it said because the
-exposure was real: the predicate carried no `status`/`settingsLocked` narrowing
-beyond `templateId`/`teacherId`/`date >` the current UTC calendar date, so it
-briefly locked every future instance of the template — including ones already
-`settingsLocked` by a registration, which its own writes could never touch —
-and `SELECT … FOR UPDATE` holds until the transaction ends, so a booking on one
-of those instances contended with a template edit for the rest of that
-transaction rather than for the statement. #194 deleted `syncTemplateInstances`
-outright. `updateClassTemplate` now writes one `ClassTemplate` row under one
-`SET LOCAL lock_timeout` and takes no `Class` lock of any kind, so the exposure
-is gone rather than narrowed, and its budget moved 15s → 10s with the four
-statements it lost.
+**The template EDIT is not in this graph (#194).** `updateClassTemplate`
+writes one `ClassTemplate` row under one `SET LOCAL lock_timeout`, within a
+10s transaction budget, and takes no `Class` lock of any kind, so a booking on
+one of the template's instances never contends with a template edit.
 
 See "The slot key is a wait edge" below before assuming `id` is the only thing
 that orders these rows: a slot constraint makes plain INSERTs take part too,
-which is a case a site enumeration is built not to find. Since #327 the
+which is a case a site enumeration is built not to find. The
 constraint is `CalendarEntry_teacher_slot_excl` and the statements that join
 that wait chain are entry writes, not `Class` writes — so the rows it orders
 are one hop from the ones this section is about.
@@ -489,12 +468,11 @@ its third filter.
 
 ### How that enumeration was derived
 
-Mechanically, not by recall — the defect being fixed was an incomplete list
-asserted as complete. An earlier version of this passage opened by asserting
-that a `Class` row lock "can only come from `UPDATE`, `DELETE` or
-`SELECT … FOR UPDATE` on that table". That is false — there is a fourth path,
-described after the list — and a completeness argument resting on it was
-unsound even though its answer happened to be right.
+Mechanically, not by recall — an incomplete list asserted as complete is the
+defect this guards against. A `Class` row lock does not only come from
+`UPDATE`, `DELETE` or `SELECT … FOR UPDATE` on that table — there is a fourth
+path, described after the list — so a completeness argument resting on those
+three is unsound even where its answer happens to be right.
 
 The candidate set is bounded by these four checks over `src/`, minus
 `*.test.ts` (re-runnable; deliberately greps rather than counts, since a count
@@ -505,108 +483,55 @@ a call):
    writes **that can lock an existing row**. `create`/`createMany` are
    deliberately absent: a freshly inserted row's lock conflicts with nothing,
    so it carries no ordering obligation. **`createManyAndReturn` joins them**,
-   for the same reason and not by oversight: #164/#192 replaced both
-   generators' per-date `create` loop with one `createManyAndReturn`, which is
-   still only inserts. Re-run at that time: this grep returned 14 on the branch
-   and 14 on `main`, so the candidate set did not move. The occupancy
-   `findMany` those generators gained, and the `class.count` on the class
-   family's resume, are reads — no locks under READ COMMITTED, no edges.
-   **True of the row, false since #196 of its index entries** — see "The
+   for the same reason and not by oversight: the generators' one
+   `createManyAndReturn` (#164/#192) is still only inserts. The generators'
+   occupancy `findMany`, and the `class.count` on the class family's resume,
+   are reads — no locks under READ COMMITTED, no edges.
+   **True of the row, false of its index entries (#196)** — see "The
    slot key is a wait edge" below: a bare `create`/`createManyAndReturn`
    still cannot conflict on the row it inserts, but it can conflict on the
-   slot, which since #327 is `CalendarEntry_teacher_slot_excl` and is written
-   by entry inserts rather than `Class` inserts. That is why this check alone
-   no longer bounds the candidate set, and neither does the multiplicity
-   filter below;
+   slot, which is `CalendarEntry_teacher_slot_excl` and is written by entry
+   inserts rather than `Class` inserts. That is why this check alone does not
+   bound the candidate set, and neither does the multiplicity filter below;
 2. `'"Class"'` — the raw statements. **Do not carry a number here; grep it.**
-   An earlier version of this check said "8 in total … the other 3 are
-   multi-row"; re-derivation on 2026-08-16 found 9 and 4, because
-   `deleteStudentAccount`'s ordered statement had been added to the table above
-   without being added here. That is the fourth time this document was wrong
-   about its own list, and #237 is the response. What holds now, and is
-   checkable rather than remembered: **every multi-row `Class` lock is
-   `lockClassRowsOrdered` (`db-locks.ts`)**, and — since Task 3c (#315) —
-   it is no longer the only production `FOR UPDATE OF c`-shaped statement in
-   `src/`; it is the only one whose locked table is `Class`. The single-id
-   `FOR UPDATE`s no longer live at the `Class`-family call sites. Every one
-   that used to be inline — three in `waitlist.ts` (`addToWaitlist`,
-   `promoteNext`, `claimSpot`) and one in `POST /api/registrations` — now goes
-   through `lockClassRow`'s own bounded body instead, the same helper
-   `removeFromWaitlist` and `handleSpotFreed` already reached the lock through
-   rather than inlining it.
+   What holds, and is checkable rather than remembered: **every multi-row
+   `Class` lock is `lockClassRowsOrdered` (`db-locks.ts`)**, and it is the
+   only production `FOR UPDATE OF c`-shaped statement in `src/` whose locked
+   table is `Class`. The single-id `FOR UPDATE`s of the `Class`-family call
+   sites — `addToWaitlist`, `promoteNext`, `claimSpot`, `removeFromWaitlist`
+   and `handleSpotFreed` (`waitlist.ts`), and `POST /api/registrations` — go
+   through `lockClassRow`'s own bounded body rather than inlining it.
    `grep -rn "FOR UPDATE" src/ --include='*.ts' | grep -v "\.test\.ts:" |
    grep -vE ":[0-9]+: *(\*|//)"` is the check, not a number kept here.
-   **It returned four hits when this check was first written, and returned
-   fourteen when re-derived for issue 259.** Re-run for issue 767 on
-   2026-10-07 it returns eighteen: the fourteen issue 259 reconciled, plus
-   `roster-link.ts:123`, `currency-switch.ts:56` and `:62`, and
-   `src/lib/auth/handoff.ts:149`.
+   Re-run on 2026-10-14 it returns eighteen, and every `Class` and
+   `CalendarEntry` row lock among them is in `db-locks.ts`:
 
-   Of the original four, two were never `Class` locks at all — the
-   two generators' template claims, then written per family as
-   `FOR UPDATE OF ct` / `FOR UPDATE OF sct` on a `ClassTemplate` /
-   `StudioClassTemplate` row — so the claim above holds over them rather than
-   being violated by them, and the other two were the `Class` helpers in
-   `db-locks.ts`, which is the whole point. Those two claim lines are now ONE:
-   issue 284 merged both generators onto `claimRuleForGeneration`
-   (`entry-generation.ts`), whose single `FOR UPDATE OF tpl` splices its table
-   name from the family descriptor and serves either family.
+   - four in `db-locks.ts`: `lockClassRow`'s and `lockClassRowsOrdered`'s
+     `Class` statements, each with its `FOR UPDATE OF e` companion (#327);
+   - ten on a `ClassTemplate` or `StudioClassTemplate` row, from the split
+     "The child row is the lock node for the template families" below
+     describes: `claimRuleForGeneration`'s one spliced `FOR UPDATE OF tpl`
+     (`entry-generation.ts`, #284), serving both generators; three single-id
+     plain `FOR UPDATE`s in `rule-lifecycle.ts` with the table name spliced
+     rather than written literally — `archiveOrUnarchiveRule`,
+     `pauseOrResumeRule` and `updateRule`, each serving BOTH of its verb's
+     entry points (`updateClassTemplate` and `updateStudioClassTemplate` both
+     run on the third); the two ordered `FOR UPDATE OF ct` / `sct` locks of
+     `deleteTeacherAccount`'s bulk archive (`gdpr.ts`) and the two of the
+     currency switch's pre-lock (`switchTeacherCurrency`,
+     `currency-switch.ts`, #758); `room-archive.ts`'s cascade pre-lock, which
+     holds every `ClassTemplate` row of the room being archived; and
+     `switchToSharedRoom`'s step-1 pre-lock (`room-switch.ts`, #259), the
+     same shape as the archive's;
+   - two on a `TeacherRoom` row: `switchToSharedRoom`'s step-2 and step-3
+     locks on the private and the shared `TeacherRoom`;
+   - one on a `TeacherStudent` row: `lockTeacherStudentLink`
+     (`roster-link.ts`, #265);
+   - one on a `HandoffAttemptBudget` row: `reserveHandoffComparisons`
+     (`src/lib/auth/handoff.ts`, #767).
 
-   That accounts for three of the fourteen issue 259 reconciled: the two `db-locks.ts` `Class`
-   helpers, plus the merged claim standing where two lines used to. The other
-   eleven were added since, and are of four kinds. Five come from the split
-   "The child row is the lock node for the template families" below describes:
-   three single-id plain `FOR UPDATE`s on a child template row, all in
-   `rule-lifecycle.ts` with the table name spliced rather than written
-   literally — `archiveOrUnarchiveRule`, `pauseOrResumeRule` and `updateRule`,
-   each serving BOTH of its verb's entry points (issue 332 merged the two
-   archive lines into the first, issue 336 the two pause lines into the
-   second, and `updateClassTemplate` and `updateStudioClassTemplate` both run
-   on the third) — plus two ordered `FOR UPDATE OF` locks in
-   `deleteTeacherAccount`'s bulk archive (`gdpr.ts`), one per template family,
-   which the `FOR UPDATE OF` census one section up counts alongside the merged
-   claim. Two more are #327's `FOR UPDATE OF e` companions inside
-   `lockClassRow` and `lockClassRowsOrdered`, which now take two lines each.
-   One is `room-archive.ts`'s cascade pre-lock, which holds every
-   `ClassTemplate` row of the room being archived. The last three are
-   `switchToSharedRoom`'s (`room-switch.ts`, issue 259): its step-1 pre-lock,
-   the same shape as the archive's, and its step-2 and step-3 locks on the
-   private and the shared `TeacherRoom`. None of those four belongs to a
-   convention on this page, and they are the four non-`Class` lines the
-   `Class`-scoped census returned when issue 259 reconciled it. Three plus five plus two plus one plus three is
-   the fourteen the command returned then, and that sum is the only reconciliation
-   this paragraph offers. Cut a different way: eight of those fourteen lock a
-   `ClassTemplate` or `StudioClassTemplate` row — the merged claim, the three
-   single-id lifecycle locks, the two ordered bulk-archive locks, and the
-   archive's and the switch's pre-locks — two lock a `TeacherRoom` row, and
-   the remaining four are in `db-locks.ts`, which is where every `Class` and
-   `CalendarEntry` row lock still lives. Re-derived for issue 259, this
-   paragraph's previous figure (twelve) had already drifted to eleven before
-   the switch arrived: `updateClassTemplate`'s and
-   `updateStudioClassTemplate`'s two locks had become `updateRule`'s one. A
-   count that stays right while the membership changes is the one error
-   nothing that counts can catch, and this document has already made that
-   mistake once (`db-locks.ts`'s register named `deleteStudentAccount` as a
-   `lockClassRow` caller long after it stopped being one, and the total never
-   moved). The branch that closed this section produced a fresh instance of
-   the same failure in its own planning, not just this file's history: an
-   earlier draft of its spec moved a misfiled row between two groups and left
-   the TOTAL unchanged at thirteen while the membership moved underneath it,
-   and a later task then found a fourteenth location the count had missed
-   outright — and the task after that one (#315) shipped its own plan
-   asserting this exact census "still returns 4 and is still true" without
-   re-deriving it against the six-plus-two new sites its own steps were about
-   to add, which is the same mistake in the same document for a fifth time.
-   The count was never the thing to trust; re-deriving the list
-   was.
-
-   Re-run for issue 758 on 2026-10-06 it returns seventeen: the fourteen
-   above; `roster-link.ts`'s `TeacherStudent` row lock
-   (`lockTeacherStudentLink`, #265), which landed without a note here; and
-   this issue's two, the currency switch's ordered `FOR UPDATE OF ct` and
-   `FOR UPDATE OF sct` pre-locks (`switchTeacherCurrency`,
-   `currency-switch.ts`). Ten of the seventeen now lock a template row, and
-   `db-locks.ts` still holds every `Class` and `CalendarEntry` row lock;
+   A count that stays right while the membership changes is the one error
+   nothing that counts can catch. Re-derive the list, not the total;
 3. `lockClassRow(` — the helper's callers;
 4. **parent deletes that cascade onto `Class` without naming it** — the
    category a grep for `class.` misses. `Class` holds three FKs pointing *out*
@@ -624,8 +549,8 @@ up holding more than one `Class` row lock? Single-`id` writes and single-`id`
 are all handled by `lockClassRowsOrdered`, which is the whole of the
 within-`Class` concern this section derives. That leaves the single-`id`
 `FOR UPDATE`s out, individually — they carry no ordering obligation.
-**It is not the right bound for `Class` as a whole any more.** Since #196 a
-single-row write can be half of a slot-key deadlock without ever holding a
+**It is not the right bound for `Class` as a whole.** A single-row write can
+be half of a slot-key deadlock (#196) without ever holding a
 second `Class` row lock — see "The slot key is a wait edge" below, where
 `updateClass` joins the candidate set on exactly that basis despite locking
 only one row. Note `autoCancelClasses` is *not* one of the multi-row sites
@@ -645,15 +570,16 @@ and with every site named in "Known conformance" below.
 
 It changes the answer nowhere, and that was checked rather than assumed: a
 transaction only acquires a *second* `Class` lock this way if it inserts
-children of more than one class. Exactly one does — `deleteTeacherAccount`'s
-`createBulkNotifications` — and it runs inside the per-class loop, on the class
-whose CAS it has just taken, so the `FOR KEY SHARE` lands on a row it already
-holds a stronger lock on, in the same ascending sequence. Every other
-child-insert in `src/` is scoped to one class per transaction.
+children of more than one class. `deleteTeacherAccount`'s
+`createBulkNotifications` does, inside the per-class loop, on the class whose
+CAS it has just taken, so the `FOR KEY SHARE` lands on a row it already holds a
+stronger lock on, in the same ascending sequence. `resumePayments`
+(`payout-resume.ts`) does too, and with no order — see its row below. Every
+other child-insert in `src/` is scoped to one class per transaction.
 
 That was checked across every `createBulkNotifications` call site, and "every"
-is the word this passage exists to earn — a completeness claim here has been
-short before, and a table of names cannot say so about itself. So the table is
+is the word this passage exists to earn — a table of names cannot vouch for
+its own completeness. So the table is
 re-derived rather than remembered, and it ships the command that re-derives it:
 run this and it should return one line per row below, with no row unaccounted
 for and no line unlisted.
@@ -677,46 +603,46 @@ Against each, the class its notifications carry:
 | `POST /api/registrations` | one — the class being booked |
 | `completeWalkIn` (`walk-ins.ts`) | one — the class being walked into, under the `lockClassRow` `POST /api/registrations` already holds |
 | `POST /api/announcements` | at most one — the class of a class-scoped send; an all-students or custom send names none (#196, #48) |
-| `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327; this is where the transition route's cancel branch went) |
+| `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
+| `resumePayments` (`payout-resume.ts`) | **many** — one reminder per owed payment, each carrying its completed class as `relatedClassId` |
 
-> **#212 moved the broadcast inside a transaction, and the order is unchanged.**
-> It was one of **four** `createBulkNotifications` sites taking no `Class` row
-> lock. The other three still take none: `sendPaymentReminder`
-> (`payments.ts`) and `sendPaymentReminders` (`payment-reminders.ts`), both
-> payment-scoped and reaching a class only through the `relatedClassId` on the
-> notification they write; and `sendAnnouncement` (`services/announcements.ts`,
-> called by `POST /api/announcements`), whose
-> `lockAnnouncementSlot` is an **advisory** lock, not a `Class` row lock — as
-> the #196/#215 section of this document says below. `handleSpotFreed`'s broadcast takes `lockClassRow`
-> and then inserts
-> notifications carrying `relatedClassId` — a `FOR KEY SHARE` on the row it
-> already holds `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named
-> exception above. One class per transaction, so it adds no edge.
->
-> The first sentence originally read "the **one** site that took no `Class`
-> lock at all", which was false, and it is left recorded rather than quietly
-> corrected: it was written into #212's spec, carried into the plan, and
-> implemented faithfully — a completeness claim asserted twenty lines below
-> the paragraph explaining that an earlier completeness claim here undercounted
-> seven against eleven. Neither `payments.ts` nor `payment-reminders.ts`
-> contains `lockClassRow` or `FOR UPDATE`; that is one grep, and it was not run
-> until PR review.
+> **Three `createBulkNotifications` sites take no `Class` row lock.**
+> `sendPaymentReminder` (`payments.ts`) and `sendPaymentReminders`
+> (`payment-reminders.ts`), both payment-scoped and reaching a class only
+> through the `relatedClassId` on the notification they write — neither file
+> contains `lockClassRow` or `FOR UPDATE`, which is one grep; and
+> `sendAnnouncement` (`services/announcements.ts`, called by
+> `POST /api/announcements`), whose `lockAnnouncementSlot` is an **advisory**
+> lock, not a `Class` row lock — as the #196/#215 section of this document
+> says below. `handleSpotFreed`'s broadcast runs inside a transaction (#212):
+> it takes `lockClassRow` and then inserts notifications carrying
+> `relatedClassId` — a `FOR KEY SHARE` on the row it already holds
+> `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named exception above. One
+> class per transaction, so it adds no edge.
 
-Five stands — but a future sweep that notifies across classes in one
-transaction would be a sixth site, and none of the four checks above would
-surface it.
+**`resumePayments` takes `FOR KEY SHARE` on many classes in no order.** Its
+reminders carry `relatedClassId`, and their `createMany` takes the FK's
+`FOR KEY SHARE` on each owed payment's class in the order the payments were
+read — not ascending. Its classes are completed (a `Payment` exists only after
+`completeClass`), which keeps it clear of every ordered `FOR UPDATE` locker
+but one: `deleteStudentAccount`'s pre-lock covers every class the student holds
+a `WaitlistEntry` of ANY status on, so a `claimed` or `promoted` entry on a
+completed class is in it. A student who owes this teacher on two such classes,
+erased while the teacher resumes payments, can therefore close a cycle — the
+erasure holding the lower class `FOR UPDATE` and waiting on the higher, the
+resume holding the higher `FOR KEY SHARE` and waiting on the lower. Postgres
+detects it and aborts one side; nothing lands unheld. Reasoned, not pinned by
+a test; reading the owed payments in ascending class order would remove the
+edge.
 
-**That sweep arrived, and it is the `archiveOrUnarchiveTemplate` row above**
-— named rather than numbered, because every insertion into that table moved the
-number and none of them moved this sentence. #112 made
-`archiveOrUnarchiveTemplate` notify the waiting students of every class its
-`deleteMany` took, in one `createMany`, inside the archive transaction — the
-first site in `src/` that notifies across more than one class at a time, and
-exactly the case this paragraph predicted would slip past the four checks. It
-did: nothing in that change touched this file until PR review caught it.
+**`archiveOrUnarchiveTemplate` is the other site above that notifies across
+classes in one transaction** (#112): it notifies the waiting students of every
+class its `deleteMany` took, in one `createMany`, inside the archive
+transaction. None of the four checks above would surface a site of that kind,
+which is why the table is re-derived with its own command.
 
-The answer is still unchanged, for a reason worth stating rather than
+It adds no edge, for a reason worth stating rather than
 re-deriving: those notifications carry **no `relatedClassId`**. They cannot,
 because their classes are deleted earlier in the same transaction and the FK
 would reject the insert. `Notification.recipientId` has no foreign key at all,
@@ -724,7 +650,7 @@ so that `createMany` takes `FOR KEY SHARE` on nothing and adds no edge to the
 order — the one child-insert in the codebase that notifies across many classes
 is also the one that references none of them.
 
-Read that as a coincidence this file is now watching, not as a rule. Give an
+Read that as a coincidence this file watches, not as a rule. Give an
 archive notification a `relatedClassId` and it becomes a transaction taking
 `FOR KEY SHARE` on many `Class` rows at once, in `candidates` order, which is
 whatever the query planner returned — not the ascending order the rest of this
@@ -753,41 +679,36 @@ purposes, wherever it sits in the transaction.
 Three things about that table are easy to get wrong and are the reason it exists:
 
 **The lock order of a loop is the order of the read it walks — unless something
-locks first.** `deleteTeacherAccount` used to be the pure case: no explicit lock
-at all, its CAS `UPDATE` was the lock, and there was no line of code that "takes
-the locks" to inspect. Its `findMany` had no `orderBy` until the whole-branch
-review of #174, which meant its lock order was whatever the heap returned: for
-freshly inserted rows, physical (insertion) order, which is uncorrelated with
-id. Against `deleteStudentAccount`, which sorted, that is a live cycle and it
-was reproduced — Postgres `40P01 deadlock detected`, either side the victim.
+locks first.** A loop whose CAS `UPDATE` is its only lock has no line of code
+that "takes the locks" to inspect, and if the `findMany` it walks has no
+`orderBy`, its lock order is whatever the heap returns: for freshly inserted
+rows, physical (insertion) order, which is uncorrelated with id. Against a site
+that sorts, that is a live cycle, and it was reproduced (#174) — Postgres
+`40P01 deadlock detected`, either side the victim. The rule applies to any loop
+that CASes without pre-locking.
 
-Since #237 an ordered `lockClassRowsOrdered` pre-lock runs ahead of that
-loop, so the rule no longer describes this site: the pre-lock is first
-among `Class`/`CalendarEntry` locks (not first in the transaction — #229's
-`ClassTemplate`/`StudioClassTemplate` locks run before it), and since #367
-it is also first among any read of this teacher's classes INSIDE THE
-TRANSACTION — the completion sweep above it (`db.class.findMany` over
-`in_progress`) reads them too, but runs in a transaction of its own before
-this one opens, so it is ordered against nothing here. The read the loop
-walks is scoped to the pre-lock's own returned ids, not an
-independently-timed `findMany`, so `orderBy: { id: 'asc' }` on that read is
-presentation only (it fixes the notification order) for a stronger reason
-than before: there is no longer a separate snapshot for it to agree or
-disagree with. The rule still applies to any future loop that CASes
-without pre-locking, which is why it is kept. Pinned by
-`gdpr-lock-order.test.ts`, "does not deadlock when a teacher erasure and a
-student erasure overlap on two classes"; that test fails with `40P01` if
-the pre-lock is removed. The same fix closes the inherited disagreement
-with `withdrawWaitingEntriesForTeacher`, which has sorted since #166.
+`deleteTeacherAccount`'s cancel loop runs behind an ordered
+`lockClassRowsOrdered` pre-lock (#237): the pre-lock is first among
+`Class`/`CalendarEntry` locks (not first in the transaction — #229's
+`ClassTemplate`/`StudioClassTemplate` locks run before it), and (#367) it is
+also first among any read of this teacher's classes INSIDE THE TRANSACTION —
+the completion sweep above it (`db.class.findMany` over `in_progress`) reads
+them too, but runs in a transaction of its own before this one opens, so it is
+ordered against nothing here. The read the loop walks is scoped to the
+pre-lock's own returned ids, not an independently-timed `findMany`, so
+`orderBy: { id: 'asc' }` on that read is presentation only (it fixes the
+notification order): there is no separate snapshot for it to agree or disagree
+with. Pinned by `gdpr-lock-order.test.ts`, "does not deadlock when a teacher
+erasure and a student erasure overlap on two classes"; that test fails with
+`40P01` if the pre-lock is removed. `withdrawWaitingEntriesForTeacher` sorts
+too (#166), so the two agree.
 
-**JS and SQL had to agree while one site sorted in JavaScript, and that was
-checked, not assumed.** Since #237 every ordered site takes its order from
-`lockClassRowsOrdered`'s `ORDER BY c.id`, so nothing sorts in JS and the
-question is closed by construction — `grep -n '\.sort(' src/services/gdpr.ts`
-returns nothing. Kept because the verification is expensive to redo and a
-future site that sorts an id array in JS reopens it: `[...].sort()` and
-`ORDER BY id` producing different sequences would reintroduce the cycle with
-every site looking individually correct. Verified
+**JS and SQL sort these ids the same way — checked, not assumed.** Every
+ordered site takes its order from `lockClassRowsOrdered`'s `ORDER BY c.id`
+(#237), so nothing sorts in JS — `grep -n '\.sort(' src/services/gdpr.ts`
+returns nothing. A future site that sorts an id array in JS depends on this:
+`[...].sort()` and `ORDER BY id` producing different sequences would introduce
+a cycle with every site looking individually correct. Verified
 directly against this project's database: `Class.id` is `text` with the default
 collation, the database is `en_US.utf8`, and over 4000 random uuids the
 JS-sorted and SQL-sorted sequences were identical element for element. The
@@ -795,9 +716,8 @@ check is scoped to uuid-shaped ids (`[0-9a-f-]` only) — that is all `Class.id`
 ever holds — and should be re-run rather than assumed if that ever stops being
 true.
 
-**Sorting the id array does NOT order a multi-row write.** This is the trap the
-two then-unordered template sites sat in, and it is why neither was "fixed"
-with a one-line sort. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
+**Sorting the id array does NOT order a multi-row write**, so a one-line sort
+fixes no multi-row site. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
 `… WHERE id = ANY($1)`, and the row-visit order — which *is* the lock order —
 is chosen by the planner, never by the array. Measured directly: one
 transaction holding a row, the multi-row `UPDATE` blocked on it, and a third
@@ -812,16 +732,15 @@ scan (index order, which for `id` would *coincidentally* be ascending). Do not
 build on that coincidence: it can change under you with no code change at all,
 which is worse than a plainly wrong order because it will test green.
 
-That warning came due against this document's own test suite in #239. Both
-ordering reproductions asserted a *premise* about the natural order of a
-`Class`/`WaitlistEntry` join, forced with `enable_hashjoin = off` — which
+The same holds for a lock-order test's *premise* about the natural order of a
+`Class`/`WaitlistEntry` join (#239). Forcing it with `enable_hashjoin = off`
 removes a join ALGORITHM but not a join DIRECTION. The planner can still drive
 that join from `Class`, and then the two callers agree and the cycle cannot be
 built. Which side it picks is a cost knife-edge on `w."studentId"`, a column no
 index leads with, and it is NON-MONOTONIC in table size: measured on
 2026-08-16, background-row counts of 0, 2, 50 and 200 drive from `Class` while
 10, 1 000 and 50 000 drive from `WaitlistEntry`. No amount of seeding makes a
-cost-chosen plan safe. The fix is to leave the planner no choice —
+cost-chosen plan safe. The ordering reproductions leave the planner no choice —
 `enable_mergejoin`, `enable_seqscan` AND `enable_bitmapscan` off as well, which
 leaves a nested loop whose order comes from index structure rather than from a
 cost comparison. If you write another lock-order reproduction, force the plan;
@@ -829,11 +748,11 @@ do not hope for it.
 `archiveOrUnarchiveTemplate` does not even pass ids — its `deleteMany` takes a
 predicate, so it has no array to sort in the first place.
 
-All four, and the fourth is the one #470 came back for. Index-DRIVEN is not
-index-ORDERED: a bitmap heap scan is fed by a bitmap index scan and still
-returns physical heap order — the same warning this section opens with, two
-paragraphs up — so the three settings above left one heap-ordered path open,
-reachable rather than excluded. Postgres's scan paths over a plain table are
+All four are needed, and `enable_bitmapscan` is the one #470 established.
+Index-DRIVEN is not index-ORDERED: a bitmap heap scan is fed by a bitmap index
+scan and still returns physical heap order — the same warning this section
+opens with, two paragraphs up — so without it one heap-ordered path stays
+open, reachable rather than excluded. Postgres's scan paths over a plain table are
 sequential, index, index-only, bitmap heap, and TID — and of those, sequential
 and bitmap heap are the two that return physical order for the statements here.
 Turn both off and what remains is index and index-only scans. **A TID scan is
@@ -844,9 +763,6 @@ A statement that grew one would be back to heap order with every setting still
 in force. Measured (including with every path carrying `disable_cost`) in
 `docs/superpowers/specs/2026-09-06-scan-order-premise-pin-design.md`. Both
 settings discourage rather than forbid, so neither can make a statement fail.
-(The premise assertion #470 came from had flaked before, on 2026-08-27, in a
-copy of the test that carried none of these settings — a different gap, closed
-by adding them.)
 
 **Forcing the plan buys BTREE order, and only where no GiST index is
 eligible.** `pg_indexam_has_property(gist,'can_order')` is false: a GiST
@@ -1022,9 +938,8 @@ Ordering a multi-row write means locking the rows first, explicitly: an
 `lockClassRowsOrdered` (`db-locks.ts`) — `withdrawWaitingEntriesForTeacher`
 and `archiveOrUnarchiveTemplate` take theirs as a pre-lock ahead of their
 `updateMany`/`deleteMany` (issue 180), and both erasures reach the same helper
-(#237). The template edit was a third until #194 deleted its propagation.
-A per-row `lockClassRow` loop over a sorted read also works and is what `deleteStudentAccount` used before
-#216/#182; it costs 2N round trips, which is why it was replaced.
+(#237). A per-row `lockClassRow` loop over a sorted read also works, but
+costs 2N round trips.
 
 ### `Notification` rows: the retention sweep against erasure (#223)
 
@@ -1080,72 +995,55 @@ grep -rn 'setLockTimeout\|LOCK_TIMEOUT_SQL' src/ --include='*.ts' \
   | grep -vE ":[0-9]+:import "
 ```
 
-The filters are not cosmetic. On 2026-09-16 (issue 183) the unfiltered needle
-returned 100 lines across 26 files: 52 of them in `.test.ts` files, 26 more
-comment prose outside the tests — five of those in `db-locks.ts` itself,
-quoting the needle back at its own reader. That is the failure the
-`FOR UPDATE` census one section up already records: a reader who runs the
-unfiltered version concludes on first use that the convention is not worth
-checking.
+The filters are not cosmetic. Unfiltered, the needle returns 111 lines across
+33 files (2026-10-14), 58 of them in `.test.ts` files and much of the rest
+comment prose — some of it in `db-locks.ts` itself, quoting the needle back at
+its own reader. That is the failure the `FOR UPDATE` census one section up
+records: a reader who runs the unfiltered version concludes on first use that
+the convention is not worth checking.
 
-**On 2026-09-16 (issue 183) it returned 18.** Three of the 18 are the bound
-itself and the helper that issues it, all three in `db-locks.ts`; two are
-members of multi-line `import { … }` blocks that name `setLockTimeout`
-without issuing it —
-`gdpr.ts`'s and `class-template-lifecycle.ts`'s own `  setLockTimeout,`
-lines — which the `import ` filter cannot drop, since it matches only a line
-that itself starts with `import `; the remaining thirteen are transactions
-arming it, spread over `db-locks.ts` (four helpers now: `lockClassRow`,
-`lockClassRowsOrdered`, and #183's `lockStudentForErasure` and
-`lockLiveStudent`), `rule-lifecycle.ts`, `studio-class-template-lifecycle.ts`,
-`class-template-lifecycle.ts`, `entry-generation.ts`, `gdpr.ts` and
-`room-archive.ts`. What the number is for is noticing a MOVE — a new
-transaction that takes a contended row lock without arming the bound does not
-appear here at all, so a count that has not moved is not on its own evidence
-that nothing was missed. Re-derive the list, not the total.
+**Re-run on 2026-10-14 it returns 24.** Three are the bound itself and the
+helper that issues it, all three in `db-locks.ts`. One is `gdpr.ts`'s
+`  setLockTimeout,` line, a member of a multi-line `import { … }` block that
+names `setLockTimeout` without issuing it, which the `import ` filter cannot
+drop, since it matches only a line that itself starts with `import `. The
+remaining twenty are transactions arming it:
 
-Re-run for issue 259 it returns 19: `switchToSharedRoom`'s own transaction
-arming it (`room-switch.ts`) is new, and every other line sits in one of the
-files listed above.
+- eight helpers in `db-locks.ts`: `lockClassRow`, `lockClassRowsOrdered`,
+  `lockStudentForErasure` and `lockLiveStudent` (#183); `lockLiveTeacher`, the
+  photo upload's gate on the `Teacher` row — "The `Teacher` row is the photo
+  upload's gate (#46)" below; `lockTeacherForNoKeyUpdate` and
+  `lockTeacherForShare`, the `Teacher` first lock — "The `Teacher` row is the
+  first lock (#758)" below; and `lockAccountForSignOut`, the `Account` row
+  every multi-session sign-out writer takes — "The `Account` row orders
+  multi-session sign-out writes" below (#811);
+- three in `rule-lifecycle.ts`, one in `entry-generation.ts` (spliced
+  `LOCK_TIMEOUT_SQL`), two in `gdpr.ts` and one in `room-archive.ts`;
+- `switchToSharedRoom`'s own transaction (`room-switch.ts`, #259);
+- three before a `TeacherStudent` row lock (#265): `reopenPayment`
+  (`payments.ts`) and `archiveStudent`'s two (`student-archive.ts` — its own
+  transaction, and the re-read after a waive miss);
+- `reserveHandoffComparisons` (`src/lib/auth/handoff.ts`, #767), the
+  handoff-code budget reservation, before its `HandoffAttemptBudget` row lock.
 
-Re-run for issue 265 on 2026-09-28 it returns 22 = the 19 above + 3 new
-transactions arming it, each before its `TeacherStudent` row lock:
-`reopenPayment` (`payments.ts`), and `archiveStudent`'s two
-(`student-archive.ts` — its own transaction, and the re-read after a waive
-miss). Pinned by `src/services/student-archive-lock-order.test.ts`'s
-"archiving and reopening bound their wait on the link row" describe, which
-holds the link row past the bound and expects `55P03` inside the hold.
+Transactions that arm the bound through one of those helpers add no line of
+their own: `createClassTemplate` and `createStudioClassTemplate` arm it through
+`lockTeacherForShare`, their first statement; `deleteTeacherAccount` through
+`lockTeacherForNoKeyUpdate` as well as its own counted `setLockTimeout`; and the
+two one-off create routes and the currency switch through the same helpers.
 
-Re-run for issue 46 on 2026-09-29 it returns 23 = the 22 above + 1:
-`lockLiveTeacher` (`db-locks.ts`), the photo upload's gate on the `Teacher`
-row — "The `Teacher` row is the photo upload's gate (#46)" below. Every other
-line sits in one of the files listed above.
+What the number is for is noticing a MOVE — a new transaction that takes a
+contended row lock without arming the bound does not appear here at all, so a
+count that has not moved is not on its own evidence that nothing was missed.
+Re-derive the list, not the total.
 
-Re-run for issue 758 on 2026-10-06 it returns 22 = the 23 above + 2 − 3. The
-two added lines are in `db-locks.ts`: `lockTeacherForNoKeyUpdate` and
-`lockTeacherForShare`, the `Teacher` first lock — "The `Teacher` row is the
-first lock (#758)" below. The three removed are `createClassTemplate`'s and
-`createStudioClassTemplate`'s own `setLockTimeout` calls, and
-`class-template-lifecycle.ts`'s `  setLockTimeout,` import line: both creates
-now arm the bound through `lockTeacherForShare`, their first statement.
-`deleteTeacherAccount` arms it through `lockTeacherForNoKeyUpdate`, and its
-own `setLockTimeout` line was already counted; the two one-off create routes
-and the currency switch arm it through the same helpers and add no line.
-Every other line sits in one of the files listed above.
-
-Re-run for issue 767 on 2026-10-07 it returns 23 = the 22 above + 1:
-`reserveHandoffComparisons` (`src/lib/auth/handoff.ts`), the handoff-code
-budget reservation, which arms it before its `HandoffAttemptBudget` row lock.
-Pinned by `handoff.test.ts`'s "a claim held past the lock timeout fails as a
-transient 503" test, which holds the row past the bound and expects `55P03`
-inside the hold. Every other line sits in one of the files listed above.
-
-Re-run for issue 811 on 2026-10-10 it returns 24 = the 23 above + 1:
-`lockAccountForSignOut` (`db-locks.ts`), the `Account` row every
-multi-session sign-out writer takes — "The `Account` row orders multi-session
-sign-out writes" below. Pinned by `account-sign-out-lock-order.test.ts`'s
-"signOutEverywhere held past lock_timeout fails with a lock timeout and
-deletes nothing". Every other line sits in one of the files listed above.
+Three of the bounds are pinned by a test that holds the row past the bound and
+expects `55P03` inside the hold: `src/services/student-archive-lock-order.test.ts`'s
+"archiving and reopening bound their wait on the link row" describe (the
+`TeacherStudent` link row), `handoff.test.ts`'s "a claim held past the lock
+timeout fails as a transient 503" (the `HandoffAttemptBudget` row), and
+`account-sign-out-lock-order.test.ts`'s "signOutEverywhere held past
+lock_timeout fails with a lock timeout and deletes nothing" (the `Account` row).
 
 ### Template creation's transaction budget (#758)
 
@@ -1158,8 +1056,7 @@ locks are in the sum. On 2026-10-06 each transaction had five:
 `lockTeacherForShare`, the `ScheduleRule` insert, the template insert, and
 generation's two writes (`generateEntriesForRule`'s
 `calendarEntry.createManyAndReturn` and the family's `createChildren`, a
-`class.createMany` or `studioClass.createMany`). 5 × 2s + 2s = 12s. Before
-#758 the `Teacher` lock was absent and the budget 10s.
+`class.createMany` or `studioClass.createMany`). 5 × 2s + 2s = 12s.
 
 Re-derive by reading each create's transaction and `generateEntriesForRule`
 (`entry-generation.ts`) for statements that write or lock; a grep cannot tell
@@ -1204,19 +1101,18 @@ says as much about `TeacherStudent`'s roster-link write. It has two
 consequences a site enumeration over `FOR UPDATE`/`UPDATE`/`DELETE` is shaped
 to miss.
 
-**The key moved twice, and the mechanism did not.** Everything measured in this
-section was measured against `Class_teacher_slot_unique`, `(teacherId, date,
-startTime) WHERE status <> 'cancelled'`, which #327 dropped along with the three
-columns it keyed on. The slot now lives on `CalendarEntry_teacher_slot_excl`, an
+**The slot lives on `CalendarEntry_teacher_slot_excl` (#327)**, an
 `EXCLUDE USING gist` over the generated `span`, partial on `cancelledAt IS
-NULL`. Read the transcripts below as evidence about a mechanism this database
-still has, on a different object, and read every `Class` statement in them as
-the `CalendarEntry` statement that carries the columns now.
+NULL`. The `updateClass` measurements below name `Class_teacher_slot_unique`,
+`(teacherId, date, startTime) WHERE status <> 'cancelled'`, the b-tree unique
+index they were taken against; read them as evidence about a mechanism this
+database still has, on a different object, and read every `Class` statement in
+them as the `CalendarEntry` statement that carries those columns.
 
-**But an exclusion constraint does NOT wait the way a unique index does, and
-this paragraph said it did.** Both make the second writer block on the first's
-uncommitted entry. What differs is *when the waiter inserts its own entry*, and
-that difference decides whether the wait can be symmetric:
+**But an exclusion constraint does NOT wait the way a unique index does.** Both
+make the second writer block on the first's uncommitted entry. What differs is
+*when the waiter inserts its own entry*, and that difference decides whether
+the wait can be symmetric:
 
 - A **b-tree unique** check runs BEFORE the waiter's entry exists. The waiter
   holds nothing the first transaction could block on, so the wait is
@@ -1242,24 +1138,17 @@ Measured deterministically, three statements, on a throwaway database with
 The equality case cannot even be made symmetric: equality is transitive, so two
 distinct keys cannot each conflict with the other. Overlap is not transitive,
 which is what gives the exclusion constraint a cycle to have. This is why a
-`40P01` on a plain concurrent create is new since #298/#327 rather than
-inherited, and why issue 331 was first read as flake — this paragraph said the
-mechanism was unchanged.
+plain concurrent create can deadlock on the exclusion constraints
+(#298/#327, issue 331) where it could not on a unique index.
 
-**It falsifies a stated premise of "How that enumeration was derived".** Check 1
-excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted row's
-lock conflicts with nothing, so it carries no ordering obligation". True of the
-row, false of its index entries since #196: `updateClass`'s single-row
-`UPDATE` was measured as one half of a reproduced `40P01` (see "The slot key
-is a wait edge" below — `updateClass` vs `updateClass`, 32 of 100 runs, and
-the template sync vs `updateClass`, 1 of 120, the second of which measured a
-function #194 has since deleted). The generator's own `createManyAndReturn` is
-not what was reproduced here: measured against that same sync it came back
-clean, 6 of 6, in the shipped configuration (see "The pairing that looks worst
-is unreachable" below), and only deadlocked — 3 of 3 — once
-`ClassTemplate_teacher_slot_unique` was dropped. The candidate set is no longer
+**It qualifies a stated premise of "How that enumeration was derived".** Check
+1 excuses `create`/`createMany`/`createManyAndReturn` — "a freshly inserted
+row's lock conflicts with nothing, so it carries no ordering obligation". True
+of the row, false of its index entries (#196): `updateClass`'s single-row
+`UPDATE` was measured as one half of a reproduced `40P01` (below —
+`updateClass` vs `updateClass`, 32 of 100 runs). The candidate set is not
 "statements that can lock an existing row" but **"statements that write the
-slot"** — since #327 every `CalendarEntry` insert, and every update of `date`,
+slot"** — every `CalendarEntry` insert, and every update of `date`,
 `startTime` or `durationMinutes`, or of `cancelledAt` across the null boundary.
 `updateClass` (`class-lifecycle.ts`) joins on that basis: it accepts `date`,
 `startTime` and `durationMinutes` from `updateClassSchema` and writes them to
@@ -1274,128 +1163,63 @@ There is no pre-lock that fixes it either: the resource is a key that does not
 exist yet.
 
 Reproduced against the real functions, on a throwaway database with the full
-migration history, **with no handshake at all** — these were the statements
-production issued, raced as-is.
+migration history, **with no handshake at all** — the statements production
+issues, raced as-is:
 
-**#194 deleted one of the two participants**, and the results are kept rather
-than trimmed: they are evidence about a state this database really was in, and
-the mechanism they demonstrate — a slot key is a wait edge, and a
-vacate-and-claim has no order to take — is unchanged. Read the first bullet as
-history and the second as live. Nothing in `src/` calls `syncTemplateInstances`
-now; nothing can, it does not exist.
-
-- **`syncTemplateInstances` vs `updateClass`** — *the sync side no longer
-  exists (#194); recorded as measured.* Crossing on one date (the sync
-  moves the template's instance 09:00 → 10:00 while the teacher moves a
-  one-off class on that date 10:00 → 09:00): `40P01` in **1 of 120** runs,
-  raised on the `updateClass` side. The other 119 ended with both sides taking
-  an ordinary `23505` — the window is one row's heap-update-to-index-insert
-  gap, so it is narrow, not absent. Postgres names the resource itself:
-  `CONTEXT: while inserting index tuple (1,31) in relation
-  "Class_teacher_slot_unique"`.
 - **`updateClass` vs `updateClass`**, two classes on one date swapping their
   start times: `40P01` in **32 of 100** runs, either side the victim. Two
   single-statement autocommit `UPDATE`s, no transaction on either side.
 
-Both were new to #196, proven by mutation rather than argued: with
-`Class_teacher_slot_unique` dropped and nothing else changed, the same races
-ran clean — 120 of 120 for the sync vs `updateClass` (the pairing #194 has
-since removed a side of), 60 of 60 for `updateClass` vs `updateClass`, which
-is still live. The second figure is a smaller sample than
-the 100-run original measurement above; the point of this mutation check is
-the pattern disappearing entirely once the index is gone, not reproducing the
-original run count, and 60/60 clean already establishes that as firmly as
-100/100 would — and leaves behind exactly the duplicate slots #196 exists to
-prevent. The trade was taken knowingly in that direction; it is
-recorded here, not fixed. The cheap fix (retry on `40P01`) is a decision about
-`withErrorHandler`, not about lock order, and a deferrable unique index would
-give up the immediate `409` the create routes answer with.
+Proven by mutation rather than argued: with `Class_teacher_slot_unique`
+dropped and nothing else changed, the same race ran clean, 60 of 60 — the
+pattern disappears entirely once the index is gone, and leaves behind exactly
+the duplicate slots #196 exists to prevent. The trade was taken knowingly in
+that direction; it is recorded here, not fixed. The cheap fix (retry on
+`40P01`) is a decision about `withErrorHandler`, not about lock order, and a
+deferrable unique index would give up the immediate `409` the create routes
+answer with.
 
-**The pairing that looks worst is unreachable, and only because a
-SECOND new index blocks it.** A `POST /api/class-templates` transaction
-(`classTemplate.create`, then a four-week `createManyAndReturn`) against a
-`syncTemplateInstances` transaction was the case where both sides hold several
-`Class` slot keys across statements — the generator inserting in date order,
-the sync updating in heap order, an inversion of exactly the kind this section
-is about. **#194 deleted the sync side**, so the measurement below is history;
-what it establishes is not. Every template-driven writer left is an INSERT in
-date order (`generateClassInstances`, `POST /api/class-templates`,
-`pauseOrResumeTemplate`'s resume), so the remaining pairings have neither an
-inversion nor a second participant that rewrites an existing key — and the
-structural argument two paragraphs down, which is what actually blocks them,
-never mentioned the sync. Measured both orderings, three runs each, widened with a third
-connection holding one `Class` row so the sync sat parked mid-`updateMany`
-(confirmed by `FOR UPDATE NOWAIT` from a fourth connection answering `55P03`
-for a row it had already taken): **no `40P01`, 6 of 6**. Every run died earlier
-and elsewhere — `P2002` on `ClassTemplate_teacher_slot_unique`, at
-`classTemplate.create` or at the PUT's `classTemplate.update`.
+**Template-driven writers cannot deadlock each other on the slot, because a
+rule-level constraint keeps them apart.** Every template-driven writer of
+entries is an INSERT in date order — generation, whether from the sweep, a
+template create or a resume — so no pairing has an inversion or a participant
+that rewrites an existing key; a template edit writes no entry or `Class` row
+at all (#194). And two template-driven writers can only collide on a dated
+slot, an overlapping `(teacherId, span)`, if their rules agree on teacher,
+weekday and an overlapping time window, because a rule generates on one
+weekday at one time. That is the key `ScheduleRule_teacher_slot_excl` forbids
+(#298), RANGE-based rather than exact-start. The archived-rule hole in that
+constraint does not open it: archiving deletes every future `draft`/`open`
+instance (`scheduledWhere`, `gt: today`), and an archived rule writes no
+`Class` row afterwards by any route — generation skips it, and an edit writes
+none for any template.
 
-That is not the probe failing to bite. Drop `ClassTemplate_teacher_slot_unique`
-alone, leave everything else as it is, and the identical race deadlocks **3 of
-3**, on the generator's insert:
+The rule-level constraint is load-bearing, not incidental. Measured against
+the b-tree index that held this role before it (`ClassTemplate_teacher_slot_unique`),
+with a writer of existing slots that #194 has since deleted on the other side:
+with the index in place the race came back clean, 6 of 6, every run dying
+earlier on that index's `P2002`; with it dropped and nothing else changed, the
+generator's insert deadlocked **3 of 3**. **Nothing in the code says so, and
+nothing enforces it** — which is the same condition as the rest of this
+document: if `ScheduleRule_teacher_slot_excl` is ever dropped, narrowed, or
+given a predicate that lets two live rules share an overlapping window, this
+exposure reopens for whichever pairing of template-driven writers is live.
 
-```
-A (POST /api/class-templates): REJECTED 40P01 deadlock detected
-    at class-generator.ts:177  db.class.createManyAndReturn()
-B (syncTemplateInstances)    : ok {"synced":4,"regenerated":0,"kept":0}
-```
-
-*(Transcript kept verbatim. Side B is `syncTemplateInstances`, deleted by #194
-— the counts it returned describe a report shape that no longer exists either.
-It is retained as the measurement that proved `ClassTemplate_teacher_slot_unique`
-is load-bearing, which is a property of the index, not of the sync.)*
-
-The reason is structural, not luck. Two template-driven writers can only
-collide on a dated slot — `(teacherId, date, startTime)` when this was
-measured, an overlapping `(teacherId, span)` since #327 — if their templates
-agree on `(teacherId, dayOfWeek, startTime)`, because a template generates on
-one weekday at one time, so same slot means same weekday and same time. That
-is the key `ScheduleRule_teacher_slot_excl` forbids now, where
-`ClassTemplate_teacher_slot_unique` forbade it when this was measured: #298 replaced one with the other, and the
-argument did not change, only which object carries it. The archived-rule hole
-in that constraint does not open it: archiving deletes every future
-`draft`/`open` instance (`scheduledWhere`, `gt: today`), and an archived rule
-writes no `Class` row afterwards by any route — generation skips it, and
-since #194 an edit writes no `Class` row for any template at all. (This
-sentence used to reach the same conclusion through the sync's own `mutable`
-filter dropping what the delete spared; the mechanism went, the conclusion
-got shorter.)
-
-So one of the six new indexes was what kept another of the six from being a
-live deadlock — **and that sentence has since been tested, not just left
-standing.** `ClassTemplate_teacher_slot_unique` WAS dropped, by #298, exactly
-the antecedent an earlier version of this paragraph warned about. The
-consequence it predicted did not follow: `ScheduleRule_teacher_slot_excl`
-inherited the same forbidding role — a stronger one, in fact, RANGE rather
-than exact-start — so no two live rules of either kind can share an
-overlapping weekday-and-time window for one teacher today either. **Nothing
-in the code says so, and nothing enforces it** — which is the same condition
-as the rest of this document, now applying to the new object: if
-`ScheduleRule_teacher_slot_excl` is ever dropped, narrowed, or given a
-predicate that lets two live rules share an overlapping window, the exposure
-this section describes reopens — for whichever pairing of template-driven
-writers is still live at that point, not necessarily the sync-vs-generator
-one below, which stays dead on its own terms regardless (#194 deleted the
-sync side).
-
-**#196 (PR #208) made this legible, not impossible.** The premise it started
-from — that `classifyApiError` had no branch for `40P01` and let this reach
-a teacher as a bare 500 — did not hold: an unrelated, already-merged PR
-(#174) had already given `40P01` a branch, grouped with `55P03`/`40001`/the
-matching Prisma codes under "lost a contention race, not a bad request"
-(`isTransientDbError`, checked after `isTerminalStatusViolation`'s `23514` but
-before `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
-trusted: two real `updateClass` writes racing over
+**A slot-key deadlock reaches the client as a 503, not a 500.**
+`classifyApiError` groups `40P01` with `55P03`/`40001`/the matching Prisma
+codes under "lost a contention race, not a bad request" (`isTransientDbError`,
+#174, checked after `isTerminalStatusViolation`'s `23514` but before
+`P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
+trusted (#196): two real `updateClass` writes racing over
 `Class_teacher_slot_unique` with no synchronisation, throwaway database, hit
-on attempt 5 of a 150-attempt budget.
-The error was a `PrismaClientUnknownRequestError` with no `.code` property and
-`code: "40P01"` embedded in its message — already the exact shape
-`isTransientDbError` matches — and `classifyApiError` already answered 503,
-"The system was busy … Please try again", at `warn`. Pinned at
-`src/lib/api-errors.test.ts` ("maps the real Class_teacher_slot_unique
-deadlock … to a 503, not a 500"), mutation-proven against the pre-existing
-branch (commented out: that test and 6 others in the file flip to 500;
-restored: 19/19 green).
+on attempt 5 of a 150-attempt budget. The error was a
+`PrismaClientUnknownRequestError` with no `.code` property and
+`code: "40P01"` embedded in its message — the exact shape
+`isTransientDbError` matches — and `classifyApiError` answered 503, "The
+system was busy … Please try again". Pinned at `src/lib/api-errors.test.ts`
+("maps the real Class_teacher_slot_unique deadlock … to a 503, not a 500"),
+mutation-proven against the branch (commented out: that test and 6 others in
+the file flip to 500).
 
 What stays true regardless of which status code answers it: the cycle itself
 is not fixable by reordering, only classifiable once it happens. A transaction
@@ -1405,24 +1229,24 @@ has no resource to sort, because the resource being contested does not exist
 until the statement that claims it runs. Two of these crossing will deadlock
 under any ordering discipline this document could add. The branch above
 answers "what does the client see", not "does this still happen" — it still
-does, at the rates measured above (32/100, 1/120).
+does, at the rate measured above (32/100).
 
-**Since #232, every `deadlock` kind logs at `error`** — `TRANSIENT_KIND_LEVEL`
+**Every `deadlock` kind logs at `error` (#232)** — `TRANSIENT_KIND_LEVEL`
 (`src/lib/api-errors.ts`) is the authority, and the reason is general to the
 kind, not specific to this cycle. What follows from that here: the
-`updateClass` × `updateClass` slot-key trade this section keeps recording
-rather than fixing will log at `error` every time it fires. Which other
-slot-key cycles are still live is argued where each is recorded in this
-section, not restated here.
+`updateClass` × `updateClass` slot-key trade this section records rather than
+fixing will log at `error` every time it fires. Which other slot-key cycles
+are live is argued where each is recorded in this section, not restated here.
 
 ## The `Student` row is the erasure's gate (#183)
 
 `deleteStudentAccount` (`src/services/gdpr.ts`) chooses its `Class` lock set
 with one statement and deletes its subject's `WaitlistEntry` rows with a later
-one, and under READ COMMITTED each statement reads its own snapshot. Before
-this gate, an entry a waitlist join committed between the two was deleted
+one, and under READ COMMITTED each statement reads its own snapshot. Without
+this gate, an entry a waitlist join commits between the two would be deleted
 outside the lock set (its class renumbered unlocked too), and one still
-uncommitted when the delete ran survived the erasure, roster link included.
+uncommitted when the delete runs would survive the erasure, roster link
+included.
 
 Two halves, both in `src/lib/db-locks.ts`, each arming the shared 2s bound
 itself:
@@ -1564,17 +1388,8 @@ rows (`gdpr.ts`) and a gated writer's `resolveInvitationOnLink` updates them
 (`link-consent.ts`), both while holding their half of the gate.
 
 `POST /api/registrations` writes `Student.tierSelectedAt` after its transaction
-commits because of this rule — the case that surfaced it. It used to write it
-inside, after inserting the `Registration`, and that closed two cycles with the
-erasure: on any class,
-the booking held `FOR KEY SHARE` and waited for `FOR NO KEY UPDATE` while the
-erasure's closing `UPDATE` waited on that `FOR KEY SHARE`; on a class in the
-erasure's lock set, the booking held the `Class` row and waited on `Student`
-while the erasure held `Student` and waited on the `Class` row
-(`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`, §1,
-*Correction*), while the booking was ungated. Since #625 the booking is gated,
-so what keeps the write outside is the upgrade described above: an update
-inside the transaction would upgrade the gate's `FOR SHARE`. Pinned over HTTP by
+commits because of this rule: the booking is gated (#625), and an update inside
+the transaction would upgrade the gate's `FOR SHARE`. Pinned over HTTP by
 `tests/integration/registrations-api.test.ts` ("a first self-booking does not
 wait on a share lock held on its student's row"): the pinning test's holder takes
 `FOR SHARE`, the gate's own mode. The booking's gate shares it, and only an
@@ -1635,23 +1450,21 @@ transaction to end, so the read after it sees the entry. Pinned by
 `src/services/gdpr-lock-order.test.ts` ("refuses to commit when an entry for
 the student was still being written outside its lock set").
 
-An ungated writer can. Any ungated writer that inserts a `Student` child row,
+An ungated writer would. Any ungated writer that inserts a `Student` child row,
 taking `FOR KEY SHARE`, and then waits on a row the erasure has already
-written closes a cycle with that closing `UPDATE` — three writers were
-reasoned into this shape and all three are now gated, one reproduced before
-its gate landed and two not:
+written closes a cycle with that closing `UPDATE`. Three writers have that
+shape, and all three are gated:
 
-- The booking route (`POST /api/registrations`), closed by #625. Its cycle
-  WAS reproduced against the ungated route on 2026-09-16, by the test
+- The booking route (`POST /api/registrations`, #625). Its cycle was
+  reproduced against the ungated route on 2026-09-16 by
   `src/app/api/registrations/route-lock-order.test.ts` ("refuses a booking
   whose roster link the erasure has already deleted"): the booking's
   roster-link insert failed with `40P01`, and the route answered 503.
-- `acceptInvitation` (`src/services/invitations.ts`), which inserts the
+- `acceptInvitation` (`src/services/invitations.ts`, #626), which inserts the
   roster link and then updates an `Invitation` row the erasure anonymises.
-  Closed by #626, unreproduced.
-- `unlinkTeacher` (same file), whose `StudentPrivacy` upsert inserts, then
-  deletes a `TeacherStudent` row the erasure has deleted. Closed by #626,
-  unreproduced.
+  Not reproduced.
+- `unlinkTeacher` (same file, #626), whose `StudentPrivacy` upsert inserts,
+  then deletes a `TeacherStudent` row the erasure has deleted. Not reproduced.
 
 ### Who is not gated yet
 
@@ -2132,8 +1945,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   `src/services/teacher-profile.ts`) without a `currency` takes no explicit
   lock, but its `teacher.updateMany` waits on an erasure's hold and, scoped to
   `deletedAt: null`, writes nothing once the erasure commits. The PUT answers
-  404. Without that scope it re-matched the anonymised row by `id` and wrote
-  the PUT's profile fields back onto it.
+  404. Without that scope it would re-match the anonymised row by `id` and
+  write the PUT's profile fields back onto it.
 - The payment-link save and removal (`savePaymentLink` and
   `removePaymentLink`, `src/services/payment-link.ts`, behind
   `PUT`/`DELETE /api/teachers/[id]/payment-link`): `lockTeacherForNoKeyUpdate`
@@ -2324,8 +2137,8 @@ Re-derive the call sites with:
     grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher|lockForPasskeyRemoval)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -v "export async function" | grep -vE ":[0-9]+: *(\*|//)"
 
 It prints call lines only: an import has no `(` after the name, and the last
-three filters drop the definitions and comment lines. Run on 2026-10-10 after
-the passkey-added link joined them, it printed `classes/route.ts`,
+three filters drop the definitions and comment lines. Run on 2026-10-10, it
+printed `classes/route.ts`,
 `studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
 `teacher-photo.ts`, `bank-accounts.ts` (its save and its removal),
@@ -2373,19 +2186,18 @@ serialisations this node exists for. `src/lib/db-locks.test.ts`, "the Teacher
 first lock (#758)", probes each mode with `NOWAIT`.
 
 The closing `UPDATE`'s raise to `FOR UPDATE` is an acquisition this
-transaction has always made at that point. Before #758 it was made from
-nothing, so moving a weaker lock to the top adds no wait edge at the end.
+transaction would make at that point with or without the first lock, so
+taking a weaker lock at the top adds no wait edge at the end.
 
 ### What else takes `Teacher` inside a transaction
 
 `grep -rn -e 'tx\.teacher\.\(update\|upsert\|delete\)' -e 'FROM "Teacher"' -e 'lockLiveTeacher(' src | grep -v '\.test\.'`
 on 2026-10-06 found the two lock helpers' callers above, a lock-free
-`COUNT(*)` in `db-provision.ts`, and the erasure's own `teacher.updateMany`.
-Re-run after the currency switch landed the same day, it also finds the
+`COUNT(*)` in `db-provision.ts`, the erasure's own `teacher.updateMany`, the
 switch's closing `teacher.update` (`currency-switch.ts`) and the currency
-save's `teacher.updateMany` of the other fields (`teacher-profile.ts`),
-both writing a row their transaction took `FOR NO KEY UPDATE` as its first
-lock. No site holds a template or `Class` row and then explicitly locks or
+save's `teacher.updateMany` of the other fields (`teacher-profile.ts`) — the
+last two both writing a row their transaction took `FOR NO KEY UPDATE` as its
+first lock. No site holds a template or `Class` row and then explicitly locks or
 writes a `Teacher` row it does not already hold. The foreign-key `KEY SHARE` above is the only implicit edge, and
 `FOR NO KEY UPDATE` is chosen so that it does not conflict.
 
@@ -2544,14 +2356,11 @@ class-scoped and an all-students or custom send of one text contend for the same
 It is not a row of any table, so nothing about the canonical line applies to it
 directly. What does apply:
 
-**It is ordered ABOVE `Class`, and the plan that introduced it predicted it
-would be ordered against nothing.** That prediction was wrong, and the reason is
-already in this document: the transaction holding this lock goes on to insert
+**It is ordered ABOVE `Class`.** The reason is already in this document: the
+transaction holding this lock goes on to insert
 `Notification` rows carrying `relatedClassId` and an `Announcement` carrying
 `classId`, and each of those takes `FOR KEY SHARE` on the parent `Class` row —
-"the fourth path" above. So the real sequence is `advisory → Class`, and the
-`createBulkNotifications` table above had to change its `POST /api/announcements`
-row from "outside any transaction" to inside one for the same reason.
+"the fourth path" above. So the real sequence is `advisory → Class`.
 
 **It cannot be half of a cycle today, and the reason is structural at the service boundary (#215).**
 A cycle needs some other transaction to hold a `Class` row lock and then wait on this advisory lock.
@@ -2562,49 +2371,35 @@ cannot invoke `lockAnnouncementSlot` and create an inversion without explicitly 
 boundary. Two announcement sends racing each other take the two locks in the same order (`advisory → Class`),
 which is not a cycle either.
 
-**The single-call-site invariant is now enforced by the module boundary, not a comment.**
-Originally (#196), `lockAnnouncementSlot` lived in `src/lib/db-locks.ts` as an exported helper,
-relying on a warning in this document asking contributors to check for a second call site before
-calling it. Issue #215 resolved this by encapsulating the advisory lock inside `sendAnnouncement`
-in `src/services/announcements.ts`. "First statement in transaction" and "exactly one call site"
-are now facts about the service boundary rather than conventions a reader has to remember.
+**The single-call-site invariant is enforced by the module boundary, not a
+comment.** "First statement in transaction" and "exactly one call site" are
+facts about the service boundary rather than conventions a reader has to
+remember.
 
 **Not bounded by `LOCK_TIMEOUT_SQL`, and the wait really is unbounded in wall
-clock. This paragraph has now been wrong twice, in opposite directions, and the
-second time is the instructive one.**
+clock.**
 
 The transaction issues no `SET LOCAL lock_timeout`, so nothing bounds its
 `FOR KEY SHARE` wait on `Class` — and it waits while holding the advisory lock,
 queueing other identical sends of the same message behind it for the whole
 duration.
 
-The first version said that and concluded, without checking, that adding the
-bound "would convert a slow send into a failed one". The second version tried to
-correct it by claiming Prisma's 5000 ms interactive-transaction timeout already
-bounds the wait, and pasted this as evidence:
-
-```
-threw after 13516 ms -> P2028 … The timeout for this transaction was 5000 ms
-```
-
-**Read that again: the wait ran 13.5 seconds under a "5000 ms" timeout.** The
-evidence disproved the claim it was quoted to support. Re-measured
-independently — blocker holding a row 12 s, waiter taking the advisory lock and
-then blocking on it — the waiter returned after **12013 ms**, again with
-`P2028`.
-
-Prisma's transaction timeout does not cancel a statement already blocked inside
-Postgres; it only refuses to begin the *next* one once the blocked statement
-returns. **This project already had that written down** — `services/gdpr.ts`,
-where the erasure's own lock bound was added: *"That timeout cannot roll back a
-statement already blocked inside Postgres, only decline to begin another one."*
+Prisma's 5000 ms interactive-transaction timeout does not bound it either.
+Measured — blocker holding a row 12 s, waiter taking the advisory lock and
+then blocking on it — the waiter returned after **12013 ms**, with `P2028 …
+The timeout for this transaction was 5000 ms`; another run threw after
+13516 ms under the same "5000 ms" timeout. Prisma's transaction timeout does
+not cancel a statement already blocked inside Postgres; it only refuses to
+begin the *next* one once the blocked statement returns. `services/gdpr.ts`
+says the same where the erasure's own lock bound is set: *"That timeout cannot
+roll back a statement already blocked inside Postgres, only decline to begin
+another one."*
 
 So: the wait is unbounded, the advisory lock is held for all of it, and the
 `P2028` that eventually surfaces is a 503 via `TRANSIENT_PRISMA_CODE_KIND`
-(`src/lib/api-errors.ts`) rather than a bound. Still left unchanged — a bound
-here turns a slow send into a failed one, which is the original reasoning and
-survives — but the cost is now stated honestly instead of being talked down to
-"three seconds and an error string".
+(`src/lib/api-errors.ts`) rather than a bound. It is left unbounded
+deliberately — a bound here turns a slow send into a failed one — at that
+cost.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
@@ -2639,27 +2434,19 @@ opposite order (see "Known safe by accident" below), and the reason racing
 them doesn't currently deadlock is those upserts taking no row lock whenever
 the block row already exists — **not** because either order is safe.
 
-Until #181 the same quirk also covered five `TeacherStudent` call sites, each
-upserting it with `update: {}` while racing a transaction that took the
-opposite order on purpose or by circumstance — `acceptInvitation`
-(`invitations.ts`); `addToWaitlist`, `promoteNext`, `claimSpot`
-(`waitlist.ts`); and `POST /api/registrations` (`route.ts`). #181 replaced all
-five with one shared writer, `linkTeacherStudent` (`services/roster-link.ts`)
-— `createMany` with `skipDuplicates`, which compiles to `INSERT ... ON
-CONFLICT DO NOTHING`, one statement with no separate `update` payload left for
-a future edit to widen. That retires the "one real column away from
-vanishing" risk this section used to warn about for `TeacherStudent`
-specifically.
+`TeacherStudent` is outside the quirk: every roster-link write goes through one
+shared writer, `linkTeacherStudent` (`services/roster-link.ts`, #181) —
+`createMany` with `skipDuplicates`, which compiles to `INSERT ... ON CONFLICT
+DO NOTHING`, one statement with no separate `update` payload for a future edit
+to widen.
 
-It does NOT retire the wait edge the old `TeacherStudent` upsert's `INSERT`
-path already had when the row did not exist yet. Measured directly (#181 task
-1): `ON CONFLICT DO NOTHING` still asks Postgres for the row lock against an
-uncommitted conflicting tuple, and that wait still participates in deadlock
-detection exactly like the old `INSERT` path's did. #179's `{Invitation,
-TeacherStudent}` reorder (see "Known conformance" below) is what closes that
-cycle, and it remains load-bearing after this statement change — the new
-statement does not close it by itself. What #181 removed was the `P2002` a
-losing caller used to get on that wait, not the wait itself.
+That statement still has a wait edge when the row does not exist yet.
+Measured directly (#181): `ON CONFLICT DO NOTHING` still asks Postgres for the
+row lock against an uncommitted conflicting tuple, and that wait participates
+in deadlock detection like any `INSERT`'s. #179's `{Invitation,
+TeacherStudent}` order (see "Known conformance" below) is what closes that
+cycle; the statement does not close it by itself. A losing caller waits rather
+than getting a `P2002`.
 
 **If you are the future reader who turns one of those `TeacherBlock`
 `update: {}` payloads into something with a real field in it** (an `updatedAt`
@@ -2668,7 +2455,7 @@ lock-taking path for that upsert, and if the write order at that call site
 doesn't already match this document, you have just reintroduced a live
 `40P01`. Check this file first.
 
-For `declineInvitation` that edit is no longer silent, and the executable form
+For `declineInvitation` that edit is not silent, and the executable form
 of this paragraph is worth more than the paragraph: the first test of the
 `Invitation and TeacherBlock take one lock order` describe in
 `src/services/invitations-lock-order.test.ts` races the real
@@ -2681,34 +2468,33 @@ second, that watches the production function.
 
 `unlinkTeacher`'s upsert has no equivalent pin: the #174 task 7 measurement
 below raced hand-shaped transactions, not that function, so an edit to its
-payload still fails first in production.
+payload would fail first in production.
 
 `StudentPrivacy`'s upsert (`unlinkTeacher`, `SILENCED_PRIVACY`) is never
-empty — six real boolean columns, every call — so it was never protected by
-this quirk. The `{StudentPrivacy, TeacherStudent}` inversion #174 task 7 fixed
-was a live, reproduced deadlock in real production code, not a theoretical one.
+empty — six real boolean columns, every call — so this quirk does not protect
+it. Its order against `TeacherStudent` is load-bearing: the inversion #174
+task 7 fixed was a live, reproduced deadlock in production code, not a
+theoretical one.
 
 ## The RESTRICT trigger is a wait edge, and a route guard is what closes it (#103)
 
 `ClassTemplate_teacherRoomId_roomArchived_fkey`
-(`20260827120000_template_room_archive_invariant/migration.sql`; formerly
-`ClassTemplate_teacherRoomId_fkey`) and `Class_teacherRoomId_roomArchived_fkey`
-(`20260905120000_class_room_archive_invariant/migration.sql`; formerly
-`Class_teacherRoomId_fkey`) are both
+(`20260827120000_template_room_archive_invariant/migration.sql`) and
+`Class_teacherRoomId_roomArchived_fkey`
+(`20260905120000_class_room_archive_invariant/migration.sql`) are both
 `ON DELETE RESTRICT`. A
 `DELETE FROM "TeacherRoom"` therefore locks the parent row and then runs the
 triggers' `SELECT 1 FROM "ClassTemplate" WHERE "teacherRoomId" = $1 AND
 "roomArchived" = $2 FOR KEY SHARE` — a lock nothing in this document's site
 enumeration can see, because no source line issues it. The second conjunct
-arrived with issue 272, which widened the key to carry the room mirror; it
-changes nothing about the lock, because the mirror guarantees every child row
-matches its parent's value, but the check Postgres runs is the two-column one
-and this section exists to state it exactly. Issue 339 widened the `Class`
-side's key the same way, so its own RESTRICT trigger runs the identical
-two-column check against `Class` — see "The class mirrors' foreign keys are
-wait edges (#339)" below for that edge; nothing in the argument here changes,
-because it was never about `Class`'s name, only about whether a second,
-independent cycle exists (next).
+is the room mirror (issue 272); it changes nothing about the lock, because the
+mirror guarantees every child row matches its parent's value, but the check
+Postgres runs is the two-column one and this section exists to state it
+exactly. The `Class` side's key carries the same mirror (issue 339), so its
+own RESTRICT trigger runs the identical two-column check against `Class` — see
+"The class mirrors' foreign keys are wait edges (#339)" below for that edge;
+nothing in the argument here changes, because it is not about `Class`'s name,
+only about whether a second, independent cycle exists (next).
 
 The cycle:
 
@@ -2717,8 +2503,8 @@ The cycle:
 | generator sweep | `ClassTemplate` `FOR UPDATE` (`claimTemplateForGeneration`) | `TeacherRoom` `FOR KEY SHARE`, from its `Class` insert's FK check |
 | room delete | `TeacherRoom`, exclusively | `ClassTemplate` `FOR KEY SHARE`, from the RESTRICT trigger |
 
-AB-BA, so `40P01`. It did not exist before #95, which is when the sweep first
-held a template lock across its inserts.
+AB-BA, so `40P01`. It exists because the sweep holds a template lock across
+its inserts (#95).
 
 **What closes it is a guard in each delete route, not a lock.** Both routes
 count `ClassTemplate` rows and refuse with 409 before issuing the `DELETE`
@@ -2731,19 +2517,15 @@ deadlocking case.
 **The `isRoomDeleteBlocked` catch beside each guard does NOT substitute for
 it.** The catch runs after the `DELETE` has taken its locks; it converts the
 outcome, it does not avoid the wait. Removing the pre-check as belt-and-braces
-reopens this edge, and until PR review it did so **with every test in the
-integration project green** — `if (false && ...)` in both routes left every one
-of them passing (434 at the time, 437 once this section's own cases landed;
-the whole suite is 1613), because the
-catch answers a byte-identical 409 and no status assertion can tell the two
-guards apart. Each integration suite now carries a case that can: it holds
+reopens this edge, and no status assertion can see it: the catch answers a
+byte-identical 409, so nothing that checks status can tell the two guards
+apart. Each integration suite carries a case that can: it holds
 `FOR UPDATE` on the template row the RESTRICT trigger needs `FOR KEY SHARE` on,
 and fails when the DELETE waits on it instead of refusing outright. That case
 is the only thing in the repo that observes this edge, so treat it as part of
 the guard rather than as coverage.
 
-**Why `Class_teacherRoomId_roomArchived_fkey` does NOT add a second unclosable cycle**, which
-an earlier version of this section wrongly claimed. For the sweep to be
+**Why `Class_teacherRoomId_roomArchived_fkey` does NOT add a second unclosable cycle.** For the sweep to be
 inserting a `Class` on `TeacherRoom` X it must be holding
 `claimTemplateForGeneration`'s `FOR UPDATE` on a `ClassTemplate` whose
 `teacherRoomId` IS X (the generator's `Class` insert copies `template.teacherRoomId`
@@ -2771,17 +2553,17 @@ template creation.
 ## One teacher, one slot: two exclusion constraints (#296, #298, #327)
 
 One teacher holds at most one live row per slot ACROSS the two families, at
-both layers. Since #327 both halves are the same KIND of mechanism, and neither
-is a trigger:
+both layers. Both halves are the same KIND of mechanism, and neither is a
+trigger:
 
-- **`CalendarEntry`, since #327.** `CalendarEntry_teacher_slot_excl`, one
+- **`CalendarEntry` (#327).** `CalendarEntry_teacher_slot_excl`, one
   `EXCLUDE USING gist` over `("teacherId" WITH =, span WITH &&)`, partial on
   `"cancelledAt" IS NULL`. `span` is a generated `tsrange` over
   `[date + startTime, date + startTime + durationMinutes)`, so it is RANGE, not
-  exact-start: two live entries of either kind whose windows overlap now
+  exact-start: two live entries of either kind whose windows overlap
   conflict even when their start times differ, and an entry running past
   midnight conflicts with one on the following date.
-- **`ScheduleRule`, since #298.** `ScheduleRule_teacher_slot_excl`, the same
+- **`ScheduleRule` (#298).** `ScheduleRule_teacher_slot_excl`, the same
   shape one layer up — `(teacherId, dayOfWeek, slot)`, partial on
   `isArchived = false`, RANGE rather than exact-start for the same reason.
 
@@ -2798,14 +2580,10 @@ SELECT conrelid::regclass AS "table", conname, pg_get_constraintdef(oid)
   FROM pg_constraint WHERE contype = 'x' ORDER BY 1;
 ```
 
-**`YG001` has no raiser left, and neither does its matcher any more.**
-Both halves of this invariant used to be trigger functions running a plain
-`SELECT … LIMIT 1` against the SIBLING table and raising the user-defined
-SQLSTATE `YG001`: one function per table, fired by an INSERT trigger and an
-UPDATE trigger each. #298 folded the template half into
-`ScheduleRule_teacher_slot_excl` and #327 the entry half into
-`CalendarEntry_teacher_slot_excl`, so what is left is a number rather than a
-roster — and it is a query, not a memory:
+**Nothing raises `YG001`, and nothing in `src/` matches it.** No function in
+the schema raises the user-defined SQLSTATE `YG001`: both halves of this
+invariant are the constraints above, not triggers reading the sibling table.
+It is a query, not a memory:
 
 ```sql
 SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -2813,33 +2591,28 @@ SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
 ```
 
 It returns **0** — measured against `ethical_yoga_test` on 2026-08-26. The
-earlier values are deliberately not written down here: nobody ran this query
-before those extractions, and a number nobody measured does not become true by
-being plausible. The two template `POST` routes' dead arms that called
-`isCrossFamilySlotConflict` are gone (issues 331/228), and with them the
-function's last two callers. `src/lib/cross-family-conflict.ts` and its test
-were deleted in the same round rather than kept at zero callers —
-`grep -rn 'isCrossFamilySlotConflict' src` now matches only comment prose in
-other files narrating what the deleted predicate used to do, no import or
-call site among them.
+template `POST` routes have no `YG001` arm, and `isCrossFamilySlotConflict`
+(`src/lib/cross-family-conflict.ts`) does not exist (issues 331/228):
+`grep -rn 'isCrossFamilySlotConflict' src` matches only comment prose, no
+import or call site.
 
 **The migration comments that this document owns.** Each entry below is prose
 about an APPLIED migration — immutable, comments included — that cannot live
 where it belongs: either it was written into the migration and is wrong or stale
 there, or it is what should have been written there and now never can be.
 
-The first was briefly added as a comment inside
-`20260821120000_cross_family_slot_guard/migration.sql`. A comment-only edit
-still changes the file's SHA-256, and `_prisma_migrations` stores that checksum
-— measured, `861bd46…` against `3867657…`. `prisma migrate status` compares
-NAMES and passes regardless, so nothing catches it until the next
-`prisma migrate dev` reports the migration as modified and demands a reset.
-Applied migrations are immutable including their comments; prose about a
-migration belongs in prose. What it said: the invariant spans two tables, so no
-unique index could express it, and a trigger was what was left. That premise is
-what #298 and #327 removed — a *generated range column* on a single shared
-table is an expression a unique-style constraint can carry, and the two
-extractions are what created the shared table to put it on.
+The first is about `20260821120000_cross_family_slot_guard/migration.sql`. A
+comment-only edit to it would change the file's SHA-256, and
+`_prisma_migrations` stores that checksum — measured, `861bd46…` against
+`3867657…`. `prisma migrate status` compares NAMES and passes regardless, so
+nothing catches it until the next `prisma migrate dev` reports the migration as
+modified and demands a reset. Applied migrations are immutable including their
+comments; prose about a migration belongs in prose. What belongs beside that
+one: the invariant spans two tables, so no unique index could express it, and a
+trigger was what was left. #298 and #327 removed that premise — a *generated
+range column* on a single shared table is an expression a unique-style
+constraint can carry, and the two extractions created the shared table to put
+it on.
 
 The second is `20260825065109_schedule_rule_backfill/migration.sql`, block 4,
 which drops the four TEMPLATE-half triggers —
@@ -2866,11 +2639,11 @@ WHERE d.refclassid = 'pg_class'::regclass AND d.refobjsubid > 0
   AND c.relname IN ('ClassTemplate','StudioClassTemplate');
 ```
 
-It returned 10 before #298 (the count the stranded comment records) and returns
-0 after — measured against both `ethical_yoga_test` and `ethical_yoga` on
-2026-08-25. A reader who finds the migration comment first should believe this
-paragraph, not that one: the triggers it counted dependencies for no longer
-exist, on either table.
+It returns 0 — measured against both `ethical_yoga_test` and `ethical_yoga`
+on 2026-08-25; the comment's 10 counts the triggers that migration drops. A
+reader who finds the migration comment first should believe this paragraph,
+not that one: the triggers it counted dependencies for do not exist, on either
+table.
 
 The third is `20260827120000_template_room_archive_invariant/migration.sql`,
 whose `REMEDIATION` block pauses every live `ClassTemplate` found on an
@@ -2978,8 +2751,8 @@ SELECT migration_name, finished_at FROM "_prisma_migrations"
  WHERE migration_name = '20260827120000_template_room_archive_invariant';
 ```
 
-**Since #463 a migration landing after `20260903195051_student_signup_purposes`
-must announce or explain a data change, for the two shapes the rule reads.**
+**A migration landing after `20260903195051_student_signup_purposes` must
+announce or explain a data change, for the two shapes the rule reads (#463).**
 `untracedDataChanges` (`tests/migration-sql.ts`, pinned by
 `src/lib/migration-remediation-trace.test.ts`) reports any migration sorting
 after that cutoff whose comment-stripped SQL contains `UPDATE "…"` or
@@ -2994,8 +2767,9 @@ rewrites every row.
 **The exemption is per FILE, not per statement**, which is the rule's other
 boundary. One real `RAISE NOTICE` anywhere in a migration exempts every data
 change in it, so a silent remediation added beside an announced one passes.
-That shape is precedented rather than hypothetical — the tree's one compliant
-example already carries more than one data change under a single notice:
+That shape is precedented rather than hypothetical —
+`20260905120000_class_room_archive_invariant` carries more than one data
+change under a single notice:
 
 ```sh
 perl -0777 -ne '
@@ -3015,7 +2789,7 @@ a command that did not would disagree with the rule in both directions. It is a
 close approximation and not the rule itself: it does not subtract
 `CREATE OR REPLACE FUNCTION` bodies, so a migration whose only notice sits in a
 trigger body would be exempted here and reported by
-`untracedDataChanges`. No migration in the tree has that shape today — the one
+`untracedDataChanges`. No migration in the tree has that shape today — every
 real notice sits in a `DO $$` block, which both read alike:
 
 ```sh
@@ -3038,29 +2812,28 @@ and it loses `20260825065109_schedule_rule_backfill`, exempted by a comment
 that merely names `RAISE NOTICE` while the migration raises none. Flip
 `!~ /\bRAISE\s+NOTICE\b/i` to `=~` on the stripped text and it lists the
 migrations that carry a data change AND announce it — a migration with a notice
-and no data change never reaches that test: one,
-`20260905120000_class_room_archive_invariant` (#339), which landed the day this
-entry was written and is the first this tree has ever had.
+and no data change never reaches that test: five on 2026-10-14, the earliest
+`20260905120000_class_room_archive_invariant` (#339).
 
-**The four SLOT partial unique indexes of `20260811202634` are all gone too.**
+**None of the four SLOT partial unique indexes of `20260811202634` survives.**
 That migration declared six; the other two are the `Room` identity pair.
 `ClassTemplate_teacher_slot_unique` and
-`StudioClassTemplate_teacher_slot_unique` folded into
-`ScheduleRule_teacher_slot_excl` at #298; `Class_teacher_slot_unique` and
-`StudioClass_teacher_slot_unique` folded into
-`CalendarEntry_teacher_slot_excl` at #327. Each layer's within-family and
-cross-family exclusivity is now ONE constraint rather than two mechanisms
-layered on each other, which is what removed the residual race this section
-used to price — an unlocked cross-table `SELECT` cannot see an uncommitted
-sibling insert, and there is no longer an unlocked cross-table `SELECT`.
-Two transactions writing opposite families at one slot were measured
-committing in **200 of 200** forced-overlap runs under the trigger design; the
-constraint that replaced it cannot produce that outcome at all, because the
-second writer waits on the first's index entry rather than reading past it.
+`StudioClassTemplate_teacher_slot_unique` are dropped in favour of
+`ScheduleRule_teacher_slot_excl` (#298); `Class_teacher_slot_unique` and
+`StudioClass_teacher_slot_unique` in favour of
+`CalendarEntry_teacher_slot_excl` (#327). Each layer's within-family and
+cross-family exclusivity is ONE constraint rather than two mechanisms layered
+on each other, so there is no unlocked cross-table `SELECT` — which cannot see
+an uncommitted sibling insert — for two writers to slip past. Under the
+cross-family trigger design that read the sibling that way, two transactions
+writing opposite families at one slot were measured committing in **200 of
+200** forced-overlap runs; the constraint cannot produce that outcome at all,
+because the second writer waits on the first's index entry rather than reading
+past it.
 
 ### What keeps the realistic path away from the constraint
 
-The generator pre-checks — one function for both families since #284
+The generator pre-checks — one function for both families (#284)
 (`generateEntriesForRule`, `services/entry-generation.ts`), and there is ONE
 entry table, so the pre-check reads it directly rather than reaching across to
 a sibling — and declines the date as `blocked_by_overlap` rather than letting
@@ -3077,15 +2850,10 @@ Four ENDPOINTS and six — the ten above, split by layer, and the third column i
 where they are named. The middle column counts call sites instead, which need
 not agree: the rule layer's edit and unarchive probes sit in `rule-lifecycle.ts`,
 generic over the child and so serving both template families from one line each.
-An earlier version of this paragraph said "all eight routes …
-five catch, three return", counting FILES on one side of the sentence and
-ENDPOINTS on the other, and so undercounted the reason-based side by the two
-`PATCH` unarchive arms. It closed by saying "named rather than counted", which
-is the right instinct and was defeated by naming an incomplete set — so the
-table above is the naming, and each row ships the grep that re-derives its call
-sites. Each row's ENDPOINTS are re-derivable too, on the line every endpoint in
-that row runs to build its 409 — the rule row's slot-taken lookup, the entry
-row's message call — so both third columns ship that command beside the names.
+Each row ships the grep that re-derives its call sites, and its ENDPOINTS are
+re-derivable too, on the line every endpoint in that row runs to build its 409
+— the rule row's slot-taken lookup, the entry row's message call — so both
+third columns ship that command beside the names.
 The entry row's is scoped to `src/app/api/`, where its endpoints live, because
 the same call appears in a test file as well.
 
@@ -3099,24 +2867,21 @@ so "you already have something at that time" would describe a clash the teacher
 cannot find. `src/lib/entry-conflict.ts` carries that argument; `heldBy` falls
 out of the same row as a projection.
 
-**The `CROSS_FAMILY_` grep no longer measures this.**
-`grep -rn "CROSS_FAMILY_" src/app/api/` returned 12 before #298, 11 after, and
-returns **6** now (re-measured 2026-08-26, excluding tests): four in the
-template routes' `SLOT_TAKEN` maps, and two in the dead `YG001` arms the
-section above describes. The entry layer dropped out of it entirely — with both
-families in one table, a refusal there is `DUPLICATE_CLASS_SLOT` or
-`DUPLICATE_STUDIO_SLOT` named for the ASKING surface, and the family of the
-holder rides in the message rather than in the code.
+**The `CROSS_FAMILY_` grep does not measure this.**
+`grep -rn "CROSS_FAMILY_" src/app/api/` returns **4** (2026-10-14, excluding
+tests), all in the template routes' `SLOT_TAKEN` maps. The entry layer is absent
+from it — with both families in one table, a refusal there is
+`DUPLICATE_CLASS_SLOT` or `DUPLICATE_STUDIO_SLOT` named for the ASKING surface,
+and the family of the holder rides in the message rather than in the code.
 
 That is the same division of labour `countRoomDeleteBlockers` has with the
 RESTRICT trigger one section up: the constraint is the backstop, the pre-check
 is what means it almost never fires.
 
-### How the pre-check must be tested, and the mutation that lied
+### How the pre-check must be tested
 
-Removing the pre-check no longer makes the batch insert fail at all, and that
-is a change worth stating plainly: since #327 the entry insert is
-`createManyAndReturn` with `skipDuplicates: true` — a bare
+Removing the pre-check does not make the batch insert fail: the entry insert
+is `createManyAndReturn` with `skipDuplicates: true` (#327) — a bare
 `ON CONFLICT DO NOTHING`, no conflict target, which covers an exclusion
 constraint as well as a unique key. A date the pre-check would have declined is
 simply not returned, so it falls into the `'raced'` arm instead of
@@ -3124,48 +2889,30 @@ simply not returned, so it falls into the `'raced'` arm instead of
 as a throw and not as `created` moving, and the suite asserts the reason for
 exactly that purpose.
 
-**That is not what this section said first, twice over, and both ways of being
-wrong are worth keeping.**
-
-The first was #296's own: it shipped a `catch` around `createManyAndReturn`
-that retried per date, and the mutation was recorded as *masked* — the trigger
-fires, the fallback retries, the date is reclassified `'raced'`,
-`result.created` does not move. Every word of that was observed, in the **unit
-tests**, which call both generators with a bare `PrismaClient`, where each
-statement is its own transaction and a retry after an abort is perfectly legal.
-Every PRODUCTION caller passes a transaction client (both sweeps, both POST
-routes, both pause/resume services), Prisma takes no savepoint per statement,
-so `RAISE EXCEPTION` left the transaction aborted and the first retried
-`create` returned `25P02` — costing the whole window, and turning a wordable
-409 into a 500. The fallback was deleted in review.
-
-The second was this document's, and it survived the trigger it described: a
-paragraph here said the mutation makes the generator THROW, which was true
-while a `RAISE EXCEPTION` aborted the statement and stopped being true when
-`ON CONFLICT DO NOTHING` replaced it. (An earlier draft before that said
-"`created` drops to 0 **and** the generator throws"; those were mutually
-exclusive, and only the second happened.)
-
-The lesson generalises past both: **a mutation is only evidence about the
-configuration it ran in.** The guard reported honestly; the harness asked it
-the wrong question, because the test client and the production client differ in
-exactly the property under test. `generation-transaction.test.ts` now drives
+**A mutation is only evidence about the configuration it ran in.** The unit
+tests call both generators with a bare `PrismaClient`, where each statement is
+its own transaction and a retry after an abort is perfectly legal. Every
+PRODUCTION caller passes a transaction client (both sweeps, both POST routes,
+both pause/resume services), and Prisma takes no savepoint per statement, so a
+statement that raises leaves the transaction aborted and a retried statement
+returns `25P02` — costing the whole window, and turning a wordable 409 into a
+500 (#296). A per-date retry fallback therefore looks right in the unit tests
+and is wrong in production: the test client and the production client differ
+in exactly the property under test. `generation-transaction.test.ts` drives
 both generators through a real `$transaction` for that reason.
 
 ## The child row is the lock node for the template families (#315)
 
-Issue 298 moved the calendar identity both template families share —
-`isActive`, `isArchived`, `archivedAt`, `withdrawnCount`, `classType`,
-`dayOfWeek`, `startTime`, `durationMinutes` — off `ClassTemplate` and
-`StudioClassTemplate` onto a new shared `ScheduleRule` row. That split a lock:
-`claimTemplateForGeneration`'s `FOR UPDATE` (`class-generator.ts`) used to do
-three jobs on ONE row — serialise against `archiveOrUnarchiveTemplate`'s CAS,
-block a concurrent `Class` insert (its FK check takes `FOR KEY SHARE` on the
-template row, #164), and hold the economics authoritative for generation
-(#102) — and after the split the first of those needed the rule while the
-other two still needed the child. Postgres row locks are per-table, so a
-lock taken on only one of the two no longer serialises against a writer that
-takes it on only the other.
+The calendar identity both template families share — `isActive`,
+`isArchived`, `archivedAt`, `withdrawnCount`, `classType`, `dayOfWeek`,
+`startTime`, `durationMinutes` — lives on a shared `ScheduleRule` row (issue
+298), not on `ClassTemplate` or `StudioClassTemplate`. The template lock has
+three jobs — serialise against `archiveOrUnarchiveTemplate`'s CAS, block a
+concurrent `Class` insert (its FK check takes `FOR KEY SHARE` on the template
+row, #164), and hold the economics authoritative for generation (#102) — and
+the first of those concerns the rule while the other two need the child.
+Postgres row locks are per-table, so a lock taken on only one of the two does
+not serialise against a writer that takes it on only the other.
 
 **The decision, taken with the maintainer: the child stays the only lock
 node.** Every writer of a rule's lifecycle or calendar columns takes the
@@ -3192,9 +2939,7 @@ census can read, and `c` is `Class`'s — see "Ordering BETWEEN `Class` and its
 
 **Rejected: lock both rows.** That would add `ScheduleRule` as a second node
 to an ordering this document has twice declined to extend for lesser reasons,
-with a named AB-BA against `updateClassTemplate`, in a codebase that previously
-carried a `ClassTemplate`-vs-`Class` ordering violation (since resolved
-in #229). **Rejected: narrowing the
+with a named AB-BA against `updateClassTemplate`. **Rejected: narrowing the
 extraction.** The cross-family slot constraint's `WHERE isArchived = false`
 needs that column on the rule, so keeping a copy of the lifecycle flags on the
 child would restore the two-sources-of-truth drift this extraction exists to
@@ -3260,35 +3005,27 @@ waited on — so eligibility is re-checked against THAT read, not trusted from
 the raw statement's `WHERE`. See `claimRuleForGeneration`'s own docblock
 (`entry-generation.ts`) for the same argument at the call site.
 
-**`deleteTeacherAccount`'s bulk archive needed the same fix, and the need was
-measured rather than assumed to be absent.** Before issue 298 its bulk
-`updateMany` wrote `isActive`/`isArchived` on `ClassTemplate`/
-`StudioClassTemplate` directly, and a bare `updateMany` locks the rows it
-matches — the same "joins this rule as a full member" mechanism "`Class` is
-the real gate" above describes — so it already serialised against a sweep's
-claim for free. After the split that `updateMany` targets `ScheduleRule`
-instead, and the free lock stopped covering the child, the same gap as the
-six single-template writers above. Left `known-open` by Task 3; closed by
-Task 3c after checking, rather than arguing, whether a sweep can plausibly be
-mid-claim when an erasure opens: `ACTIVE_TEMPLATE_WHERE`
-(`lib/template-selection.ts`), which the hourly sweep's own candidate
-`findMany` selects with, carries no `teacher.deletedAt` filter at all — only
-`scheduleRule.isActive`/`isArchived`. So a template belonging to a just-erased
-teacher is exactly as visible to the next sweep tick as any other teacher's
-until the erasure's own `ScheduleRule` write lands, which is the interleaving
-this gap was open for. The fix takes the child locks ordered by id first,
+**`deleteTeacherAccount`'s bulk archive takes the child locks too, and the
+need was checked rather than assumed absent.** Its bulk `updateMany` writes
+`isActive`/`isArchived` on `ScheduleRule`, which locks no child row — the same
+gap as the six single-template writers above. A sweep can be mid-claim when an
+erasure opens: `ACTIVE_TEMPLATE_WHERE` (`lib/template-selection.ts`), which
+the hourly sweep's own candidate `findMany` selects with, carries no
+`teacher.deletedAt` filter at all — only `scheduleRule.isActive`/`isArchived`.
+So a template belonging to a just-erased teacher is exactly as visible to the
+next sweep tick as any other teacher's until the erasure's own `ScheduleRule`
+write lands. The erasure therefore takes the child locks ordered by id first,
 mirroring `lockClassRowsOrdered`'s discipline, over EVERY `ClassTemplate` /
 `StudioClassTemplate` row the erased teacher owns (joined through
-`ScheduleRule`, since neither child table carries `teacherId` any more) —
-two ordered statements, one per family, both before either `ScheduleRule`
-`updateMany`. Pinned by `gdpr-lock-order.test.ts`, "waits for a concurrent claim to
-release the child row before archiving the teacher templates"
-(describe block `deleteTeacherAccount serialises against a claim in progress
-(#315)`), mutation-proven the same way
-as the other nine sites.
+`ScheduleRule`, since neither child table carries `teacherId`) — two ordered
+statements, one per family, both before either `ScheduleRule` `updateMany`.
+Pinned by `gdpr-lock-order.test.ts`, "waits for a concurrent claim to release
+the child row before archiving the teacher templates" (describe block
+`deleteTeacherAccount serialises against a claim in progress (#315)`),
+mutation-proven the same way as the other nine sites.
 
 Not a new node on the canonical `Student → Class → WaitlistEntry → …` ordering above.
-Since #229 `deleteTeacherAccount` takes `ClassTemplate` before `Class` —
+`deleteTeacherAccount` takes `ClassTemplate` before `Class` (#229) —
 consistent with every other site — so these child locks come after the
 `Teacher` lock ("The `Teacher` row is the first lock (#758)") and ahead of
 `lockClassRowsOrdered`.
@@ -3320,22 +3057,12 @@ try again. A throw surfaces the same state as a 500 logged at `error` — the
 paging level — for exactly the condition `classifyApiError`'s transient branch
 (`src/lib/api-errors.ts`) exists to demote to a retryable 503.
 
-**Why both families answer alike.** Structurally, since issue 336: there is
-one branch, and both entry points reach it. Before that there were two, and
-they disagreed for two issues — `aed305f8` gave the class branch `busy` for
-#116 and the port to the studio branch never happened, so one interleaving
-answered 503 in one family and 500 in the other; issue 332 ported the
-behaviour and pinned it. One live pin covers the branch today — "the residual
+**Why both families answer alike.** Structurally: there is one branch (issue
+336), and both entry points reach it. One live pin covers it — "the residual
 CAS miss answers busy rather than throwing"
-(`studio-class-template-lifecycle.test.ts`); the class family's equivalent was
-retired when #272 closed the window that could stage it, and
-`class-template-lifecycle-lock-order.test.ts` records that where its test stood.
-Re-derive both halves:
-
-```sh
-git log -S'residual fourth state' --oneline -- src/services/class-template-lifecycle.test.ts
-git log -S'residual CAS miss answers busy' --oneline -- src/services/studio-class-template-lifecycle.test.ts
-```
+(`studio-class-template-lifecycle.test.ts`); the class family has no
+equivalent, because #272 closed the window that could stage it, and
+`class-template-lifecycle-lock-order.test.ts` records that.
 
 A distinction only one family draws costs more than the distinction is worth;
 that judgement is the same one the shared archive in `rule-lifecycle.ts` rests
@@ -3403,8 +3130,8 @@ A `.catch()` on the whole `$transaction(…)` promise is a different thing and i
 fine — `acceptInvitation` and `unlinkTeacher` (`src/services/invitations.ts`)
 both do it. So is one on a promise from a helper that queries the database
 itself, outside any transaction it did not open — `deliverInvitation`'s own
-`.catch()` on the async IIFE it starts (`src/services/invitations.ts`, since
-#391 owns its rejection path internally rather than leaving it to each caller)
+`.catch()` on the async IIFE it starts (`src/services/invitations.ts`; it owns
+its rejection path internally rather than leaving it to each caller, #391)
 and `ownedInvitation` (`src/app/api/invitations/[id]/route.ts`) are this
 shape. The rule is about a statement inside an interactive-transaction
 callback.
@@ -3449,31 +3176,28 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `TeacherBlock`, through `declinePending`, the same helper and order
   `declineInvitation` takes.
 - **`acceptInvitation`** (`src/services/invitations.ts`) — `TeacherStudent`
-  then `Invitation`. Was the other way round until #174 task 7, and **the old
-  order deadlocks against a real production writer**:
+  then `Invitation` (#174 task 7), and **the reverse order deadlocks against a
+  real production writer**:
   `POST /api/registrations` writes the roster link and then reaches
   `Invitation` through `resolveInvitationOnLink`, so on a pair with no link
   yet both transactions `INSERT` the same `(teacherId, studentId)` key —
   and Postgres makes the second inserter wait on the first's uncommitted
   tuple, a wait that deadlocks exactly like a row lock. Reproduced against
   the real function and the route's real statement order, three runs per
-  order: old `accept: REJECTED 40P01` 3/3, new no deadlock 3/3. #181 replaced
-  the upsert both sides used with `linkTeacherStudent`'s `createMany`/`ON
-  CONFLICT DO NOTHING`, and re-measured the same reproduction against it —
-  the wait edge survives the statement change (see the quirk section above),
-  so this order still has to hold.
+  order: reverse order `accept: REJECTED 40P01` 3/3, this order no deadlock
+  3/3. Re-measured against `linkTeacherStudent`'s `createMany`/`ON CONFLICT
+  DO NOTHING` (#181): the wait edge survives that statement (see the quirk
+  section above), so this order has to hold.
 
   When the link ALREADY exists, `linkTeacherStudent`'s `INSERT ... ON
   CONFLICT DO NOTHING` finds the conflict already committed and returns
-  without taking a lock on that row — the same already-safe case the old
-  upsert's three-`SELECT` path covered, just by a different mechanism. That
-  is why the reorder was made on principle before anyone had a reproduction,
-  and why `src/services/invitations-lock-order.test.ts` also pins the write
-  ORDER's effect directly, with a hand-rolled non-empty `TeacherStudent`
-  write standing in for whichever statement shape sat at this call site.
-  That file lived in `tests/integration/` until #174's four-specialist
-  review moved it — it is a DB-invariant suite with no HTTP surface, and the
-  `integration` project deliberately runs against dev.
+  without taking a lock on that row. That is why
+  `src/services/invitations-lock-order.test.ts` also pins the write ORDER's
+  effect directly, with a hand-rolled non-empty `TeacherStudent` write
+  standing in for the statement at this call site. That file is a
+  DB-invariant suite with no HTTP surface, which is why it is not in
+  `tests/integration/`: the `integration` project deliberately runs against
+  dev.
 
   That insert is not the whole of the roster-link write: its
   `INSERT ... ON CONFLICT DO NOTHING` takes no lock on a committed
@@ -3490,10 +3214,7 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   race, not a reproduction — with the reorder reverted and the handshake
   removed, 1 of 6 runs deadlocked. So the write ORDER is pinned separately
   and unconditionally by "takes
-  TeacherStudent before Invitation, and accepts". An earlier version of this
-  entry claimed no reproduction was possible at all; that was wrong, and
-  wrong because it generalised from a counterparty whose roster-link write
-  came first — which is not where the registration route puts it.
+  TeacherStudent before Invitation, and accepts".
 - **`archiveStudent`** (`src/services/student-archive.ts`, #265) —
   `TeacherStudent` via `lockTeacherStudentLink`, first statement of its
   transaction; then `Registration` and `Payment` read unlocked; then
@@ -3513,59 +3234,42 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `lockStudentForErasure` (#183; "The `Student` row is the erasure's gate"
   above), then `Class`, via a single ordered `SELECT … FOR UPDATE OF c` joined
   through `WaitlistEntry`, covering every class the student holds an entry in
-  of **any** status, ahead of every row write (#174 task 5 hoisted it;
-  #216/#182's review made it one statement). Then `Registration`,
-  `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`
-  (anonymized in place, not deleted). Was already `StudentPrivacy` before
-  `TeacherStudent`; not the outlier on that pair.
+  of **any** status, ahead of every row write (#174, #216/#182). Then
+  `Registration`, `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`,
+  `Invitation` (anonymized in place, not deleted). `StudentPrivacy` before
+  `TeacherStudent`, conformant on that pair.
 
-  **Any status, not `waiting` only, and that is a fix rather than caution**
-  (#216/#182 whole-branch review). The `deleteMany` below has no status
-  scope, so a lock set scoped to `waiting` is strictly smaller than the write
-  set it is meant to gate. The two used to
-  coincide by accident: before #216 nothing closed a queue when a class
-  *started*, so a student who never got in stayed `waiting` for ever.
-  `closeQueueOnStart` flips exactly those rows to `expired`, which dropped
-  their classes out of the lock set while the delete went on deleting them —
-  and `POST /api/registrations` writes `expired` entries under the class row
-  lock when a teacher walks a queued student in, so the window was live, not
-  theoretical.
+  **Any status, not `waiting` only, and that is load-bearing rather than
+  caution** (#216/#182). The `deleteMany` below has no status scope, so a
+  lock set scoped to `waiting` would be strictly smaller than the write set
+  it is meant to gate: `closeQueueOnStart` flips a started class's waiting
+  rows to `expired`, and `POST /api/registrations` writes `expired` entries
+  under the class row lock when a teacher walks a queued student in, so the
+  window would be live, not theoretical.
 
   It is deliberately not narrowed to "statuses another writer can still
   touch". The load-bearing writer is the walk-in resolver in
   `POST /api/registrations`, which matches `CLAIMABLE_WAITLIST_STATUSES`
   (`waiting` ∪ `expired`) and writes under this same class row lock;
-  `removeFromWaitlist` also carries no class-status guard of its own. (An
-  earlier version of this paragraph reached for `addToWaitlist` instead, which
-  does revive an entry of any status on a rejoin — but only on an `open` class,
-  and `expired` rows exist only on classes that have started and can never
-  return to `open`. It could not have been the example.) Write set equals lock
-  set is the form that does not rest on any such enumeration staying true.
-  Since #183 the delete is also scoped to the classes the pre-lock returned,
-  and after its closing update the erasure reads the subject's remaining
-  entries, so a lock set that narrowed again would fail the erasure with
-  `ErasureLockSetError` rather than delete outside it.
+  `removeFromWaitlist` also carries no class-status guard of its own.
+  `addToWaitlist` revives an entry of any status on a rejoin, but only on an
+  `open` class, and `expired` rows exist only on classes that have started
+  and can never return to `open`. Write set equals lock set is the form that
+  does not rest on any such enumeration staying true. The delete is also
+  scoped to the classes the pre-lock returned (#183), and after its closing
+  update the erasure reads the subject's remaining entries, so a lock set
+  that narrowed again would fail the erasure with `ErasureLockSetError`
+  rather than delete outside it.
 
-  **One statement, not a loop, and that is a correctness property rather than a
-  speed one.** `lockClassRow` is two round trips, so a loop cost 2N of them and
-  the transaction's `timeout` had to grow with N to pay for it — while nothing
-  in production deletes a `WaitlistEntry` except this very transaction, making
-  an all-status count monotone for the life of the account. Past the ceiling the
-  erasure failed and the retry re-read the same count and failed identically: an
-  account that could never be erased. (The count half of that argument is
-  rebutted in `gdpr.ts`'s transaction-budget comment, #246:
-  `min(5_000 + N × 2_000, 20_000)` is monotone non-decreasing in N and
-  capped, so an all-status count could only ever grant MORE budget, never
-  less.) The single statement makes the lock cost O(1) ROUND TRIPS — not
-  O(1) waiting, which an earlier version of this
-  sentence implied by saying "O(1) statements" and letting the budget be sized
-  by the reorder loop's `waiting` count. `lock_timeout` is armed per lock
-  acquisition, so one statement over N contended rows can still spend N × 2s
-  (measured 2026-08-16: two rows, releases at 1.5s and 3.0s, one waiter at 2s,
-  succeeded after 2.67s). #240 removed the sizing term for that reason; the
-  budget is a flat `{ timeout: 20_000 }`. The single statement also closes
-  the read-then-lock window, since the lock is taken BY the statement that
-  chooses the rows.
+  **One statement, not a loop.** `lockClassRow` is two round trips, so a
+  loop costs 2N of them; the single statement makes the lock cost O(1) ROUND
+  TRIPS — not O(1) waiting. `lock_timeout` is armed per lock acquisition, so
+  one statement over N contended rows can still spend N × 2s (measured
+  2026-08-16: two rows, releases at 1.5s and 3.0s, one waiter at 2s,
+  succeeded after 2.67s), which is why the budget is a flat
+  `{ timeout: 20_000 }` with no term sized by N (#240). The single statement
+  also closes the read-then-lock window, since the lock is taken BY the
+  statement that chooses the rows.
 
   Pinned by "waits for a class row another transaction holds when the erased
   entry is %s" (`gdpr-lock-order.test.ts`), which resolves the erasure to the
@@ -3573,15 +3277,14 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   threshold — and fails if the lock set narrows again: the narrowed erasure
   never asks for the held class, and rejects with `ErasureLockSetError`.
 
-  It is the outlier on `WaitlistEntry`, though, and in **three** ways, not the
-  one this entry used to name: it writes `Registration`, `StudentPrivacy` AND
-  `TeacherStudent` all before `WaitlistEntry`, where the canonical line puts
-  `WaitlistEntry` before all three. The whole-branch review of #174 added the
-  two that were missing here.
+  It is the outlier on `WaitlistEntry`, though, and in **three** ways: it
+  writes `Registration`, `StudentPrivacy` AND `TeacherStudent` all before
+  `WaitlistEntry`, where the canonical line puts `WaitlistEntry` before all
+  three.
 
   What protects all three is "`Class` is the real gate" above, over the
-  classes this function locked — and since #183 those are all the classes its
-  `WaitlistEntry` writes can reach. The #174 whole-branch review reproduced the
+  classes this function locked — and those are all the classes its
+  `WaitlistEntry` writes can reach (#183). The #174 whole-branch review reproduced the
   disagreement directly against the real functions, first with the entry
   inside the lock set:
 
@@ -3617,8 +3320,8 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
     (`docs/superpowers/specs/2026-09-16-waitlist-erasure-gate-design.md`;
     not re-reproduced).
 
-  The `Registration` half stays open. Round 1 review of #174 task 7 could not
-  construct a live counterparty — the one candidate disagreement,
+  The `Registration` half stays open. No live counterparty has been
+  constructed — the one candidate disagreement,
   `promoteNext`'s conditional stale-head drop above, needs the erased student
   to hold both an active `Registration` and a `waiting` `WaitlistEntry` for
   the same class at once, a state `POST /api/registrations`'s own
@@ -3643,47 +3346,43 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   returned, not an independently-timed read. `orderBy: { id: 'asc' }` on that
   read is presentation only (notification order) — `lockedIds` is already
   ascending, so nothing about lock ORDER depends on it; see "Ordering WITHIN
-  `Class`" for what it used to order and why it stopped. Then, per class,
+  `Class`". Then, per class,
   `WaitlistEntry` and the `Registration` read that chooses who gets the
-  cancellation notice — under the same lock, not a separate eager-load (#174
-  whole-branch review: a student registering after an eager-loaded read had
-  their class cancelled and was never told; #367 additionally closed the
-  unlocked interval such a registration could land in freely, by putting the
-  pre-lock ahead of the read rather than after it — the blocking itself is
-  the automatic `FOR KEY SHARE` lock the "fourth path" above documents,
-  which is the pre-lock's own property and not something #367 introduced, so
-  a test that observes the blocking cannot tell the two orders apart; only
-  the statement order says which one this site is in). After the
+  cancellation notice — under the same lock, not a separate eager-load (#174:
+  a student registering after an eager-loaded read would have their class
+  cancelled without being told; and the pre-lock runs ahead of the read rather
+  than after it, #367, so there is no unlocked interval for such a
+  registration to land in — the blocking itself is the automatic
+  `FOR KEY SHARE` lock the "fourth path" above documents, which is the
+  pre-lock's own property, so a test that observes the blocking cannot tell
+  the two orders apart; only the statement order says which one this site is
+  in). After the
   loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
   (deleted, not anonymized — the teacher is soft-deleted, not scrubbed like
-  a student's identity is). Was already `StudentPrivacy` before
-  `TeacherStudent`; not the outlier.
+  a student's identity is). `StudentPrivacy` before `TeacherStudent`;
+  conformant.
 - **`transitionClass`** (`src/services/class-lifecycle.ts`) — `Class` via
-  `lockClassRow`, then its CAS `class.updateMany` on the same row. It took the
-  lock through the CAS alone until #327, which is the one thing about this site
-  that used to be different from every other on this list; the extraction gave
-  the CAS a conjunct on `CalendarEntry` and `EvalPlanQual` re-fetches only the
-  locked row, so the second table's subplan kept a pre-wait snapshot and a
-  cancel committing mid-transition was invisible. `lockClassRow` also carries
-  the `setLockTimeout` this site used to issue itself, so its CAS still gets
-  the bounded 2s `55P03` every `lockClassRow` site gets rather than Prisma's 5s
-  `P2028`.
+  `lockClassRow`, then its CAS `class.updateMany` on the same row. The CAS
+  alone would not do (#327): it carries a conjunct on `CalendarEntry`, and
+  `EvalPlanQual` re-fetches only the locked row, so the second table's
+  subplan would keep a pre-wait snapshot and a cancel committing
+  mid-transition would be invisible. `lockClassRow` also arms
+  `setLockTimeout`, so the CAS gets the bounded 2s `55P03` every
+  `lockClassRow` site gets rather than Prisma's 5s `P2028`.
   When the CAS succeeds and the target is `in_progress`, it writes
   `WaitlistEntry` next, via `closeQueueOnStart` — `Class → WaitlistEntry`,
   conformant with the order above, and the whole write set is the two
   tables and nothing else: the refusal-diagnosis reads below the
-  transaction decide nothing that gets persisted. The only production
-  caller left since #216/#182 removed the sweep's is
-  `POST /api/classes/[id]/transition`, which now does nothing but call it.
+  transaction decide nothing that gets persisted. Its only production
+  caller is `POST /api/classes/[id]/transition`, which does nothing but call
+  it.
 - **`POST /api/classes/[id]/cancel`** (#327) — `Class` then `CalendarEntry`
   via `lockClassRow`, then the CAS `calendarEntry.updateMany` that writes
   `cancelledAt` on a row this transaction already holds, then `Registration`
   (read only — who gets the notice), then `WaitlistEntry` (closed to
-  `removed`), then `Notification` via `createBulkNotifications`. This is the
-  transition route's cancel branch, moved to its own door when `cancelled` left
-  `ClassStatus`, and the move is what gave it a deliberate lock: the old branch
-  let its CAS `class.updateMany` take the `Class` row for free, and the CAS now
-  writes the ENTRY, so the free lock would have landed on the wrong row. It
+  `removed`), then `Notification` via `createBulkNotifications`. It takes the
+  `Class` lock deliberately because its CAS writes the ENTRY: a CAS's free
+  lock would land on the entry row, not on `Class`. It
   reads `Registration` before writing `WaitlistEntry`, which the canonical line
   orders the other way — no edge either way, because a plain `findMany` takes
   no row lock; the WRITE order is `Class → CalendarEntry → WaitlistEntry →
@@ -3698,10 +3397,9 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   then `Registration`, `Payment`. `transitionClass`'s own
   docblock names this and `autoCancelClasses`
   as the two sites that read more state than a bare status under the
-  decision, and take the lock instead of a plain CAS for that reason — the
-  older of the two reasons to take it, which since #327 no longer
-  distinguishes them from `transitionClass` itself. Since
-  #216/#182 this is also where `autoCompleteClasses`' timing decision lives:
+  decision, and take the lock instead of a plain CAS for that reason — a
+  reason that applies to `transitionClass` too (#327). This is also where
+  `autoCompleteClasses`' timing decision lives (#216/#182):
   `autoCompleteClasses` itself takes no lock of its own — its `sweepAt` (and
   the teacher route's `teacherAt`) is compared against `autoFinishAt`/
   `finishOpensAt` of the fresh, locked row's recomputed end (and, for
@@ -3736,11 +3434,7 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   **`claimSpot`** (`src/services/waitlist.ts`) — `Class`, then `Registration`
   (`activateRegistration`), `TeacherStudent`, then `WaitlistEntry` TWICE (the
   promotion `update`, then `reorderWaitingEntries`) — never before
-  `Registration`. An earlier version of this document claimed both functions
-  wrote `WaitlistEntry` before `Registration` unconditionally; wrong for
-  `claimSpot` and overstated for `promoteNext`, corrected in round 1 review.
-  A later version called the promotion `update` `claimSpot`'s "only"
-  `WaitlistEntry` write, which the reorder after it contradicts.
+  `Registration`.
   Neither calls `resolveInvitationOnLink` (deliberately — see each
   function's own docblock), so neither touches `Invitation`/`TeacherBlock`.
 - **`removeFromWaitlist`**, **`withdrawWaitingEntriesForTeacher`**
@@ -3766,11 +3460,11 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
 - **`reapClosedWaitlistEntries`** (`src/services/waitlist-retention.ts`) —
   `Class`, then `WaitlistEntry`, one class per `db.$transaction` via
   `lockClassRow`. **Deliberately a single-row-lock site**, like
-  `autoCancelClasses` and unlike the four `lockClassRowsOrdered` sites counted
+  `autoCancelClasses` and unlike the `lockClassRowsOrdered` sites counted
   under **Ordering WITHIN `Class`**.
-  **But holding one row lock is not by itself why it is safe**, and that is the
-  multiplicity bound this document retires at "Ordering WITHIN `Class`" above:
-  since #196 a single-row write can be half of a slot-key deadlock while holding
+  **But holding one row lock is not by itself why it is safe** — "Ordering
+  WITHIN `Class`" above says why multiplicity is not the right bound: a
+  single-row write can be half of a slot-key deadlock (#196) while holding
   exactly one `Class` row lock, and `updateClass` is that case. Anyone citing
   this bullet as precedent needs the mechanism, not the count. The conclusion
   survives on three mechanical facts: this sweep never writes a `Class` row and
@@ -3816,38 +3510,32 @@ real field, with the decline side hand-rolled for that one so the payload
 could be varied (`src/services/invitations-lock-order.test.ts`; the booking
 side is the real function in both). Both settle for the same
 reason — those upserts are `update: {}` and hit the non-locking path described
-above whenever a block already exists. This is not a "shared prior
-`TeacherStudent` lock" protecting it — an earlier working hypothesis, now
-shown wrong — it is the same upsert quirk on a different table. Not fixed, per
-instruction: doing so would widen the original task past the two pairs it was
-scoped to. If a future edit makes any of those `update` payloads non-empty,
+above whenever a block already exists. No shared prior `TeacherStudent` lock
+protects it; it is the same upsert quirk on a different table. If a future
+edit makes any of those `update` payloads non-empty,
 this pair needs the same treatment `{Invitation, TeacherStudent}` and
 `{StudentPrivacy, TeacherStudent}` already got.
 
-#181 does not trip this trigger. It replaced `acceptInvitation`'s
-`TeacherStudent` upsert with `linkTeacherStudent`'s `createMany`, a different
-lock node from either member of this pair — `TeacherBlock` and `Invitation`
-are untouched by that change, and neither upsert's `update` payload was
-touched either. The `{TeacherBlock, Invitation}` order recorded here is
-unaffected.
+`linkTeacherStudent`'s `createMany` (#181) does not trip this trigger: it is a
+different lock node from either member of this pair, and neither block
+upsert's `update` payload is non-empty. The `{TeacherBlock, Invitation}` order
+recorded here is unaffected.
 
 **Why the canonical line names `unlinkTeacher`'s direction, not
 `resolveInvitationOnLink`'s.** Not by head-count, and counting is the wrong
 instrument here twice over. Every site that disagrees reaches these two tables
 through the same function — `addToWaitlist` and `POST /api/registrations` both
 call `resolveInvitationOnLink` — so a tally of call sites counts one decision
-as many. And a tally of functions moves whenever someone writes a new one —
-#522 added `declineInvitation` to the conforming side — so a majority was
-never what the line was resting on. What it rests on is which order was
+as many. And a tally of functions moves whenever someone writes a new one, so
+a majority is not what the line rests on. What it rests on is which order was
 reasoned about: `unlinkTeacher` is the one function in this codebase that
 touches every table in the canonical line — `StudentPrivacy`,
 `TeacherStudent`, `Invitation` AND `TeacherBlock` — and its order across the
 first three of those was directly audited and fixed for lock safety in #174
 task 7. `resolveInvitationOnLink`'s own order was not chosen with lock
 safety in mind at all, as far as this document can tell from the comment at
-its `teacherBlock.deleteMany` (`link-consent.ts` — an inline comment, not the
-function's docblock, which an earlier version of this passage attributed it
-to): "the block is the thing that actually stands between them — so clearing
+its `teacherBlock.deleteMany` (`link-consent.ts`, an inline comment, not the
+function's docblock): "the block is the thing that actually stands between them — so clearing
 it is what makes booking the student's route back" is a narrative choice
 about
 which state change makes sense first from the student's side, not a
@@ -3859,24 +3547,20 @@ that wasn't, is the basis for the choice — not a claim that
 ## Resolved: `{Class, ClassTemplate}` order standardised (#229)
 
 `ClassTemplate` before `Class` is the canonical order. Every site that locks
-both now takes them in that direction.
+both takes them in that direction.
 
-**History.** `deleteTeacherAccount` (`gdpr.ts`) was the sole site taking
-`Class` before `ClassTemplate`. Five other sites — `claimTemplateForGeneration`
-(`class-generator.ts`, calling `claimRuleForGeneration` in `entry-generation.ts`),
-`pauseOrResumeTemplate`,
-`archiveOrUnarchiveTemplate`, `POST /api/class-templates`, and
-`updateClassTemplate` (`class-template-lifecycle.ts`) — took the opposite
-order. No deadlock was ever reproduced between them, but the inversion was
-documented and tracked.
+The sites that take both, in that direction: the generation claim
+(`claimTemplateForGeneration`, `class-generator.ts`, calling
+`claimRuleForGeneration` in `entry-generation.ts`), `pauseOrResumeTemplate`,
+`archiveOrUnarchiveTemplate` and `POST /api/class-templates`
+(`class-template-lifecycle.ts`), the currency switch (`switchTeacherCurrency`,
+`currency-switch.ts`), and `deleteTeacherAccount` (`gdpr.ts`), whose
+`ClassTemplate`/`StudioClassTemplate` ordered locks run ahead of its
+`lockClassRowsOrdered` call, behind an explicit `setLockTimeout(tx)`, within
+its `{ timeout: 10_000 }` budget. `updateClassTemplate` takes no `Class` lock
+at all (#194).
 
-**Resolution.** `deleteTeacherAccount`'s `ClassTemplate`/`StudioClassTemplate`
-ordered locks were moved ahead of its `lockClassRowsOrdered` call, with an
-explicit `setLockTimeout(tx)` before them. The transaction budget
-(`{ timeout: 10_000 }`) is unchanged — the same bounded waits are present in
-both orderings, just resequenced.
-
-## Related, but not a lock-order issue — found while fixing the above, not fixed
+## Related, but not a lock-order issue: a link deleted under `unlinkTeacher`
 
 `unlinkTeacher` reads the `TeacherStudent` row's id with a plain `findUnique`
 **before** opening its transaction, then deletes it by that id
@@ -3890,18 +3574,14 @@ contention involved at all — or `unlinkTeacher`'s transaction can already be
 open and blocked on a lock the erasure holds (exactly what happens when
 `unlinkTeacher` loses the `StudentPrivacy` race the rest of this document is
 about), in which case the erasure finishes and commits while `unlinkTeacher`
-waits, with the same result once it unblocks. Reordering `unlinkTeacher`
-closes the second shape's likeliest path to that outcome (the deadlock that
-used to fire first is gone) but does nothing about the first, which does not
-depend on lock order, or even on `StudentPrivacy`, at all. `classifyApiError`
-(`src/lib/api-errors.ts`) has no branch for `P2025`, so it falls through to
-the generic 500. Reproduced directly, reliably, three times in a row (#174
-task 7 report has the transcripts). The pre-transaction read itself predates
-this task — byte-identical at commit `e99c165`, well before task 7 touched
-this file. Left as a finding for a separate issue: the fix is either a
-`deleteMany` (count-tolerant) in place of the single-row `delete`, or
-re-verifying the link inside the transaction rather than trusting a
-pre-transaction read.
+waits, with the same result once it unblocks. The lock order closes the second
+shape's likeliest path to that outcome (a deadlock firing first) but does
+nothing about the first, which does not depend on lock order, or even on
+`StudentPrivacy`, at all. Reproduced directly, reliably, three times in a row
+(#174 task 7 report has the transcripts). `classifyApiError`
+(`src/lib/api-errors.ts`) has no branch for `P2025`, so `unlinkTeacher`
+catches it itself (`isRecordNotFound`) and answers `NOT_LINKED` — the same
+answer as never having had the link.
 
 ## The room mirror's foreign keys are wait edges (#272)
 
@@ -3945,12 +3625,12 @@ transaction budget cannot cut short a statement already blocked inside
 Postgres. Both properties are pinned from the archive's side in
 `room-archive-lock-order.test.ts`, one case per property, each verified to fail
 when its guard is removed. They live in their own file, and serially, because a
-multi-second hold in a parallel tier is exactly the noise the `#180` case below
+multi-second hold in a parallel tier is exactly the noise a lock-order test
 cannot tell from the defect it watches for. What remains is the two-room shape: two transactions
-row-locking two rooms in opposite orders. That one is pre-existing and is not a
-shape this migration introduces — the room-delete wait edge it rides on is
-"The RESTRICT trigger is a wait edge, and a route guard is what closes it
-(#103)" earlier in this file, which describes the edge but not this cycle.
+row-locking two rooms in opposite orders. That shape does not come from the
+mirror — the room-delete wait edge it rides on is "The RESTRICT trigger is a
+wait edge, and a route guard is what closes it (#103)" earlier in this file,
+which describes the edge but not this cycle.
 Probe results for both shapes are in PR #340.
 
 ### The referencing side is indexed, and that was measured (#272)
@@ -3966,11 +3646,10 @@ RESTRICT check do so while holding the room row):
   `isArchived` flips, in that same transaction
 - the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`
 - `switchToSharedRoom`'s own step-1 pre-lock (`src/services/room-switch.ts`,
-  issue 259), the same shape as the archive's pre-lock above, added after the
-  measurement below and not part of it
+  issue 259), the same shape as the archive's pre-lock above; the measurement
+  below does not cover it
 
-Measured before adding the index rather than after, because the design asked
-for a measurement rather than an index on principle (#272 design §7.3).
+The index rests on a measurement rather than on principle (#272 design §7.3).
 Scratch database built from the real migrations, median of 15 runs:
 
 | rows | path | no index | with index |
@@ -4014,10 +3693,10 @@ function's docblock points here instead of arguing it.
 
 `PATCH /api/class-templates/[id]` is what turns that into a sentence a teacher
 can act on. Its pre-check runs only when `state === 'active'`, and only for a
-row this teacher owns whose rule is not archived — both conditions load-bearing
-and each a defect while it was missing: without the ownership conjunct the
-probe is an existence oracle where the service answers 403, and without the
-`isArchived` conjunct it outranks the `archived` refusal with advice
+row this teacher owns whose rule is not archived — both conditions
+load-bearing: without the ownership conjunct the probe would be an existence
+oracle where the service answers 403, and without the `isArchived` conjunct it
+would outrank the `archived` refusal with advice
 ("unarchive the room") that would accomplish nothing for an archived template.
 The route's `catch` on `isCheckViolationOn(e,
 'ClassTemplate_live_needs_open_room')` covers the race between that read and
@@ -4256,8 +3935,8 @@ only by the wider
 
     grep -rn "cancelledAt:" --include="*.ts" src/ | grep -v '\.test\.' | grep -v "cancelledAt: null"
 
-The row is added to the table above by reading, not by the narrower command,
-the same way the `gdpr.ts:1521` studio row already was. Its safety argument is
+That row is in the table above by reading, not by the narrower command, as
+the `gdpr.ts:1521` studio row is. Its safety argument is
 identical to that row's: `kind: 'studio'`, no `Class` child, so the cascade
 this section is about cannot fire from it regardless of direction.
 
@@ -4288,8 +3967,8 @@ backward writer's own `setLockTimeout` is what ends the wait. Confirmed
 sensitive to the mechanism itself, not just to the staging: with
 `Class_calendarEntryId_kind_entryLive_fkey` dropped outright on a scratch
 database, the same backward write resolves instead of rejecting — the
-assertion reddens, because there is no longer anything on the `Class` row for
-it to wait on.
+assertion reddens, because there is then nothing on the `Class` row for it
+to wait on.
 
 ### `TeacherRoom → Class`: `switchToSharedRoom`'s step 5 writes it, and adds no wait edge
 
@@ -4364,7 +4043,8 @@ in "The room mirror's foreign keys are wait edges" above and detailed in PR
 
 ### The referencing side is indexed, and that was measured (#339)
 
-`Class` had no index on `teacherRoomId`. The referencing side of
+`Class` carries an index on its side of the room key
+(`Class_teacherRoomId_roomArchived_idx`). The referencing side of
 `Class_teacherRoomId_roomArchived_fkey` is read by the `ON UPDATE CASCADE`
 that rewrites every mirroring `Class` row when a room's `isArchived` flips,
 and by the `ON DELETE RESTRICT` check behind `ROOM_DELETE_RESTRICT_FKS`; in the
@@ -4376,7 +4056,7 @@ of its own. `switchToSharedRoom` (issue 259) does take `Class` locks, at its
 step 4, ahead of its own step-7 cascade — see "Switching to a shared room
 (#259)" above.)
 
-Measured before adding, the same way #272's design §7.3 asked for. Scratch
+The index rests on a measurement, as #272's does (design §7.3). Scratch
 database (`ethical_yoga_scratch_339`) seeded with one target `TeacherRoom`
 holding a handful of `Class` rows and a background `TeacherRoom` holding the
 rest, so a scan of the whole table has to pass over almost every row before
@@ -4399,8 +4079,8 @@ the child row and re-validates its own foreign key against the parent it just
 changed.
 
 **The literal `EXPLAIN (ANALYZE, BUFFERS) DELETE FROM "TeacherRoom" WHERE …`
-this issue's plan named cannot be run against a room WITH children, and that
-was checked rather than assumed.** `ON DELETE RESTRICT` raises the foreign-key
+cannot be run against a room WITH children, and that was checked rather than
+assumed.** `ON DELETE RESTRICT` raises the foreign-key
 violation from inside an `AFTER` trigger before `EXPLAIN` ever gets to print a
 plan, so the statement returns only the error — verified directly: an
 `EXPLAIN ANALYZE DELETE` against the measurement's own target room produced no
@@ -4421,10 +4101,10 @@ Index size 704 kB against a 14 MB table.
 The case for it is the SLOPE, the same argument #272's own index made: without
 it, both paths grow roughly linearly with the table (2.075 ms → 13.644 ms and
 1.440 ms → 12.991 ms across a 10× row-count increase); with it, both stay flat
-regardless of table size. Added as its own migration,
+regardless of table size. The index is its own migration,
 `20260905130000_index_class_room_fk`, whose comment carries this section's
-location rather than the numbers, per the convention
-`20260828120000_index_template_room_fk` set. Re-derive with:
+location rather than the numbers, as `20260828120000_index_template_room_fk`'s
+does. Re-derive with:
 
     EXPLAIN (ANALYZE, BUFFERS)
     SELECT 1 FROM ONLY "Class" x
