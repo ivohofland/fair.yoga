@@ -11,7 +11,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@prisma/client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
-import { cancelDeadlineFrom, freeCancelUntil } from '@/lib/cancel-deadline';
+import { cancelDeadlineFrom, freeCancelUntil, keepsPromotionGrace } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
@@ -755,10 +755,10 @@ export async function promoteNext(
 
     const tz = cls.calendarEntry.teacher.defaultTimezone;
     const deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz);
-    // The same answer the cancel route will give (`freeCancelUntilFor`): a
-    // booking this student already late-cancelled stays charged.
+    // The same answer the cancel route will give: a booking this student
+    // already late-cancelled stays charged.
     const cancelTerms =
-      registration.lateCancelledAt === null
+      keepsPromotionGrace(registration)
         ? `You can cancel for free until ${formatInstantInZone(freeCancelUntil(deadline, now), tz)}.`
         : 'You cancelled this class after the deadline before, so it stays charged if you cancel again.';
 

@@ -51,8 +51,8 @@ export function freeCancelUntil(deadline: Date, promotedAt: Date | null): Date {
  * `status === 'promoted'` carries the grace — every other member of
  * `WaitlistStatus`, and no linked entry at all, reads as `null`.
  *
- * A booking that was ever late-cancelled gets no grace either, even once a
- * promotion has reactivated it: the late cancel already charged it, and a
+ * A booking that was ever late-cancelled gets no grace either
+ * (`keepsPromotionGrace`), even once a promotion has reactivated it: a
  * rejoin is a change of mind, not a way out of that charge.
  *
  * `WaitlistStatus` arrives via `import type` only, so this module still adds
@@ -67,6 +67,14 @@ export function freeCancelUntilFor(
 ): Date {
   const promotion = booking.waitlistEntry;
   const graceFrom =
-    booking.lateCancelledAt === null && promotion?.status === 'promoted' ? promotion.promotedAt : null;
+    keepsPromotionGrace(booking) && promotion?.status === 'promoted' ? promotion.promotedAt : null;
   return freeCancelUntil(deadline, graceFrom);
+}
+
+/**
+ * Whether a promotion onto this booking carries the free-cancel grace: not
+ * once the booking has been late-cancelled, which already charged it.
+ */
+export function keepsPromotionGrace(booking: { lateCancelledAt: Date | null }): boolean {
+  return booking.lateCancelledAt === null;
 }

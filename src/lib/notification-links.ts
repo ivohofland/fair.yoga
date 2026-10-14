@@ -12,6 +12,7 @@
  */
 
 import type { ClassStatus, NotificationType } from '@prisma/client';
+import { STUDENT_PUSH_GROUP } from './push-policy';
 
 /**
  * The student's own page listing pending invitations and their teachers —
@@ -36,12 +37,16 @@ export const STUDENT_INVITATION_LABEL = 'Review the invitation';
  */
 export const STUDENT_BOOKINGS_PATH = '/bookings';
 
-/** The notification types a student acts on from `STUDENT_BOOKINGS_PATH`. */
-const WAITLIST_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
-  'waitlist_promoted',
-  'spot_available',
-  'spot_taken',
-]);
+/**
+ * The notification types a student acts on from `STUDENT_BOOKINGS_PATH`: the
+ * `waitlist` group of `STUDENT_PUSH_GROUP`, which classifies every type, so a
+ * new waitlist type is routed here by being classified there.
+ */
+const WAITLIST_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set(
+  (Object.keys(STUDENT_PUSH_GROUP) as NotificationType[]).filter(
+    (type) => STUDENT_PUSH_GROUP[type] === 'waitlist',
+  ),
+);
 
 /** The email button's label for that action. */
 export const STUDENT_BOOKINGS_LABEL = 'Go to your bookings';
