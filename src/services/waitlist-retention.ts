@@ -317,8 +317,15 @@ export interface ReapOptions {
  * class among several — nothing throws.
  */
 export class RetentionFailedError extends Error {
-  constructor(public readonly classes: number) {
-    super(`waitlist retention attempted ${classes} class(es) and every one failed`);
+  constructor(
+    public readonly classes: number,
+    public readonly failed: number,
+  ) {
+    super(
+      failed === classes
+        ? `waitlist retention attempted ${classes} class(es) and every one failed`
+        : `waitlist retention attempted ${classes} class(es) and ${failed} failed`,
+    );
     this.name = 'RetentionFailedError';
   }
 }
@@ -524,7 +531,7 @@ function report(summary: ReapSummary): void {
     // that attempted N classes and failed all N is a different statement at
     // any N, and the one that must not be swallowed.
     log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
-    throw new RetentionFailedError(summary.classes);
+    throw new RetentionFailedError(summary.classes, summary.failed);
   }
 
   if (summary.failed > summary.classes / 2) {
@@ -532,7 +539,7 @@ function report(summary: ReapSummary): void {
     // one failure the sample is too small to mean anything, and the sweep runs
     // daily.
     log.error(summary, 'waitlist retention failed for most of the classes it tried');
-    throw new RetentionFailedError(summary.classes);
+    throw new RetentionFailedError(summary.classes, summary.failed);
   }
 
   if (summary.failed > 0) {
