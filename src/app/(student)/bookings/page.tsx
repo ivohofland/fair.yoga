@@ -14,7 +14,7 @@ import { WaitlistEntryActions } from '@/components/student/waitlist-entry-action
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatRoomLocation, paymentStateText, formatDayHeader, formatMoney } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import { getWaitlistWindow, cancelDeadlineInstant } from '@/services/waitlist';
+import { canClaimSpot, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
 import { PAY_NOW_LABEL, payPagePath, studentNotificationHref } from '@/lib/notification-links';
@@ -227,14 +227,7 @@ export default async function StudentBookingsPage() {
             const activeCount = cls.registrations.filter((r) =>
               ACTIVE_REGISTRATION_STATUSES.includes(r.status),
             ).length;
-            // In the final hour before class a freed spot goes to whoever
-            // claims it first — show the claim button then.
-            const canClaim =
-              cls.status === 'open' &&
-              cls.calendarEntry.cancelledAt === null &&
-              activeCount < cls.maxStudents &&
-              getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone) ===
-                'first_come_first_claimed';
+            const canClaim = canClaimSpot({ ...cls, activeCount });
             return (
               <ListRow key={entry.id}>
                 <p className="text-base text-ink">{cls.calendarEntry.classType}</p>
