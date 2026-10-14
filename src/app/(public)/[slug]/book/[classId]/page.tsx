@@ -17,6 +17,7 @@ import { peekSignupTicket, ticketTokenFrom } from '@/lib/auth';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import { countOutstandingPaymentsForStudent } from '@/services/payments';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,14 @@ export default async function BookClassPage({
       calendarEntry: {
         include: {
           teacher: {
-            select: { id: true, firstName: true, lastName: true, pageSlug: true, deletedAt: true },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              pageSlug: true,
+              deletedAt: true,
+              defaultTimezone: true,
+            },
           },
         },
       },
@@ -185,6 +193,9 @@ export default async function BookClassPage({
           isFirstBooking={viewer.tierSelectedAt === null}
           openPaymentsCount={openPaymentsCount}
           waitlistPosition={ownWaitlistEntry?.position ?? null}
+          inClaimWindow={
+            getWaitlistWindow(entry, entry.teacher.defaultTimezone) === 'first_come_first_claimed'
+          }
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />

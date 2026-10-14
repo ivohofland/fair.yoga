@@ -231,7 +231,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
 
     // Leave — the section empties.
     await page.getByRole('button', { name: 'Leave waitlist' }).click();
-    await page.getByRole('button', { name: 'Leave', exact: true }).click();
+    await page.getByRole('button', { name: /^Leave the waitlist for / }).click();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible({
       timeout: 10_000,
     });
