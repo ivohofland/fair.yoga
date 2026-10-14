@@ -18,6 +18,8 @@ const findUnique = vi.fn();
 const updateMany = vi.fn();
 const handleSpotFreed = vi.fn();
 const notificationCreate = vi.fn();
+const classStatusUnderLock = vi.fn();
+const lockClassRow = vi.fn();
 
 vi.mock('@/services/waitlist', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/waitlist')>();
@@ -36,15 +38,22 @@ vi.mock('@/lib/api-utils', async (importOriginal) => {
     }),
   };
 });
-vi.mock('@/lib/db', () => ({
-  prisma: {
+vi.mock('@/lib/db-locks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/db-locks')>();
+  return { ...actual, lockClassRow: (...args: unknown[]) => lockClassRow(...args) };
+});
+vi.mock('@/lib/db', () => {
+  const prisma = {
     registration: {
       findUnique: (...args: unknown[]) => findUnique(...args),
       updateMany: (...args: unknown[]) => updateMany(...args),
     },
+    class: { findUniqueOrThrow: (...args: unknown[]) => classStatusUnderLock(...args) },
     notification: { create: (...args: unknown[]) => notificationCreate(...args) },
-  },
-}));
+    $transaction: (fn: (tx: unknown) => unknown) => fn(prisma),
+  };
+  return { prisma };
+});
 
 const { PUT, DELETE } = await import('./route');
 
@@ -78,6 +87,28 @@ beforeEach(() => {
   updateMany.mockReset().mockResolvedValue({ count: 0 });
   handleSpotFreed.mockReset();
   notificationCreate.mockReset();
+  classStatusUnderLock.mockReset().mockResolvedValue({ status: 'open' });
+  lockClassRow.mockReset().mockResolvedValue({ classId: 'class-1' });
+});
+
+describe('DELETE /api/registrations/[id] — a cancel racing the class completing', () => {
+  // The pre-read saw an open class; completion committed before the cancel
+  // took the class lock. Writing on would leave the Payment completion just
+  // created attached to a cancelled booking.
+  it('refuses once the class completed under the lock, and writes nothing', async () => {
+    findUnique.mockResolvedValueOnce(bookingRow());
+    classStatusUnderLock.mockResolvedValue({ status: 'completed' });
+
+    const res = await DELETE(
+      new NextRequest('http://localhost:3000/api/registrations/reg-1', { method: 'DELETE' }),
+      params(),
+    );
+
+    await expectRefusal(res, 'CLASS_TERMINAL');
+    expect(lockClassRow).toHaveBeenCalledWith(expect.anything(), 'class-1');
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(handleSpotFreed).not.toHaveBeenCalled();
+  });
 });
 
 describe('DELETE /api/registrations/[id] — a teacher cancel whose write missed', () => {

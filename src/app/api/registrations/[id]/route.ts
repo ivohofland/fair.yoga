@@ -1,5 +1,6 @@
 import { NextRequest, type NextResponse } from 'next/server';
-import type { RegistrationStatus } from '@prisma/client';
+import type { Prisma, RegistrationStatus } from '@prisma/client';
+import { lockClassRow } from '@/lib/db-locks';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -333,14 +334,9 @@ export const DELETE = withErrorHandler(async (
   const alreadyCancelled = answerForCancelledRow(id, registration.status, isStudent);
   if (alreadyCancelled) return alreadyCancelled;
 
-  // Cancelling on a completed class would orphan its payment.
-  if (registration.class.status === 'completed') {
-    return respondError(
-      "This class has finished, so the booking can't be cancelled.",
-      409,
-      'CLASS_TERMINAL',
-    );
-  }
+  // Cancelling on a completed class would orphan its payment. Read again
+  // under the class lock when the cancel is written (`writeCancel`).
+  if (registration.class.status === 'completed') return refuseCompletedCancel();
 
   // Enforce cancellation deadline for students (teachers can always cancel).
   if (isStudent) {
@@ -378,11 +374,13 @@ export const DELETE = withErrorHandler(async (
       // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
       // billing a student for a class the teacher had let them out of.
       const now = new Date();
-      const updated = await prisma.registration.updateMany({
-        where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
-        data: { status: 'late_cancel', cancelledAt: now, lateCancelledAt: now },
+      const written = await writeCancel(id, registration.classId, {
+        status: 'late_cancel',
+        cancelledAt: now,
+        lateCancelledAt: now,
       });
-      if (updated.count === 0) {
+      if (written === 'class_completed') return refuseCompletedCancel();
+      if (written === 'missed') {
         return answerMissedCancel(id, isStudent);
       }
       // The seat is free even though the canceller is still charged.
@@ -405,11 +403,12 @@ export const DELETE = withErrorHandler(async (
   // ahead of the bare deadline and one still inside #236's grace.
   // Status in the WHERE for the same reason as the late-cancel branch above:
   // two concurrent cancels must not both reach the waitlist hook.
-  const updated = await prisma.registration.updateMany({
-    where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
-    data: { status: 'cancelled', cancelledAt: new Date() },
+  const written = await writeCancel(id, registration.classId, {
+    status: 'cancelled',
+    cancelledAt: new Date(),
   });
-  if (updated.count === 0) {
+  if (written === 'class_completed') return refuseCompletedCancel();
+  if (written === 'missed') {
     return answerMissedCancel(id, isStudent);
   }
 
@@ -620,6 +619,38 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * with a free seat takes no new waiters; once the last seat is taken the flag
  * clears, and a later drop is re-broadcast by the sweep.
  */
+function refuseCompletedCancel(): NextResponse {
+  return respondError("This class has finished, so the booking can't be cancelled.", 409, 'CLASS_TERMINAL');
+}
+
+/**
+ * Writes a cancel under the class row lock, refusing it if the class has
+ * completed. `completeClass` takes the same lock and creates the class's
+ * `Payment` rows under it, so the status the DELETE handler read before this
+ * can be stale by the time it writes — and a cancel written after completion
+ * would leave a payment attached to a cancelled booking.
+ *
+ * The status stays in the WHERE as well: two concurrent cancels must not
+ * both reach the waitlist hook, and a late cancel must not overwrite a
+ * teacher's free one (the call sites say which).
+ */
+async function writeCancel(
+  id: string,
+  classId: string,
+  data: Prisma.RegistrationUpdateManyMutationInput,
+): Promise<'written' | 'missed' | 'class_completed'> {
+  return prisma.$transaction(async (tx) => {
+    await lockClassRow(tx, classId);
+    const { status } = await tx.class.findUniqueOrThrow({ where: { id: classId }, select: { status: true } });
+    if (status === 'completed') return 'class_completed';
+    const updated = await tx.registration.updateMany({
+      where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
+      data,
+    });
+    return updated.count === 0 ? 'missed' : 'written';
+  });
+}
+
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);
