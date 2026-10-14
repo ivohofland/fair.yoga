@@ -9,7 +9,7 @@ interface WaitlistEntryActionsProps {
   entryId: string;
   classId: string;
   /**
-   * The class and when it runs ("Yin, Friday 18:00"), read aloud after each
+   * The class and when it runs, e.g. "Yin, Friday, 17 Oct 18:00", read aloud after each
    * button's visible text so a screen reader can tell one row's buttons from
    * the next.
    */

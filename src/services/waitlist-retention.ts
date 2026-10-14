@@ -50,11 +50,11 @@ export const WAITLIST_RETENTION_DAYS = 365;
  * history would be worse, and every lock it holds is one a teacher's own request
  * may be waiting behind.
  *
- * Not because an unbounded run would stop the job through `scheduler.ts`'s `running` guard. That guard drops ticks
- * while a run is in flight, but the interval is 24 h, so a run would have to
- * exceed a full day to cost even one tick — and the loop is over a finite
- * `groupBy` result, so it terminates regardless. A backlog drains at this rate
- * per day.
+ * Not because an unbounded run would stop the job through `scheduler.ts`'s
+ * `running` guard. That guard drops ticks while a run is in flight, but the
+ * interval is 24 h, so a run would have to exceed a full day to cost even one
+ * tick — and the loop is over a finite `groupBy` result, so it terminates
+ * regardless. A backlog drains at this rate per day.
  */
 export const MAX_CLASSES_PER_RUN = 500;
 

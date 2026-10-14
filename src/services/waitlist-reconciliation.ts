@@ -107,8 +107,7 @@ export interface ReconcileSummary {
    *
    * A subset rather than a second partition, following `repairedClassIds`'
    * relationship to `reconciledClassIds`. It is what lets a caller separate "the
-   * next tick will fix this" from "this fails again on every tick, forever",
-   * which the summary previously could not express at all.
+   * next tick will fix this" from "this fails again on every tick, forever".
    */
   readonly transientFailedClassIds: readonly string[];
   /**
@@ -410,9 +409,9 @@ export async function reconcileWaitlists(
     // `queuedClasses`, not a hardcoded zero: `candidateIds.length` is >= 1 here
     // by construction, and it is the interesting number. One or two is an
     // ordinary race with a completing class. Two hundred means the query above
-    // and the one here disagree about `status` — a drift worth seeing, and the
-    // figure that distinguishes them is exactly the one an earlier revision
-    // threw away by logging `candidates: 0` on both paths.
+    // and the one here disagree about `status` — a drift worth seeing, and
+    // this figure is the one that distinguishes them; `candidates: 0` alone
+    // would read the same on both paths.
     log.debug(
       { candidates: 0, queuedClasses: candidateIds.length },
       'waitlist reconciliation found no open candidate class',
@@ -490,12 +489,11 @@ async function reconcileOne(
   // (`CLAIM_WINDOW_MINUTES`), and `classStartInstant` itself catches an
   // invalid stored timezone and degrades to UTC (#145) rather than
   // raising. So this is a scope kept deliberately wider than its current need,
-  // not a live catch, and the reason is history: the gate used to be a database
-  // round-trip sitting ABOVE the `try`, where a `P2024` pool timeout escaped
-  // the loop, abandoned every class queued behind this one, and recorded
-  // nothing about which class failed. Drawing the boundary at the top of the
-  // body is what makes that unreachable by construction rather than by the
-  // current body happening to be infallible.
+  // not a live catch: a database round-trip added ABOVE the `try` would let a
+  // `P2024` pool timeout escape the loop, abandon every class queued behind
+  // this one, and record nothing about which class failed. Drawing the
+  // boundary at the top of the body makes that unreachable by construction
+  // rather than by the current body happening to be infallible.
   try {
     const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
     if (window === 'frozen') return { kind: 'skipped', reason: 'frozen' };
@@ -731,9 +729,8 @@ function report(
   if (gated > 0) {
     // `info`, and this is the branch the skip reasons exist for. A tick where
     // every candidate was GATED is not an idle tick — it is the state that
-    // looks identical to a jammed gate, and an earlier revision logged it at
-    // `debug`, which is off by default. The diagnostic existed in the source
-    // and never in the output.
+    // looks identical to a jammed gate. At `debug`, which is off by default,
+    // the diagnostic would exist in the source and never in the output.
     log.info(
       { ...payload, gatedClassIds: summary.skipped.filter((s) => s.reason !== 'full') },
       'waitlist reconciliation invoked no class — every candidate was gated',

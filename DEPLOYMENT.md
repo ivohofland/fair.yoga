@@ -494,16 +494,15 @@ it descends from the one you rolled back to.
   under the rule in the bullet above. It runs every minute and repairs
   waitlists whose live spot-freed hook was dropped, so a single lost row-lock
   race is routine and self-healing. It reports the job unhealthy when a
-  failure will not clear by retrying, or
-  when five consecutive ticks lost **every** class to contention
-  (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
+  failure will not clear by retrying, or when five consecutive ticks lost
+  **every** class to contention (`MAX_CONSECUTIVE_CONTENDED_TICKS` in
   `src/services/waitlist-reconciliation.ts`) — roughly five minutes of an
-  unbroken hold. "Every class" means every class the tick actually **invoked**:
-  candidates it skipped (any `SkipReason` in
-  `src/services/waitlist-reconciliation.ts`: already full, a broadcast already
-  standing, or the class already started) count neither way. So a class stuck behind siblings that are
-  genuinely being reconciled in the same tick does **not** flip the flag on its
-  own — while a tick in which the stuck class was the only one invoked, because
+  unbroken hold. "Every class" means every class the tick actually
+  **invoked**: candidates it skipped (any `SkipReason` in
+  `src/services/waitlist-reconciliation.ts`: already full, a broadcast
+  already standing, or the class already started) count neither way. So a
+  class stuck behind siblings that are genuinely being reconciled in the same
+  tick does **not** flip the flag on its own — while a tick in which the stuck class was the only one invoked, because
   everything else was skipped for an unrelated reason, contributes to the
   tick-level streak like any other all-invoked-and-failed tick. Either way the
   stuck class logs at `error` with a `classStreak` field naming it, and nothing

@@ -151,9 +151,10 @@ export const VALID_TRANSITIONS: Record<ClassStatus, readonly ClassStatus[]> = {
  * (`class-transitions.ts`) selects on `calendarEntry: { cancelledAt: null }`,
  * and a hand-written completion trips the CHECK above. And it cannot unfreeze
  * the entry: `entry_reject_frozen_schedule_change` reads `cancelledAt` and
- * never the class's status, so `waitlist-retention.ts`'s date guarantee is
- * untouched by the walk. What it produces is a cancelled class carrying a live
- * status — a display state, with nothing downstream acting on it. The token is
+ * never the class's status, so the retention sweep's date guarantee
+ * (`docs/technical-architecture.md`, Waitlist retention) is untouched by the
+ * walk. What it produces is a cancelled class carrying a live status — a
+ * display state, with nothing downstream acting on it. The token is
  * here so a sweep for open residuals finds it; prose saying the same thing is
  * not searchable.
  *
@@ -409,10 +410,12 @@ export async function transitionClass(
   // for a 09:00 class, CAS at 09:00:00.1 — which publishes a class whose start
   // has just passed, exactly as publishing it a second earlier legally would.
   //
-  // THE CLOCK IS THE ONLY OTHER WRITER. Re-derive it from the `class.` write
-  // sites in `src/`, minus the tests: `updateClass` below is the only
-  // statement that moves an existing class's `date`/`startTime`, and it is
-  // guarded. The narrower argument below is kept anyway, because the strong
+  // Besides `updateClass`, the only thing that changes whether the start is
+  // past is the clock. Re-derive that from the `calendarEntry.` write sites in
+  // `src/`, minus the tests — `date` and `startTime` live on the entry since
+  // #327: `updateClass` below, through `tx.calendarEntry.updateMany`, is the
+  // only statement that moves an existing class's `date`/`startTime`, and it
+  // is guarded. The narrower argument below is kept anyway, because the strong
   // claim holds only while no unguarded writer of those columns exists.
   //
   // It stays safe on that narrower reason regardless. Losing such a race would
@@ -1407,7 +1410,8 @@ export type UpdateClassResult =
  * The terminal freeze additionally has a database backstop, and since #327 it
  * covers three columns rather than one: `entry_frozen_schedule_guard` refuses
  * a `date`, `startTime` or `durationMinutes` change on a frozen entry, which
- * is the span `waitlist-retention.ts` and the slot constraint both read. The
+ * is the span the retention sweep (`docs/technical-architecture.md`, Waitlist
+ * retention) and the slot constraint both read. The
  * CAS below is the path that returns a 409; the trigger is what reaches a
  * client that never goes through this function.
  */

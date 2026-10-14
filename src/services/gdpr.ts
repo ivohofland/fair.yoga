@@ -662,13 +662,13 @@ export async function deleteStudentAccount(
     // would go stale against it silently.
     //
     // `archiveOrUnarchiveTemplate`'s pre-lock is not total — a row its
-    // `deleteMany` matches can escape it — but the escape cannot pair with
-    // THIS function into an AB-BA cycle, because a class this erasure locks
-    // holds a waitlist entry and such a class's schedule cannot move. The
-    // reasoning is `docs/lock-order.md`'s ("One escape survives").
+    // `deleteMany` matches can escape it. When that escape can pair with
+    // THIS function into an AB-BA cycle is `docs/lock-order.md`'s
+    // ("One escape survives").
     //
     // The order lives in ONE place — the helper's `ORDER BY c.id` — so two
-    // callers that share the helper cannot take a pair in opposite sequences, whatever their reads return. That it stays true is
+    // callers that share the helper cannot take a pair in opposite
+    // sequences, whatever their reads return. That it stays true is
     // pinned by `db-locks-lock-order.test.ts` (the helper's own order) and by
     // the deadlock test `gdpr-lock-order.test.ts` runs, which races the two
     // erasures' pre-locks directly ("does not deadlock when a

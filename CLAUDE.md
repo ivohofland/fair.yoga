@@ -178,7 +178,7 @@ Classes move through states: `draft → open → in_progress → completed` (eve
 
 ### Waitlist (Hybrid Promotion)
 
-- Until 1 hour before class: auto-promote the next in queue. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion.
+- Until 1 hour before class: auto-promote the next in queue. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion, unless that booking was late-cancelled before (`Registration.lateCancelledAt`, `keepsPromotionGrace`).
 - Final hour before class: broadcast to everyone waiting, first to claim gets the seat. A claim is past the cancel deadline and charged.
 - From class start: frozen.
 - Retention: an entry that never became a registration is reaped once its class

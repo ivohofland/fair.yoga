@@ -126,7 +126,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 **Waitlist:** When a class reaches maximum capacity, additional students join a waitlist. Waitlist promotion is anchored on class start, not on the cancellation deadline (#236):
 
-- **Until 1 hour before class**: the first person on the waitlist is automatically promoted and notified. They can cancel free until the later of the cancellation deadline and 15 minutes after being promoted.
+- **Until 1 hour before class**: the first person on the waitlist is automatically promoted and notified. They can cancel free until the later of the cancellation deadline and 15 minutes after being promoted — unless they had already cancelled this booking after the deadline, in which case it stays charged.
 - **In the final hour before class**: everyone remaining on the waitlist gets a notification that a spot opened. First to claim it gets in — a claim always lands past the cancellation deadline, so it's charged even if they can't make it.
 - **From class start**: the waitlist is frozen. No more movement. The registration list is final.
 
@@ -134,7 +134,7 @@ Setting min rate and target rate to the same value collapses the scaling to a fl
 
 Two separate deadlines serve different purposes:
 
-**Student cancellation deadline** (48/24/12/6h before class): the cutoff for penalty-free cancellation. Students who cancel after this deadline or who don't show up are still included in the price calculation and charged their share — except an auto-promoted student inside their 15-minute grace (see Waitlist above).
+**Student cancellation deadline** (48/24/12/6h before class): the cutoff for penalty-free cancellation. Students who cancel after this deadline or who don't show up are still included in the price calculation and charged their share — except an auto-promoted student inside their 15-minute grace (see Waitlist above), which a booking already cancelled late does not get.
 
 **Auto-cancel check** (4/2/1h before class): the system checks once, at the chosen time, whether the minimum number of students is registered. Late cancellations count toward the minimum, since they still pay. If the minimum is met the class runs, whatever happens afterwards. If not, the class is automatically cancelled and all students are notified. No charges are applied. No teacher action is required. A class published or moved inside its check window, or added inside it when a recurring schedule is created or resumed, is not checked. The hourly fill declines such a date instead of creating the class, so that template's week stays empty (#859).
 
@@ -142,7 +142,7 @@ Two separate deadlines serve different purposes:
 
 **Early cancellations** (before the cancellation deadline): removed from the calculation, no charge.
 
-**Grace policies:** Beyond the auto-promoted student's 15-minute grace (see Waitlist above), no system-level grace policy for cancellations or emergencies. If a student has a genuine emergency, they talk to their teacher. The teacher can manually mark someone as "not charged" if they choose to be lenient. This keeps the relationship human and teacher-centric.
+**Grace policies:** Beyond the auto-promoted student's 15-minute grace (see Waitlist above; not for a booking already cancelled late), no system-level grace policy for cancellations or emergencies. If a student has a genuine emergency, they talk to their teacher. The teacher can manually mark someone as "not charged" if they choose to be lenient. This keeps the relationship human and teacher-centric.
 
 ### 4. Room / Space Database
 

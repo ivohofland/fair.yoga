@@ -814,7 +814,7 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | **Timestamps** | | |
 | registered_at | datetime | When the current booking was made. Reset when an earlier booking's row is reused for a new booking, so a rebooked student sorts as booked then |
 | cancelled_at | datetime, nullable | |
-| late_cancelled_at | datetime, nullable | Set by a student's late cancel and never cleared. A booking that carries it gets no auto-promotion free-cancel grace, so rejoining the waitlist after a late cancel is a change of mind, not a way out of the charge (`freeCancelUntilFor`, `src/lib/cancel-deadline.ts`) |
+| late_cancelled_at | datetime, nullable | Set by a student's late cancel and never cleared. A booking that carries it gets no auto-promotion free-cancel grace, so rejoining the waitlist after a late cancel is a change of mind, not a way out of the charge (`freeCancelUntilFor`, `src/lib/cancel-deadline.ts`). The teacher's attendance edit (`PUT /api/registrations/[id]`) may return a booking to `late_cancel` only when it carries this stamp |
 | class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is claimed, before it is delivered; a failed email leaves it set (at most once). Cleared when an earlier booking's row is reused for a new booking |
 | updated_at | datetime | |
 
@@ -879,7 +879,7 @@ gate".
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Hybrid waitlist promotion, anchored on class start (#236): until 1 hour before start, students are auto-promoted in queue order; in the final hour before start, it switches to first-come-first-claimed for any remaining spots; from start, the queue is frozen. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion (`freeCancelUntil`, `src/lib/cancel-deadline.ts`) — a claimed spot gets no grace: the claim is the student's own act, and it always lands past the cancel deadline, so it is charged.
+Hybrid waitlist promotion, anchored on class start (#236): until 1 hour before start, students are auto-promoted in queue order; in the final hour before start, it switches to first-come-first-claimed for any remaining spots; from start, the queue is frozen. An auto-promoted student can cancel free until the later of the cancel deadline and 15 minutes after promotion (`freeCancelUntil`, `src/lib/cancel-deadline.ts`), unless that booking was late-cancelled before: it then stays charged (`Registration.lateCancelledAt`, `keepsPromotionGrace`) — a claimed spot gets no grace: the claim is the student's own act, and it always lands past the cancel deadline, so it is charged.
 
 **Retention (#238):** an entry that never became a registration is deleted once
 its class is terminal (`completed`/`cancelled`) and more than 365 days past its
