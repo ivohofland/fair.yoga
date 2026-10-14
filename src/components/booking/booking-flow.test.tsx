@@ -37,10 +37,22 @@ describe('BookingFlow', () => {
         currency="EUR"
         isFirstBooking={false}
         openPaymentsCount={0}
+        waitlistPosition={null}
         {...overrides}
       />,
     );
   }
+
+  // A queued student on a full class was offered "Join the waitlist" again.
+  it('tells a student already waiting their place, and offers no join', () => {
+    stubFetch();
+    renderFlow({ isFull: true, waitlistPosition: 2 });
+
+    expect(screen.getByText("You're on the waitlist")).toBeInTheDocument();
+    expect(screen.getByText(/You're number 2 in the queue/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to your bookings' })).toHaveAttribute('href', '/bookings');
+    expect(screen.queryByRole('button', { name: 'Join the waitlist' })).not.toBeInTheDocument();
+  });
 
   it('asks for a tier instead of naming one when the stored tier is unreadable', () => {
     stubFetch();
