@@ -120,42 +120,38 @@ export interface ReapOptions {
 }
 
 /**
- * Thrown when a run attempted at least one class and every single one failed.
+ * Thrown when a run attempted at least one class and most or all of them
+ * failed — the two conditions `report` throws on.
  *
- * Shares its shape with `ReconciliationFailedError` (`waitlist-reconciliation.ts`)
- * — both swallow per-class failures by design, so one contended class cannot
- * abandon the classes behind it, and both rethrow when swallowing ALL of them
- * would let `scheduler.ts` stamp `lastSuccessAt`, leave `lastError` null, and
- * `/api/health` report the job `healthy: true` — an affirmative false statement
- * rather than a missing signal. The reason to rethrow diverges from there:
- * `ReconciliationFailedError` tolerates a bounded run of all-transient ticks,
- * because that sweep only INVOKES a class in the rare state it exists for — a
- * free seat and a live queue at the same moment — and skips every other
- * candidate, so one invoked class hitting a benign transient database failure
- * is the ordinary all-failed tick there, not the edge case. This sweep does
- * not — it throws unconditionally, transience-blind, the moment every class it
- * attempted fails. It runs once daily over a batch of up to
- * `MAX_CLASSES_PER_RUN` terminal classes that essentially nothing else is
- * contending for, so an all-failed run here is a real signal rather than a
- * false alarm; there is no routine contention for a streak to distinguish from
- * a wedged lock.
+ * Swallowing every per-class failure would let `scheduler.ts` stamp
+ * `lastSuccessAt`, leave `lastError` null and `/api/health` report the job
+ * healthy: an affirmative false statement rather than a missing signal. Unlike
+ * `ReconciliationFailedError`, this is transience-blind: the sweep runs once
+ * daily over terminal classes nothing routinely contends for, so a run that
+ * lost most of its classes is a real signal, with no routine contention for a
+ * streak to tell apart from a wedged lock.
  *
- * `classes > 0` is what keeps this cheap: "nothing was eligible" and "found work
- * and accomplished none" are different states the summary can already tell
- * apart, and only the second is a failure. In the routine case — one contended
- * class among several — nothing throws.
+ * `classes > 0` is what keeps this cheap: "nothing was eligible" and "found
+ * work and accomplished none" are different states the summary already tells
+ * apart, and only the second is a failure.
+ *
+ * Takes the summary rather than two bare numbers, so the counts cannot be
+ * passed in the wrong order.
  */
 export class RetentionFailedError extends Error {
-  constructor(
-    public readonly classes: number,
-    public readonly failed: number,
-  ) {
+  readonly classes: number;
+  readonly failed: number;
+
+  constructor(summary: Pick<ReapSummary, 'classes' | 'failed'>) {
+    const { classes, failed } = summary;
     super(
       failed === classes
         ? `waitlist retention attempted ${classes} class(es) and every one failed`
         : `waitlist retention attempted ${classes} class(es) and ${failed} failed`,
     );
     this.name = 'RetentionFailedError';
+    this.classes = classes;
+    this.failed = failed;
   }
 }
 
@@ -354,7 +350,7 @@ function report(summary: ReapSummary): void {
     // that attempted N classes and failed all N is a different statement at
     // any N, and the one that must not be swallowed.
     log.error(summary, 'waitlist retention reaped nothing — every class it tried failed');
-    throw new RetentionFailedError(summary.classes, summary.failed);
+    throw new RetentionFailedError(summary);
   }
 
   if (summary.failed > summary.classes / 2) {
@@ -362,7 +358,7 @@ function report(summary: ReapSummary): void {
     // one failure the sample is too small to mean anything, and the sweep runs
     // daily.
     log.error(summary, 'waitlist retention failed for most of the classes it tried');
-    throw new RetentionFailedError(summary.classes, summary.failed);
+    throw new RetentionFailedError(summary);
   }
 
   if (summary.failed > 0) {

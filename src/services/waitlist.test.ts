@@ -363,9 +363,19 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
   // Booking refuses a class whose start has passed; the queue must too, or a
   // student joins a class already running until the status sweep catches up.
   it('rejects joining a full class whose start has passed, though it is still open', async () => {
+    // A student with no entry on this class, so the refusal is the join's own
+    // and not the already-waiting no-op's.
+    const late = await prisma.student.create({
+      data: { firstName: 'Late', lastName: 'Joiner', email: `late-joiner-${uniqueSuffix}@test.local`, incomeTier: 3 },
+    });
+    onTestFinished(async () => {
+      await prisma.student.delete({ where: { id: late.id } });
+    });
+
     await expect(
-      addToWaitlist(prisma, classId, studentIds[0]!, new Date('2099-06-02T00:00:00Z')),
+      addToWaitlist(prisma, classId, late.id, new Date('2099-06-02T00:00:00Z')),
     ).rejects.toMatchObject({ reason: 'class_started' });
+    expect(await prisma.waitlistEntry.count({ where: { classId, studentId: late.id } })).toBe(0);
   });
 
   it('rejects joining when already actively registered', async () => {
