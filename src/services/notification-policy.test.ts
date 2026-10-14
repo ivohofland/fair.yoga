@@ -51,6 +51,21 @@ describe('isEmailEligible', () => {
     ).toBe(true);
   });
 
+  // A freed-spot message is about a seat that can only be claimed before
+  // start; emailed mid-class, it is noise about a door already shut.
+  it.each(['spot_available', 'spot_taken'] as const)(
+    'never emails %s once its class has started, however old',
+    (type) => {
+      expect(isEmailEligible({ type, createdAt: minutes(-45), classStart: minutes(-1) }, now, 30)).toBe(false);
+    },
+  );
+
+  it('still emails spot_available while its class is ahead', () => {
+    expect(
+      isEmailEligible({ type: 'spot_available', createdAt: minutes(-1), classStart: minutes(30) }, now, 30),
+    ).toBe(true);
+  });
+
   it('another type a day before class still waits out the threshold', () => {
     expect(
       isEmailEligible({ type: 'booking_confirmed', createdAt: now, classStart: new Date('2026-06-02T12:00:00Z') }, now, 30),

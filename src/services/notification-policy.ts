@@ -60,11 +60,30 @@ export const IMMEDIATE_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set([
   'walk_in_added',
 ]);
 
+/**
+ * Types about a seat that can only be claimed before class start. Once the
+ * class has started the queue is closed, so their email would arrive
+ * mid-class about a choice that no longer exists — they are never emailed
+ * from then on.
+ */
+export const CLOSES_AT_CLASS_START_TYPES: ReadonlySet<NotificationType> = new Set([
+  'spot_available',
+  'spot_taken',
+]);
+
 export function isEmailEligible(
   input: { type: NotificationType; createdAt: Date; classStart: Date | null },
   now: Date,
   thresholdMinutes: number,
 ): boolean {
+  if (
+    CLOSES_AT_CLASS_START_TYPES.has(input.type) &&
+    input.classStart !== null &&
+    now >= input.classStart
+  ) {
+    return false;
+  }
+
   if (IMMEDIATE_EMAIL_TYPES.has(input.type)) return true;
 
   const oldEnough =
