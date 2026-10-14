@@ -247,12 +247,13 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
  * the last seat cannot make that mistake. The predicate itself queries
  * nothing; each caller supplies the row it read.
  *
- * The claim-window lower bound survives as a secondary check, in memory and
- * for free. `date` and `startTime` are absent from `ECONOMIC_FIELDS`
- * (`lib/class-fields.ts`), so a class can be rescheduled after its settings
- * lock — which opens a NEW claim window while a flag from the old one still
- * stands. Without the bound, a flag from the old window would keep the new
- * window silent until the class next fills.
+ * The claim-window lower bound is a defensive secondary check, in memory and
+ * for free: a flag stamped before the current claim window opened does not
+ * count as standing for it. A class with a waitlist has a registration, and
+ * a registration locks `date` and `startTime` (`LOCKED_FIELDS`,
+ * `lib/class-fields.ts`), so no writer moves the window under a standing
+ * flag; the bound keeps a flag from some other window from silencing this
+ * one should that ever stop holding.
  */
 export function broadcastStillStands(cls: {
   spotBroadcastAt: Date | null;
@@ -659,10 +660,12 @@ export async function promoteNext(
       throw new WaitlistPromotionError('Class is full', 'class_full');
     }
 
-    // Find the queue head to promote. Entries can go stale — a student books
-    // the class directly and their `waiting` row survives. A stale head must
-    // be dropped, not promoted: promoting it would violate the unique
-    // (classId, studentId) registration constraint and wedge the queue.
+    // Find the queue head to promote. A `waiting` row whose student already
+    // holds an active registration is one no current writer leaves behind
+    // (booking directly resolves the entry), but a hand-written or legacy row
+    // can. Such a stale head is dropped, not promoted: promoting it would
+    // violate the unique (classId, studentId) registration constraint and
+    // wedge the queue.
     let nextEntry: WaitlistEntry | null = null;
     for (;;) {
       const candidate = await tx.waitlistEntry.findFirst({
@@ -1062,10 +1065,9 @@ export async function handleSpotFreed(
       // A broadcast already standing for this claim window covers this seat
       // too, so a second one would tell every waiter what they were already
       // told. Read here, not from `cls` above: `spotBroadcastAt` is written
-      // under this row lock, and so is any reschedule that moves the window
-      // (`docs/lock-order.md`), so only a read taken after the lock sees
-      // either. The lock alone orders two callers for one freed seat; this is
-      // what tells the second about the first. Why declining loses no
+      // under this row lock, so only a read taken after the lock sees a
+      // concurrent broadcast's stamp. The lock alone orders two callers for
+      // one freed seat; this is what tells the second about the first. Why declining loses no
       // recipient: `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
       const current = await tx.class.findUniqueOrThrow({
         where: { id: classId },
@@ -1224,9 +1226,7 @@ async function hasActiveRegistration(
  * `FOR UPDATE` lock, and that convention belongs with the table it
  * protects. Without the lock, a `promoteNext` racing an unlink promotes the
  * student off the queue, and its `linkTeacherStudent` call re-creates the
- * very link the unlink is in the middle of deleting. (It no longer clears the
- * `TeacherBlock` too: since the link moved to the join, promotion resolves
- * no invitations at all. The link alone is enough to want this lock.)
+ * very link the unlink is in the middle of deleting.
  *
  * The convention now covers every renumbering writer *in this module*:
  * `addToWaitlist`, `promoteNext`, `claimSpot` and `removeFromWaitlist` each
@@ -1235,11 +1235,7 @@ async function hasActiveRegistration(
  * additional reason on top of the link race above, not the same one: two
  * renumberings of one queue interleaving, which the partial unique index on
  * waiting positions (`WaitlistEntry_waiting_position_key`) refuses only when
- * the interleaving ends in a duplicate. (`removeFromWaitlist` picked it up in
- * #174, having gone without it for a while — it can only move an entry OUT of
- * `waiting`, never into it, so nothing it raced could have manufactured the
- * standing request this withdraws; the gap was skew in the position
- * numbering, not a wrong promotion.) `POST /api/registrations` locks and
+ * the interleaving ends in a duplicate. `POST /api/registrations` locks and
  * renumbers the same way,
  * outside this module (`src/app/api/registrations/route.ts` — `lockClassRow`,
  * the same helper this module's functions call, and the
@@ -1264,38 +1260,28 @@ async function hasActiveRegistration(
  * The needle carries its client prefix so this line does not match itself —
  * both prefixes, because `reorderWaitingEntries` below takes either.
  *
- * Two answer today. `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near
+ * Of its hits, these are the ones without a `lockClassRow` of their own.
+ * `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near
  * its `tx.calendarEntry.updateMany` CAS, to `removed`) holds a conflicting
  * `Class` lock anyway, through the ordered `lockClassRowsOrdered` pre-lock
  * its loop runs behind. `closeQueueOnStart` below (to `expired` — see its
  * own docblock) takes none of its own and instead trusts its caller to
- * have already taken one; every caller does, via `lockClassRow`,
- * `transitionClass` included since #327 gave it a lock of its own. Neither
+ * have already taken one; every caller does, via `lockClassRow`. Neither
  * can race a `lockClassRow` holder into corrupting anything.
  *
- * NEITHER IS UNBOUNDED, and the one that used to be is the one that moved.
- * The transition route's cancel branch is `POST /api/classes/[id]/cancel`
- * since #327, a door that opens with `lockClassRow` — so its
- * `waitlistEntry.updateMany` runs under the same bounded 2s wait as every
- * other site, where the branch it replaced reached the `Class` row through a
- * bare CAS `class.updateMany` with no `setLockTimeout` ahead of it.
- * `deleteTeacherAccount` is bounded one helper over: `lockClassRowsOrdered`
- * issues `setLockTimeout`, which governs every statement left in the
- * transaction.
+ * Neither is unbounded. `POST /api/classes/[id]/cancel` opens with
+ * `lockClassRow`, so its `waitlistEntry.updateMany` runs under the same
+ * bounded 2s wait as every other site. `deleteTeacherAccount` is bounded one
+ * helper over: `lockClassRowsOrdered` issues `setLockTimeout`, which governs
+ * every statement left in the transaction.
  *
  * `deleteStudentAccount`'s `reorderWaitingEntries`
  * loop runs under the 2s bound its own transaction sets unconditionally
  * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for
- * every statement it runs, these two mutators' rows included. That used to
- * say the loop inherited `lockClassRow`'s bound, which stopped being the
- * mechanism when #216/#182 replaced the erasure's lock loop with one ordered
- * `FOR UPDATE` statement — #237 then moved that statement into the shared
- * `lockClassRowsOrdered` helper, which is a different change and is why the
- * attribution is two issues rather than one — and `gdpr.ts` calls
- * `lockClassRow` nowhere now. Named here so the next reader of that
- * transaction's budget (`gdpr.ts`, the erasure's flat `{ timeout: 20_000 }`,
- * sized from a pre-transaction count until #240 removed the term) does not
- * have to rediscover them.
+ * every statement it runs, these two mutators' rows included — not under
+ * `lockClassRow`'s, which `gdpr.ts` does not call. Named here so the next
+ * reader of that transaction's budget (`gdpr.ts`, the erasure's flat
+ * `{ timeout: 20_000 }`) does not have to rediscover them.
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.
@@ -1321,9 +1307,9 @@ export async function withdrawWaitingEntriesForTeacher(
 ): Promise<void> {
   // Through the shared helper (#237), which owns the `ORDER BY c.id`, the
   // `FOR UPDATE OF c` that keeps this join from also locking the
-  // `WaitlistEntry` rows, the 2s bound and the dedupe this call site used to
-  // do itself. `FOR UPDATE OF c` locks the same rows `addToWaitlist`,
-  // `promoteNext`, `claimSpot` and `removeFromWaitlist` lock singly.
+  // `WaitlistEntry` rows, the 2s bound and the dedupe. `FOR UPDATE OF c`
+  // locks the same rows `addToWaitlist`, `promoteNext`, `claimSpot` and
+  // `removeFromWaitlist` lock singly.
   //
   // VERDICT (#327): this transaction reads and writes `WaitlistEntry` only —
   // no entry column of any kind — so it takes the `Class` rows and stops
@@ -1380,20 +1366,20 @@ export async function reorderWaitingEntries(
  * Closes a class's queue because the class has STARTED, not because it was
  * cancelled or left.
  *
- * `expired`, and it is the only writer of that value in production code (four
- * test files fixture the status directly). The three
+ * `expired`, and it is the only writer of that value in production code. The
  * cancel paths write `removed`, matching `removeFromWaitlist` — a student who
  * left. This one means the opposite: a student who never got in. The
  * distinction is not decorative. `exportStudentData` (`gdpr.ts`) publishes
- * `WaitlistEntry.status` verbatim and, unlike the registrations half of the
- * same export, does NOT select the class's status — so `removed` here would
- * tell a subject-access request that the student withdrew, which is a
- * different and equally wrong story from the one the data supports.
+ * `WaitlistEntry.status` verbatim beside the class's `classCancelledAt`, and
+ * that column tells a cancellation's `removed` from a student's own; it says
+ * nothing about a class that ran — so `removed` here would tell a
+ * subject-access request that the student withdrew, which is a different and
+ * equally wrong story from the one the data supports.
  *
  * No reorder. `reorderWaitingEntries` renumbers only `waiting` rows, so closed
  * rows keep stale positions by design — `WaitlistEntry_waiting_position_key` is
  * partial on `status = 'waiting'` for the same reason; closing an entire queue
- * at once leaves nothing to renumber, which is why the three cancel paths issue
+ * at once leaves nothing to renumber, which is why the cancel paths issue
  * their `updateMany` without one either.
  *
  * No notification. #112's promise was about a class ceasing to be OFFERED. A

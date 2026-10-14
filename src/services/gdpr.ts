@@ -661,26 +661,14 @@ export async function deleteStudentAccount(
     // "Ordering WITHIN `Class`" — it owns that census; a second copy here
     // would go stale against it silently.
     //
-    // "Takes an order", deliberately, not "agree" — one of those sites is not
-    // total, and the exception is a pairing with THIS function, so it must
-    // not be read out of this comment. `archiveOrUnarchiveTemplate`'s
-    // pre-lock covers `date > today`; `updateClass` (`class-lifecycle.ts`)
-    // can reschedule a same-day instance into the future from outside that
-    // transaction, between the pre-lock and the `deleteMany` whose predicate
-    // is re-evaluated at execution time by design. That row is deleted
-    // without ever having been held in order, so the AB-BA cycle against
-    // this function can still form through that window — narrow, measured,
-    // and tracked as a residual rather than closed. See that pre-lock's own
-    // comment and the atomic-template-update spec's risk list before
-    // treating this pairing as settled. `withdrawWaitingEntriesForTeacher`
-    // does not share the exposure: its write set is keyed
-    // `classId: { in: classIds }`, a structural subset of what its pre-lock
-    // returned.
+    // `archiveOrUnarchiveTemplate`'s pre-lock is not total — a row its
+    // `deleteMany` matches can escape it — but the escape cannot pair with
+    // THIS function into an AB-BA cycle, because a class this erasure locks
+    // holds a waitlist entry and such a class's schedule cannot move. The
+    // reasoning is `docs/lock-order.md`'s ("One escape survives").
     //
-    // The order lives in ONE place now — the helper's `ORDER BY c.id` — so
-    // the two tables' disagreement that used to make this comment a three-way
-    // audit is closed: two callers that share the helper cannot take a pair in
-    // opposite sequences, whatever their reads return. That it stays true is
+    // The order lives in ONE place — the helper's `ORDER BY c.id` — so two
+    // callers that share the helper cannot take a pair in opposite sequences, whatever their reads return. That it stays true is
     // pinned by `db-locks-lock-order.test.ts` (the helper's own order) and by
     // the deadlock test `gdpr-lock-order.test.ts` runs, which races the two
     // erasures' pre-locks directly ("does not deadlock when a

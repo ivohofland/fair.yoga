@@ -409,19 +409,11 @@ export async function transitionClass(
   // for a 09:00 class, CAS at 09:00:00.1 — which publishes a class whose start
   // has just passed, exactly as publishing it a second earlier legally would.
   //
-  // THE CLOCK IS NOW THE ONLY OTHER WRITER, and that took a deletion rather
-  // than an argument. An earlier revision rested the whole case on "since
-  // #249's other guard a class's stored start can never be moved into the
-  // past, so this read cannot understate it"; that was false at the time,
-  // because the template sync rewrote `startTime` on a template's instances
-  // with a bare `updateMany` past no such guard (the measurement is in
-  // `waitlist-retention.ts`'s docblock) and could land in this window. #194
-  // deleted that function. Re-derived rather than recalled — the `class.`
-  // write sites in `src/`, minus the tests — `updateClass` below is the only
-  // statement left that moves an existing class's `date`/`startTime`, and it
-  // is guarded. The strong claim is true again, which is precisely why the
-  // narrower argument below is kept rather than dropped: it was one unguarded
-  // writer away from false once already.
+  // THE CLOCK IS THE ONLY OTHER WRITER. Re-derive it from the `class.` write
+  // sites in `src/`, minus the tests: `updateClass` below is the only
+  // statement that moves an existing class's `date`/`startTime`, and it is
+  // guarded. The narrower argument below is kept anyway, because the strong
+  // claim holds only while no unguarded writer of those columns exists.
   //
   // It stays safe on that narrower reason regardless. Losing such a race would
   // mean publishing a `draft` whose start had just been moved into

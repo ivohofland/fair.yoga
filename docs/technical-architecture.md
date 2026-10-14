@@ -500,6 +500,75 @@ async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
 }
 ```
 
+#### What closes a queue
+
+A `waiting` entry leaves contention in one of two ways, and every writer of
+`WaitlistEntry` is one or the other (or only renumbers `position`):
+
+- **Closed without a seat** — a terminal status or a deleted row. A class that
+  starts has its queue closed to `expired` by `closeQueueOnStart`
+  (`waitlist.ts`), atomically with each `open → in_progress` exit
+  (`autoTransitionToInProgress`, `transitionClass`, and `completeClass`'s
+  inline bump when a teacher completes an `open` class directly), so a class
+  leaves `open` with no `waiting` rows. A cancellation, a withdrawal or an
+  unlink writes `removed`. `deleteStudentAccount` (`gdpr.ts`) and the
+  retention sweep (below) delete rows outright.
+- **Fulfilled** — `promoteNext`, `claimSpot`, and a queued student booking
+  directly through `POST /api/registrations` write `promoted`/`claimed`. Self-
+  limiting: the entry leaves `waiting` because the student got a seat.
+
+This is the property the reconciliation sweep's candidate query
+(`reconcileWaitlists`, `waitlist-reconciliation.ts`) leans on for its cost:
+its `open`-and-live join stays a bound on a set that does not grow with the
+life of the deployment. Re-derive the writers rather than trusting the list
+above:
+
+    grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src | grep -v '\.test\.'
+
+then read each hit for which status it writes, or whether it deletes the row.
+
+### Waitlist retention (`services/waitlist-retention.ts`)
+
+`reapClosedWaitlistEntries` deletes entries that never became a registration,
+on terminal classes more than `WAITLIST_RETENTION_DAYS` past their date
+(policy: `docs/data-model.md`, WaitlistEntry → Retention). Nothing else removes
+such a row: `deleteStudentAccount` deletes only its own subject's entries, a
+`Class` cascade fires only from the template archive, which deletes future
+instances and so never reaches a terminal class, and a `Student` is anonymised
+rather than deleted. Without the sweep the population grows for the life of
+each account — which is also most of what grows the erasure's `Class` lock
+set (`deleteStudentAccount`'s pre-lock joins `WaitlistEntry` with no status
+predicate; the sweep reaps only unfulfilled entries, so that set shrinks but
+is not bounded).
+
+**Why deleting is safe.** Both halves of the sweep's predicate are columns of
+one `CalendarEntry` row, and that row's schedule is frozen by the database:
+terminality is `classCompletedAt IS NOT NULL OR (kind = 'regular' AND
+cancelledAt IS NOT NULL)`, the predicate `entry_frozen_schedule_guard`
+evaluates before it refuses a change to `date`, `startTime` or
+`durationMinutes`. So on any row the sweep considers, `date` cannot move from
+any client, raw SQL included, and "more than 365 days past" is a property of
+the row. Terminality is itself held: `entry_completion_marker_guard` makes
+`classCompletedAt` write-once, and `entry_terminal_liveness_guard` refuses to
+clear `cancelledAt` on a regular entry or set it on a completed one. A raw-SQL
+walk of a cancelled class's `Class.status` among the live statuses remains
+possible (the `KNOWN-OPEN` beside `TERMINAL_CLASS_STATUSES`,
+`class-lifecycle.ts`), but a cancelled regular entry satisfies the predicate
+on its own, so the walk changes nothing here. `updateClass` refuses every edit
+to a terminal class as service policy; the trigger is what this deleting sweep
+depends on, because it holds against clients that never call that function.
+
+No `WaitlistEntry` writer can produce a row the sweep would wrongly reap. Run
+the grep above and classify each hit: guarded by class liveness (it requires
+the class live, or runs inside the write that makes it terminal), scoped to
+`status: 'waiting'` (on a terminal class a `waiting` row is legacy that
+reaping removes), or a deleter, which shrinks the population rather than
+adding to it.
+
+**Why it cannot deadlock against the erasure**, and why it is one class per
+transaction: `docs/lock-order.md`, Known conformance →
+`reapClosedWaitlistEntries`.
+
 ### Notification Dispatcher (`services/notifications.ts`)
 
 `createNotification` / `createBulkNotifications` do only two things: write the

@@ -283,22 +283,26 @@ its own membership four times — the last of them by the round that filed the
 issue, which added `deleteStudentAccount`'s statement to the table and not to
 the derivation below it. The table is gone rather than corrected a fifth time.
 
-**One exception survives, and it is about a predicate rather than an order.**
-`archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`) call covers
-`date > today`, so a same-day instance rescheduled into the future by
-`updateClass` (`class-lifecycle.ts`) — which takes the `Class` row lock via
-`lockClassRow`, holds it only until its own commit, and never takes the
-template lock — between that call and the `deleteMany` is deleted without
-ever having been held. The AB-BA cycle against
-`deleteStudentAccount` can still form through that window. It is narrow (it
-needs a concurrent reschedule *and* an erasure timed into the same gap, of a
-student in one of two shapes: waitlisted across both classes, or waitlisted on
-the rescheduled class and named in the audience of an announcement scoped to
-another class the same delete removes first — the second shape since #48, see
-"`Announcement` rows: the audience scrub (#48)"), it is measured rather than theorised,
-and it is no worse than the pre-#180 state, which had no ordering at all — but
-it is not closed. Widening the call past `today` would lock history for no
-gain, and #86/#112 require the delete's live predicate re-evaluation regardless.
+**One escape survives, about a predicate rather than an order, and it closes
+no cycle.** `archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`)
+call covers `date > today`, so a same-day instance moved into the future by
+`updateClass` (`class-lifecycle.ts`) between that call and the `deleteMany` is
+deleted without ever having been held. Widening the call past `today` would
+lock history for no gain, and #86/#112 require the delete's live predicate
+re-evaluation regardless.
+
+The AB-BA cycle against `deleteStudentAccount` that this window once allowed
+is closed by #836's schedule lock. Every shape of it needs the moved class to
+hold a waitlist entry of the erased student — waitlisted across both classes,
+or waitlisted on the moved class and named in the audience of an announcement
+scoped to another class the same delete removes first (see "`Announcement`
+rows: the audience scrub (#48)") — because the erasure's pre-lock is keyed on
+that student's waitlist entries. A waitlist forms only on a full class, so the
+class has had a registration; the first registration sets `settingsLocked`,
+which nothing ever clears; and with `settingsLocked` set `updateClass` refuses
+any move of `date` or `startTime` (`LOCKED_FIELDS`, `src/lib/class-fields.ts`,
+answered `SETTINGS_LOCKED`), re-checked under its own `lockClassRow`. So the
+row that escapes the pre-lock is always one no erasure locks.
 `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) does not share it: its write
 set is keyed on the ids its own `lockClassRowsOrdered` call handed back, a
 structural subset rather than a predicate re-evaluated when the write runs.
@@ -1655,18 +1659,13 @@ an EXISTING `Announcement` row, and what each meeting does:
   `lock_timeout`, for a transaction that waits on nothing the erasure holds,
   then re-checks `@>` on the committed version (the array is unchanged by the
   null) and applies. The archive re-applies its null onto a row the scrub
-  committed the same way. The exception is the archive pre-lock's documented
-  residual ("Ordering WITHIN `Class`", "One exception survives"; `gdpr.ts`,
-  the comment above the erasure's first write): an entry rescheduled into the
-  delete's predicate after the pre-lock is deleted without its `Class` held.
-  If the erasure holds that class (the subject has a `WaitlistEntry` there,
-  which is what puts a class in the erasure's lock set), and the
-  same delete has already nulled an announcement, scoped to another of its
-  classes, whose audience names the subject, the archive holds a row the scrub
-  wants while waiting on the class the erasure holds: `40P01`. This is a
-  second shape of that residual, beside the original one (the subject
-  waitlisted in both classes), through the same window, and it is accepted
-  with it.
+  committed the same way. The archive pre-lock's escape ("One escape
+  survives", above) does not reopen this: an entry moved into the delete's
+  predicate after the pre-lock is deleted without its `Class` held, but a
+  `40P01` here needs the erasure to hold that class — the subject has a
+  `WaitlistEntry` there, which is what puts a class in the erasure's lock
+  set — and a class with a waitlist has had a registration, so its schedule
+  cannot be moved. The same chain closes both shapes.
 - **The `ON DELETE CASCADE` of `Announcement_teacherId_fkey`.** No production
   code deletes a `Teacher`; erasure anonymises it.
 

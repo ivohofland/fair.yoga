@@ -1,34 +1,12 @@
 /**
  * Reconciles waitlists whose spot-freed hook never delivered.
  *
- * `handleSpotFreed` can fail two different ways, and both end with a waiting
- * student silently not told and nothing retrying (#220):
- *
- *   - the broadcast branch aborts at `lockClassRow`'s 2s `SET LOCAL
- *     lock_timeout` with `55P03`, while the contending writer still holds the
- *     row;
- *   - the auto-promote branch aborts the same way now: `promoteNext` (#104)
- *     takes its class row lock through `lockClassRow` too, so the two
- *     branches converged on one failure mechanism, not one branch merging
- *     into the other.
- *
- * HISTORICAL, kept as the evidence for a claim that is still true: before
- * #104 bounded it, the auto-promote branch's `FOR UPDATE` was unbounded and
- * ran inside a bare `db.$transaction(...)`, so a held row instead blew
- * Prisma's default 5s interactive-transaction budget — measured at 7014 ms
- * against a 7 s hold, having waited out the whole hold and failed afterwards
- * with `P2028`. That happened because Prisma's interactive-transaction
- * timeout cannot cancel a statement already blocked inside Postgres, only
- * refuse to start a new one (see `deleteStudentAccount`'s transaction-budget
- * note in `services/gdpr.ts`) — the claim this conversion leaves untouched,
- * since `lockClassRow`'s 2s bound now stops the wait long before that 5s
- * budget would ever be reached here.
- *
- * Both of those callers log and swallow, so this sweep is the only thing that
- * makes either loss recoverable. It is also the answer to a July 2026 audit
- * observation that no sweep re-checked waitlists against free seats — stated
- * here rather than cited, because the audit notes live outside the repository
- * and a reference no other clone can open is not a reference.
+ * Both branches of `handleSpotFreed` — broadcast and auto-promote — take the
+ * class row lock through `lockClassRow`, and both can abort at its 2s
+ * `SET LOCAL lock_timeout` with `55P03` while a contending writer still holds
+ * the row. Either way a waiting student is not told (#220), and the hook's
+ * callers log and swallow, so this sweep is what makes either loss
+ * recoverable.
  *
  * **This module detects; `handleSpotFreed` decides.** It resolves the window to
  * choose which classes to ASK about, but makes no promote-vs-broadcast decision
@@ -45,9 +23,7 @@
  * through `ReconcileOptions`, which in production is
  * `runWaitlistReconciliationTick`'s and in a test is the test's own.
  *
- * Line numbers are deliberately absent throughout this file. Every reference
- * names a symbol instead: an earlier revision cited sixteen of them and eight
- * were already wrong three commits into the branch that wrote them.
+ * References in this file name symbols, never line numbers.
  */
 import type { PrismaClient } from '@prisma/client';
 import { transientDbFailure } from '@/lib/api-errors';
@@ -63,8 +39,8 @@ import {
 } from './waitlist';
 
 /**
- * Why a candidate class was not handed to `handleSpotFreed`. Three reasons,
- * three distinct origins — a caller that cannot tell them apart cannot tell a
+ * Why a candidate class was not handed to `handleSpotFreed`. Each member has
+ * its own origin — a caller that cannot tell them apart cannot tell a
  * legitimately idle tick from a gate that has jammed shut.
  */
 export type SkipReason =
@@ -366,53 +342,12 @@ export async function reconcileWaitlists(
   // Start from the waiting entries, not from the classes: most classes have no
   // queue, and this is the narrowest set that can possibly need reconciling.
   //
-  // `class: { status: 'open' }` is not a duplicate of the filter below — it
-  // USED TO be what BOUNDS this set. Since #216 it is a cost bound rather
-  // than a correctness guard: removing it fails no test by design (#222).
-  // Before #216, nothing closed a queue when a class left `open` by starting
-  // — `class-lifecycle.ts` never touched `WaitlistEntry` on that path, and a
-  // queue only forms at `maxStudents`, so "a full class that starts" is the
-  // ordinary case, not an edge one — so the candidate list grew
-  // monotonically for the life of the deployment, rebuilt and passed inline
-  // to the queries below on every tick, on the single 2 GB VPS this project is
-  // pinned to.
-  //
-  // `closeQueueOnStart` (`waitlist.ts`, #216) closes that growth at the
-  // source now: atomic with each of the three `open -> in_progress` exits
-  // (`autoTransitionToInProgress`, `transitionClass`, and `completeClass`'s
-  // inline bump when a teacher completes an `open` class directly), it
-  // writes `expired` over every `waiting` row before the class can leave
-  // `open` any way but to `cancelled`. That is the property this join relies
-  // on, not a fixed roster of writers to keep in sync: every path that takes
-  // a `waiting` entry out of contention WITHOUT fulfilling it — a
-  // cancellation, a withdrawal, an erasure, or the class starting — either
-  // writes a terminal status (`removed` or `expired`) or deletes the row
-  // outright — `deleteStudentAccount` (`gdpr.ts`) and, since #238,
-  // `reapClosedWaitlistEntries` (`waitlist-retention.ts`) are both hard
-  // deletes rather than status writes. The reaper cannot affect THIS query's
-  // candidate set: it only touches classes in a terminal status, and this
-  // reads `status: 'waiting'` on `open` ones. It does drain the pre-#216
-  // legacy `waiting` rows on terminal classes. Those are not the last rows that
-  // could make the join below do any work, though — it additionally excludes
-  // `waiting` rows on `in_progress` classes, which the reaper never touches.
-  // FULFILMENT —
-  // `promoteNext`'s own promotion, `claimSpot`,
-  // or a queued student booking directly through `POST /api/registrations`
-  // (all of which write `promoted`/`claimed`) — is a different, self-limiting
-  // category this paragraph is not about: a fulfilled entry leaves `waiting`
-  // because the student got a seat, not because the queue closed under them.
-  // To re-derive either roster:
-  // `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`,
-  // excluding tests, then read each hit for which status it writes, or
-  // whether it deletes the row. Two of them are production DELETERS rather
-  // than one. (`waitlist-retention.ts`'s header classifies the same roster by
-  // whether each site can reach a terminal class. Neither place states a
-  // headcount any more: the hand-maintained partition went stale on the very
-  // commit that added the fifteenth site, while the grep recipe and the
-  // classification do not.) The `class: { status: 'open' }` join is kept
-  // anyway — it still narrows the scan to classes whose queue could still
-  // matter, which is worth avoiding even though nothing downstream depends on
-  // it for correctness any more.
+  // The `class` filter here duplicates the liveness filter on the class read
+  // below, and is a cost bound rather than a correctness guard: removing it
+  // fails no test by design (#222). It narrows the scan to queues that could
+  // still matter. Which writers take a `waiting` entry out of contention, and
+  // so keep that set from growing, is `docs/technical-architecture.md`
+  // (Waitlist → What closes a queue).
   //
   // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
   // into SQL. It selects the rows (plus `id`, which it needs to compare) and

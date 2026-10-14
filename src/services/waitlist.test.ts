@@ -717,7 +717,7 @@ describe('promoteNext (DB)', () => {
     });
     await addToWaitlist(prisma, classId, studentIds[3]!);
     // Manufacture the stale entry directly — the API resolves it on booking,
-    // but a claim/promotion race can still leave one behind.
+    // so only a hand-written or legacy row looks like this.
     const stale = await prisma.waitlistEntry.update({
       where: { classId_studentId: { classId, studentId: studentIds[1]! } },
       data: { status: 'waiting', position: 0, registrationId: null, promotedAt: null },

@@ -3,179 +3,19 @@
  * booking, on classes that can never change again, once those classes are
  * older than the window.
  *
- * WHY THIS EXISTS. Nothing else removes a `WaitlistEntry`. The only other
- * production remover is `deleteStudentAccount` (`gdpr.ts`), which runs once per
- * account at that account's request; `onDelete: Cascade` from `Class` fires
- * only from one deleter, scoped to FUTURE instances
- * (`archiveOrUnarchiveTemplate`'s `date > today`), so it cannot reach a
- * terminal class. There were two until #194 deleted the template sync's
- * wrong-day cleanup; the argument is one participant shorter and otherwise
- * unchanged. `Student`'s cascade
- * never fires at all, because erasure anonymises rather than deletes. So
- * without this sweep the population grows for the life of each account.
+ * Why the sweep exists, and why deleting on its predicate is safe, are
+ * arguments about other modules and the database's triggers:
+ * `docs/technical-architecture.md` (Waitlist retention). Policy:
+ * `docs/data-model.md` (WaitlistEntry → Retention).
  *
- * That growth is most of what makes the erasure's `Class` lock set grow with
- * account age — see the budget rationale in `deleteStudentAccount`. Only most:
- * that pre-lock joins `WaitlistEntry` with no status predicate, while this
- * sweep reaps only UNFULFILLED entries, so the lock set is shrunk rather than
- * bounded and still grows for a student who queues and gets promoted week
- * after week. This is also a storage-limitation problem in its own right
- * (GDPR Art. 5(1)(e)): an entry for a class that ran two years ago, which never
- * became a booking, has no remaining purpose, and the Article 15 export
- * publishes every one of them verbatim.
- *
- * WHY IT IS SAFE. Two arguments, and since #327 the first of them covers the
- * whole predicate rather than half of it:
- *
- *  - BOTH HALVES OF THIS SWEEP'S PREDICATE ARE COLUMNS OF ONE ROW, and that
- *    row's schedule is frozen by one trigger. `date` and terminality both live
- *    on `CalendarEntry` now — terminality as `classCompletedAt IS NOT NULL OR
- *    (kind = 'regular' AND cancelledAt IS NOT NULL)`, which is the same
- *    predicate `entry_reject_frozen_schedule_change` evaluates before it
- *    refuses, over that function's `OLD` row. Its live definition comes from
- *    `prisma/migrations/20260826140000_entry_guard_restorations/`, which
- *    replaced the one the rewire installed; the predicate is unchanged, and
- *    what the replacement added is an early return when none of the three
- *    frozen columns actually changes — a write that carries an unchanged
- *    `date` is not a move, so nothing below depends on the difference. So on
- *    any row this sweep considers, `date` is physically immovable from any
- *    client, raw SQL included: that is what makes "more than 365 days past" a
- *    property of the row rather than a snapshot something can move underneath
- *    it. The freeze covers `startTime` and `durationMinutes` in the same
- *    trigger; this sweep reads only `date`, and does not care about the other
- *    two.
- *
- *    THAT IMMOVABILITY IS A CLAIM ABOUT TWO TRIGGERS, NOT ONE, and the second
- *    one is why the first cannot be walked around in two statements. Every
- *    trigger here is `BEFORE UPDATE OF <columns>`, and `UPDATE OF` fires on a
- *    column's PRESENCE IN THE SET LIST — so a guard reading `OLD` is only as
- *    immovable as the columns its `OLD` depends on. Until
- *    `20260826182710_entry_completion_marker_guard`,
- *    `UPDATE "CalendarEntry" SET "classCompletedAt" = NULL` named none of the
- *    freeze guard's three columns, fired nothing, and left the next statement's
- *    `OLD` reading NULL: measured, the date then moved on a completed class.
- *    `entry_completion_marker_guard` makes the marker write-once, so the
- *    freeze's own input is as immovable as what it protects.
- *
- *    BOTH HALVES OF TERMINALITY ARE HELD BY TRIGGERS, which they were not when
- *    the rewire landed. `classCompletedAt` cannot be undone — the function
- *    `class_sync_entry_completed` is its only writer (two triggers run it, one
- *    per event; `prisma/schema.prisma` carries the query that re-derives the
- *    set), it only ever sets the column, and
- *    `entry_completion_marker_guard` now refuses every departure from a value
- *    it has set; its precondition is a `completed` status that
- *    `class_reject_terminal_status_change` refuses to let go of. `cancelledAt`
- *    on a REGULAR entry is equally immovable: `entry_terminal_liveness_
- *    guard` refuses to clear it, and refuses to set it on a completed entry.
- *    The studio family's PUT is still the only writer in `src/` that clears the
- *    column, and both that trigger's `kind` conjunct and this disjunct's keep
- *    the studio family out of the question either way.
- *
- *    ONE THING IS STILL NOT FROZEN, and it does not reach this sweep. Raw SQL
- *    can still walk a cancelled class's `Class.status` among the LIVE
- *    statuses: `class_reject_terminal_status_change` refuses only a class
- *    leaving `completed`, and a cancelled one has not got there. It cannot be
- *    walked TO `completed` —
- *    `CalendarEntry_not_cancelled_and_completed`
- *    (`20260826200000_entry_marker_exclusivity`) aborts that transaction, on
- *    the sync trigger's own write to the entry rather than on the status
- *    `UPDATE`. The walk that remains carries a `KNOWN-OPEN` beside
- *    `TERMINAL_CLASS_STATUSES` (`class-lifecycle.ts`) with its bounds. The row
- *    it produces is one this sweep would already have considered: a cancelled
- *    regular entry satisfies the second disjunct on its own, so a status walk
- *    adds nothing to reapability and takes nothing away from the freeze, which
- *    reads the entry's own columns and not the class's status.
- *
- *  - Every `WaitlistEntry` write site falls into one of three buckets, and none
- *    of them can write a row this sweep would then wrongly reap. To re-derive
- *    the roster:
- *    `grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src`, excluding
- *    tests and the comment lines among the hits. Classify each:
- *
- *      1. GUARDED BY CLASS LIVENESS — requires the class to be `open` (or
- *         `open`/`in_progress` for the walk-in resolver) and its entry
- *         uncancelled, or runs inside the write that makes the class terminal.
- *         A frozen entry is out of reach.
- *      2. SCOPED TO `status: 'waiting'` — `removeFromWaitlist`,
- *         `withdrawWaitingEntriesForTeacher`, `reorderWaitingEntries`. On a
- *         terminal class a `waiting` row exists only as pre-#216 legacy, and
- *         reaping is what removes that legacy population.
- *      3. DELETERS — `deleteStudentAccount` (`gdpr.ts`) and this sweep's own
- *         `deleteMany` below. A DELETE needs no status guard of its own: it is
- *         the population this sweep exists to shrink, not a writer this
- *         argument has to account for.
- *
- *    The classification is what makes the argument; a headcount of each bucket
- *    is not. An earlier revision hand-maintained one and it went stale on the
- *    very commit that added this sweep — the grep is self-updating, the
- *    arithmetic was not.
- *
- * THE SERVICE STILL HOLDS THE POLICY AND THE DATABASE THE INVARIANT, which is
- * the asymmetry #247 designed and #327 preserved one table over. `updateClass`
- * (`class-lifecycle.ts`) refuses EVERY edit to a frozen class — the class is
- * frozen, not a list of columns — and returns `terminal` or `frozen`, which
- * `PUT /api/classes/[id]` answers as 409; the trigger holds the one invariant
- * this deleting sweep depends on, from clients that never go through that
- * function.
- *
- * A PAST START ON A LIVE CLASS IS NOT THIS SWEEP'S PROBLEM, and the reason is
- * the freeze rather than the doors. #249 guards where a past start can be
- * WRITTEN — `updateClass` refuses a `date`/`startTime` edit whose resulting
- * start instant has already passed, and `transitionClass` refuses a
- * `draft -> open` publish of a class whose start has passed. Both are service
- * policy and deliberately not triggers, because an `open` class whose start
- * has passed is a state `generateClassInstances` legitimately produces
- * (`docs/superpowers/specs/2026-08-18-past-start-guard-design.md` §3). None of
- * that is load-bearing here: this sweep only ever reads `date` on a FROZEN
- * entry, and on those the trigger answers whatever the doors do.
- *
- * WHY IT CANNOT DEADLOCK AGAINST THE ERASURE. `deleteStudentAccount` deletes
- * its subject's waitlist entries with no status scope — terminal classes
- * included — so its write set and this one overlap, and Postgres picks the
- * victim of any cycle: it can be the erasure,
- * which means a student's Art. 17 request failing because a background sweep
- * raced it.
- *
- * What removes that cycle is the `Class` ROW LOCK, not the batch size. The
- * erasure PRE-LOCKS every `Class` it will delete entries from before its first
- * write (`gdpr.ts`, joined on `w."studentId"` with no status predicate), and
- * this sweep takes `lockClassRow(tx, classId)` before its `deleteMany`. So
- * every `WaitlistEntry` row in either write set sits under a `Class` row lock
- * that both transactions must hold first — the two can never contend on the
- * same `WaitlistEntry` row at all, and that holds regardless of how many
- * classes this sweep batched. Do not read one-class-at-a-time as the deadlock
- * argument; it is not, and a future site copying it as one would be misled.
- *
- * WHAT ONE CLASS PER TRANSACTION ACTUALLY BUYS is two smaller things: it keeps
- * this sweep off the list of sites that lock more than one `Class` row
- * (`docs/lock-order.md`, "Ordering WITHIN `Class`", which owns that census),
- * and it bounds how long this sweep holds locks against live traffic.
- *
- * ARGUED ON THE MECHANISM, NOT ON MULTIPLICITY. `docs/lock-order.md`
- * classifies lock sites by MULTIPLICITY — a transaction holding two `Class` row
- * locks carries an ordering obligation, one holding a single row lock carries
- * none — and then withdraws that in the next breath: since #196 a single-row
- * write can be half of a slot deadlock without ever holding a second
- * `Class` row lock, `updateClass` being the example — and since #327 that
- * example holds a second row lock outright, on the entry. Taking one row lock is
- * therefore NOT on its own a safety argument. This is worth stating rather than
- * passing over, because the multiplicity reading is the one a future author is
- * most likely to copy from this file. What actually makes this sweep edge-free
- * is three mechanical facts:
- *
- *  - it never `INSERT`s or `UPDATE`s a `Class` row or its `CalendarEntry`, so
- *    it takes no `CalendarEntry_teacher_slot_excl` index-entry lock and cannot
- *    join a slot wait chain;
- *  - deleting a CHILD row takes no FK lock on the parent (only inserting or
- *    updating one takes `FOR KEY SHARE`), so the `deleteMany` adds no `Class`
- *    edge beyond the `lockClassRow` this transaction took deliberately;
- *  - no production writer holds a `WaitlistEntry` row lock while requesting a
- *    `Class` lock, so there is no reverse edge for this one to close a cycle
- *    against.
- *
- * The shape is `autoCancelClasses`' (`class-transitions.ts`), whose own docblock
- * argues it on the axis that matters here: a slow lock wait on one class costs
- * only that class's transaction.
+ * One class per transaction, each behind `lockClassRow` before its
+ * `deleteMany`. The `Class` row lock is what keeps this sweep out of a cycle
+ * with the erasure, at any batch size; one class per transaction only keeps
+ * this off the multi-row `Class` lock sites and bounds how long it holds
+ * locks against live traffic. The mechanism, rather than the multiplicity, is
+ * argued in `docs/lock-order.md` (Known conformance →
+ * `reapClosedWaitlistEntries`) — copy that argument, not the shape, into a
+ * new site.
  */
 
 import type { Prisma, PrismaClient } from '@prisma/client';
@@ -210,8 +50,7 @@ export const WAITLIST_RETENTION_DAYS = 365;
  * history would be worse, and every lock it holds is one a teacher's own request
  * may be waiting behind.
  *
- * Not, as an earlier revision claimed, because an unbounded run would "stop the
- * job for ever" through `scheduler.ts`'s `running` guard. That guard drops ticks
+ * Not because an unbounded run would stop the job through `scheduler.ts`'s `running` guard. That guard drops ticks
  * while a run is in flight, but the interval is 24 h, so a run would have to
  * exceed a full day to cost even one tick — and the loop is over a finite
  * `groupBy` result, so it terminates regardless. A backlog drains at this rate
@@ -222,15 +61,12 @@ export const MAX_CLASSES_PER_RUN = 500;
 /**
  * All `readonly`, and constructed exactly once at the end of the run.
  *
- * The sibling `ReconcileSummary` (`waitlist-reconciliation.ts`) argues the same
- * point and it is sharper here: an earlier revision built this object early,
- * mutated `failed` inside the loop, and carried a SECOND accumulator for
- * `deleted` in a local `let` that was reconciled onto the field only after the
- * loop. Any future early return inside that loop would have reported
- * `deleted: 0` while having permanently deleted rows — a summary that
- * under-reports an irreversible operation, which is the one direction this
- * value must never be wrong in. Accumulating into locals and constructing once
- * makes that unrepresentable rather than merely absent.
+ * Built after the loop from locals, never early and mutated: an object built
+ * before the loop would let an early return inside it report `deleted: 0`
+ * while having permanently deleted rows — a summary that under-reports an
+ * irreversible operation, which is the one direction this value must never be
+ * wrong in. Constructing once makes that unrepresentable rather than merely
+ * absent.
  */
 export interface ReapSummary {
   /** Entries actually deleted. */
@@ -247,25 +83,18 @@ export interface ReapSummary {
    * On the uncapped path it is `classes`, and that is the whole eligible set
    * rather than a floor: `take: maxClasses + 1` means a batch below the cap
    * cannot have left anything behind. On the capped path it is a real `COUNT`,
-   * taken only there — `candidates.length` cannot answer this, and an earlier
-   * revision logged that length as if it could: it is always exactly
-   * `maxClasses + 1` whenever `cappedOut`, i.e. a constant dressed as a
+   * taken only there — `candidates.length` cannot answer this: it is always
+   * exactly `maxClasses + 1` whenever `cappedOut`, a constant dressed as a
    * measurement. An operator needs the real figure to tell a backlog that drains
-   * tomorrow from one that takes a hundred days.
-   *
-   * Named `eligible` and not `eligibleAtLeast` for that reason. The hedge
-   * described no path this code has, and the log line below already emitted the
-   * value under the honest key — one number under two names, one of them weaker
-   * than the truth, is a smaller version of the same defect the paragraph above
-   * records.
+   * tomorrow from one that takes a hundred days. Hence `eligible`, not a hedged
+   * `eligibleAtLeast`: the number is exact on every path.
    */
   readonly eligible: number;
   /**
    * The cutoff this run used, ISO-8601.
    *
    * For an irreversible policy-driven deletion, the window applied belongs in
-   * the only durable record of the run. Neither this nor `now` reached the log
-   * line or the route's JSON before.
+   * the only durable record of the run.
    */
   readonly cutoff: string;
 }
@@ -369,8 +198,7 @@ export async function reapClosedWaitlistEntries(
         date: { lt: cutoff },
         // Terminality, in the same shape `entry_frozen_schedule_guard`
         // enforces: the entry is frozen iff its class completed, or it is a
-        // cancelled regular entry. One predicate, one row, one guard — where
-        // this used to be a status on one table and a date on another.
+        // cancelled regular entry. One predicate, one row, one guard.
         OR: [
           { classCompletedAt: { not: null } },
           { kind: 'regular', cancelledAt: { not: null } },
@@ -448,8 +276,8 @@ export async function reapClosedWaitlistEntries(
     // batch size. This bounds lock-holding against live traffic.
     //
     // Swallowed PER CLASS: one contended class must not abandon the classes
-    // behind it, which is the same trade `reconcileWaitlists` makes. Unlike an
-    // earlier revision, an all-failed run IS rethrown after the loop — see
+    // behind it, which is the same trade `reconcileWaitlists` makes. A run
+    // that mostly or wholly failed IS rethrown after the loop — see
     // `RetentionFailedError` for why `isolatedSweeps` cannot substitute for
     // that (it only ever sees errors that ESCAPE the sweep, and this catch
     // guarantees none do).
@@ -503,26 +331,21 @@ export async function reapClosedWaitlistEntries(
 }
 
 /**
- * Four branches, mirroring `report()` in `waitlist-reconciliation.ts`.
+ * One branch per outcome, mirroring `report()` in `waitlist-reconciliation.ts`;
+ * a bare "swept" would be the wrong statement for every outcome but a clean
+ * run.
  *
- * An unconditional `log.info` said "swept" whatever happened, which is the
- * wrong statement for three of the four outcomes below.
- *
- * WHY THE THRESHOLD IS PROPORTIONAL AND NOT TOTAL. Only the all-failed branch
- * threw at first, and the argument for it was that `{classes: 500, failed:
+ * WHY THE THRESHOLD IS PROPORTIONAL AND NOT TOTAL. `{classes: 500, failed:
  * 500, deleted: 0}` returning normally is an affirmative false statement
- * rather than a missing signal. `{classes: 500, failed: 499, deleted: 2}` is
- * the same false statement with one fewer decimal place, and it took the
- * `failed > 0` branch: a `warn`, a normal return, `makeTick` stamping
- * `lastSuccessAt` and clearing `lastError`, and `/api/health` — the surface
- * `DEPLOYMENT.md` tells operators to watch — reporting this job
- * `healthy: true`. All-or-nothing was the weakest version of the check this
- * module argues for.
+ * rather than a missing signal, and `{classes: 500, failed: 499, deleted: 2}`
+ * is the same false statement with one fewer decimal place. Returning it
+ * normally would let `makeTick` stamp `lastSuccessAt`, clear `lastError`, and
+ * have `/api/health` — the surface `DEPLOYMENT.md` tells operators to watch —
+ * report this job `healthy: true`.
  *
- * The failure direction is worth stating because it is the reason this is a
- * reporting fix and not a data fix: every failure mode here is UNDER-
- * deletion, which is the safe side for a permanent delete. Nothing is lost by
- * failing; what was lost was the operator's ability to find out.
+ * Every failure mode here is UNDER-deletion, which is the safe side for a
+ * permanent delete: nothing is lost by failing, so what the throw protects is
+ * the operator's ability to find out.
  */
 function report(summary: ReapSummary): void {
   if (summary.classes > 0 && summary.failed === summary.classes) {

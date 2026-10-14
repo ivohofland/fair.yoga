@@ -134,12 +134,11 @@ export const POST = withErrorHandler(async (
     // off `/bookings`.
     //
     // Re-read under the lock this transaction holds — not from `cls`, the
-    // handler's top-of-function read, taken outside it. `date` and `startTime`
-    // are NOT in `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so `settingsLocked`
-    // does not freeze them and a teacher can reschedule a booked open class at
-    // any time. Reschedule while cancelling and the notice named the old day.
-    // `autoCancelClasses` (`class-transitions.ts`) re-reads inside its own
-    // transaction for exactly this reason.
+    // handler's top-of-function read, taken outside it. An unbooked class can
+    // still be moved; a booked one cannot (`LOCKED_FIELDS`,
+    // `lib/class-fields.ts`), so for any class with recipients the two reads
+    // agree. Reading under the lock keeps the notice's day and time from
+    // resting on that: it names what the row holds as the cancellation commits.
     const fresh = await tx.calendarEntry.findUniqueOrThrow({
       where: { id: cls.calendarEntry.id },
       select: { classType: true, date: true, startTime: true },

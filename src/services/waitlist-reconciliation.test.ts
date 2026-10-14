@@ -537,11 +537,10 @@ describe('reconcileWaitlists (DB)', () => {
    * "a broadcast stands for the CURRENT window" from "a broadcast has ever
    * stood".
    *
-   * Reachable in production: `date` and `startTime` are absent from
-   * `ECONOMIC_FIELDS` (`lib/class-fields.ts`), so a class can be rescheduled
-   * after its settings lock. That opens a new claim window while the old flag
-   * persists, and without the bound the gate would be shut forever for that
-   * class — this branch's own defect, reintroduced for rescheduled classes.
+   * The bound is defensive: a class with a waitlist has a registration, which
+   * locks `date` and `startTime` (`LOCKED_FIELDS`, `lib/class-fields.ts`), so
+   * no writer moves the window under a standing flag. The fixture stamps the
+   * flag directly to pin the bound should that ever stop holding.
    */
   it('broadcasts despite a broadcast flag stamped before the claim window', async () => {
     const cls = await makeFreedSeat('OldFlag');
@@ -983,27 +982,18 @@ describe('reconcileWaitlists (DB)', () => {
   });
 
   /**
-   * A class that is not `open` is never reconciled, however free its seats.
+   * A cancelled class is never reconciled, however free its seats — even with
+   * a `waiting` row left on it and its status still `open`, since
+   * cancellation is the entry's `cancelledAt`, not a status.
    *
-   * Two things enforce this — the `class: { status: 'open' }` join on the
-   * candidate query and the `status: 'open'` filter on the class read — so this
+   * Two things enforce this — the `calendarEntry: { cancelledAt: null }` join
+   * on the candidate query and the same filter on the class read — so this
    * test pins the OUTCOME rather than either mechanism; removing one alone
-   * leaves it green, and that is worth saying plainly because an earlier
-   * revision of this comment claimed the filter was pinned and it is not. The
-   * join's job is bounding the candidate set, a cost property no unit test can
-   * observe; the filter's job is correctness against a class that completes
-   * between the two queries, a race no test enters. The outcome is what both
-   * exist for and the only thing worth asserting here.
-   *
-   * The state is reachable, though less often than when this was written:
-   * `closeQueueOnStart` (#216) now closes the queue at all three
-   * `open -> in_progress` exits, `completeClass`'s inline bump included, so a
-   * class that simply RAN no longer leaves `waiting` rows behind. What remains
-   * are rows predating that change, and any future path that moves a class out
-   * of `open` without going through those three — which is exactly what this
-   * test is here to keep harmless.
+   * leaves it green. The join's job is bounding the candidate set, a cost
+   * property no unit test can observe; the filter's job is correctness against
+   * a class cancelled between the two queries, a race no test enters.
    */
-  it('does not reconcile a class that is no longer open', async () => {
+  it('does not reconcile a cancelled class', async () => {
     const cls = await makeClass(2);
     const waiter = await makeStudent('ClosedClass');
 
