@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BookingFlow } from './booking-flow';
+import { routerRefresh } from '../../../tests/setup/components';
 
 /**
  * #158. BookingFlow asks for a tier instead of naming one when the stored
@@ -38,6 +39,7 @@ describe('BookingFlow', () => {
         isFirstBooking={false}
         openPaymentsCount={0}
         waitlistPosition={null}
+        inClaimWindow={false}
         {...overrides}
       />,
     );
@@ -264,6 +266,42 @@ describe('BookingFlow', () => {
     });
   });
 
+  // The page is a snapshot: a refusal means it is out of date (the class
+  // filled, or the last seat was taken), so it is read again and the button
+  // shows what is possible now. The message stays.
+  describe('after a refusal', () => {
+    function refuse(status: number, message: string) {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status,
+        url: '/api/registrations',
+        json: async () => ({ error: { message, code: 'CLASS_FULL' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    it('reads the page again after a refused booking, and keeps the message', async () => {
+      refuse(409, 'This class is full.');
+      renderFlow({ isFull: false });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Book/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('This class is full.');
+      expect(routerRefresh).toHaveBeenCalled();
+    });
+
+    it('does not read it again after a network error — the server said nothing', async () => {
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+      vi.stubGlobal('fetch', fetchMock);
+      renderFlow({ isFull: false });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Book/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+      expect(routerRefresh).not.toHaveBeenCalled();
+    });
+  });
+
   // #236. Joining a waitlist is a conscious commitment — the promotion window
   // and the free-cancel grace it comes with belong beside the act, not only
   // in the notification that follows it.
@@ -276,6 +314,19 @@ describe('BookingFlow', () => {
           'If a spot opens up until 1 hour before class, the next person in line is booked automatically. The usual cancellation deadline applies, with at least 15 minutes to change your mind.',
         ),
       ).toBeInTheDocument();
+    });
+
+    // In the final hour nobody is moved in automatically and a claim carries
+    // no grace, so the usual promise would be false.
+    it('describes the claim instead in the final hour before class', () => {
+      stubFetch();
+      renderFlow({ isFull: true, inClaimWindow: true });
+      expect(
+        screen.getByText(
+          "It's the final hour before class, so a spot that opens isn't given out automatically: everyone waiting is told, and the first to claim it gets it. Claiming is charged even if you can't make it.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/the next person in line is booked automatically/)).not.toBeInTheDocument();
     });
 
     it('says nothing about it when the class is not full', () => {

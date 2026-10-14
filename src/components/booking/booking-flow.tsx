@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { Currency } from '@prisma/client';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
@@ -41,6 +42,11 @@ interface BookingFlowProps {
    * queued student is pointed there rather than offered the join again.
    */
   waitlistPosition: number | null;
+  /**
+   * The queue is in its final hour before class, when a freed seat goes to
+   * whoever claims it first rather than to the head of the queue.
+   */
+  inClaimWindow: boolean;
 }
 
 type Phase = 'choose' | 'booked' | 'waitlisted';
@@ -58,12 +64,22 @@ export function BookingFlow({
   isFirstBooking,
   openPaymentsCount,
   waitlistPosition,
+  inClaimWindow,
 }: BookingFlowProps) {
+  const router = useRouter();
   const [tier, setTier] = useState<IncomeTier | null>(currentTier);
   const [phase, setPhase] = useState<Phase>('choose');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showExplainer, setShowExplainer] = useState(false);
+
+  // A refusal means this page was out of date — the class filled, its last
+  // seat was taken, it started. Read it again so the button offers what is
+  // possible now; the message stays. A network error says nothing about the
+  // class, so it reads nothing.
+  function refreshAfterRefusal() {
+    router.refresh();
+  }
 
   async function handleBook() {
     if (tier === null) return;
@@ -95,6 +111,7 @@ export function BookingFlow({
           setPhase('waitlisted');
         } else {
           setError(await readErrorMessage(res, 'Could not join the waitlist. Try again.'));
+          refreshAfterRefusal();
         }
         return;
       }
@@ -108,6 +125,7 @@ export function BookingFlow({
         setPhase('booked');
       } else {
         setError(await readErrorMessage(res, 'Could not book the class. Try again.'));
+        refreshAfterRefusal();
       }
     } catch (err) {
       logRequestFailure('booking-flow', { classId, studentId, isFull }, err);
@@ -266,10 +284,20 @@ export function BookingFlow({
         </Button>
         {isFull && (
           <p className="type-caption mt-2">
-            If a spot opens up until {formatMinutes(CLAIM_WINDOW_MINUTES)} before
-            class, the next person in line is booked automatically. The usual
-            cancellation deadline applies, with at least{' '}
-            {FREE_CANCEL_GRACE_MINUTES} minutes to change your mind.
+            {inClaimWindow ? (
+              <>
+                It&apos;s the final hour before class, so a spot that opens isn&apos;t given
+                out automatically: everyone waiting is told, and the first to claim it gets
+                it. Claiming is charged even if you can&apos;t make it.
+              </>
+            ) : (
+              <>
+                If a spot opens up until {formatMinutes(CLAIM_WINDOW_MINUTES)} before
+                class, the next person in line is booked automatically. The usual
+                cancellation deadline applies, with at least{' '}
+                {FREE_CANCEL_GRACE_MINUTES} minutes to change your mind.
+              </>
+            )}
           </p>
         )}
       </div>
