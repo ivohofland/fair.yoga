@@ -152,7 +152,9 @@ beforeEach(() => {
   notificationCreate.mockReset().mockResolvedValue({ id: 'note-1' });
   classFindUniqueOrThrow
     .mockReset()
-    .mockResolvedValue({ calendarEntry: registrationRow().class.calendarEntry });
+    // One stub for two reads: `writeCancel`'s status under the lock, and the
+    // notice's re-read of the schedule.
+    .mockResolvedValue({ status: 'open', calendarEntry: registrationRow().class.calendarEntry });
 });
 
 describe('DELETE /api/registrations/[id] — the loss its spot-freed hook records', () => {

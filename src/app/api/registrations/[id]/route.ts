@@ -1,5 +1,5 @@
 import { NextRequest, type NextResponse } from 'next/server';
-import type { Prisma, RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@prisma/client';
 import { lockClassRow } from '@/lib/db-locks';
 import { prisma } from '@/lib/db';
 import {
@@ -360,9 +360,9 @@ export const DELETE = withErrorHandler(async (
     if (isPastCancelDeadline(until, new Date())) {
       // Past the free-cancel instant — mark as late_cancel (still charged).
       //
-      // Status in the WHERE, not just the pre-check above: that pre-check is a
-      // read-then-write and this handler opens no transaction, so two
-      // concurrent cancels both pass it.
+      // Status in the WHERE, not just the pre-check above: that pre-check runs
+      // outside `writeCancel`'s transaction, so two concurrent cancels both
+      // pass it.
       //
       // The scope does two jobs. Waitlist: a late cancel frees a seat the
       // queue can still take, so two concurrent late cancels must not both
@@ -373,12 +373,7 @@ export const DELETE = withErrorHandler(async (
       // and `cancelled` is not, so an unscoped write here can land *after* a
       // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
       // billing a student for a class the teacher had let them out of.
-      const now = new Date();
-      const written = await writeCancel(id, registration.classId, {
-        status: 'late_cancel',
-        cancelledAt: now,
-        lateCancelledAt: now,
-      });
+      const written = await writeCancel(id, registration.classId, 'late_cancel');
       if (written === 'class_completed') return refuseCompletedCancel();
       if (written === 'missed') {
         return answerMissedCancel(id, isStudent);
@@ -403,10 +398,7 @@ export const DELETE = withErrorHandler(async (
   // ahead of the bare deadline and one still inside #236's grace.
   // Status in the WHERE for the same reason as the late-cancel branch above:
   // two concurrent cancels must not both reach the waitlist hook.
-  const written = await writeCancel(id, registration.classId, {
-    status: 'cancelled',
-    cancelledAt: new Date(),
-  });
+  const written = await writeCancel(id, registration.classId, 'cancelled');
   if (written === 'class_completed') return refuseCompletedCancel();
   if (written === 'missed') {
     return answerMissedCancel(id, isStudent);
@@ -566,6 +558,46 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
   }
 }
 
+function refuseCompletedCancel(): NextResponse {
+  return respondError("This class has finished, so the booking can't be cancelled.", 409, 'CLASS_TERMINAL');
+}
+
+/**
+ * Writes a cancel under the class row lock, refusing it if the class has
+ * completed. `completeClass` takes the same lock and creates the class's
+ * `Payment` rows under it, so the status the DELETE handler read before this
+ * can be stale by the time it writes — and a cancel written after completion
+ * would leave a payment attached to a cancelled booking.
+ *
+ * Takes the kind of cancel rather than the columns to write, so a late
+ * cancel cannot be written without the `lateCancelledAt` stamp that keeps it
+ * charged through a later reactivation.
+ *
+ * The status stays in the WHERE as well: two concurrent cancels must not
+ * both reach the waitlist hook, and a late cancel must not overwrite a
+ * teacher's free one (the call sites say which).
+ */
+async function writeCancel(
+  id: string,
+  classId: string,
+  kind: 'cancelled' | 'late_cancel',
+): Promise<'written' | 'missed' | 'class_completed'> {
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    await lockClassRow(tx, classId);
+    const { status } = await tx.class.findUniqueOrThrow({ where: { id: classId }, select: { status: true } });
+    if (status === 'completed') return 'class_completed';
+    const updated = await tx.registration.updateMany({
+      where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
+      data:
+        kind === 'late_cancel'
+          ? { status: kind, cancelledAt: now, lateCancelledAt: now }
+          : { status: kind, cancelledAt: now },
+    });
+    return updated.count === 0 ? 'missed' : 'written';
+  });
+}
+
 /**
  * Runs the waitlist spot-freed hook after a cancel has committed. The cancel
  * already succeeded — a promotion failure must not turn it into a 500, so
@@ -619,38 +651,6 @@ async function notifyCancellation(input: CancellationNoticeInput): Promise<void>
  * with a free seat takes no new waiters; once the last seat is taken the flag
  * clears, and a later drop is re-broadcast by the sweep.
  */
-function refuseCompletedCancel(): NextResponse {
-  return respondError("This class has finished, so the booking can't be cancelled.", 409, 'CLASS_TERMINAL');
-}
-
-/**
- * Writes a cancel under the class row lock, refusing it if the class has
- * completed. `completeClass` takes the same lock and creates the class's
- * `Payment` rows under it, so the status the DELETE handler read before this
- * can be stale by the time it writes — and a cancel written after completion
- * would leave a payment attached to a cancelled booking.
- *
- * The status stays in the WHERE as well: two concurrent cancels must not
- * both reach the waitlist hook, and a late cancel must not overwrite a
- * teacher's free one (the call sites say which).
- */
-async function writeCancel(
-  id: string,
-  classId: string,
-  data: Prisma.RegistrationUpdateManyMutationInput,
-): Promise<'written' | 'missed' | 'class_completed'> {
-  return prisma.$transaction(async (tx) => {
-    await lockClassRow(tx, classId);
-    const { status } = await tx.class.findUniqueOrThrow({ where: { id: classId }, select: { status: true } });
-    if (status === 'completed') return 'class_completed';
-    const updated = await tx.registration.updateMany({
-      where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
-      data,
-    });
-    return updated.count === 0 ? 'missed' : 'written';
-  });
-}
-
 async function promoteAfterCancel(classId: string): Promise<void> {
   try {
     await handleSpotFreed(prisma, classId);

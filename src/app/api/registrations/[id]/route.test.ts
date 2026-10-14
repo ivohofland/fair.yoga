@@ -20,6 +20,17 @@ const handleSpotFreed = vi.fn();
 const notificationCreate = vi.fn();
 const classStatusUnderLock = vi.fn();
 const lockClassRow = vi.fn();
+const waitlistEntryFindUnique = vi.fn();
+
+/** The caller: the class's teacher unless a test signs in its student. */
+const TEACHER_SESSION = {
+  sessionId: 'sess-1',
+  accountId: 'acct-1',
+  teacherId: 'teacher-1',
+  defaultTimezone: 'Europe/Amsterdam',
+  studentId: null as string | null,
+};
+let session = TEACHER_SESSION;
 
 vi.mock('@/services/waitlist', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/waitlist')>();
@@ -29,13 +40,7 @@ vi.mock('@/lib/api-utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api-utils')>();
   return {
     ...actual,
-    requireSession: async () => ({
-      sessionId: 'sess-1',
-      accountId: 'acct-1',
-      teacherId: 'teacher-1',
-      defaultTimezone: 'Europe/Amsterdam',
-      studentId: null,
-    }),
+    requireSession: async () => session,
   };
 });
 vi.mock('@/lib/db-locks', async (importOriginal) => {
@@ -49,6 +54,7 @@ vi.mock('@/lib/db', () => {
       updateMany: (...args: unknown[]) => updateMany(...args),
     },
     class: { findUniqueOrThrow: (...args: unknown[]) => classStatusUnderLock(...args) },
+    waitlistEntry: { findUnique: (...args: unknown[]) => waitlistEntryFindUnique(...args) },
     notification: { create: (...args: unknown[]) => notificationCreate(...args) },
     $transaction: (fn: (tx: unknown) => unknown) => fn(prisma),
   };
@@ -89,6 +95,8 @@ beforeEach(() => {
   notificationCreate.mockReset();
   classStatusUnderLock.mockReset().mockResolvedValue({ status: 'open' });
   lockClassRow.mockReset().mockResolvedValue({ classId: 'class-1' });
+  waitlistEntryFindUnique.mockReset().mockResolvedValue(null);
+  session = TEACHER_SESSION;
 });
 
 describe('DELETE /api/registrations/[id] — a cancel racing the class completing', () => {
@@ -108,6 +116,30 @@ describe('DELETE /api/registrations/[id] — a cancel racing the class completin
     expect(lockClassRow).toHaveBeenCalledWith(expect.anything(), 'class-1');
     expect(updateMany).not.toHaveBeenCalled();
     expect(handleSpotFreed).not.toHaveBeenCalled();
+  });
+
+  // The late-cancel branch has its own check: without it the handler would
+  // answer a late cancel it never wrote and promote into a finished class.
+  it('refuses a student late cancel once the class completed under the lock', async () => {
+    session = { ...TEACHER_SESSION, teacherId: null as unknown as string, studentId: 'student-1' };
+    const row = bookingRow();
+    // Starting in an hour: past the 24-hour deadline, so the late branch.
+    const start = new Date(Date.now() + 60 * 60 * 1000);
+    row.class.calendarEntry.date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+    row.class.calendarEntry.startTime = new Date(Date.UTC(1970, 0, 1, start.getUTCHours(), start.getUTCMinutes()));
+    row.class.calendarEntry.teacher.defaultTimezone = 'UTC';
+    findUnique.mockResolvedValueOnce(row);
+    classStatusUnderLock.mockResolvedValue({ status: 'completed' });
+
+    const res = await DELETE(
+      new NextRequest('http://localhost:3000/api/registrations/reg-1', { method: 'DELETE' }),
+      params(),
+    );
+
+    await expectRefusal(res, 'CLASS_TERMINAL');
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(handleSpotFreed).not.toHaveBeenCalled();
+    expect(notificationCreate).not.toHaveBeenCalled();
   });
 });
 
