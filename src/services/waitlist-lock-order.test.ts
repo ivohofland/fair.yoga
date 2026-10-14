@@ -386,7 +386,7 @@ describe('claimSpot (DB)', () => {
     await prisma.registration.create({
       data: { classId, studentId: fillerIds[0]!, tierAtBooking: 3 },
     });
-    await addToWaitlist(prisma, classId, studentIds[0]!);
+    await addToWaitlist(prisma, classId, studentIds[0]!, IN_CLAIM_WINDOW);
   });
 
   afterAll(async () => {
