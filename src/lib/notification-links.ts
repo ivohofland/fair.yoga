@@ -29,11 +29,19 @@ export const STUDENT_INVITATION_PATH = '/account/privacy';
 export const STUDENT_INVITATION_LABEL = 'Review the invitation';
 
 /**
- * The student's own bookings list — where `waitlist_promoted` and
- * `spot_available` send them (#236). Unlike a class page, `/bookings` is a
- * student route.
+ * The student's own bookings list — where the waitlist notifications send
+ * them (#236), in the app and in email. Unlike a class page, `/bookings` is a
+ * student route, and it is the one page that shows a queued student their
+ * entry and its Claim button.
  */
 export const STUDENT_BOOKINGS_PATH = '/bookings';
+
+/** The notification types a student acts on from `STUDENT_BOOKINGS_PATH`. */
+const WAITLIST_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set([
+  'waitlist_promoted',
+  'spot_available',
+  'spot_taken',
+]);
 
 /** The email button's label for that action. */
 export const STUDENT_BOOKINGS_LABEL = 'Go to your bookings';
@@ -94,6 +102,7 @@ export interface StudentNotificationTarget {
  */
 export function studentNotificationHref(notification: StudentNotificationTarget): string | null {
   if (notification.type === 'teacher_invitation') return STUDENT_INVITATION_PATH;
+  if (WAITLIST_NOTIFICATION_TYPES.has(notification.type)) return STUDENT_BOOKINGS_PATH;
   if (isPaymentNotification(notification.type)) {
     return notification.relatedClass ? payPagePath(notification.relatedClass.id) : null;
   }
