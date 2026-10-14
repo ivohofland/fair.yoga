@@ -396,6 +396,46 @@ describe('GET /bookings (page) — the waitlist strip', () => {
   });
 });
 
+describe('GET /bookings (page) — waitlist order', () => {
+  it('lists the waitlist soonest first, whatever order the student joined in', async () => {
+    const { studentId } = await prisma.waitlistEntry.findFirstOrThrow({
+      where: { classId: openClassId, status: 'waiting' },
+      select: { studentId: true },
+    });
+    const laterType = `w-order-later-${suffix}`;
+    const soonerType = `w-order-sooner-${suffix}`;
+    // Created, and joined, later-class first: a query with no order of its
+    // own tends to hand rows back in insertion order.
+    for (const [classType, date, slotIndex] of [
+      [laterType, new Date('2099-06-03'), 20],
+      [soonerType, new Date('2099-05-30'), 21],
+    ] as const) {
+      const cls = await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType,
+        date,
+        startTime: hhmmToTime(slot(slotIndex)),
+        durationMinutes: 1,
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 2,
+        status: 'open',
+      });
+      classIds.push(cls.id);
+      studentIds.push(...(await fillSeats(prisma, cls.id, 2, `w-order-seat-${slotIndex}-${suffix}`)));
+      await prisma.waitlistEntry.create({ data: { classId: cls.id, studentId, position: 1, status: 'waiting' } });
+    }
+
+    const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+
+    expect(html.indexOf(soonerType)).toBeGreaterThan(-1);
+    expect(html.indexOf(soonerType)).toBeLessThan(html.indexOf(laterType));
+  });
+});
+
 describe('GET /class/[id] (page) — the waitlist count', () => {
   it('counts waiting entries only — neither a closed queue nor a seated student inflates it', async () => {
     const res = await fetch(`${BASE_URL}/class/${countClassId}`, {

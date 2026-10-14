@@ -117,6 +117,11 @@ export default async function StudentBookingsPage() {
         status: 'waiting',
         class: { status: 'open', calendarEntry: { cancelledAt: null } },
       },
+      // Soonest class first.
+      orderBy: [
+        { class: { calendarEntry: { date: 'asc' } } },
+        { class: { calendarEntry: { startTime: 'asc' } } },
+      ],
       include: {
         class: {
           include: {
@@ -261,7 +266,12 @@ export default async function StudentBookingsPage() {
                 >
                   View class &rarr;
                 </Link>
-                <WaitlistEntryActions entryId={entry.id} classId={cls.id} canClaim={canClaim} />
+                <WaitlistEntryActions
+                  entryId={entry.id}
+                  classId={cls.id}
+                  classLabel={`${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)} ${timeToHHmm(cls.calendarEntry.startTime)}`}
+                  canClaim={canClaim}
+                />
               </ListRow>
             );
           })}

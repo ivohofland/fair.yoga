@@ -8,6 +8,12 @@ import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-err
 interface WaitlistEntryActionsProps {
   entryId: string;
   classId: string;
+  /**
+   * The class and when it runs ("Yin, Friday 18:00"), read aloud after each
+   * button's visible text so a screen reader can tell one row's buttons from
+   * the next.
+   */
+  classLabel: string;
   /** True during the first-come-first-claimed window with a free seat. */
   canClaim: boolean;
 }
@@ -18,7 +24,7 @@ interface WaitlistEntryActionsProps {
  * rejoining goes to the back of the queue. The confirmation takes focus when
  * it opens, and the trigger gets it back when the student stays.
  */
-export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEntryActionsProps) {
+export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim }: WaitlistEntryActionsProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<'claim' | 'leave' | null>(null);
   const [error, setError] = useState('');
@@ -59,6 +65,10 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         return;
       }
       setError(await readErrorMessage(res, 'Could not claim the spot. Try again.'));
+      // A refusal means this page was out of date — the spot was taken, the
+      // window moved on. Read it again so the row stops offering the claim;
+      // the message stays.
+      router.refresh();
     } catch (err) {
       logRequestFailure('waitlist-entry-actions-claim', { classId, entryId }, err);
       setError('Network error. Try again.');
@@ -83,6 +93,8 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
         return;
       }
       setError(message);
+      // As for a refused claim: the row on screen is out of date.
+      router.refresh();
     } catch (err) {
       logRequestFailure('waitlist-entry-actions-leave', { entryId }, err);
       setError('Network error. Try again.');
@@ -105,7 +117,9 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
             Claiming books you in, and you&apos;ll pay your share even if you can&apos;t make it.
           </p>
           <Button onClick={handleClaim} disabled={busy !== null}>
-            {busy === 'claim' ? 'Claiming...' : 'Claim the spot'}
+            {busy === 'claim' ? 'Claiming...' : (
+              <>Claim the spot{' '}<span className="sr-only">for {classLabel}</span></>
+            )}
           </Button>
         </div>
       )}
@@ -123,7 +137,9 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
               onClick={handleLeave}
               disabled={busy !== null}
             >
-              {busy === 'leave' ? 'Leaving...' : 'Leave'}
+              {busy === 'leave' ? 'Leaving...' : (
+                <>Leave{' '}<span className="sr-only">the waitlist for {classLabel}</span></>
+              )}
             </Button>
             <Button type="button" variant="secondary" onClick={stay} disabled={busy !== null}>
               Stay on the waitlist
@@ -138,7 +154,7 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
           disabled={busy !== null}
           className="type-label text-danger self-start disabled:opacity-50"
         >
-          Leave waitlist
+          Leave waitlist{' '}<span className="sr-only">for {classLabel}</span>
         </button>
       )}
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
