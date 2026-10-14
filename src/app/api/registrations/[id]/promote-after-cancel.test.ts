@@ -70,8 +70,14 @@ vi.mock('@/lib/api-utils', async (importOriginal) => {
 // succeed and `notifyCancellation` stays silent, the same reason
 // `handleSpotFreed`'s success path never appears in a `mockRejectedValue`
 // call below.
-vi.mock('@/lib/db', () => ({
-  prisma: {
+// The cancel is written under the class lock (`writeCancel`); the lock is
+// stubbed and the transaction runs on the same mocked client.
+vi.mock('@/lib/db-locks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/db-locks')>();
+  return { ...actual, lockClassRow: async () => ({ classId: 'class-1' }) };
+});
+vi.mock('@/lib/db', () => {
+  const prisma = {
     registration: {
       findUnique: (...args: unknown[]) => findUnique(...args),
       updateMany: (...args: unknown[]) => updateMany(...args),
@@ -79,8 +85,10 @@ vi.mock('@/lib/db', () => ({
     class: { findUniqueOrThrow: (...args: unknown[]) => classFindUniqueOrThrow(...args) },
     waitlistEntry: { count: (...args: unknown[]) => waitlistCount(...args) },
     notification: { create: (...args: unknown[]) => notificationCreate(...args) },
-  },
-}));
+    $transaction: (fn: (tx: unknown) => unknown) => fn(prisma),
+  };
+  return { prisma };
+});
 
 const { DELETE } = await import('./route');
 
