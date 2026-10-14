@@ -471,6 +471,13 @@ let studentAccountId: string;
         where: { classId: fixture.classId, studentId: fixture.studentId },
       });
       expect(entry.status).toBe('removed');
+
+      // `removed` alone reads as "the student withdrew"; the export carries
+      // the class's own cancellation beside it, as its bookings half does.
+      const exported = await exportStudentData(prisma, fixture.studentId);
+      expect(exported.waitlist).toEqual([
+        expect.objectContaining({ status: 'removed', classCancelledAt: expect.any(Date) }),
+      ]);
     } finally {
       await prisma.notification.deleteMany({ where: { recipientId: fixture.studentId } });
       await cleanupStudentWaitingInClass(fixture);
