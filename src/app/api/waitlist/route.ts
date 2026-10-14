@@ -21,6 +21,7 @@ import { CLASS_GONE } from '../classes/[id]/shared';
 const JOIN_REFUSAL_CODE = {
   class_cancelled: 'CLASS_CANCELLED',
   class_not_open: 'CLASS_NOT_BOOKABLE',
+  class_started: 'WAITLIST_FROZEN',
   class_not_full: 'CLASS_NOT_FULL',
   already_registered: 'ALREADY_REGISTERED',
   student_erased: 'STUDENT_ERASED',

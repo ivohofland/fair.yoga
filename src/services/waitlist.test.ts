@@ -319,6 +319,14 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     await prisma.calendarEntry.deleteMany({ where: { id: calendarEntryId } });
   });
 
+  // Booking refuses a class whose start has passed; the queue must too, or a
+  // student joins a class already running until the status sweep catches up.
+  it('rejects joining a full class whose start has passed, though it is still open', async () => {
+    await expect(
+      addToWaitlist(prisma, classId, studentIds[0]!, new Date('2099-06-02T00:00:00Z')),
+    ).rejects.toMatchObject({ reason: 'class_started' });
+  });
+
   it('rejects joining when already actively registered', async () => {
     await expect(addToWaitlist(prisma, classId, fillerIds[0]!)).rejects.toMatchObject({
       reason: 'already_registered',
@@ -1031,14 +1039,14 @@ describe('claimSpot (DB)', () => {
     await prisma.registration.create({
       data: { classId: cls.id, studentId: fillerId, tierAtBooking: 3 },
     });
-    await addToWaitlist(prisma, cls.id, waiterId);
+    await addToWaitlist(prisma, cls.id, waiterId, BEFORE_CLAIM_WINDOW);
     return cls.id;
   };
 
   /** Like `makeFullClass`, but both `waiterId` and `secondWaiterId` end up waiting. */
   const makeFullClassWithTwoWaiters = async (): Promise<string> => {
     const classId = await makeFullClass();
-    await addToWaitlist(prisma, classId, secondWaiterId);
+    await addToWaitlist(prisma, classId, secondWaiterId, BEFORE_CLAIM_WINDOW);
     return classId;
   };
 
@@ -2340,7 +2348,9 @@ describe('handleSpotFreed (DB)', () => {
   it('promotes a seat freed just before the claim window opens, though the lock is taken just after', async () => {
     const id = await seedFreeSeat('2099-06-12');
     vi.useFakeTimers({ toFake: ['Date'] });
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     vi.setSystemTime(new Date('2099-06-12T07:59:59.900Z'));
     const original = dbLocks.lockClassRow;
     const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, lockedId) => {

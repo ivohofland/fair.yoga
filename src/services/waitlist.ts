@@ -61,6 +61,7 @@ export class WaitlistJoinError extends Error {
     public readonly reason:
       | 'class_cancelled'
       | 'class_not_open'
+      | 'class_started'
       | 'class_not_full'
       | 'already_registered'
       | 'student_erased',
@@ -296,7 +297,7 @@ export function getWaitlistWindow(
  *   nothing
  * - then, under the shared FOR UPDATE class lock, so joins serialize with
  *   registrations and promotions:
- *   - the class must be open
+ *   - the class must be open, and must not have started
  *   - the class must actually be full — otherwise the student should book
  *   - the student must not hold an active registration
  *
@@ -313,6 +314,7 @@ export async function addToWaitlist(
   db: PrismaClient,
   classId: string,
   studentId: string,
+  now?: Date,
 ): Promise<WaitlistEntry> {
   return db.$transaction(async (tx) => {
     // The `Student` gate: this transaction's first lock, before the class
@@ -334,7 +336,15 @@ export async function addToWaitlist(
       where: { id: classId },
       select: {
         status: true,
-        calendarEntry: { select: { teacherId: true, cancelledAt: true } },
+        calendarEntry: {
+          select: {
+            teacherId: true,
+            cancelledAt: true,
+            date: true,
+            startTime: true,
+            teacher: { select: { defaultTimezone: true } },
+          },
+        },
       },
     });
     // Two checks, because a cancelled class keeps whatever status it had
@@ -344,6 +354,11 @@ export async function addToWaitlist(
     }
     if (cls.status !== 'open') {
       throw new WaitlistJoinError("This class isn't taking waitlist sign-ups.", 'class_not_open');
+    }
+    // A class stays `open` until the status sweep moves it on, a minute or so
+    // after its start; the queue is closed from the start itself.
+    if (getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now) === 'frozen') {
+      throw new WaitlistJoinError('This class has already started.', 'class_started');
     }
 
     const { isFull } = await readSeatCount(tx, lock);
