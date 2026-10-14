@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, payPagePath, studentNotificationHref, teacherNotificationHref } from './notification-links';
+import { STUDENT_BOOKINGS_PATH, STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, payPagePath, studentNotificationHref, teacherNotificationHref } from './notification-links';
 
 /**
  * #166 whole-branch review I5. A `teacher_invitation` notification carries no
@@ -20,6 +20,16 @@ describe('studentNotificationHref', () => {
       studentNotificationHref({ type: 'teacher_invitation', relatedClass: null }),
     ).toBe(STUDENT_INVITATION_PATH);
   });
+
+  // The booking page has no Claim button and offers "Join the waitlist" to
+  // someone already on it; `/bookings` is where these are acted on, and where
+  // their emails already point.
+  it.each(['spot_available', 'spot_taken', 'waitlist_promoted'] as const)(
+    'sends %s to the student\'s bookings, as its email does',
+    (type) => {
+      expect(studentNotificationHref({ type, relatedClass: openClass })).toBe(STUDENT_BOOKINGS_PATH);
+    },
+  );
 
   it('sends a booking notification to the public page of its class', () => {
     expect(
