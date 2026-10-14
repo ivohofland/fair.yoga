@@ -99,18 +99,16 @@ export default async function StudentBookingsPage() {
       //
       // One guard deliberately does NOT require `open`, and hiding the row
       // here is now the second of two defences rather than the only one.
-      // `removeFromWaitlist` (sole call site `waitlist-entry-actions.tsx`)
-      // scopes its write to `status: 'waiting'`, so a DELETE sent from a
-      // stale render of this page — the class has since started and
-      // `closeQueueOnStart` has already flipped the row to `expired` — is
-      // refused as `NOT_FOUND` rather than overwriting it to `removed`, which
-      // would turn "never got in" into "withdrew". This predicate keeps the
-      // stale click from being offered; that guard is what makes it harmless
-      // when it happens anyway, and the route answers it with a 409 and a
-      // refresh rather than claiming the entry does not exist.
+      // `removeFromWaitlist` scopes its write to `status: 'waiting'`, so a
+      // DELETE sent from a stale render of this page — the class has since
+      // started and `closeQueueOnStart` has already flipped the row to
+      // `expired` — is refused as `NOT_WAITING` rather than overwriting it to
+      // `removed`, which would turn "never got in" into "withdrew". This
+      // predicate keeps the stale click from being offered; that guard is what
+      // makes it harmless when it happens anyway. The route answers it with a
+      // 409 `WAITLIST_ENTRY_INACTIVE` whose message asks the student to
+      // refresh, rather than claiming the entry does not exist.
       //
-      // Four drains now close a queue: `closeQueueOnStart` (#216, the class
-      // starting) and the three cancel paths (#195).
       // `cancelledAt: null` beside the class's status (#327): a cancelled
       // class keeps its `open` status, and a queue on a cancelled class is
       // exactly what this predicate exists to hide.
