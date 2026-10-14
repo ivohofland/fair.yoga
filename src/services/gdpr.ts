@@ -140,7 +140,7 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
         include: {
           class: {
             select: {
-              calendarEntry: { select: { classType: true, date: true, startTime: true } },
+              calendarEntry: { select: { classType: true, date: true, startTime: true, cancelledAt: true } },
             },
           },
         },
@@ -233,6 +233,9 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       class: w.class.calendarEntry.classType,
       date: w.class.calendarEntry.date,
       status: w.status,
+      // `removed` is written both by a student leaving and by the class being
+      // cancelled; this is what tells the two apart.
+      classCancelledAt: w.class.calendarEntry.cancelledAt,
       position: w.position,
     })),
     // Records held ABOUT the subject rather than created by them: a teacher
