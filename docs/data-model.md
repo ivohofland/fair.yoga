@@ -814,6 +814,7 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | **Timestamps** | | |
 | registered_at | datetime | When the current booking was made. Reset when an earlier booking's row is reused for a new booking, so a rebooked student sorts as booked then |
 | cancelled_at | datetime, nullable | |
+| late_cancelled_at | datetime, nullable | Set by a student's late cancel and never cleared. A booking that carries it gets no auto-promotion free-cancel grace, so rejoining the waitlist after a late cancel is a change of mind, not a way out of the charge (`freeCancelUntilFor`, `src/lib/cancel-deadline.ts`) |
 | class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is claimed, before it is delivered; a failed email leaves it set (at most once). Cleared when an earlier booking's row is reused for a new booking |
 | updated_at | datetime | |
 
