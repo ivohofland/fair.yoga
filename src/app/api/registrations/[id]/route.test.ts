@@ -361,15 +361,15 @@ describe('PUT /api/registrations/[id] — an attendance write that missed', () =
       const [late, attended] = updateMany.mock.calls.map(
         ([arg]) => (arg as { where: Record<string, unknown> }).where,
       );
-      expect(late).toMatchObject({ cancelledAt: { not: null } });
-      expect(attended).not.toHaveProperty('cancelledAt');
+      expect(late).toMatchObject({ lateCancelledAt: { not: null } });
+      expect(attended).not.toHaveProperty('lateCancelledAt');
     });
 
     it('refuses a live booking that never late-cancelled, whatever status it holds', async () => {
       clockAt(opens);
       findUnique.mockResolvedValueOnce(attendanceRead()).mockResolvedValueOnce({
         status: 'attended',
-        cancelledAt: null,
+        lateCancelledAt: null,
         class: { status: 'open', calendarEntry: { cancelledAt: null } },
       });
 
@@ -380,14 +380,14 @@ describe('PUT /api/registrations/[id] — an attendance write that missed', () =
       clockAt(opens);
       findUnique.mockResolvedValueOnce(attendanceRead()).mockResolvedValueOnce({
         status: 'registered',
-        cancelledAt: null,
+        lateCancelledAt: null,
         class: { status: 'open', calendarEntry: { cancelledAt: new Date() } },
       });
       await expectRefusal(await mark('late_cancel'), 'CLASS_CANCELLED');
 
       findUnique.mockResolvedValueOnce(attendanceRead()).mockResolvedValueOnce({
         status: 'late_cancel',
-        cancelledAt: null,
+        lateCancelledAt: null,
         class: { status: 'open', calendarEntry: { cancelledAt: null } },
       });
       await expectUnchanged(await mark('late_cancel'));

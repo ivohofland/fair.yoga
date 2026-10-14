@@ -193,13 +193,10 @@ export const PUT = withErrorHandler(async (
   // concurrent write.
   //
   // `late_cancel` as a TARGET is a restoration, not an action on a live
-  // booking: DELETE writes `cancelledAt` with `late_cancel`, and this route
-  // never clears it. So `cancelledAt IS NOT NULL` on a row that is not
-  // `cancelled` says "this booking was late-cancelled", and without it
-  // `registered -> late_cancel` (or the two-step via `attended`) would charge a
-  // student who never cancelled. The WHERE below excludes `cancelled` rows,
-  // which also carry `cancelledAt` (a free cancel, an erasure), and re-booking
-  // clears it (`activateRegistration`).
+  // booking: only a booking that carries `lateCancelledAt` — stamped by the
+  // student's late cancel and never cleared — may return to it. Without that,
+  // `registered -> late_cancel` (or the two-step via `attended`) would charge
+  // a student who never cancelled.
   //
   const requested = parsed.data.status;
   const updated = await prisma.registration.updateMany({
@@ -214,7 +211,7 @@ export const PUT = withErrorHandler(async (
       // arm is a plain condition Prisma can compile without a nested relation
       // negation.
       OR: [{ status: { not: 'late_cancel' } }, { class: { status: { not: 'open' } } }],
-      ...(requested === 'late_cancel' ? { cancelledAt: { not: null } } : {}),
+      ...(requested === 'late_cancel' ? { lateCancelledAt: { not: null } } : {}),
     },
     data: { status: requested },
   });
@@ -229,7 +226,7 @@ export const PUT = withErrorHandler(async (
       where: { id },
       select: {
         status: true,
-        cancelledAt: true,
+        lateCancelledAt: true,
         class: { select: { status: true, calendarEntry: { select: { cancelledAt: true } } } },
       },
     });
@@ -244,7 +241,7 @@ export const PUT = withErrorHandler(async (
     if (current.status === requested) {
       return respondUnchanged<AttendanceBody>({ id, status: requested });
     }
-    if (requested === 'late_cancel' && current.cancelledAt === null) {
+    if (requested === 'late_cancel' && current.lateCancelledAt === null) {
       return respondError(
         'A booking can only return to a late cancellation if the student cancelled late.',
         409,
