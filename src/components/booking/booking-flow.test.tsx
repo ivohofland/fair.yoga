@@ -290,6 +290,26 @@ describe('BookingFlow', () => {
       expect(routerRefresh).toHaveBeenCalled();
     });
 
+    it('does not read it again after a server error — it says nothing about the class', async () => {
+      refuse(503, 'Busy right now. Please try again.');
+      renderFlow({ isFull: false });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Book/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Busy right now. Please try again.');
+      expect(routerRefresh).not.toHaveBeenCalled();
+    });
+
+    it('reads the page again after a refused waitlist join', async () => {
+      refuse(409, 'The class still has open spots — book directly instead.');
+      renderFlow({ isFull: true });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Join the waitlist' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('book directly instead');
+      expect(routerRefresh).toHaveBeenCalled();
+    });
+
     it('does not read it again after a network error — the server said nothing', async () => {
       fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
       vi.stubGlobal('fetch', fetchMock);

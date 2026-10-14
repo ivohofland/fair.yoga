@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
+import { isRefusal, logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
 
 interface WaitlistEntryActionsProps {
   entryId: string;
@@ -68,7 +68,7 @@ export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim }:
       // A refusal means this page was out of date — the spot was taken, the
       // window moved on. Read it again so the row stops offering the claim;
       // the message stays.
-      router.refresh();
+      if (isRefusal(res)) router.refresh();
     } catch (err) {
       logRequestFailure('waitlist-entry-actions-claim', { classId, entryId }, err);
       setError('Network error. Try again.');
@@ -94,7 +94,7 @@ export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim }:
       }
       setError(message);
       // As for a refused claim: the row on screen is out of date.
-      router.refresh();
+      if (isRefusal(res)) router.refresh();
     } catch (err) {
       logRequestFailure('waitlist-entry-actions-leave', { entryId }, err);
       setError('Network error. Try again.');
