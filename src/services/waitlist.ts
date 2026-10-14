@@ -951,6 +951,11 @@ export async function handleSpotFreed(
   now?: Date,
 ): Promise<SpotFreedResult> {
   let branch: SpotFreedBranch | null = null;
+  // One instant for the window decided here and every check made under the
+  // lock below — `promoteNext` re-checks the window, and its own clock read a
+  // moment later could land past the claim window's opening and refuse the
+  // seat this call chose to promote.
+  const at = now ?? new Date();
   try {
     const cls = await db.class.findUnique({
       where: { id: classId },
@@ -962,14 +967,14 @@ export async function handleSpotFreed(
       return { action: 'none' };
     }
 
-    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now);
+    const window = getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, at);
 
     if (window === 'frozen') return { action: 'frozen' };
     branch = window;
 
     if (window === 'auto_promote') {
       try {
-        const entry = await promoteNext(db, classId, { now });
+        const entry = await promoteNext(db, classId, { now: at });
         return entry ? { action: 'promoted', entry } : { action: 'none' };
       } catch (err) {
         // A concurrent registration may have refilled the spot — that's fine.
@@ -1078,7 +1083,7 @@ export async function handleSpotFreed(
       // fill that takes the last free seat.
       await tx.class.update({
         where: { id: classId },
-        data: { spotBroadcastAt: now ?? new Date() },
+        data: { spotBroadcastAt: at },
       });
       // `notified` is `createMany`'s own count, not `waiting.length`. The two
       // cannot differ today (no `skipDuplicates`, so the insert is all-or-throw)
