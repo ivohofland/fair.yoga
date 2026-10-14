@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
@@ -14,12 +14,36 @@ interface WaitlistEntryActionsProps {
 
 /**
  * Claim an open spot (final hour before class — first claim wins) or leave
- * the waitlist.
+ * the waitlist. Leaving asks first: a place given up is not given back, and
+ * rejoining goes to the back of the queue. The confirmation takes focus when
+ * it opens, and the trigger gets it back when the student stays.
  */
 export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEntryActionsProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<'claim' | 'leave' | null>(null);
   const [error, setError] = useState('');
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const questionId = useId();
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // Set by "Stay on the waitlist", so focus returns to the trigger once it is back.
+  const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (confirmingLeave) {
+      if (busy === null) confirmRef.current?.focus();
+      return;
+    }
+    if (returnFocus.current) {
+      returnFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [confirmingLeave, busy]);
+
+  function stay() {
+    returnFocus.current = true;
+    setConfirmingLeave(false);
+  }
 
   async function handleClaim() {
     setBusy('claim');
@@ -85,14 +109,38 @@ export function WaitlistEntryActions({ entryId, classId, canClaim }: WaitlistEnt
           </Button>
         </div>
       )}
-      <button
-        type="button"
-        onClick={handleLeave}
-        disabled={busy !== null}
-        className="type-label text-danger self-start disabled:opacity-50"
-      >
-        {busy === 'leave' ? 'Leaving...' : 'Leave waitlist'}
-      </button>
+      {confirmingLeave ? (
+        <div className="flex flex-col gap-2">
+          <p id={questionId} className="text-sm text-brown">
+            Leave the waitlist? You&apos;ll lose your place in the queue.
+          </p>
+          <div className="flex gap-3">
+            <Button
+              ref={confirmRef}
+              type="button"
+              variant="destructive"
+              aria-describedby={questionId}
+              onClick={handleLeave}
+              disabled={busy !== null}
+            >
+              {busy === 'leave' ? 'Leaving...' : 'Leave'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={stay} disabled={busy !== null}>
+              Stay on the waitlist
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setConfirmingLeave(true)}
+          disabled={busy !== null}
+          className="type-label text-danger self-start disabled:opacity-50"
+        >
+          Leave waitlist
+        </button>
+      )}
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
