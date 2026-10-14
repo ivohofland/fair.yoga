@@ -11,6 +11,8 @@ import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { CHECKIN_OPENS_MINUTES } from '@/lib/finish-window';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
+import { scopeSweep } from '../scoped-sweep';
+import { runWaitlistReconciliationTick } from '@/services/waitlist-reconciliation';
 import { completeClass } from '@/services/class-lifecycle';
 
 const prisma = new PrismaClient();
@@ -2838,6 +2840,64 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
       where: { relatedClassId: classId, type: 'waitlist_promoted' },
     });
     expect(notice.body).toContain('stays charged');
+  });
+});
+
+/**
+ * `docs/lock-order.md` ("`Registration` status writers outside the class
+ * lock"): a writer that frees a seat without the class lock, and so without
+ * the spot-freed hook, leaves the broadcast too quiet, and the reconciliation
+ * sweep repairs it on its next tick. The attendance route is that writer here:
+ * restoring a booking to `late_cancel` in the final hour frees its seat and
+ * calls no hook.
+ */
+describe('PUT /api/registrations/[id] — a seat freed outside the class lock is announced by the next sweep tick', () => {
+  it('announces nothing itself, and the sweep then tells everyone waiting', async () => {
+    // Inside both the claim window and check-in: the restoration is allowed,
+    // and a freed seat is broadcast rather than promoted.
+    const classId = await makeAttendanceClass(1, 'open', 10);
+    onTestFinished(async () => {
+      await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+    });
+    // A student who cancelled late and was then marked attended: the class is
+    // full, and the booking can return to its late cancel.
+    const lateAt = new Date();
+    const booking = await prisma.registration.create({
+      data: {
+        classId,
+        studentId: studentIds[0]!,
+        status: 'attended',
+        tierAtBooking: 3,
+        cancelledAt: lateAt,
+        lateCancelledAt: lateAt,
+      },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[1]!, position: 1, status: 'waiting' },
+    });
+
+    const restored = await fetch(`${BASE_URL}/api/registrations/${booking.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(attendanceToken) },
+      body: JSON.stringify({ status: 'late_cancel' }),
+    });
+    expect(await expectApplied(restored)).toEqual({ id: booking.id, status: 'late_cancel' });
+
+    // Too quiet: the seat is free, and nobody waiting has been told.
+    const broadcasts = () =>
+      prisma.notification.findMany({ where: { relatedClassId: classId, type: 'spot_available' } });
+    expect(await broadcasts()).toEqual([]);
+    expect(
+      (await prisma.class.findUniqueOrThrow({ where: { id: classId }, select: { spotBroadcastAt: true } }))
+        .spotBroadcastAt,
+    ).toBeNull();
+
+    // The sweep's next tick, scoped to this class.
+    const scoped = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [classId] } } });
+    const summary = await runWaitlistReconciliationTick(scoped.db);
+
+    expect(summary.reconciledClassIds).toContain(classId);
+    expect((await broadcasts()).map((n) => n.recipientId)).toEqual([studentIds[1]]);
   });
 });
 
