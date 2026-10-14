@@ -648,16 +648,15 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // duration, bounded by the 2s `SET LOCAL lock_timeout` at the head of
       // this transaction and its 10s budget.
       //
-      // What a `40P01` out of THIS family's archive most likely means, which
-      // belongs beside the statement that decides it. The AB-BA cycle against
-      // `deleteStudentAccount` argued above was reproduced (issue 180), and
-      // the pre-lock below is what closed it — except through the narrow
-      // window recorded further down, which is still open. The other lock
-      // case, an archive queued behind the generation sweep's
-      // claim, has no cycle at all and ends in `55P03`. So a deadlock here now
-      // points at that window (the `{Class, ClassTemplate}` ordering question
-      // this hook is one side of is standardized in #229: `ClassTemplate → Class`)
-      // rather than at the pairing this pre-lock already handles.
+      // What a `40P01` out of THIS family's archive means, which belongs beside
+      // the statement that decides it: no known cycle. The AB-BA cycle against
+      // `deleteStudentAccount` (issue 180) is closed by the pre-lock below, and
+      // the narrow window it leaves aborts the erasure, never the archive
+      // (`docs/lock-order.md`, "One escape survives"; pinned in
+      // `gdpr-lock-order.test.ts`). An archive queued behind the generation
+      // sweep's claim has no cycle and ends in `55P03`. So a deadlock here is a
+      // new cycle to investigate (the `{Class, ClassTemplate}` ordering this
+      // hook is one side of is standardized in #229: `ClassTemplate → Class`).
       // `ArchiveRuleResult`'s `busy` arm (`rule-lifecycle.ts`) lists the codes
       // that reach it; this calibration sits here instead, because a family
       // whose `withdraw` is null takes none of these locks.

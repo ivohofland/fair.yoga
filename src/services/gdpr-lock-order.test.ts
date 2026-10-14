@@ -33,6 +33,8 @@ import { CLASS_TO_ENTRY_JOIN, CLASS_TO_WAITLIST_JOIN, LOCK_TIMEOUT_SQL } from '@
 import { addToWaitlist, promoteNext, WaitlistJoinError } from './waitlist';
 import { claimTemplateForGeneration } from './class-generator';
 import { claimStudioTemplateForGeneration } from './studio-class-generator';
+import { archiveOrUnarchiveTemplate } from './class-template-lifecycle';
+import { updateClass } from './class-lifecycle';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
@@ -3143,6 +3145,371 @@ describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
 
       expect(await generating).toBe('generated');
       expect(await erasing).toBe('erased');
+    } finally {
+      await cleanup(fx);
+    }
+  }, 20_000);
+});
+
+/**
+ * `docs/lock-order.md`, "One escape survives, about a predicate rather than an
+ * order": the one shape in which `archiveOrUnarchiveTemplate` and
+ * `deleteStudentAccount` close an AB-BA cycle, and the claim that Postgres then
+ * aborts a transaction — a deadlock (`40P01`) or a `lock_timeout` (`55P03`) —
+ * rather than letting the archive's `deleteMany` remove a class the erasure
+ * holds.
+ *
+ * THE FOUR REQUESTS ARE STAGED, NOT RACED. The archive is parked between its
+ * ordered pre-lock and its `deleteMany` by a query hook on that statement, and
+ * while it is parked this test does, one after another and each committed on
+ * its own connection, what four independent requests would have to do inside
+ * that window: move a never-booked same-day class (`updateClass`, the real
+ * door) to a date the delete's predicate matches, book it, put the subject on
+ * its waitlist, and cancel the booking without the queue taking the seat (the
+ * last three as plain row writes). How likely that interleaving is stays the
+ * doc's argument; these tests are about what happens once it is reached.
+ *
+ * The cycle needs the moved class's id to sort BELOW the class the archive
+ * pre-locked: the erasure locks ascending, so it takes the moved class and
+ * then waits on the pre-locked one, and the archive's cascade then needs the
+ * moved class. With the ids the other way round the erasure waits before it
+ * holds anything the archive needs and there is no cycle — which is why both
+ * ids are assigned, and why the `NOWAIT` premise below fails if they swap.
+ *
+ * WHICH SIDE LOSES IS NOT POSTGRES'S CHOICE HERE. The erasure always starts
+ * waiting first (the archive's delete has nothing to wait on until the erasure
+ * holds the moved class), and each backend runs its deadlock check once,
+ * `deadlock_timeout` after its own wait began. So the erasure's check is the
+ * first to run: if the delete is already waiting by then it finds the cycle
+ * and the erasure gets `40P01`; if not, the erasure's own 2s `lock_timeout`
+ * fires before the delete's check ever runs, and it gets `55P03`. One case
+ * each, chosen by when the parked delete is released.
+ */
+describe('the archive escape against a student erasure ends in an abort, not an unheld delete', () => {
+  const prisma = new PrismaClient();
+  const DAY = 24 * 60 * 60 * 1000;
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function makeFixture() {
+    const suffix = `gdpr-escape-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    // `movedClassId` sorts below `heldClassId` by construction — see the docblock.
+    const movedClassId = `00000000-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    const heldClassId = `ffffffff-0000-4000-8000-${crypto.randomBytes(6).toString('hex')}`;
+    // The teacher runs on UTC, so this is the archive's own `today`.
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const daysFromToday = (n: number) => new Date(todayUtc + n * DAY);
+
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Escape',
+        lastName: 'Teacher',
+        email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: 'Archive-escape fixture',
+        pageSlug: suffix,
+        defaultTimezone: 'UTC',
+      },
+      select: { id: true, accountId: true },
+    });
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Escape Studio',
+        address: `${suffix} St`,
+        city: 'Amsterdam',
+        postcode: '1234ES',
+        floor: '1',
+        roomName: 'Main',
+        maxCapacity: 20,
+        createdById: teacher.id,
+      },
+      select: { id: true },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const template = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: teacher.id,
+            kind: 'regular',
+            classType: 'Escape class',
+            dayOfWeek: new Date(todayUtc).getUTCDay(),
+            startTime: hhmmToTime('09:00'),
+            durationMinutes: 60,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
+        roomCost: 20,
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 1,
+        maxStudents: 1,
+      },
+      select: { id: true, scheduleRuleId: true },
+    });
+
+    const base = {
+      teacherId: teacher.id,
+      teacherRoomId: teacherRoom.id,
+      scheduleRuleId: template.scheduleRuleId,
+      classType: 'Escape class',
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 20,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 1,
+      status: 'open' as const,
+    };
+    // Today: outside the archive's `e.date > today` pre-lock, never booked.
+    await createClassFixture(prisma, { ...base, id: movedClassId, date: daysFromToday(0) });
+    // A week out: inside the pre-lock, and full — a filler holds its one seat,
+    // so the delete spares it — with the subject queued on it.
+    await createClassFixture(prisma, {
+      ...base,
+      id: heldClassId,
+      date: daysFromToday(7),
+      settingsLocked: true,
+    });
+
+    const makeStudent = async (label: string) => {
+      const email = `${suffix}-${label}@test.local`;
+      const student = await prisma.student.create({
+        data: {
+          firstName: 'Escape',
+          lastName: label,
+          email,
+          incomeTier: 2,
+          claimedAt: new Date(),
+          account: { create: { email } },
+        },
+        select: { id: true, accountId: true },
+      });
+      return { id: student.id, accountId: student.accountId!, email };
+    };
+    const subject = await makeStudent('subject');
+    const filler = await makeStudent('filler');
+    const booker = await makeStudent('booker');
+    await prisma.registration.create({
+      data: { classId: heldClassId, studentId: filler.id, status: 'registered', tierAtBooking: 2 },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: heldClassId, studentId: subject.id, position: 1, status: 'waiting' },
+    });
+    return {
+      teacherId: teacher.id,
+      accountId: teacher.accountId,
+      roomId: room.id,
+      templateId: template.id,
+      movedClassId,
+      heldClassId,
+      moveTo: daysFromToday(3),
+      subject,
+      booker,
+      students: [subject, filler, booker],
+    };
+  }
+
+  type Fixture = Awaited<ReturnType<typeof makeFixture>>;
+
+  async function cleanup(fx: Fixture): Promise<void> {
+    const studentIds = fx.students.map((s) => s.id);
+    await prisma.notification.deleteMany({ where: { recipientId: { in: [...studentIds, fx.teacherId] } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: fx.teacherId } });
+    await prisma.room.deleteMany({ where: { id: fx.roomId } });
+    await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
+    await prisma.account.deleteMany({
+      where: { id: { in: [fx.accountId, ...fx.students.map((s) => s.accountId)] } },
+    });
+  }
+
+  async function pollFor<T>(label: string, read: () => Promise<T | null>, withinMs: number): Promise<T> {
+    const deadline = Date.now() + withinMs;
+    while (Date.now() < deadline) {
+      const found = await read();
+      if (found !== null) return found;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error(`${label} not observed within ${withinMs}ms`);
+  }
+
+  type Staged = {
+    archived: Awaited<ReturnType<typeof archiveOrUnarchiveTemplate>>;
+    erased: { erased: true } | { error: string };
+    deleteError: unknown;
+  };
+
+  /**
+   * Parks the archive at its `deleteMany`, stages the four requests, starts
+   * the erasure and waits for it to hold the moved class and queue on the held
+   * one, then releases the delete `releaseAfterMs` after that. Resolves once
+   * the delete has been SEEN waiting on the erasure — the cycle, read off
+   * `pg_stat_activity` — and both transactions have settled.
+   */
+  async function stage(fx: Fixture, releaseAfterMs: number, observeWithinMs: number): Promise<Staged> {
+    let parked!: () => void;
+    const isParked = new Promise<void>((r) => {
+      parked = r;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let deleteError: unknown;
+    const interposing = prisma.$extends({
+      query: {
+        calendarEntry: {
+          async deleteMany({ args, query }) {
+            parked();
+            await released;
+            try {
+              return await query(args);
+            } catch (err) {
+              deleteError = err;
+              throw err;
+            }
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+
+    const archiving = archiveOrUnarchiveTemplate(interposing, fx.templateId, fx.teacherId, 'archived');
+    let erasing: Promise<Staged['erased']> | undefined;
+    try {
+      await awaitHandshake(isParked, "the archive's deleteMany");
+
+      // Premise: the pre-lock holds the week-out class and left today's alone.
+      const free = await prisma.$transaction(async (tx) => {
+        const rows = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM "Class" WHERE id IN (${fx.movedClassId}, ${fx.heldClassId})
+          FOR UPDATE SKIP LOCKED`;
+        return rows.map((r) => r.id);
+      });
+      expect(free).toEqual([fx.movedClassId]);
+
+      // 1: the never-booked same-day class moves into the delete's range.
+      const moved = await updateClass(prisma, fx.movedClassId, { date: fx.moveTo });
+      expect(moved.ok, JSON.stringify(moved)).toBe(true);
+      // 2: a booking fills its one seat, which locks its settings.
+      const booking = await prisma.registration.create({
+        data: { classId: fx.movedClassId, studentId: fx.booker.id, status: 'registered', tierAtBooking: 2 },
+      });
+      await prisma.class.update({ where: { id: fx.movedClassId }, data: { settingsLocked: true } });
+      // 3: the subject joins its waitlist.
+      await prisma.waitlistEntry.create({
+        data: { classId: fx.movedClassId, studentId: fx.subject.id, position: 1, status: 'waiting' },
+      });
+      // 4: the booking is cancelled, and no promotion takes the seat.
+      await prisma.registration.update({
+        where: { id: booking.id },
+        data: { status: 'cancelled', cancelledAt: new Date() },
+      });
+
+      erasing = deleteStudentAccount(prisma, fx.subject.id).then(
+        () => ({ erased: true as const }),
+        (err: unknown) => ({ error: String(err) }),
+      );
+      const erasureWait = await pollFor(
+        'the erasure waiting in its Class pre-lock',
+        async () => {
+          const [row] = await prisma.$queryRaw<Array<{ pid: number; blockers: number[] }>>`
+            SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock'
+               AND query LIKE '%JOIN "WaitlistEntry" w%FOR UPDATE OF c%'`;
+          return row ?? null;
+        },
+        1_000,
+      );
+      // Blocked by exactly one backend: the parked archive.
+      expect(erasureWait.blockers).toHaveLength(1);
+      const archivePid = erasureWait.blockers[0]!;
+
+      // Premise: the erasure holds the moved class while it waits.
+      const probe = await prisma
+        .$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${fx.movedClassId} FOR UPDATE NOWAIT`;
+        })
+        .then(
+          () => 'free' as const,
+          (err: unknown) => String(err),
+        );
+      expect(probe).toMatch(/55P03|could not obtain lock/);
+
+      if (releaseAfterMs > 0) await new Promise((r) => setTimeout(r, releaseAfterMs));
+      release();
+
+      // The delete waits on the erasure's lock on the moved class rather than
+      // deleting through it.
+      await pollFor(
+        "the archive's delete waiting behind the erasure",
+        async () => {
+          const [row] = await prisma.$queryRaw<Array<{ blockers: number[] }>>`
+            SELECT pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+             WHERE pid = ${archivePid} AND wait_event_type = 'Lock'`;
+          return row && row.blockers.includes(erasureWait.pid) ? row : null;
+        },
+        observeWithinMs,
+      );
+    } finally {
+      release();
+      await joinOrThrow(archiving, erasing);
+    }
+    return { archived: await archiving, erased: (await erasing)!, deleteError };
+  }
+
+  /** The erasure lost and nothing of it stands; the archive then deleted the class. */
+  async function expectErasureAborted(fx: Fixture, staged: Staged, code: RegExp): Promise<void> {
+    expect('error' in staged.erased ? staged.erased.error : 'erased').toMatch(code);
+    expect(staged.deleteError).toBeUndefined();
+    expect(staged.archived).toMatchObject({ ok: true, action: 'archived', deleted: 1 });
+    // Gone — after the erasure's rollback released it, since until then the
+    // delete was the waiter `stage` observed.
+    expect(await prisma.class.findUnique({ where: { id: fx.movedClassId } })).toBeNull();
+    expect(await prisma.student.findUniqueOrThrow({ where: { id: fx.subject.id } })).toMatchObject({
+      email: fx.subject.email,
+    });
+    expect(
+      await prisma.waitlistEntry.count({ where: { classId: fx.heldClassId, studentId: fx.subject.id } }),
+    ).toBe(1);
+  }
+
+  beforeAll(async () => {
+    // Both cases below are timed against these two settings.
+    const [row] = await prisma.$queryRaw<Array<{ deadlock_timeout: string }>>`SHOW deadlock_timeout`;
+    expect(row?.deadlock_timeout).toBe('1s');
+    expect(LOCK_TIMEOUT_SQL).toBe("SET LOCAL lock_timeout = '2s'");
+  });
+
+  it('aborts the erasure with 40P01 when the delete queues inside deadlock_timeout', async () => {
+    const fx = await makeFixture();
+    try {
+      // Released at once: the delete is waiting well before the erasure's
+      // deadlock check runs, 1s into its wait.
+      const staged = await stage(fx, 0, 800);
+      await expectErasureAborted(fx, staged, /40P01|deadlock/);
+    } finally {
+      await cleanup(fx);
+    }
+  }, 20_000);
+
+  it('aborts the erasure with 55P03 when the delete queues after deadlock_timeout', async () => {
+    const fx = await makeFixture();
+    try {
+      // Released 1.4s into the erasure's wait: its deadlock check (at 1s) found
+      // no cycle, and its lock_timeout (at 2s) fires before the delete's own
+      // check (1s into the delete's wait, so at 2.4s or later).
+      const staged = await stage(fx, 1_400, 500);
+      await expectErasureAborted(fx, staged, /55P03|lock timeout/);
     } finally {
       await cleanup(fx);
     }
