@@ -57,22 +57,33 @@ describe('freeCancelUntil', () => {
 describe('freeCancelUntilFor', () => {
   const deadline = new Date('2026-06-01T06:00:00Z');
   const promotedAt = new Date('2026-06-01T05:55:00Z'); // inside the last 15 minutes
+  const booking = (
+    waitlistEntry: { status: 'promoted' | 'claimed' | 'waiting'; promotedAt: Date | null } | null,
+    lateCancelledAt: Date | null = null,
+  ) => ({ lateCancelledAt, waitlistEntry });
 
   it('is the deadline for no linked entry at all', () => {
-    expect(freeCancelUntilFor(deadline, null)).toEqual(deadline);
+    expect(freeCancelUntilFor(deadline, booking(null))).toEqual(deadline);
   });
 
   it('extends the deadline for a promoted entry, matching freeCancelUntil', () => {
-    expect(freeCancelUntilFor(deadline, { status: 'promoted', promotedAt })).toEqual(
+    expect(freeCancelUntilFor(deadline, booking({ status: 'promoted', promotedAt }))).toEqual(
       freeCancelUntil(deadline, promotedAt),
     );
   });
 
   it('gives a claimed entry no grace, even with the same promotedAt a promotion would extend on', () => {
-    expect(freeCancelUntilFor(deadline, { status: 'claimed', promotedAt })).toEqual(deadline);
+    expect(freeCancelUntilFor(deadline, booking({ status: 'claimed', promotedAt }))).toEqual(deadline);
   });
 
   it('gives a waiting entry no grace — it was never promoted', () => {
-    expect(freeCancelUntilFor(deadline, { status: 'waiting', promotedAt: null })).toEqual(deadline);
+    expect(freeCancelUntilFor(deadline, booking({ status: 'waiting', promotedAt: null }))).toEqual(deadline);
+  });
+
+  it('gives a booking that was once late-cancelled no grace, even when a promotion reactivated it', () => {
+    const lateCancelledAt = new Date('2026-06-01T05:00:00Z');
+    expect(
+      freeCancelUntilFor(deadline, booking({ status: 'promoted', promotedAt }, lateCancelledAt)),
+    ).toEqual(deadline);
   });
 });

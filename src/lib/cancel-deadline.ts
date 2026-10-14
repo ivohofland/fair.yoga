@@ -46,17 +46,27 @@ export function freeCancelUntil(deadline: Date, promotedAt: Date | null): Date {
 }
 
 /**
- * `freeCancelUntil`, taking the linked `WaitlistEntry` projection a caller
- * fetched rather than a bare `promotedAt`. Only `status === 'promoted'`
- * carries the grace — every other member of `WaitlistStatus`, and no linked
- * entry at all, reads as `null`.
+ * `freeCancelUntil` for a booking as a caller fetched it: its linked
+ * `WaitlistEntry` projection, and `Registration.lateCancelledAt`. Only
+ * `status === 'promoted'` carries the grace — every other member of
+ * `WaitlistStatus`, and no linked entry at all, reads as `null`.
+ *
+ * A booking that was ever late-cancelled gets no grace either, even once a
+ * promotion has reactivated it: the late cancel already charged it, and a
+ * rejoin is a change of mind, not a way out of that charge.
  *
  * `WaitlistStatus` arrives via `import type` only, so this module still adds
  * no runtime import — the type is erased at compile time.
  */
 export function freeCancelUntilFor(
   deadline: Date,
-  promotion: { status: WaitlistStatus; promotedAt: Date | null } | null,
+  booking: {
+    lateCancelledAt: Date | null;
+    waitlistEntry: { status: WaitlistStatus; promotedAt: Date | null } | null;
+  },
 ): Date {
-  return freeCancelUntil(deadline, promotion?.status === 'promoted' ? promotion.promotedAt : null);
+  const promotion = booking.waitlistEntry;
+  const graceFrom =
+    booking.lateCancelledAt === null && promotion?.status === 'promoted' ? promotion.promotedAt : null;
+  return freeCancelUntil(deadline, graceFrom);
 }

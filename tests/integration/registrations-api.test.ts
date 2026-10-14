@@ -6,7 +6,7 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
 import { formatDayHeader } from '@/lib/format';
 import { isEssential } from '@/services/notification-policy';
-import { cancelDeadlineInstant } from '@/services/waitlist';
+import { cancelDeadlineInstant, promoteNext } from '@/services/waitlist';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import { CHECKIN_OPENS_MINUTES } from '@/lib/finish-window';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
@@ -2810,6 +2810,34 @@ describe('DELETE /api/registrations/[id] — the free-cancel grace for an auto-p
     });
     const entry = await prisma.waitlistEntry.findUniqueOrThrow({ where: { registrationId } });
     expect(entry.status).toBe('promoted');
+  });
+
+  // A late canceller may change their mind through the queue, but the
+  // promotion's grace must not turn the charge they already owe into a free
+  // cancel.
+  it('keeps a late cancel charged when the student rejoins, is promoted and cancels again', async () => {
+    const classId = await makeLateCancelClass(5, 130, 'HOURS_6');
+    const booked = (await expectApplied(await post(studentTokens[0]!, { classId }), 201)) as { id: string };
+    expect(await expectApplied(await cancel(studentTokens[0]!, booked.id))).toEqual({
+      id: booked.id,
+      status: 'late_cancel',
+    });
+
+    // What the rejoin leaves, without filling the class around it.
+    await prisma.waitlistEntry.create({
+      data: { classId, studentId: studentIds[0]!, position: 1, status: 'waiting' },
+    });
+    const promoted = await promoteNext(prisma, classId);
+    expect(promoted?.registrationId).toBe(booked.id);
+
+    expect(await expectApplied(await cancel(studentTokens[0]!, booked.id))).toEqual({
+      id: booked.id,
+      status: 'late_cancel',
+    });
+    const notice = await prisma.notification.findFirstOrThrow({
+      where: { relatedClassId: classId, type: 'waitlist_promoted' },
+    });
+    expect(notice.body).toContain('stays charged');
   });
 });
 

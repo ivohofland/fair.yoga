@@ -301,7 +301,7 @@ export default async function StudentBookingsPage() {
               // #236's free-cancel instant (`freeCancelUntilFor`, `cancel-deadline.ts`).
               const freeCancelUntil = freeCancelUntilFor(
                 cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz),
-                reg.waitlistEntry,
+                reg,
               );
               return (
                 <div key={reg.id} className="bg-sand-soft border border-border rounded-card p-5">

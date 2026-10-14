@@ -1167,6 +1167,9 @@ model Registration {
   tierRatio           Decimal?           @db.Decimal(5, 4)
   registeredAt        DateTime           @default(now())
   cancelledAt         DateTime?
+  /// Set by a student's late cancel and never cleared, so a booking that is
+  /// reactivated afterwards still gets no free-cancel grace.
+  lateCancelledAt     DateTime?
   /// Set once when this booking's class reminder is claimed, before it is
   /// delivered; a failed email leaves it set.
   classReminderSentAt DateTime?

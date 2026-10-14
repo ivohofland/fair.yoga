@@ -713,7 +713,12 @@ export async function promoteNext(
 
     const tz = cls.calendarEntry.teacher.defaultTimezone;
     const deadline = cancelDeadlineInstant(cls.calendarEntry, cls.cancelDeadline, tz);
-    const freeUntil = freeCancelUntil(deadline, now);
+    // The same answer the cancel route will give (`freeCancelUntilFor`): a
+    // booking this student already late-cancelled stays charged.
+    const cancelTerms =
+      registration.lateCancelledAt === null
+        ? `You can cancel for free until ${formatInstantInZone(freeCancelUntil(deadline, now), tz)}.`
+        : 'You cancelled this class after the deadline before, so it stays charged if you cancel again.';
 
     await createBulkNotifications(tx, [
       {
@@ -721,7 +726,7 @@ export async function promoteNext(
         recipientId: nextEntry.studentId,
         type: 'waitlist_promoted',
         title: 'You are in',
-        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. You can cancel for free until ${formatInstantInZone(freeUntil, tz)}.`,
+        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. ${cancelTerms}`,
         relatedClassId: classId,
       },
     ]);

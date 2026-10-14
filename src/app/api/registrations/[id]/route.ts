@@ -356,7 +356,10 @@ export const DELETE = withErrorHandler(async (
       where: { registrationId: id },
       select: { status: true, promotedAt: true },
     });
-    const until = freeCancelUntilFor(deadline, promotion);
+    const until = freeCancelUntilFor(deadline, {
+      lateCancelledAt: registration.lateCancelledAt,
+      waitlistEntry: promotion,
+    });
 
     if (isPastCancelDeadline(until, new Date())) {
       // Past the free-cancel instant — mark as late_cancel (still charged).
@@ -374,9 +377,10 @@ export const DELETE = withErrorHandler(async (
       // and `cancelled` is not, so an unscoped write here can land *after* a
       // teacher's free cancel and silently rewrite `cancelled` → `late_cancel`,
       // billing a student for a class the teacher had let them out of.
+      const now = new Date();
       const updated = await prisma.registration.updateMany({
         where: { id, status: { notIn: ['cancelled', 'late_cancel'] } },
-        data: { status: 'late_cancel', cancelledAt: new Date() },
+        data: { status: 'late_cancel', cancelledAt: now, lateCancelledAt: now },
       });
       if (updated.count === 0) {
         return answerMissedCancel(id, isStudent);
