@@ -91,6 +91,19 @@ describe('WaitlistEntryActions', () => {
     expect(routerRefresh).not.toHaveBeenCalled();
   });
 
+  it('keeps the page as it is after a server error — it says nothing about the class', async () => {
+    fetchMock.mockResolvedValue(
+      reply(503, { error: { message: 'Busy right now. Please try again.', code: 'SERVICE_UNAVAILABLE' } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    renderActions(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Claim the spot for Yin, Friday 18:00' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Busy right now. Please try again.');
+    expect(routerRefresh).not.toHaveBeenCalled();
+  });
+
   describe('leave', () => {
     /** The trigger, then the confirmation's own Leave button. */
     function leave(): void {

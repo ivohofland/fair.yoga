@@ -60,3 +60,13 @@ export type RequestFailureContext = Readonly<
 export function logRequestFailure(tag: string, context: RequestFailureContext, err: unknown): void {
   console.error(`[${tag}] request failed`, { ...context, err });
 }
+
+/**
+ * Whether a failed response is the server refusing the request (4xx) rather
+ * than failing to answer it (5xx). A refusal means the page that sent it was
+ * out of date, so it is worth reading again; a server error says nothing
+ * about what the page shows, and a re-render would meet the same failure.
+ */
+export function isRefusal(res: Pick<Response, 'status'>): boolean {
+  return res.status >= 400 && res.status < 500;
+}

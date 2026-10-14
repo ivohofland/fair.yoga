@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { Currency } from '@prisma/client';
 import { Button } from '@/components/ui/button';
-import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { isRefusal, logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_PROMPT, type IncomeTier } from '@/lib/tiers';
 import { formatMoney } from '@/lib/format';
 import { FREE_CANCEL_GRACE_MINUTES } from '@/lib/cancel-deadline';
@@ -75,10 +75,10 @@ export function BookingFlow({
 
   // A refusal means this page was out of date — the class filled, its last
   // seat was taken, it started. Read it again so the button offers what is
-  // possible now; the message stays. A network error says nothing about the
-  // class, so it reads nothing.
-  function refreshAfterRefusal() {
-    router.refresh();
+  // possible now; the message stays. A server or network error says nothing
+  // about the class, so it reads nothing.
+  function refreshAfterRefusal(res: Response) {
+    if (isRefusal(res)) router.refresh();
   }
 
   async function handleBook() {
@@ -111,7 +111,7 @@ export function BookingFlow({
           setPhase('waitlisted');
         } else {
           setError(await readErrorMessage(res, 'Could not join the waitlist. Try again.'));
-          refreshAfterRefusal();
+          refreshAfterRefusal(res);
         }
         return;
       }
@@ -125,7 +125,7 @@ export function BookingFlow({
         setPhase('booked');
       } else {
         setError(await readErrorMessage(res, 'Could not book the class. Try again.'));
-        refreshAfterRefusal();
+        refreshAfterRefusal(res);
       }
     } catch (err) {
       logRequestFailure('booking-flow', { classId, studentId, isFull }, err);

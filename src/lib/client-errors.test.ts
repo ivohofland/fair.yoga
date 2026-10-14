@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { logRequestFailure, readError, readErrorMessage } from './client-errors';
+import { logRequestFailure, readError, readErrorMessage, isRefusal } from './client-errors';
 import type { ApiErrorCode } from './api-error-codes';
 import type { Assert, Equals } from './type-pins';
 
@@ -147,3 +147,16 @@ function _contextRefusesObjectsAndErr(): void {
   // @ts-expect-error — a caller-supplied err key is refused
   logRequestFailure('x', { err: 'shadow' }, null);
 }
+
+describe('isRefusal', () => {
+  // A refusal is the server saying what the class is now, so the page is worth
+  // reading again; a server error says nothing about it, and a re-render would
+  // hit the same failing database.
+  it.each([404, 409])('is a refusal at %i', (status) => {
+    expect(isRefusal({ status } as Response)).toBe(true);
+  });
+
+  it.each([500, 503])('is not a refusal at %i', (status) => {
+    expect(isRefusal({ status } as Response)).toBe(false);
+  });
+});
