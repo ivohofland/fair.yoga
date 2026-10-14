@@ -739,6 +739,35 @@ async function main() {
     },
   );
 
+  // 7. OPEN (full, with a waitlist) — in two days, every seat taken and three
+  // students queued behind them. A one-off (no template) at an hour none of
+  // Ivo's other entries or templates hold, so `CalendarEntry_teacher_slot_excl`
+  // has nothing to refuse.
+  const yinSeats = 7;
+  const waitlistedClass = await createClass(
+    {
+      teacherId: ivo.id,
+      classType: 'Yin',
+      date: daysFromNow(2),
+      startTime: hhmmToTime('18:00'),
+      durationMinutes: 60,
+    },
+    {
+      teacherRoomId: ivoCommunity.id,
+      description: 'Long holds, low light. Small group.',
+      roomCost: new Prisma.Decimal('25.00'),
+      minRate: new Prisma.Decimal('12.00'),
+      targetRate: new Prisma.Decimal('20.00'),
+      minStudents: 3,
+      maxStudents: yinSeats,
+      cancelDeadline: 'HOURS_24',
+      autoCancelCheck: 'HOURS_2',
+      status: 'open',
+      settingsLocked: true,
+      vatPercent: 9,
+    },
+  );
+
   // --------------------------------------------------------------------------
   // Maya's classes — the ones that make the timezone boundary visible
   // --------------------------------------------------------------------------
@@ -1034,16 +1063,35 @@ async function main() {
   }
 
   // ==========================================================================
-  // WAITLIST ENTRIES (on full class)
+  // WAITLIST (the full Yin class)
   // ==========================================================================
-  // Students 8 and 9 are on the waitlist (Iris and Jan) — but they're already
-  // registered in the full class above. Use students from a different scenario:
-  // Actually, the full class already has all 10 students. In a real scenario
-  // extra students who couldn't register would be waitlisted.
-  // We'll skip creating waitlist entries that conflict with unique constraints.
-  // Instead, note that waitlist entries would be created for students NOT
-  // already registered. For seed purposes, we'll leave the waitlist empty
-  // for the full class since all 10 students are registered.
+  // Its seats go to the first `yinSeats` students and everyone after them
+  // waits, in booking order: no student both holds a seat and waits, and the
+  // waiting positions run 1..n with no gap.
+  // Hugo, Iris and Jan are the ones waiting — /bookings shows each their row.
+  for (let i = 0; i < students.length; i++) {
+    const student = students[i]!;
+    if (i < yinSeats) {
+      await prisma.registration.create({
+        data: {
+          classId: waitlistedClass.id,
+          studentId: student.id,
+          status: 'registered',
+          tierAtBooking: student.incomeTier,
+          registeredAt: new Date(daysAgo(3).getTime() + i * 3_600_000),
+        },
+      });
+    } else {
+      await prisma.waitlistEntry.create({
+        data: {
+          classId: waitlistedClass.id,
+          studentId: student.id,
+          position: i - yinSeats + 1,
+          createdAt: new Date(daysAgo(1).getTime() + i * 3_600_000),
+        },
+      });
+    }
+  }
 
   // ==========================================================================
   // PAYMENTS (first completed class — 9 charged registrations)
@@ -1317,10 +1365,11 @@ async function main() {
   console.log(`  Invitations: 3 (2 pending, 1 declined)`);
   console.log(`  Rooms: 3, TeacherRooms: 4`);
   console.log(`  ClassTemplate: 1`);
-  console.log(`  Classes: 11 (8 for Ivo across every lifecycle state, 3 for Maya)`);
+  console.log(`  Classes: ${await prisma.class.count()} (Ivo across every lifecycle state, plus Maya's)`);
   console.log(`  StudioClassTemplate: 1`);
   console.log(`  StudioClasses: 3 (1 past, 1 upcoming, 1 one-off)`);
-  console.log(`  Registrations: 42`);
+  console.log(`  Registrations: ${await prisma.registration.count()}`);
+  console.log(`  WaitlistEntries: ${await prisma.waitlistEntry.count({ where: { status: 'waiting' } })} waiting`);
   console.log(`  Payments: 18 (9 paid, 3 pending, 6 overdue)`);
   console.log(`  Notifications: 5`);
   console.log(`  Announcements: 1`);

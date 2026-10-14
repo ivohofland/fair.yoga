@@ -4,7 +4,8 @@ import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfStudent } from './account-helpers';
 import { uniqueSuffix, seedSession, sessionCookie, BASE_URL } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { createClassFixture } from '../class-fixtures';
+import { createClassFixture, wallSlotAt } from '../class-fixtures';
+import { teardownStudent, teardownTeacher } from '../helpers';
 
 /**
  * The student's side of a contested class, end to end through the UI:
@@ -230,6 +231,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
 
     // Leave — the section empties.
     await page.getByRole('button', { name: 'Leave waitlist' }).click();
+    await page.getByRole('button', { name: 'Leave', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible({
       timeout: 10_000,
     });
@@ -340,10 +342,10 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await expect(page.getByRole('button', { name: 'Mark "You are in" read' })).toBeHidden();
     await expect(page.getByText('You are in')).toBeVisible();
 
-    // A linked row navigates to the public booking page — never a
+    // A waitlist row links to /bookings (`studentNotificationHref`) — never a
     // teacher route (the hrefById override at work).
     await page.getByText('You are in').click();
-    await page.waitForURL(`**/${slug}/book/${classId}`);
+    await page.waitForURL('**/bookings');
 
     // Back home: zero unread, but the section header + link remain.
     await page.goto('/bookings');
@@ -355,5 +357,158 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
       where: { recipientType: 'student', recipientId: bramId, isRead: false },
     });
     expect(unread).toBe(0);
+  });
+});
+
+/**
+ * The final hour before class (`first_come_first_claimed`): a freed seat is
+ * not auto-promoted, and the waiting student takes it with "Claim the spot".
+ */
+test.describe('Student journey — final-hour claim', () => {
+  test.describe.configure({ mode: 'serial' });
+
+  const claimSuffix = uniqueSuffix();
+  const claimSlug = `e2e-sclaim-${claimSuffix}`;
+  const timeZone = 'Europe/Amsterdam';
+  let claimTeacherId: string;
+  let claimRoomId: string;
+  let claimClassId: string;
+  let claimerId: string;
+  let claimerToken: string;
+  let fillerId: string;
+
+  test.beforeAll(async () => {
+    await prisma.$connect();
+    const email = `e2e-sclaim-teacher-${claimSuffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Final',
+        lastName: 'Hour',
+        email,
+        account: { create: { email } },
+        bio: 'Final-hour claim e2e',
+        pageSlug: claimSlug,
+        defaultTimezone: timeZone,
+      },
+    });
+    claimTeacherId = teacher.id;
+
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Claim Studio',
+        address: `${claimSuffix} Claim St`,
+        city: 'Amsterdam',
+        postcode: '1234CL',
+        maxCapacity: 5,
+        createdById: claimTeacherId,
+      },
+    });
+    claimRoomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: claimTeacherId, roomId: claimRoomId, capacityOverride: 5, rentalRate: 15 },
+    });
+
+    // Starts 30 minutes from now on the teacher's wall clock: inside the
+    // claim window, well short of the start sweep. `autoCancelDecidedAt`
+    // keeps the running app's auto-cancel sweep off it.
+    const { date, startTime } = wallSlotAt(new Date(Date.now() + 30 * 60 * 1000), timeZone);
+    const cls = await createClassFixture(prisma, {
+      teacherId: claimTeacherId,
+      teacherRoomId: teacherRoom.id,
+      classType: 'Final Hour Flow',
+      date,
+      startTime,
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 0,
+      maxStudents: 1,
+      autoCancelDecidedAt: new Date(),
+      settingsLocked: true,
+      status: 'open',
+    });
+    claimClassId = cls.id;
+
+    const mkStudent = async (first: string): Promise<string> => {
+      const studentEmail = `e2e-sclaim-${first.toLowerCase()}-${claimSuffix}@test.local`;
+      const student = await prisma.student.create({
+        data: {
+          firstName: first,
+          lastName: 'Student',
+          email: studentEmail,
+          account: { create: { email: studentEmail } },
+          incomeTier: 3,
+          claimedAt: new Date(),
+          tierSelectedAt: new Date(),
+        },
+      });
+      return student.id;
+    };
+    fillerId = await mkStudent('Filler');
+    claimerId = await mkStudent('Cleo');
+    claimerToken = await seedSession(prisma, await accountIdOfStudent(prisma, claimerId));
+
+    // The one seat is taken and Cleo waits behind it.
+    await prisma.registration.create({
+      data: { classId: claimClassId, studentId: fillerId, status: 'registered', tierAtBooking: 3 },
+    });
+    await prisma.waitlistEntry.create({
+      data: { classId: claimClassId, studentId: claimerId, position: 1 },
+    });
+  });
+
+  test.afterAll(async () => {
+    if (claimClassId) {
+      await prisma.notification.deleteMany({ where: { relatedClassId: claimClassId } });
+      await prisma.waitlistEntry.deleteMany({ where: { classId: claimClassId } });
+      await prisma.registration.deleteMany({ where: { classId: claimClassId } });
+    }
+    if (claimTeacherId) {
+      await prisma.teacherStudent.deleteMany({ where: { teacherId: claimTeacherId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: claimTeacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: claimTeacherId } });
+    }
+    if (claimRoomId) {
+      await prisma.room.delete({ where: { id: claimRoomId } });
+    }
+    await teardownStudent(prisma, claimerId);
+    await teardownStudent(prisma, fillerId);
+    await teardownTeacher(prisma, claimTeacherId);
+    await prisma.$disconnect();
+  });
+
+  test('a seat freed in the final hour is claimed from /bookings', async ({ page, context }) => {
+    await signIn(context, claimerToken);
+
+    // Full: Cleo is waiting and has nothing to claim yet.
+    await page.goto('/bookings');
+    await expect(page.getByRole('heading', { name: 'Waitlist' })).toBeVisible();
+    await expect(page.getByText(/position 1/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Claim the spot' })).toHaveCount(0);
+
+    // The filler cancels; set up directly, the claim is what is under test.
+    await prisma.registration.updateMany({
+      where: { classId: claimClassId, studentId: fillerId },
+      data: { status: 'cancelled', cancelledAt: new Date() },
+    });
+
+    await page.reload();
+    await expect(page.getByText('A spot opened up — the first to claim it gets it.')).toBeVisible();
+    await page.getByRole('button', { name: 'Claim the spot' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible();
+    await expect(page.getByText('Final Hour Flow').first()).toBeVisible();
+
+    const registration = await prisma.registration.findFirst({
+      where: { classId: claimClassId, studentId: claimerId, status: 'registered' },
+    });
+    expect(registration).not.toBeNull();
+    const entry = await prisma.waitlistEntry.findUniqueOrThrow({
+      where: { classId_studentId: { classId: claimClassId, studentId: claimerId } },
+    });
+    expect(entry.status).toBe('claimed');
+    expect(entry.registrationId).toBe(registration!.id);
   });
 });
