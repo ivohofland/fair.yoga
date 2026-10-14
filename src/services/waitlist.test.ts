@@ -2333,6 +2333,27 @@ describe('handleSpotFreed (DB)', () => {
     expect(promoted.entry.studentId).toBe(waiterIds[0]);
   });
 
+  // The window is decided once, from one instant. Read twice — once unlocked
+  // here, once under the lock in `promoteNext` — a seat freed a moment before
+  // the claim window opened was refused as `wrong_window` and swallowed as a
+  // refill: neither promoted nor broadcast until the next sweep.
+  it('promotes a seat freed just before the claim window opens, though the lock is taken just after', async () => {
+    const id = await seedFreeSeat('2099-06-12');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => vi.useRealTimers());
+    vi.setSystemTime(new Date('2099-06-12T07:59:59.900Z'));
+    const original = dbLocks.lockClassRow;
+    const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, lockedId) => {
+      vi.setSystemTime(new Date('2099-06-12T08:00:00.100Z'));
+      return original(tx, lockedId);
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    const result = await handleSpotFreed(prisma, id);
+
+    expect(result.action).toBe('promoted');
+  });
+
   it('does nothing once the class has started, though a seat is free and students wait (#236)', async () => {
     const id = await seedFreeSeat('2099-06-12');
 
