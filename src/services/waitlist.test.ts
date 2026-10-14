@@ -1311,6 +1311,41 @@ describe('claimSpot (DB)', () => {
     ).toBe(1);
   });
 
+  /** The teacher's own `booking_confirmed` rows for a class — what a self-booking also sends. */
+  const teacherBookingNotices = async (classId: string) => {
+    const { calendarEntry } = await prisma.class.findUniqueOrThrow({
+      where: { id: classId },
+      select: { calendarEntry: { select: { teacherId: true } } },
+    });
+    const notices = await prisma.notification.findMany({
+      where: { relatedClassId: classId, recipientType: 'teacher', recipientId: calendarEntry.teacherId },
+    });
+    return { teacherId: calendarEntry.teacherId, notices };
+  };
+
+  it('tells the teacher about a claim, as a booking would', async () => {
+    const classId = await makeFullClass();
+    await claimOnce(classId);
+
+    const { notices } = await teacherBookingNotices(classId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ type: 'booking_confirmed', title: 'New booking' });
+    expect(notices[0]!.body).toContain('claimed the open spot in Claim Flow');
+  });
+
+  it('tells a teacher with booking notifications off nothing about a claim', async () => {
+    const classId = await makeFullClass();
+    const { teacherId: ownerId } = await teacherBookingNotices(classId);
+    await prisma.teacher.update({ where: { id: ownerId }, data: { bookingNotifications: 'off' } });
+    onTestFinished(async () => {
+      await prisma.teacher.update({ where: { id: ownerId }, data: { bookingNotifications: 'inbox_and_email' } });
+    });
+
+    await claimOnce(classId);
+
+    expect((await teacherBookingNotices(classId)).notices).toHaveLength(0);
+  });
+
   it('answers a claim retried once class start has passed as already registered', async () => {
     const classId = await makeFullClass();
     await claimOnce(classId);
@@ -2134,7 +2169,7 @@ describe('handleSpotFreed (DB)', () => {
       data: { classId, studentId: fillerId, tierAtBooking: 3 },
     });
     for (const waiterId of waiterIds) {
-      await addToWaitlist(prisma, classId, waiterId);
+      await addToWaitlist(prisma, classId, waiterId, BEFORE_CLAIM_WINDOW);
     }
   });
 
@@ -2362,6 +2397,20 @@ describe('handleSpotFreed (DB)', () => {
     const result = await handleSpotFreed(prisma, id);
 
     expect(result.action).toBe('promoted');
+  });
+
+  it('tells the teacher about a promotion, as a booking would', async () => {
+    const id = await seedFreeSeat('2099-06-13');
+
+    const promoted = await handleSpotFreed(prisma, id, new Date('2099-06-13T07:00:00Z'));
+
+    expect(promoted.action).toBe('promoted');
+    const notices = await prisma.notification.findMany({
+      where: { relatedClassId: id, recipientType: 'teacher', recipientId: teacherId },
+    });
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ type: 'booking_confirmed', title: 'New booking' });
+    expect(notices[0]!.body).toContain('moved off the waitlist into');
   });
 
   it('does nothing once the class has started, though a seat is free and students wait (#236)', async () => {

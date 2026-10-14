@@ -13,7 +13,7 @@ import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { cancelDeadlineFrom, freeCancelUntil } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
-import { createBulkNotifications } from './notifications';
+import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { resolveInvitationOnLink } from './link-consent';
 import { linkTeacherStudent } from './roster-link';
 import {
@@ -685,7 +685,7 @@ export async function promoteNext(
     // Look up the student to get their incomeTier
     const student = await tx.student.findUniqueOrThrow({
       where: { id: nextEntry.studentId },
-      select: { incomeTier: true },
+      select: { incomeTier: true, firstName: true },
     });
 
     const registration = await activateRegistration(tx, lock, {
@@ -744,6 +744,11 @@ export async function promoteNext(
         body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. ${cancelTerms}`,
         relatedClassId: classId,
       },
+      ...(await teacherBookingNotice(tx, {
+        teacherId: cls.calendarEntry.teacherId,
+        classId,
+        body: `${student.firstName} moved off the waitlist into ${cls.calendarEntry.classType}.`,
+      })),
     ]);
 
     // Reorder remaining 'waiting' entries
@@ -825,7 +830,7 @@ export async function claimSpot(
 
     const student = await tx.student.findUniqueOrThrow({
       where: { id: studentId },
-      select: { incomeTier: true },
+      select: { incomeTier: true, firstName: true },
     });
 
     const registration = await activateRegistration(tx, lock, {
@@ -863,6 +868,11 @@ export async function claimSpot(
         body: `You claimed the open spot in ${cls.calendarEntry.classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.`,
         relatedClassId: classId,
       },
+      ...(await teacherBookingNotice(tx, {
+        teacherId: cls.calendarEntry.teacherId,
+        classId,
+        body: `${student.firstName} claimed the open spot in ${cls.calendarEntry.classType}.`,
+      })),
     ]);
 
     await reorderWaitingEntries(tx, classId);
@@ -1149,6 +1159,32 @@ export async function handleSpotFreed(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The teacher's heads-up for a booking the waitlist made — the same
+ * `booking_confirmed` a self-booking sends (`POST /api/registrations`), and
+ * likewise nothing when the teacher turned booking notifications off.
+ */
+async function teacherBookingNotice(
+  tx: PrismaTransactionClient,
+  input: { teacherId: string; classId: string; body: string },
+): Promise<CreateNotificationInput[]> {
+  const { bookingNotifications } = await tx.teacher.findUniqueOrThrow({
+    where: { id: input.teacherId },
+    select: { bookingNotifications: true },
+  });
+  if (bookingNotifications === 'off') return [];
+  return [
+    {
+      recipientType: 'teacher',
+      recipientId: input.teacherId,
+      type: 'booking_confirmed',
+      title: 'New booking',
+      body: input.body,
+      relatedClassId: input.classId,
+    },
+  ];
+}
 
 /** True when the student holds a spot-occupying registration for the class. */
 async function hasActiveRegistration(
