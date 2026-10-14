@@ -1152,6 +1152,17 @@ export async function handleSpotFreed(
       ? { action: 'broadcast', notified: outcome.notified }
       : { action: 'none' };
   } catch (err) {
+    // The class was deleted after the read above (archiving a template
+    // deletes its future classes): no seat is left to fill, so nothing was
+    // lost. Checked against the row itself, so a missing record of any
+    // other kind is still a failure.
+    if (
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === 'P2025' &&
+      (await db.class.count({ where: { id: classId } })) === 0
+    ) {
+      return { action: 'none' };
+    }
     throw new SpotFreedError(classId, branch, err);
   }
 }
