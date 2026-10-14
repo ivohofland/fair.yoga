@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
+  canClaimSpot,
   CLAIM_WINDOW_MINUTES,
   cancelDeadlineInstant,
   addToWaitlist,
@@ -70,6 +71,46 @@ describe('getWaitlistWindow', () => {
     expect(
       getWaitlistWindow(entry, 'Europe/Amsterdam', new Date('2026-04-10T05:59:59Z')),
     ).toBe('auto_promote');
+  });
+});
+
+describe('canClaimSpot', () => {
+  // Class starts 2026-04-10 09:00 UTC; the claim window opens 08:00.
+  const inWindow = new Date('2026-04-10T08:30:00Z');
+  const cls = (over: Partial<{ status: 'open' | 'in_progress'; cancelledAt: Date | null; activeCount: number }> = {}) => ({
+    status: over.status ?? ('open' as const),
+    maxStudents: 2,
+    activeCount: over.activeCount ?? 1,
+    calendarEntry: {
+      date: new Date('2026-04-10'),
+      startTime: hhmmToTime('09:00'),
+      cancelledAt: over.cancelledAt ?? null,
+      teacher: { defaultTimezone: 'UTC' },
+    },
+  });
+
+  it('offers the claim in the final hour while a seat is free', () => {
+    expect(canClaimSpot(cls(), inWindow)).toBe(true);
+  });
+
+  it('withholds it before the final hour — the queue promotes then', () => {
+    expect(canClaimSpot(cls(), new Date('2026-04-10T07:59:59Z'))).toBe(false);
+  });
+
+  it('withholds it from start', () => {
+    expect(canClaimSpot(cls(), new Date('2026-04-10T09:00:00Z'))).toBe(false);
+  });
+
+  it('withholds it while the class is full', () => {
+    expect(canClaimSpot(cls({ activeCount: 2 }), inWindow)).toBe(false);
+  });
+
+  it('withholds it on a cancelled class, whose status stays open', () => {
+    expect(canClaimSpot(cls({ cancelledAt: new Date() }), inWindow)).toBe(false);
+  });
+
+  it('withholds it on a class that is no longer open', () => {
+    expect(canClaimSpot(cls({ status: 'in_progress' }), inWindow)).toBe(false);
   });
 });
 

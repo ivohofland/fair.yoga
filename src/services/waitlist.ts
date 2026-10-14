@@ -9,7 +9,7 @@
  */
 
 import { Prisma } from '@prisma/client';
-import type { PrismaClient, CancelDeadline, WaitlistEntry, WaitlistStatus } from '@prisma/client';
+import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@prisma/client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { cancelDeadlineFrom, freeCancelUntil } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
@@ -282,6 +282,30 @@ export function getWaitlistWindow(
   if (currentTime >= start) return 'frozen';
   if (currentTime >= claimWindowStart(entry, timeZone)) return 'first_come_first_claimed';
   return 'auto_promote';
+}
+
+/**
+ * Whether a waiting student is offered "Claim the spot": the class is open
+ * and not cancelled, a seat is free, and the queue is in its
+ * first-come-first-claimed window. The same conditions `claimSpot` refuses
+ * on, read from a snapshot — `claimSpot` decides again under the lock.
+ */
+export function canClaimSpot(
+  cls: {
+    status: ClassStatus;
+    maxStudents: number;
+    activeCount: number;
+    calendarEntry: { date: Date; startTime: Date; cancelledAt: Date | null; teacher: { defaultTimezone: string } };
+  },
+  now?: Date,
+): boolean {
+  return (
+    cls.status === 'open' &&
+    cls.calendarEntry.cancelledAt === null &&
+    cls.activeCount < cls.maxStudents &&
+    getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now) ===
+      'first_come_first_claimed'
+  );
 }
 
 // ---------------------------------------------------------------------------
