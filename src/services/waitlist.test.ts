@@ -2399,6 +2399,26 @@ describe('handleSpotFreed (DB)', () => {
     expect(result.action).toBe('promoted');
   });
 
+  // Archiving a template deletes its future classes, and the sweep can be
+  // mid-run when it does. Gone is not a failure: there is no seat to fill.
+  it('answers a class deleted between its read and its lock as nothing to do', async () => {
+    const id = await seedFreeSeat('2099-06-14');
+    const { calendarEntryId } = await prisma.class.findUniqueOrThrow({
+      where: { id },
+      select: { calendarEntryId: true },
+    });
+    const original = dbLocks.lockClassRow;
+    const spy = vi.spyOn(dbLocks, 'lockClassRow').mockImplementation(async (tx, lockedId) => {
+      await prisma.calendarEntry.delete({ where: { id: calendarEntryId } });
+      return original(tx, lockedId);
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    await expect(handleSpotFreed(prisma, id, new Date('2099-06-14T07:00:00Z'))).resolves.toEqual({
+      action: 'none',
+    });
+  });
+
   it('tells the teacher about a promotion, as a booking would', async () => {
     const id = await seedFreeSeat('2099-06-13');
 
