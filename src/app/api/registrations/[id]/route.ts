@@ -197,7 +197,6 @@ export const PUT = withErrorHandler(async (
   // student's late cancel and never cleared — may return to it. Without that,
   // `registered -> late_cancel` (or the two-step via `attended`) would charge
   // a student who never cancelled.
-  //
   const requested = parsed.data.status;
   const updated = await prisma.registration.updateMany({
     where: {

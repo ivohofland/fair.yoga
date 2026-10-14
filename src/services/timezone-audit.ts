@@ -84,10 +84,11 @@ export async function auditTeacherTimezones(
   db: PrismaClient,
 ): Promise<TimezoneAuditSummary> {
   // `groupBy`, not `findMany({ distinct })`, for the reason
-  // `waitlist-retention.ts` records at its own opening statement: Prisma does
-  // not compile `distinct` into SQL, so that shape would select one row per
-  // TEACHER and dedupe in the query engine. The `_count` rides along free and
-  // is what lets the summary report affected teachers as well as zones.
+  // `reconcileWaitlists` (`waitlist-reconciliation.ts`) records at its opening
+  // `groupBy`: Prisma does not compile `distinct` into SQL, so that shape
+  // would select one row per TEACHER and dedupe in the query engine. The
+  // `_count` rides along free and is what lets the summary report affected
+  // teachers as well as zones.
   const rows = await db.teacher.groupBy({
     by: ['defaultTimezone'],
     where: { deletedAt: null },

@@ -537,8 +537,9 @@ describe('reconcileWaitlists (DB)', () => {
    * "a broadcast stands for the CURRENT window" from "a broadcast has ever
    * stood".
    *
-   * The bound is defensive: a class with a waitlist has a registration, which
-   * locks `date` and `startTime` (`LOCKED_FIELDS`, `lib/class-fields.ts`), so
+   * The bound is defensive: a class with a waitlist has had a registration,
+   * which locks `date` and `startTime` for good (`LOCKED_FIELDS`,
+   * `lib/class-fields.ts`), so
    * no writer moves the window under a standing flag. The fixture stamps the
    * flag directly to pin the bound should that ever stop holding.
    */

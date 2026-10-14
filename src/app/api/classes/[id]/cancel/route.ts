@@ -134,8 +134,8 @@ export const POST = withErrorHandler(async (
     // off `/bookings`.
     //
     // Re-read under the lock this transaction holds — not from `cls`, the
-    // handler's top-of-function read, taken outside it. An unbooked class can
-    // still be moved; a booked one cannot (`LOCKED_FIELDS`,
+    // handler's top-of-function read, taken outside it. A never-booked class
+    // can still be moved; an ever-booked one cannot (`LOCKED_FIELDS`,
     // `lib/class-fields.ts`), so for any class with recipients the two reads
     // agree. Reading under the lock keeps the notice's day and time from
     // resting on that: it names what the row holds as the cancellation commits.

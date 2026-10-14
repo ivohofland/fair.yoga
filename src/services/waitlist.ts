@@ -249,11 +249,11 @@ export function claimWindowStart(entry: { date: Date; startTime: Date }, timeZon
  *
  * The claim-window lower bound is a defensive secondary check, in memory and
  * for free: a flag stamped before the current claim window opened does not
- * count as standing for it. A class with a waitlist has a registration, and
- * a registration locks `date` and `startTime` (`LOCKED_FIELDS`,
- * `lib/class-fields.ts`), so no writer moves the window under a standing
- * flag; the bound keeps a flag from some other window from silencing this
- * one should that ever stop holding.
+ * count as standing for it. A class with a waitlist has had a registration,
+ * and the first registration locks `date` and `startTime` for good
+ * (`LOCKED_FIELDS`, `lib/class-fields.ts`), so no writer moves the window
+ * under a standing flag; the bound keeps a flag from some other window from
+ * silencing this one should that ever stop holding.
  */
 export function broadcastStillStands(cls: {
   spotBroadcastAt: Date | null;
@@ -372,7 +372,7 @@ export async function addToWaitlist(
         },
       },
     });
-    // Two checks, because a cancelled class keeps whatever status it had
+    // Separate checks, because a cancelled class keeps whatever status it had
     // (#327); each has a reason of its own.
     if (cls.calendarEntry.cancelledAt !== null) {
       throw new WaitlistJoinError('This class has been cancelled.', 'class_cancelled');
@@ -380,8 +380,8 @@ export async function addToWaitlist(
     if (cls.status !== 'open') {
       throw new WaitlistJoinError("This class isn't taking waitlist sign-ups.", 'class_not_open');
     }
-    // A class stays `open` until the status sweep moves it on, a minute or so
-    // after its start; the queue is closed from the start itself.
+    // A class stays `open` past its start, until the status sweep moves it on;
+    // the queue is closed from the start itself.
     if (getWaitlistWindow(cls.calendarEntry, cls.calendarEntry.teacher.defaultTimezone, now) === 'frozen') {
       throw new WaitlistJoinError('This class has already started.', 'class_started');
     }
@@ -601,9 +601,11 @@ export async function removeFromWaitlist(
 
 /**
  * Promotes the head of the waitlist queue: creates a Registration, links it
- * to the waitlist entry, notifies the student, and reorders remaining
- * positions. Stale heads (a student who booked directly but whose `waiting`
- * row survives) are dropped and skipped rather than promoted.
+ * to the waitlist entry, notifies the student (and the teacher with
+ * `booking_confirmed`, unless their booking notifications are off), and
+ * reorders remaining positions. A stale head — a hand-written or legacy
+ * `waiting` row whose student already holds an active registration — is
+ * dropped and skipped rather than promoted.
  *
  * Guards (all inside the transaction, serialized by `lockClassRow`'s bounded
  * `Class` row lock, shared with the registration route):
@@ -625,11 +627,9 @@ export async function removeFromWaitlist(
  * 2.67s). The transaction opened below carries Prisma's default 5s budget, so
  * reading this as "the 2s budget" and sizing from it would under-size it.
  *
- * What those three lacked before the #104 conversion was a LOCK timeout, not
- * a timeout: they ran under Prisma's default 5s interactive-transaction
- * budget, which is the very thing `waitlist-reconciliation.ts` documents
- * blowing at 7014ms — Prisma cannot cancel a statement already blocked inside
- * Postgres, only refuse to start the next one. A bust surfaces as a `55P03`
+ * The lock timeout is what bounds those waits: Prisma's interactive-transaction
+ * budget cannot, because Prisma cannot cancel a statement already blocked
+ * inside Postgres, only refuse to start the next one. A bust surfaces as a `55P03`
  * that aborts the whole promotion; `waitlist-reconciliation.ts` is what makes
  * that recoverable.
  *
@@ -984,10 +984,11 @@ export class SpotFreedError extends Error {
  * result, logging and swallowing anything it throws — which is what made a
  * dropped notification unrecoverable and is why the third exists. What they
  * swallow is a `SpotFreedError` (see its own docblock) naming which window
- * the failure happened in, with the original failure as `cause` — the
- * `WaitlistPromotionError` a concurrent refill raises in the `auto_promote`
- * branch below is the one exception, answered with `{ action: 'none' }`
- * inside that branch's own `catch` before it ever reaches the wrapper.
+ * the failure happened in, with the original failure as `cause`. Two failures
+ * are answered with `{ action: 'none' }` instead: the `WaitlistPromotionError`
+ * a concurrent refill raises in the `auto_promote` branch (caught in that
+ * branch), and a `P2025` for a class deleted after the first read (caught in
+ * the outer `catch`, once a fresh count confirms the class is gone).
  *
  * The third is `reconcileWaitlists` (`services/waitlist-reconciliation.ts`,
  * #220), the sweep that re-invokes this on every tick for any open class holding
@@ -1051,25 +1052,11 @@ export async function handleSpotFreed(
     // registration takes this same row lock, so they serialise against this
     // transaction: one arriving after the count blocks until this commits.
     //
-    // Writers outside that: `PUT /api/registrations/[id]` (attendance),
-    // `DELETE /api/registrations/[id]` (cancel), and `deleteStudentAccount`
-    // (`gdpr.ts`), which cancels registrations in every draft/open class of the
-    // erased student while locking only the classes they were QUEUED in, so a
-    // class they were registered in but not queued in is written unlocked too. QUEUED, not WAITING: that lock set spans
-    // every `WaitlistEntry` status (#216/#182), and the capitalised literal
-    // would name the one enum value it is not scoped to.
-    //
-    // Only attendance could ever move a row INTO the counted set — from
-    // `late_cancel` to either `attended` or `no_show`, both of which are in it.
-    // The other two writers only move rows out, which makes the count too high
-    // and this branch too quiet: the safe direction.
-    //
-    // Those moves are closed STRUCTURALLY, not by timing:
-    // `PUT /api/registrations/[id]` scopes its write so `late_cancel → attended`
-    // is refused while the class is `open`, and this branch only ever runs on an
-    // `open` class. Once a class starts the move is allowed, and by then this
-    // branch cannot run at all. The argument does not lean on timing: this
-    // branch runs right up to class start (#236).
+    // The registration status writers that do NOT take it, and why none can
+    // move a row into the counted set while this branch can run, are
+    // `docs/lock-order.md` ("`Registration` status writers outside the class
+    // lock"). The argument is structural, not timing: this branch runs right
+    // up to class start (#236).
     //
     // `lockClassRow` bounds its wait to `LOCK_TIMEOUT_SQL`
     // (`@/lib/db-locks`). The cost is that a class row held longer than that
@@ -1091,8 +1078,9 @@ export async function handleSpotFreed(
       // told. Read here, not from `cls` above: `spotBroadcastAt` is written
       // under this row lock, so only a read taken after the lock sees a
       // concurrent broadcast's stamp. The lock alone orders two callers for
-      // one freed seat; this is what tells the second about the first. Why declining loses no
-      // recipient: `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
+      // one freed seat; this is what tells the second about the first. Why
+      // declining loses no recipient:
+      // `docs/superpowers/specs/2026-09-29-spot-broadcast-dedupe-design.md` §2.
       const current = await tx.class.findUniqueOrThrow({
         where: { id: classId },
         select: {
@@ -1287,30 +1275,10 @@ async function hasActiveRegistration(
  *       | grep -v '\.test\.'
  *
  * The needle carries its client prefix so this line does not match itself —
- * both prefixes, because `reorderWaitingEntries` below takes either.
- *
- * Of its hits, these are the ones without a `lockClassRow` of their own.
- * `deleteTeacherAccount`'s cancel loop (`gdpr.ts`, near
- * its `tx.calendarEntry.updateMany` CAS, to `removed`) holds a conflicting
- * `Class` lock anyway, through the ordered `lockClassRowsOrdered` pre-lock
- * its loop runs behind. `closeQueueOnStart` below (to `expired` — see its
- * own docblock) takes none of its own and instead trusts its caller to
- * have already taken one; every caller does, via `lockClassRow`. Neither
- * can race a `lockClassRow` holder into corrupting anything.
- *
- * Neither is unbounded. `POST /api/classes/[id]/cancel` opens with
- * `lockClassRow`, so its `waitlistEntry.updateMany` runs under the same
- * bounded 2s wait as every other site. `deleteTeacherAccount` is bounded one
- * helper over: `lockClassRowsOrdered` issues `setLockTimeout`, which governs
- * every statement left in the transaction.
- *
- * `deleteStudentAccount`'s `reorderWaitingEntries`
- * loop runs under the 2s bound its own transaction sets unconditionally
- * (`setLockTimeout` as that transaction's first statement, `gdpr.ts`) for
- * every statement it runs, these two mutators' rows included — not under
- * `lockClassRow`'s, which `gdpr.ts` does not call. Named here so the next
- * reader of that transaction's budget (`gdpr.ts`, the erasure's flat
- * `{ timeout: 20_000 }`) does not have to rediscover them.
+ * both prefixes, because `reorderWaitingEntries` below takes either. Which
+ * hits lack a `lockClassRow` of their own, and what holds and bounds their
+ * `Class` lock instead, is `docs/lock-order.md` ("`WaitlistEntry` status
+ * writers without a `lockClassRow` of their own").
  *
  * The lock is taken BY the statement that chooses the classes, so there is
  * no window between choosing them and holding them.

@@ -77,6 +77,60 @@ TeacherBlock` — the order is the *only* thing preventing a cycle, not a
 side-effect of a shared lock elsewhere. Both of #174 task 7's fixes are in
 that suffix.
 
+### `Registration` status writers outside the class lock
+
+`handleSpotFreed`'s broadcast branch (`waitlist.ts`) counts seats under
+`lockClassRow` and trusts that count until it commits (#212). Every writer
+that CREATES or reactivates a registration goes through
+`activateRegistration`, whose `ClassLock` parameter means its caller already
+holds that lock. The status writers that do not hold it, as of 2026-10-14:
+
+- **`PUT /api/registrations/[id]`** (attendance), which opens no transaction.
+  It is the only one that can move a row INTO the counted set
+  (`late_cancel → attended`/`no_show`), and its WHERE refuses a `late_cancel`
+  source while the class is `open` — the only status the broadcast branch runs
+  on. Its restoration TO `late_cancel` (gated on `lateCancelledAt`) moves a row
+  out.
+- **`deleteStudentAccount`** (`gdpr.ts`), whose `registration.updateMany`
+  cancels the erased student's registrations in every draft/open class while
+  its pre-lock covers only the classes they were queued in (any
+  `WaitlistEntry` status, #216/#182), so a class they were registered in but
+  not queued in is written unlocked. It only moves rows out.
+
+A writer that only moves rows out makes the count too high and the broadcast
+too quiet — the safe direction, which the reconciliation sweep repairs on its
+next tick. The cancel in `DELETE /api/registrations/[id]` is not on this list:
+`writeCancel` takes `lockClassRow`. Re-derive the candidates with
+
+    git grep -n -E 'registration[[:space:]]*\.[[:space:]]*(update|updateMany|upsert|create|createMany)\(' -- src ':!*.test.ts'
+
+and read each hit's transaction for a `lockClassRow`/`lockClassRowsOrdered`
+before it. Hits that write no `status` (`completeClass`'s price write,
+`class-reminders.ts`'s `classReminderSentAt` claim) do not move the count.
+
+### `WaitlistEntry` status writers without a `lockClassRow` of their own
+
+Some writers flip `WaitlistEntry.status` out of `waiting` without touching
+`position` and without calling `lockClassRow` themselves
+(`withdrawWaitingEntriesForTeacher`'s docblock, `waitlist.ts`, carries the
+re-derive recipe). As of 2026-10-14 its hits without a `lockClassRow` call in
+their own transaction are:
+
+- **`deleteTeacherAccount`'s cancel loop** (`gdpr.ts`, near its
+  `tx.calendarEntry.updateMany` CAS, to `removed`). It holds a conflicting
+  `Class` lock anyway, through the ordered `lockClassRowsOrdered` pre-lock its
+  loop runs behind, and that helper's `setLockTimeout` bounds every statement
+  left in the transaction.
+- **`closeQueueOnStart`** (`waitlist.ts`, to `expired`). It takes no lock and
+  trusts its caller to hold one; every caller does, via `lockClassRow`, under
+  that helper's 2s bound.
+
+Neither can race a `lockClassRow` holder into corrupting anything, and neither
+waits unbounded. `deleteStudentAccount`'s `reorderWaitingEntries` loop is
+bounded the same way, by the `setLockTimeout` its own transaction issues first
+(`gdpr.ts`) rather than by `lockClassRow`, which that file does not call — the
+number to weigh against the erasure's flat `{ timeout: 20_000 }` budget.
+
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
@@ -283,26 +337,39 @@ its own membership four times — the last of them by the round that filed the
 issue, which added `deleteStudentAccount`'s statement to the table and not to
 the derivation below it. The table is gone rather than corrected a fifth time.
 
-**One escape survives, about a predicate rather than an order, and it closes
-no cycle.** `archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`)
-call covers `date > today`, so a same-day instance moved into the future by
-`updateClass` (`class-lifecycle.ts`) between that call and the `deleteMany` is
-deleted without ever having been held. Widening the call past `today` would
-lock history for no gain, and #86/#112 require the delete's live predicate
+**One escape survives, about a predicate rather than an order.**
+`archiveOrUnarchiveTemplate`'s (`class-template-lifecycle.ts`) call covers
+`date > today`, so a same-day instance moved into the future by `updateClass`
+(`class-lifecycle.ts`) between that call and the `deleteMany` is deleted
+without ever having been held. Widening the call past `today` would lock
+history for no gain, and #86/#112 require the delete's live predicate
 re-evaluation regardless.
 
-The AB-BA cycle against `deleteStudentAccount` that this window once allowed
-is closed by #836's schedule lock. Every shape of it needs the moved class to
-hold a waitlist entry of the erased student — waitlisted across both classes,
-or waitlisted on the moved class and named in the audience of an announcement
+That window can close an AB-BA cycle against `deleteStudentAccount` only in
+one narrow shape. Every shape of such a cycle needs the moved class to hold a
+waitlist entry of the erased student — waitlisted across both classes, or
+waitlisted on the moved class and named in the audience of an announcement
 scoped to another class the same delete removes first (see "`Announcement`
 rows: the audience scrub (#48)") — because the erasure's pre-lock is keyed on
-that student's waitlist entries. A waitlist forms only on a full class, so the
-class has had a registration; the first registration sets `settingsLocked`,
-which nothing ever clears; and with `settingsLocked` set `updateClass` refuses
-any move of `date` or `startTime` (`LOCKED_FIELDS`, `src/lib/class-fields.ts`,
-answered `SETTINGS_LOCKED`), re-checked under its own `lockClassRow`. So the
-row that escapes the pre-lock is always one no erasure locks.
+that student's waitlist entries. A waitlist forms only on a full class, so a
+class with a waitlist has had a registration; the first registration sets
+`settingsLocked`, which nothing ever clears; and with `settingsLocked` set
+`updateClass` refuses any move of `date` or `startTime` (`LOCKED_FIELDS`,
+`src/lib/class-fields.ts`, answered `SETTINGS_LOCKED`), re-checked under its
+own `lockClassRow` (#836). So a class cannot move AFTER a waitlist forms on it.
+
+What that chain does not exclude is the opposite sequence, all inside one
+archive transaction: the never-booked class moves after the archive's
+pre-lock, and then — still before the `deleteMany` — bookings fill it, the
+erased student joins its waitlist, a booking is cancelled (the `deleteMany`
+matches only classes with no charged registration) and the promotion that
+cancel triggers fails to take the seat, and the erasure's pre-lock takes the
+class. Nothing in the lock order refuses that; what keeps it off the table is
+that four independent requests have to land inside the archive's own
+transaction. If it ever happens, it is a deadlock Postgres detects and resolves
+by aborting one of the two transactions (or a `lock_timeout` fires first), not
+a write that lands unheld.
+
 `withdrawWaitingEntriesForTeacher` (`waitlist.ts`) does not share it: its write
 set is keyed on the ids its own `lockClassRowsOrdered` call handed back, a
 structural subset rather than a predicate re-evaluated when the write runs.
@@ -1660,12 +1727,13 @@ an EXISTING `Announcement` row, and what each meeting does:
   then re-checks `@>` on the committed version (the array is unchanged by the
   null) and applies. The archive re-applies its null onto a row the scrub
   committed the same way. The archive pre-lock's escape ("One escape
-  survives", above) does not reopen this: an entry moved into the delete's
-  predicate after the pre-lock is deleted without its `Class` held, but a
-  `40P01` here needs the erasure to hold that class — the subject has a
-  `WaitlistEntry` there, which is what puts a class in the erasure's lock
-  set — and a class with a waitlist has had a registration, so its schedule
-  cannot be moved. The same chain closes both shapes.
+  survives", above) reaches this pair only in the shape that section leaves
+  open: an entry moved into the delete's predicate after the pre-lock is
+  deleted without its `Class` held, but a `40P01` here needs the erasure to
+  hold that class — the subject has a `WaitlistEntry` there, which is what
+  puts a class in the erasure's lock set — and a class that has had a
+  waitlist cannot be moved, so the waitlist must form after the move, inside
+  the archive's transaction. The same residual shape, and the same verdict.
 - **The `ON DELETE CASCADE` of `Announcement_teacherId_fkey`.** No production
   code deletes a `Teacher`; erasure anonymises it.
 
@@ -3726,14 +3794,12 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   `WaitlistEntry` row in either write set sits beneath a `Class` row lock both
   transactions must acquire first, and the two can never contend on the same
   `WaitlistEntry` row at all — **regardless of how many classes the sweep
-  batches**. An earlier version of this bullet credited one-class-at-a-time with
-  removing the cycle; it does not, and a future site copying that reasoning
-  without also pre-locking its parents would inherit a deadlock this sweep does
-  not have. What one class at a time actually buys is keeping this sweep out
-  of the "sites lock more than one `Class` row" count under **Ordering WITHIN
-  `Class`** — above, not below — and a bound on how long the sweep holds locks
-  against live traffic. (That count has moved with #194 and #259; this
-  bullet's argument did not.)
+  batches**. One class at a time is not what removes the cycle, and a future
+  site that relied on it without also pre-locking its parents would inherit a
+  deadlock this sweep does not have. What one class at a time actually buys
+  is keeping this sweep out of the "sites lock more than one `Class` row"
+  count under **Ordering WITHIN `Class`** — above, not below — and a bound on
+  how long the sweep holds locks against live traffic.
 
 ## Known safe by accident, not by order — not fixed here
 
@@ -4157,31 +4223,32 @@ That is the case for every regular-entry `cancelledAt` writer in `src/`:
 
 | writer | `Class` lock | entry write |
 |---|---|---|
-| `POST /api/classes/[id]/cancel` | `:61` `lockClassRow` | `:72` |
-| `autoCancelClasses` (`class-transitions.ts`) | `:416` `lockClassRow` | `:499` |
-| `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1120` `lockClassRowsOrdered` | `:1209` |
-| `deleteTeacherAccount` studio cancel (`gdpr.ts:1292`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
-| `PUT /api/studio-classes/[id]` (`route.ts:192-198`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
+| `POST /api/classes/[id]/cancel` | `:73` `lockClassRow` | `:84` |
+| `autoCancelClasses` (`class-transitions.ts`) | `:410` `lockClassRow` | `:499` |
+| `deleteTeacherAccount` erasure (`gdpr.ts`) | `:1349` `lockClassRowsOrdered` | `:1438` |
+| `deleteTeacherAccount` studio cancel (`gdpr.ts:1521`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
+| `PUT /api/studio-classes/[id]` (`route.ts:185-191`) | — | `kind: 'studio'`; no `Class` child, so no counterpart lock is needed |
 
 Re-derive the writer set with:
 
     grep -rn "cancelledAt: new Date()" --include="*.ts" src/ | grep -v '\.test\.'
 
-which returns 7 lines. Three write `Registration.cancelledAt` — a different
-column on a different table — at `api/registrations/[id]/route.ts`'s DELETE
-handler (its late-cancel and full-cancel `updateMany` calls) and `gdpr.ts:529`.
-`7 − 3 = 4`, the FIRST four rows of the table above — this
+which returned 5 lines on 2026-10-14. One writes `Registration.cancelledAt` —
+a different column on a different table — in `deleteStudentAccount`
+(`gdpr.ts:689`). `5 − 1 = 4`, the FIRST four rows of the table above — this
 command cannot find the fifth. The subtraction has to be done by READING each
-hit rather than by path alone: `gdpr.ts:529` writes a `Registration` while
-*filtering* on `calendarEntry: { cancelledAt: null }`, so the needle appears
-in a statement that mentions both columns and a path-only count would
-misclassify it.
+hit rather than by path alone: that `gdpr.ts` statement writes a
+`Registration` while *filtering* on `calendarEntry: { cancelledAt: null }`, so
+it mentions both columns, in a file whose other hits write entries. The
+DELETE handler in `api/registrations/[id]/route.ts` also writes
+`Registration.cancelledAt`, but through `writeCancel` as `cancelledAt: now`,
+which this needle does not match — it is not an entry writer either way.
 
 This command is scoped to the literal call shape `cancelledAt: new Date()` —
 an unconditional cancel — because that is the shape every regular-entry writer
 takes (a regular entry, once cancelled, can never be un-cancelled:
 `entry_terminal_liveness_guard` below refuses the reverse write), and it
-happens to also be `gdpr.ts:1292`'s studio shape. `PUT /api/studio-classes/[id]`
+happens to also be `gdpr.ts:1521`'s studio shape. `PUT /api/studio-classes/[id]`
 does not share it: a studio cancellation is reversible, so its write is a
 ternary that can set `cancelledAt` to either `new Date(…)` or `null` in the
 same statement, and the literal grep above does not match it — it is found
@@ -4190,7 +4257,7 @@ only by the wider
     grep -rn "cancelledAt:" --include="*.ts" src/ | grep -v '\.test\.' | grep -v "cancelledAt: null"
 
 The row is added to the table above by reading, not by the narrower command,
-the same way the `gdpr.ts:1292` studio row already was. Its safety argument is
+the same way the `gdpr.ts:1521` studio row already was. Its safety argument is
 identical to that row's: `kind: 'studio'`, no `Class` child, so the cascade
 this section is about cannot fire from it regardless of direction.
 

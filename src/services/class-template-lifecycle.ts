@@ -736,22 +736,20 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // that statement, and the #95 reasoning for it, are in
       // `archiveOrUnarchiveRule` (`rule-lifecycle.ts`), not the CAS, which
       // writes `ScheduleRule` and which no sweep touches. But it is not the
-      // only one. `updateClass` (`class-lifecycle.ts`) can move an unbooked
+      // only one. `updateClass` (`class-lifecycle.ts`) can move a never-booked
       // same-day instance — outside `e.date > ${today}` above, so never
       // locked here — into the future between this pre-lock and the
       // `deleteMany` below (whose predicate is re-evaluated at execution
       // time, by design — see its own comment in `rule-lifecycle.ts`), and
       // that row can be matched and deleted without ever having been held by
-      // this statement. It cannot close an AB-BA cycle against
-      // `deleteStudentAccount`: that needs the moved class to hold a waitlist
-      // entry, a waitlist needs a registration, and a registration locks
-      // `date` and `startTime` for good (`LOCKED_FIELDS`,
-      // `lib/class-fields.ts`). The chain is in `docs/lock-order.md`
-      // ("One escape survives"). `withdrawWaitingEntriesForTeacher` does
-      // not share even the escape, for the structural reason given above: its
-      // write set is a subset of the ids the pre-lock itself returned, not a
-      // predicate argument re-evaluated against whatever the table looks like
-      // when the write finally runs.
+      // this statement. Whether that can close an AB-BA cycle against
+      // `deleteStudentAccount`, and the one narrow shape in which it can, is
+      // `docs/lock-order.md` ("One escape survives").
+      // `withdrawWaitingEntriesForTeacher` does not share even the escape,
+      // for the structural reason given above: its write set is a subset of
+      // the ids the pre-lock itself returned, not a predicate argument
+      // re-evaluated against whatever the table looks like when the write
+      // finally runs.
       //
       // The delete cannot instead be scoped to exactly the ids this
       // pre-lock returns, the way that function's write is: that would undo the

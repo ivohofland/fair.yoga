@@ -31,9 +31,9 @@ export const STUDENT_INVITATION_LABEL = 'Review the invitation';
 
 /**
  * The student's own bookings list — where the waitlist notifications send
- * them (#236), in the app and in email. Unlike a class page, `/bookings` is a
- * student route, and it is the one page that shows a queued student their
- * entry and its Claim button.
+ * them in the app (#236). Unlike a class page, `/bookings` is a student
+ * route, and it is the one page with a queued student's Claim and Leave
+ * actions.
  */
 export const STUDENT_BOOKINGS_PATH = '/bookings';
 

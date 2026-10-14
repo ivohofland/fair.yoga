@@ -502,8 +502,8 @@ async function handleSpotFreed(db, classId, now?): Promise<SpotFreedResult> {
 
 #### What closes a queue
 
-A `waiting` entry leaves contention in one of two ways, and every writer of
-`WaitlistEntry` is one or the other (or only renumbers `position`):
+A `waiting` entry leaves contention in one of two ways, and every writer that
+takes an entry out of `waiting` is one or the other:
 
 - **Closed without a seat** — a terminal status or a deleted row. A class that
   starts has its queue closed to `expired` by `closeQueueOnStart`
@@ -517,15 +517,20 @@ A `waiting` entry leaves contention in one of two ways, and every writer of
   directly through `POST /api/registrations` write `promoted`/`claimed`. Self-
   limiting: the entry leaves `waiting` because the student got a seat.
 
+`addToWaitlist` (`waitlist.ts`) is the writer that puts entries in, creating
+or reactivating a `waiting` row; every other writer only renumbers `position`.
+
 This is the property the reconciliation sweep's candidate query
 (`reconcileWaitlists`, `waitlist-reconciliation.ts`) leans on for its cost:
 its `open`-and-live join stays a bound on a set that does not grow with the
 life of the deployment. Re-derive the writers rather than trusting the list
 above:
 
-    grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src | grep -v '\.test\.'
+    grep -rnE 'waitlistEntry\.(create|update|delete|upsert)' src | grep -v '\.test\.' \
+      | grep -vE ':[0-9]+: *(\*|//)'
 
-then read each hit for which status it writes, or whether it deletes the row.
+The last filter drops comment lines, which mention these calls too; then read
+each hit for which status it writes, or whether it deletes the row.
 
 ### Waitlist retention (`services/waitlist-retention.ts`)
 
