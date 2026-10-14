@@ -853,9 +853,9 @@ describe('reapClosedWaitlistEntries', () => {
       );
       await new Promise((r) => setTimeout(r, 300));
 
-      await expect(
-        reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 1 }),
-      ).rejects.toBeInstanceOf(RetentionFailedError);
+      const thrown = reapClosedWaitlistEntries(scope.db, { now: NOW, maxClasses: 1 });
+      await expect(thrown).rejects.toBeInstanceOf(RetentionFailedError);
+      await expect(thrown).rejects.toThrow('waitlist retention attempted 1 class(es) and every one failed');
 
       // The run-level line, at `error` — distinct from the per-class line,
       // which is at `warn` because `lock_timeout`'s own level in
@@ -929,9 +929,10 @@ describe('reapClosedWaitlistEntries', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {
-      await expect(
-        reapClosedWaitlistEntries(db, { now: NOW, maxClasses: 50 }),
-      ).rejects.toBeInstanceOf(RetentionFailedError);
+      const thrown = reapClosedWaitlistEntries(db, { now: NOW, maxClasses: 50 });
+      await expect(thrown).rejects.toBeInstanceOf(RetentionFailedError);
+      // The message reaches `/api/health`; "every one failed" would be false here.
+      await expect(thrown).rejects.toThrow('waitlist retention attempted 3 class(es) and 2 failed');
 
       // Must be the MAJORITY branch, not the all-failed one. `deleted: 1` is
       // what tells them apart: a test that only asserted "it threw" would pass
