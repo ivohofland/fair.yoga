@@ -206,6 +206,12 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await page.getByRole('button', { name: 'Join the waitlist' }).click();
     await expect(page.getByText("You're on the waitlist")).toBeVisible();
 
+    // Loaded fresh, the booking page reads the queue itself: the place, and no
+    // second join.
+    await page.reload();
+    await expect(page.getByText(/You're number 1 in the queue/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Join the waitlist' })).toHaveCount(0);
+
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Waitlist' })).toBeVisible();
     await expect(page.getByText(/position 1/)).toBeVisible();
@@ -230,7 +236,7 @@ test.describe('Student journey — cancel, rebook, waitlist', () => {
     await page.goto('/bookings');
 
     // Leave — the section empties.
-    await page.getByRole('button', { name: 'Leave waitlist' }).click();
+    await page.getByRole('button', { name: /^Leave waitlist/ }).click();
     await page.getByRole('button', { name: /^Leave the waitlist for / }).click();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible({
       timeout: 10_000,
@@ -485,7 +491,7 @@ test.describe('Student journey — final-hour claim', () => {
     await page.goto('/bookings');
     await expect(page.getByRole('heading', { name: 'Waitlist' })).toBeVisible();
     await expect(page.getByText(/position 1/)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Claim the spot' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Claim the spot/ })).toHaveCount(0);
 
     // The filler cancels; set up directly, the claim is what is under test.
     await prisma.registration.updateMany({
@@ -495,7 +501,7 @@ test.describe('Student journey — final-hour claim', () => {
 
     await page.reload();
     await expect(page.getByText('A spot opened up — the first to claim it gets it.')).toBeVisible();
-    await page.getByRole('button', { name: 'Claim the spot' }).click();
+    await page.getByRole('button', { name: /^Claim the spot/ }).click();
 
     await expect(page.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Waitlist' })).not.toBeVisible();
