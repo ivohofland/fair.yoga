@@ -103,6 +103,15 @@ export default async function BookClassPage({
     ? (cls.registrations.find((r) => r.studentId === student.id) ?? null)
     : null;
   const alreadyBooked = ownRegistration !== null && ownRegistration.status !== 'late_cancel';
+  // The viewer's own place in this class's queue. Only a `waiting` entry
+  // counts: any other status is a queue they are no longer in.
+  const ownWaitlistEntry =
+    student && !alreadyBooked
+      ? await prisma.waitlistEntry.findFirst({
+          where: { classId: cls.id, studentId: student.id, status: 'waiting' },
+          select: { position: true },
+        })
+      : null;
   // Scoped to this class's teacher (#389): a debt to a different teacher
   // isn't actionable from this screen. Skipped once already booked —
   // BookingFlow's confirmation view never reads this prop.
@@ -175,6 +184,7 @@ export default async function BookClassPage({
           // registrations teachers created on their behalf.
           isFirstBooking={viewer.tierSelectedAt === null}
           openPaymentsCount={openPaymentsCount}
+          waitlistPosition={ownWaitlistEntry?.position ?? null}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />

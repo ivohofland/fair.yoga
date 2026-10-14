@@ -35,6 +35,12 @@ interface BookingFlowProps {
   isFirstBooking: boolean;
   /** Pending/overdue payments this student owes this same teacher. */
   openPaymentsCount: number;
+  /**
+   * The student's place in this class's queue while their entry is
+   * `waiting`, or null. Claiming and leaving happen on `/bookings`, so a
+   * queued student is pointed there rather than offered the join again.
+   */
+  waitlistPosition: number | null;
 }
 
 type Phase = 'choose' | 'booked' | 'waitlisted';
@@ -51,6 +57,7 @@ export function BookingFlow({
   currency,
   isFirstBooking,
   openPaymentsCount,
+  waitlistPosition,
 }: BookingFlowProps) {
   const [tier, setTier] = useState<IncomeTier | null>(currentTier);
   const [phase, setPhase] = useState<Phase>('choose');
@@ -137,11 +144,12 @@ export function BookingFlow({
     );
   }
 
-  if (phase === 'waitlisted') {
+  if (phase === 'waitlisted' || waitlistPosition !== null) {
     return (
       <div className="py-4">
         <p className="type-subtitle">You&apos;re on the waitlist</p>
         <p className="type-body mt-2">
+          {waitlistPosition !== null && <>You&apos;re number {waitlistPosition} in the queue. </>}
           If a spot opens up, you&apos;ll either be moved in automatically or
           notified to claim it — watch your inbox.
         </p>
