@@ -1,13 +1,17 @@
 /**
- * @serial-tier lock-contention — holds a bank-account save's
- * `FOR NO KEY UPDATE` on a teacher while `resumePayments` waits on the same
- * row, and asserts that the resume parked, via `pg_blocking_pids`. Lock noise
- * from a neighbour in the parallel tier would stretch that wait past the
- * window the assertion allows.
+ * @serial-tier lock-contention — each case holds a row lock and asserts, via
+ * `pg_blocking_pids`, that the transactions it stages parked behind it: a
+ * bank-account save's `FOR NO KEY UPDATE` on a teacher with `resumePayments`
+ * waiting on the same row, and a held `Class` row with a student erasure
+ * waiting on it and a resume waiting on the erasure. Lock noise from a
+ * neighbour in the parallel tier would stretch those waits past the window
+ * the assertions allow, and the second case must release its holder inside
+ * the erasure's `lock_timeout`.
  *
  * A resume reads the payout details it fingerprints under the payout
  * writers' own lock, so a save in flight finishes first and the resume sees
- * what it wrote.
+ * what it wrote. A resume beside a student erasure takes the classes the two
+ * share in the erasure's direction, so the two queue rather than deadlock.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
