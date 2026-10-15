@@ -1,4 +1,5 @@
 import type { PaymentStatus, Currency, Prisma } from '@prisma/client';
+import { CURRENCY_INFO } from '@/lib/currency';
 import { timeToHHmm } from '@/lib/time-of-day';
 import type { BirthdayDayMonth } from '@/lib/birthday';
 import type { NoneOf } from '@/lib/type-pins';
@@ -243,15 +244,10 @@ export const CURRENCIES = ['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as c
 const _currenciesCoverEnum: NoneOf<Exclude<Currency, (typeof CURRENCIES)[number]>> = true;
 void _currenciesCoverEnum;
 
-/**
- * Each currency's prefix. Hand-written rather than `Intl`, whose output
- * depends on the ICU build and so can differ between the server render and
- * the browser. A code prefix carries its own trailing space, which
- * `currencyLabel` trims.
- */
-export const CURRENCY_PREFIX = {
-  EUR: '€', GBP: '£', USD: '$', CHF: 'CHF ', SEK: 'SEK ', NOK: 'NOK ', DKK: 'DKK ',
-} as const satisfies Record<Currency, string>;
+/** Each currency's prefix, from `CURRENCY_INFO`. A code prefix carries its own trailing space, which `currencyLabel` trims. */
+export const CURRENCY_PREFIX = Object.fromEntries(
+  Object.entries(CURRENCY_INFO).map(([c, info]) => [c, info.prefix]),
+) as { readonly [C in Currency]: (typeof CURRENCY_INFO)[C]['prefix'] };
 
 /**
  * Whole cents in `currency`: `€12.50`, `CHF 12.50`, and `−€12.50` for a
