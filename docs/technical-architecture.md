@@ -1363,12 +1363,13 @@ with them.
 ### Where a Prisma client comes from (#884)
 
 `src/lib/prisma-client.ts` (`createPrismaClient`) is the one place a
-`PrismaClient` is constructed. `@/lib/db` is the app singleton built from it;
+TypeScript module constructs a `PrismaClient`; the exception is the CommonJS
+engine probe, `scripts/prisma-engine-probe.cjs` (#885). `@/lib/db` is the app singleton built from it;
 tests, scripts and the seed call the factory for clients of their own, and
 each call is a new pool. Lint (`@typescript-eslint/no-restricted-imports`)
 refuses a value import of `PrismaClient` anywhere else; a type-only import is
 fine. The point is that the Prisma 7 driver-adapter change (#889) lands in
-that one file.
+that one file, plus the probe.
 
 ### PostgreSQL Configuration
 

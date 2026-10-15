@@ -1,10 +1,10 @@
 /**
  * Replaces `@prisma/client`'s `PrismaClient` with one that classifies its
- * construction stack (`classifyCallSite`), skipping frames in this installer and
- * in `src/lib/prisma-client.ts` so a client built through the factory is
- * classified by the factory's caller: a client whose call site is test
- * code comes back carrying `undefinedFilterGuard`, one whose call site is app
- * code comes back plain, and a stack with no frame to decide from makes the
+ * construction stack (`classifyCallSite`). It skips frames in this installer
+ * and in `src/lib/prisma-client.ts`, so a client built through the factory is
+ * classified by the factory's caller. A client whose call site is test code
+ * comes back carrying `undefinedFilterGuard`, one whose call site is app code
+ * comes back plain, and a stack with no frame to decide from makes the
  * constructor throw rather than guess. What is exempt, and why:
  * `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  *

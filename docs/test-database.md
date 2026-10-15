@@ -345,7 +345,8 @@ the clients test code builds:
   factory's caller decides.
 - Playwright: `createGuardedPrismaClient()` from `tests/e2e/prisma.ts`, which
   wraps `createPrismaClient()`; an ESLint `no-restricted-syntax` rule refuses
-  `createPrismaClient` under `tests/e2e`.
+  `createPrismaClient` and `new PrismaClient` under `tests/e2e`, outside
+  `tests/e2e/prisma.ts`.
 
 The vitest installer decides per client, from the stack its constructor
 captures (up to 50 frames, so a run of library frames cannot push the call

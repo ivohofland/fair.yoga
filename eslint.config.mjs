@@ -102,10 +102,10 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  // A PrismaClient is constructed in one place, createPrismaClient
-  // (src/lib/prisma-client.ts), so the Prisma 7 driver adapter lands in that
-  // one file (#884). This bans the VALUE import; `import type` and an inline
-  // `type PrismaClient` specifier stay allowed.
+  // Bans the VALUE import of PrismaClient outside createPrismaClient
+  // (src/lib/prisma-client.ts); `import type` and an inline `type PrismaClient`
+  // specifier stay allowed. Why: docs/technical-architecture.md, "Where a
+  // Prisma client comes from (#884)".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts'],
@@ -209,9 +209,9 @@ const eslintConfig = defineConfig([
   },
   // Playwright has no module mocking, so an e2e spec reaches the undefined-
   // filter guard (#783) only through createGuardedPrismaClient; this rule
-  // refuses the bare createPrismaClient factory there. A flat-config
-  // block replaces a rule's options rather than merging them, so this block
-  // repeats the localhost selector the `tests/**` block above sets.
+  // refuses the bare factory and `new PrismaClient` there. A flat-config block
+  // replaces a rule's options rather than merging them, so this block repeats
+  // the localhost selector the `tests/**` block above sets.
   {
     files: ['tests/e2e/**/*.ts'],
     ignores: ['tests/e2e/prisma.ts'],
@@ -221,7 +221,7 @@ const eslintConfig = defineConfig([
         localhostOriginSelector,
         {
           selector:
-            "ImportSpecifier[imported.name='createPrismaClient'], CallExpression[callee.name='createPrismaClient'], ImportDeclaration[source.value=/prisma-client$/] > ImportNamespaceSpecifier, ImportExpression[source.value=/prisma-client$/]",
+            "ImportSpecifier[imported.name='createPrismaClient'], CallExpression[callee.name='createPrismaClient'], ImportDeclaration[source.value=/prisma-client$/] > ImportNamespaceSpecifier, ImportExpression[source.value=/prisma-client$/], NewExpression[callee.name='PrismaClient']",
           message:
             'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).',
         },

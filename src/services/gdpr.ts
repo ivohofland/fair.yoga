@@ -1006,10 +1006,10 @@ export async function deleteStudentAccount(
     // (2GB RAM, 1 vCPU)", and the core count is cited because the pool
     // arithmetic below is computed from it). One cost of that number,
     // recorded as a cost rather than argued away: 20s is twice Prisma's
-    // default `pool_timeout` of 10s, and `src/lib/db.ts` is a bare
-    // `createPrismaClient()` — `connection_limit` is set on dedicated test
-    // clients only, never on the app's — so the pool is `physical_cores * 2 + 1`,
-    // which is three connections at that one vCPU. One erasure occupying one
+    // default `pool_timeout` of 10s, and `src/lib/db.ts` builds the app client
+    // with `createPrismaClient()` and passes no `connection_limit`, so the
+    // pool is Prisma's default, `physical_cores * 2 + 1`, which is three
+    // connections at that one vCPU. One erasure occupying one
     // of them for the full budget means a concurrent request that cannot get
     // a connection gives up at 10s with `P2024` while the erasure is still
     // running: the pool gives up before the transaction does. Survivable

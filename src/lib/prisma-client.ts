@@ -7,9 +7,8 @@ export interface PrismaClientFactoryOptions {
 }
 
 /**
- * The one place a `PrismaClient` is constructed. Every call returns a new
- * client with its own connection pool, and this never caches: callers that
- * open several rely on them being separate connections.
+ * Every TypeScript module builds its `PrismaClient` here. This never caches;
+ * each call returns a new client with its own pool.
  *
  * Under vitest the guard installer skips this module's stack frame, so the
  * caller decides whether the client carries the undefined-filter guard:
