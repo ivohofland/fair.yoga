@@ -1,17 +1,26 @@
 /**
- * @serial-tier lock-contention — each case holds a row lock and asserts, via
- * `pg_blocking_pids`, that the transactions it stages parked behind it: a
- * bank-account save's `FOR NO KEY UPDATE` on a teacher with `resumePayments`
- * waiting on the same row, and a held `Class` row with a student erasure
- * waiting on it and a resume waiting on the erasure. Lock noise from a
- * neighbour in the parallel tier would stretch those waits past the window
- * the assertions allow, and the second case must release its holder inside
- * the erasure's `lock_timeout`.
+ * @serial-tier lock-contention — the cases here hold a row lock and assert,
+ * via `pg_blocking_pids`, that the transactions they stage parked behind it.
  *
- * A resume reads the payout details it fingerprints under the payout
- * writers' own lock, so a save in flight finishes first and the resume sees
- * what it wrote. A resume beside a student erasure takes the classes the two
- * share in the erasure's direction, so the two queue rather than deadlock.
+ * "resumePayments behind a bank-account save in flight" holds the teacher row
+ * `FOR NO KEY UPDATE` with a bank-account change uncommitted, asserts a resume
+ * parks on that row, then releases it and asserts the resume answers
+ * `details_changed` and the payments stay paused.
+ *
+ * "resumePayments against a student erasure on two completed classes" holds
+ * the higher of the student's two classes, asserts the erasure parks behind it
+ * and the resume parks behind the erasure on its `Notification` insert, then
+ * releases it and asserts the erasure erases and the resume answers `resumed`:
+ * the two queue, and neither is a deadlock victim. Why the resume's order lets
+ * them queue is `docs/lock-order.md`, "`resumePayments` takes `FOR KEY SHARE`
+ * on many classes in ascending class id".
+ *
+ * Lock noise from a neighbour in the parallel tier would stretch those waits
+ * past the window the assertions allow. The erasure case has the tighter
+ * window: each of its two staged waits runs under a `lock_timeout` — the
+ * erasure's, and the resume's own, set by `lockTeacherForNoKeyUpdate`
+ * (`src/lib/db-locks.ts`) — so the holder must be released before either
+ * expires.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
@@ -51,15 +60,19 @@ async function ownPid(tx: Prisma.TransactionClient): Promise<number> {
   return row.pid;
 }
 
-async function waiterOf(holderPid: number, stop: () => boolean): Promise<number | null> {
+/** The first session parked on a lock `holderPid` holds, with the statement it is parked in. */
+async function waiterOf(
+  holderPid: number,
+  stop: () => boolean,
+): Promise<{ pid: number; query: string } | null> {
   const deadline = Date.now() + WAIT_MS;
   while (Date.now() < deadline && !stop()) {
-    const [row] = await prisma.$queryRaw<Array<{ pid: number }>>`
-      SELECT pid FROM pg_stat_activity
+    const [row] = await prisma.$queryRaw<Array<{ pid: number; query: string }>>`
+      SELECT pid, query FROM pg_stat_activity
        WHERE wait_event_type = 'Lock'
          AND ${holderPid} = ANY(pg_blocking_pids(pid))
        LIMIT 1`;
-    if (row !== undefined) return row.pid;
+    if (row !== undefined) return row;
     await new Promise((r) => setTimeout(r, 25));
   }
   return null;
@@ -102,10 +115,12 @@ describe('resumePayments behind a bank-account save in flight', () => {
 
     let outcome: ResumeOutcome | null = null;
     let parked = false;
+    let pending: Promise<ResumeOutcome> | undefined;
     try {
-      await held.promise;
+      // A holder that fails before `held.open()` rejects here, not at the timeout.
+      await Promise.race([held.promise, holding]);
       let settled = false;
-      const pending = resumePayments(prisma, { teacherId: t.id, sessionId, fingerprint: shown, now })
+      pending = resumePayments(prisma, { teacherId: t.id, sessionId, fingerprint: shown, now })
         .finally(() => { settled = true; });
       void pending.catch(() => undefined);
       parked = (await waiterOf(holderPid, () => settled)) !== null;
@@ -114,8 +129,11 @@ describe('resumePayments behind a bank-account save in flight', () => {
       outcome = await pending;
     } finally {
       release.open();
-      await holding.catch(() => undefined);
-      await holder.$disconnect();
+      try {
+        await joinOrThrow(holding, pending);
+      } finally {
+        await holder.$disconnect();
+      }
     }
 
     expect(parked).toBe(true);
@@ -146,7 +164,7 @@ describe('resumePayments against a student erasure on two completed classes', ()
 
   // The erasure locks both classes `FOR UPDATE` in ascending id; the resume's
   // reminders take `FOR KEY SHARE` on the same two through their
-  // `relatedClassId` foreign key. C holds the higher class so the erasure
+  // `relatedClassId` foreign key. `holder` holds the higher class so the erasure
   // stops between its two locks, holding the lower; the resume then starts and
   // parks behind it. Released, the two must queue rather than close a cycle.
   it('queues behind the erasure instead of deadlocking on the classes they share', async () => {
@@ -232,40 +250,41 @@ describe('resumePayments against a student erasure on two completed classes', ()
 
     const holder = new PrismaClient();
     const resumer = new PrismaClient();
-    // Connected before the hold, so engine and pool startup cannot run inside
-    // the erasure's `lock_timeout` window.
-    await holder.$connect();
-    await resumer.$connect();
     const held = latch();
     const release = latch();
     let holderPid = 0;
-    // `FOR NO KEY UPDATE` conflicts with the erasure's `FOR UPDATE` and not
-    // with the resume's `FOR KEY SHARE`.
-    const holding = holder.$transaction(async (tx) => {
-      holderPid = await ownPid(tx);
-      await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${hi} FOR NO KEY UPDATE`;
-      held.open();
-      await release.promise;
-    }, { timeout: 20_000 });
-
+    let holding: Promise<void> | undefined;
     let erasing: Promise<void> | undefined;
     let resuming: Promise<ResumeOutcome> | undefined;
     let erasurePid: number | null = null;
-    let resumePid: number | null = null;
+    let resumeWait: { pid: number; query: string } | null = null;
     let outcome: ResumeOutcome | null = null;
     try {
-      await held.promise;
+      // Connected before the hold, so engine and pool startup cannot run inside
+      // a `lock_timeout` window.
+      await holder.$connect();
+      await resumer.$connect();
+      // `FOR NO KEY UPDATE` conflicts with the erasure's `FOR UPDATE` and not
+      // with the resume's `FOR KEY SHARE`.
+      holding = holder.$transaction(async (tx) => {
+        holderPid = await ownPid(tx);
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${hi} FOR NO KEY UPDATE`;
+        held.open();
+        await release.promise;
+      }, { timeout: 20_000 });
+      // A holder that fails before `held.open()` rejects here, not at the timeout.
+      await Promise.race([held.promise, holding]);
       let erasureSettled = false;
       erasing = expectErased(deleteStudentAccount(prisma, student.id)).finally(() => { erasureSettled = true; });
       void erasing.catch(() => undefined);
-      erasurePid = await waiterOf(holderPid, () => erasureSettled);
+      erasurePid = (await waiterOf(holderPid, () => erasureSettled))?.pid ?? null;
       if (erasurePid === null) throw new Error('the erasure never parked behind the held class');
 
       let resumeSettled = false;
       resuming = resumePayments(resumer, { teacherId: t.id, sessionId, fingerprint: shown, now })
         .finally(() => { resumeSettled = true; });
       void resuming.catch(() => undefined);
-      resumePid = await waiterOf(erasurePid, () => resumeSettled);
+      resumeWait = await waiterOf(erasurePid, () => resumeSettled);
 
       release.open();
       await holding;
@@ -282,7 +301,9 @@ describe('resumePayments against a student erasure on two completed classes', ()
     }
 
     expect(erasurePid).not.toBeNull();
-    expect(resumePid).not.toBeNull();
+    // Parked on the reminder insert, whose `relatedClassId` check is the edge
+    // this case stages — not on some earlier row the erasure also holds.
+    expect(resumeWait?.query).toMatch(/^\s*INSERT\s+INTO\s+(?:"public"\.)?"Notification"/i);
     expect(outcome).toEqual({ status: 'resumed' });
   }, 20_000);
 });
