@@ -102,10 +102,12 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  // Bans the VALUE import of PrismaClient outside createPrismaClient
-  // (src/lib/prisma-client.ts); `import type` and an inline `type PrismaClient`
-  // specifier stay allowed. Why: docs/technical-architecture.md, "Where a
-  // Prisma client comes from (#884)".
+  // Refuses a direct import of the Prisma package, `@prisma/client` and every
+  // subpath of it. src/lib/prisma-client.ts is the one module that names the
+  // package; it re-exports it, with `PrismaClient` as a type only so that
+  // `createPrismaClient` stays the one constructor. An inline `import('...')`
+  // type query is not an import declaration and is not seen here. Why:
+  // docs/technical-architecture.md, "Where Prisma comes from (#884, #886)".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts'],
@@ -113,13 +115,10 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {
-          paths: [
+          patterns: [
             {
-              name: '@prisma/client',
-              importNames: ['PrismaClient'],
-              allowTypeImports: true,
-              message:
-                'Build clients with createPrismaClient() from @/lib/prisma-client (#884). A type-only import is fine.',
+              group: ['@prisma/client', '@prisma/client/*'],
+              message: 'Import Prisma from @/lib/prisma-client (#886); it is the one module that names the package.',
             },
           ],
         },

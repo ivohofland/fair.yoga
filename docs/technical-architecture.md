@@ -100,7 +100,7 @@ ethical-yoga/
 │   ├── lib/                   # Shared utilities
 │   │   ├── auth.ts            # Session management, magic link tokens
 │   │   ├── db.ts              # Prisma client singleton, built by prisma-client.ts
-│   │   ├── prisma-client.ts   # createPrismaClient, the one PrismaClient constructor
+│   │   ├── prisma-client.ts   # createPrismaClient; re-exports @prisma/client
 │   │   ├── email.ts           # sendEmail seam
 │   │   ├── email-lettermint.ts # the provider adapter
 │   │   └── types.ts           # Shared TypeScript types
@@ -1360,16 +1360,33 @@ with them.
 
 ## Database
 
-### Where a Prisma client comes from (#884)
+### Where Prisma comes from (#884, #886)
 
-`src/lib/prisma-client.ts` (`createPrismaClient`) is the one place a
-TypeScript module constructs a `PrismaClient`; the exception is the CommonJS
-engine probe, `scripts/prisma-engine-probe.cjs` (#885). `@/lib/db` is the app singleton built from it;
-tests, scripts and the seed call the factory for clients of their own, and
-each call is a new pool. Lint (`@typescript-eslint/no-restricted-imports`)
-refuses a value import of `PrismaClient` anywhere else; a type-only import is
-fine. The point is that the Prisma 7 driver-adapter change (#889) lands in
-that one file, plus the probe.
+`src/lib/prisma-client.ts` is the one module that names `@prisma/client`.
+It re-exports the whole package (`export *`), so `Prisma`, the model types and
+the enums come from `@/lib/prisma-client`, and it exports `PrismaClient` as a
+type only. `createPrismaClient` there is therefore the one place a TypeScript
+module constructs a client: `new PrismaClient()` anywhere else is compile
+error TS1362, including through a namespace import. The exception is the
+CommonJS engine probe, `scripts/prisma-engine-probe.cjs` (#885). `@/lib/db` is
+the app singleton built from the factory; tests, scripts and the seed call it
+for clients of their own, and each call is a new pool.
+
+Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) refuses
+an import of `@prisma/client` or any subpath of it outside that module,
+type-only imports included. It does not see an inline `import('@prisma/client')`
+type query, which is not an import declaration. ESLint covers `src/`, `tests/`,
+`scripts/` and `prisma/seed.ts`; none of them is in the config's global ignores.
+
+The package name survives outside the module only where a name string is the
+point: the `vi.mock('@prisma/client')` in `tests/setup/undefined-filter-guard.ts`,
+which has to replace the package's own `PrismaClient` (the one the factory
+constructs); the `vi.doUnmock` in `src/lib/e2e-prisma-factory.test.ts`; the CJS
+probe; and package metadata. Re-derive with
+`git grep -n "@prisma/client" -- ':!docs'`.
+
+The point is that one file changes when the Prisma 7 generator's `output` path
+(#888) or driver-adapter change (#889) lands, plus the probe.
 
 ### PostgreSQL Configuration
 
