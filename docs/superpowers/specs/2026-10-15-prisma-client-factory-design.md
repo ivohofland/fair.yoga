@@ -82,8 +82,8 @@ export interface PrismaClientFactoryOptions {
 export function createPrismaClient(options: PrismaClientFactoryOptions = {}): PrismaClient
 ```
 
-- `url` maps to Prisma 6's `datasourceUrl`; that mapping is the line Prisma 7
-  replaces with an adapter.
+- `url` maps to Prisma 6's `datasources: { db: { url } }`; that mapping is the
+  line Prisma 7 replaces with an adapter.
 - **No caching, ever.** Every call returns a new client with its own pool. The
   lock-order and race tests open holder/racer clients that must be separate
   connections; a test pins that two calls return distinct objects.
@@ -148,9 +148,9 @@ as well as the call, so an alias does not escape it.
 ## 6. Acceptance
 
 - `git grep -nP 'new PrismaClient(?![A-Za-z])' -- ':!docs' ':!scripts/prisma-engine-probe.cjs'`
-  matches only `src/lib/prisma-client.ts`, plus comment lines that name the
-  factory's construction (each read and given a verdict).
-- Lint fails on a value import of `PrismaClient` outside the two exempt files,
+  matches only `src/lib/prisma-client.ts`, plus comment lines (each read and
+  given a verdict; one records a historical experiment, not a construction).
+- Lint fails on a value import of `PrismaClient` outside `src/lib/prisma-client.ts`,
   and on `createPrismaClient` in an e2e spec — each proven by breaking it.
 - A test built through `createPrismaClient` is still guarded, `@/lib/db` is
   still not — and dropping `FACTORY` from the installer's `ignoreFiles` turns
