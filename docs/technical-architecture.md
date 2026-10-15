@@ -1369,9 +1369,8 @@ type only. `createPrismaClient` there is therefore the one place a TypeScript
 module constructs a client: `new PrismaClient()` anywhere else is a compile
 error (TS1362 for a named import, TS2339 through a namespace import). The
 exception is the CommonJS engine probe, `scripts/prisma-engine-probe.cjs`
-(#885). `@/lib/db` is
-the app singleton built from the factory; tests, scripts and the seed call it
-for clients of their own, and each call is a new pool.
+(#885). `@/lib/db` is the app singleton built from the factory; tests, scripts
+and the seed call it for clients of their own, and each call is a new pool.
 
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) refuses
 an import of `@prisma/client` or any subpath of it outside that module,
@@ -1390,7 +1389,8 @@ mention is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 `next build` (Turbopack) prints a warning that the `export *` over
 `[externals]/@prisma/client` re-exports a CommonJS module whose exports are
 only available at runtime. It is expected, comes from the re-export, and is
-harmless: the build and the server both work.
+harmless: the build exits 0 and the server serves (measured on Next 16 with
+`pnpm run build`, which shows the warning).
 
 The point is that one file changes when the Prisma 7 generator's `output` path
 (#888) or driver-adapter change (#889) lands, plus the probe.

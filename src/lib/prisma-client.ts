@@ -1,11 +1,10 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
 
 /**
- * This module is the codebase's one importer of `@prisma/client`; everything
- * else takes `Prisma`, the model types and the enums from here. `PrismaClient`
- * is exported as a type only, so `createPrismaClient` below stays the one
- * constructor: `new PrismaClient()` anywhere else is a compile error. Why:
- * `docs/technical-architecture.md`, "Where Prisma comes from".
+ * Re-exports `@prisma/client`, except that `PrismaClient` is a type only here,
+ * so `createPrismaClient` below is the one value that constructs a client. Why,
+ * and where it is enforced: `docs/technical-architecture.md`, "Where Prisma
+ * comes from".
  */
 export * from '@prisma/client';
 export type { PrismaClient } from '@prisma/client';
