@@ -3,7 +3,8 @@
  * holds `undefined` (#783), with nothing but the factory guarding it.
  *
  * It unmocks `@prisma/client` first, so that the real `PrismaClient` is the
- * one the factory extends; the plain-client case checks that the unmock held.
+ * one the factory extends; the plain-client case checks that the factory,
+ * imported dynamically so it binds the unmocked module, builds an unguarded one.
  * The URL points at a port nothing listens on, so a write that gets past the
  * guard fails to connect instead of touching a database.
  */
@@ -34,13 +35,13 @@ async function rejectionOf(client: PrismaClient): Promise<string> {
 describe('createGuardedPrismaClient', () => {
   it('builds a client that refuses a bulk write whose where holds undefined', async () => {
     const { createGuardedPrismaClient } = await import('../../tests/e2e/prisma');
-    const message = await rejectionOf(createGuardedPrismaClient({ datasourceUrl: UNREACHABLE }));
+    const message = await rejectionOf(createGuardedPrismaClient({ url: UNREACHABLE }));
     expect(message).toMatch(/^\[undefined-filter-guard\] DegradationEvent\.deleteMany: where\.code is undefined/);
   });
 
-  it('is the only guard here: a plain client from the unmocked module is refused by the connection, not the guard', async () => {
-    const { PrismaClient: Plain } = await import('@prisma/client');
-    const message = await rejectionOf(new Plain({ datasourceUrl: UNREACHABLE }));
+  it('is the only guard here: a plain client from createPrismaClient is refused by the connection, not the guard', async () => {
+    const { createPrismaClient } = await import('./prisma-client');
+    const message = await rejectionOf(createPrismaClient({ url: UNREACHABLE }));
     expect(message).not.toMatch(GUARD_PREFIX);
   });
 });

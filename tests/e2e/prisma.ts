@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { createPrismaClient, type PrismaClientFactoryOptions } from '@/lib/prisma-client';
 import { undefinedFilterGuard } from '../undefined-filter-guard';
 
 /**
@@ -7,7 +8,7 @@ import { undefinedFilterGuard } from '../undefined-filter-guard';
  * every row. See `docs/test-database.md`, section "Undefined filters in test
  * cleanup (#783)".
  */
-export function createGuardedPrismaClient(...args: ConstructorParameters<typeof PrismaClient>): PrismaClient {
+export function createGuardedPrismaClient(options?: PrismaClientFactoryOptions): PrismaClient {
   // The cast restores `PrismaClient`'s type; the extended client has no `$on`.
-  return new PrismaClient(...args).$extends(undefinedFilterGuard) as unknown as PrismaClient;
+  return createPrismaClient(options).$extends(undefinedFilterGuard) as unknown as PrismaClient;
 }

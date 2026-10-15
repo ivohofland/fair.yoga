@@ -5,7 +5,7 @@
  *   pnpm admin:list
  * In production it runs from the `migrate` image (DEPLOYMENT.md, Admin access).
  */
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/lib/prisma-client';
 import { grantAdmin, revokeAdmin, listAdmins } from '../src/services/admin-grants';
 
 const USAGE = 'usage: admin-grant.ts grant|revoke <email> --by "<name>" (quote a name with spaces)  |  admin-grant.ts list';
@@ -17,7 +17,7 @@ function fail(message: string): never {
 
 async function main(): Promise<void> {
   const [command, email, flag, by, ...extra] = process.argv.slice(2);
-  const db = new PrismaClient();
+  const db = createPrismaClient();
   try {
     if (command === 'list') {
       for (const a of await listAdmins(db)) {

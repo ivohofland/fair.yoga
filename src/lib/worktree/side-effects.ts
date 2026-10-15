@@ -1,11 +1,11 @@
 import { execFileSync } from 'child_process';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../prisma-client';
 import { assertSafeDatabaseName, withDatabaseName } from '../db-provision';
 import { isPidAlive } from './registry';
 
 export async function dropDatabaseReal(dbName: string, anyDatabaseUrl: string): Promise<void> {
   assertSafeDatabaseName(dbName);
-  const admin = new PrismaClient({ datasources: { db: { url: withDatabaseName(anyDatabaseUrl, 'postgres') } } });
+  const admin = createPrismaClient({ url: withDatabaseName(anyDatabaseUrl, 'postgres') });
   try {
     await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
   } finally {

@@ -13,7 +13,8 @@
 // rows it created. `--conditions=react-server` makes `server-only`, which
 // `src/lib/log.ts` imports, resolve to its empty module outside Next.
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/lib/prisma-client';
 import { dispatchPushes, PUSH_WORKERS, type PushSender } from '../src/services/push-dispatch';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';
 import { MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT } from '../src/services/push-subscriptions';
@@ -36,7 +37,7 @@ function percentile(sorted: number[], p: number): number {
 }
 
 const tag = `fanout-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const setup = new PrismaClient({ datasourceUrl: url(5) });
+const setup = createPrismaClient({ url: url(5) });
 
 /** Pushes each id as its row is created, so a throw midway leaves the caller everything to clean up. */
 async function seed(accountIds: string[], teacherIds: string[]): Promise<void> {
@@ -92,7 +93,7 @@ async function oneTick(
   ids: string[],
   contend: boolean,
 ): Promise<Run> {
-  const client = new PrismaClient({ datasourceUrl: url(poolSize) });
+  const client = createPrismaClient({ url: url(poolSize) });
   const writes: number[] = [];
   const timed = client.$extends({
     query: {

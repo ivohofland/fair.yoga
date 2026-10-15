@@ -4,12 +4,12 @@
  * fails the migrate step and so refuses the deploy (DEPLOYMENT.md §6).
  *   pnpm check:reserved-slugs
  */
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '../src/lib/prisma-client';
 import { RESERVED_SLUGS } from '../src/lib/reserved-slugs';
 import { findReservedSlugHolders } from '../src/services/reserved-slug-holders';
 
 async function main(): Promise<number> {
-  const db = new PrismaClient();
+  const db = createPrismaClient();
   try {
     // The explicit connect makes an unreachable database surface as P1001,
     // which CI's "Reserved-slug check loads in the migration image" asserts.

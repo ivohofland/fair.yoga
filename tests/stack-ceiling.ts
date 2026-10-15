@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 import { expect } from 'vitest';
 
 /**
@@ -23,8 +24,8 @@ export const CEILING_ROWS = 1000;
 export async function lowStackClient(): Promise<PrismaClient> {
   const base = process.env.DATABASE_URL;
   if (!base) throw new Error('lowStackClient: DATABASE_URL is not set');
-  const datasourceUrl = `${base}${base.includes('?') ? '&' : '?'}connection_limit=1`;
-  const client = new PrismaClient({ datasourceUrl });
+  const url = `${base}${base.includes('?') ? '&' : '?'}connection_limit=1`;
+  const client = createPrismaClient({ url });
   await client.$executeRawUnsafe(`SET max_stack_depth = '${CEILING_STACK}'`);
   const [row] = await client.$queryRawUnsafe<{ max_stack_depth: string }[]>('SHOW max_stack_depth');
   if (row?.max_stack_depth !== CEILING_STACK) {
