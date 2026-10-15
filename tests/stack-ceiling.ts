@@ -37,6 +37,17 @@ export async function lowStackClient(): Promise<PrismaClient> {
 }
 
 /**
+ * Refreshes the planner's statistics for the whole database. Call it once a
+ * ceiling test's seed is written and before its read runs: a plan chosen from
+ * statistics taken before a `CEILING_ROWS` seed can be quadratic in it, and
+ * nothing guarantees autovacuum has analyzed the seed by then. Why, measured,
+ * is `docs/test-database.md` §7.
+ */
+export async function analyzeSeed(db: PrismaClient): Promise<void> {
+  await db.$executeRawUnsafe('ANALYZE');
+}
+
+/**
  * Asserts that `db` itself runs under `CEILING_STACK`. Pass the exact client
  * the sweep was handed — a `scopeSweep` client's raw queries reach its base —
  * so a ceiling test cannot pass by running on a default-stack client.
