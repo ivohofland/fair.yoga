@@ -93,7 +93,7 @@
   ```
   keep `ignores: ['src/lib/prisma-client.ts']`, and rewrite the block comment (the `PrismaClient` value restriction is now the module's `export type`).
 - [ ] **Step 2: prove it bites.** Add `import type { Prisma } from '@prisma/client';` to a file under each of `src/`, `tests/e2e/`, `scripts/` and `prisma/seed.ts` in turn; `pnpm exec eslint <file>` → record the error; same for `'@prisma/client/runtime/library'`; restore; lint clean.
-- [ ] **Step 3: docs.** Retitle the section "Where Prisma comes from (#884, #886)": the module is the one importer; the package name survives only in the vi.mock seam (`tests/setup/undefined-filter-guard.ts`, `vi.doUnmock` in `e2e-prisma-factory.test.ts`), the CJS probe, and package metadata; re-derivation command `git grep -n "@prisma/client" -- ':!docs'`. Note that lint does not see inline `import('…')` type queries.
+- [ ] **Step 3: docs.** Retitle the section "Where Prisma comes from (#884, #886)": the module is the one importer; state the `vi.mock` seam (`tests/setup/undefined-filter-guard.ts`, `vi.doUnmock` in `e2e-prisma-factory.test.ts`) and why it must name the package, then give the re-derivation command `git grep -n "@prisma/client" -- ':!docs'` with no roster of the mentions. Note that lint does not see inline `import('…')` type queries or dynamic `import()` expressions.
 - [ ] **Step 4:** `pnpm run lint`, `pnpm exec tsc --noEmit` green. Commit `chore: lint refuses a direct @prisma/client import (#886)`.
 
 ### After the tasks

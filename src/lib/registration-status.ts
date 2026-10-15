@@ -45,9 +45,8 @@ import type { RegistrationStatus } from '@/lib/prisma-client';
  * #132 established following #218.
  *
  * The values are hand-listed rather than derived from Prisma's runtime enum
- * export because this module is reached from client components and every
- * `@/lib/prisma-client` import in a `'use client'` path in this repo is type-only —
- * a value import would pull the Prisma runtime into the browser bundle.
+ * export because this module is reached from client components and its own
+ * import stays type-only, keeping the Prisma runtime out of what it pulls in.
  */
 const REGISTRATION_ROLE: Record<RegistrationStatus, 'occupies' | 'frees'> = {
   registered: 'occupies',

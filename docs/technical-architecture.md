@@ -1362,28 +1362,35 @@ with them.
 
 ### Where Prisma comes from (#884, #886)
 
-`src/lib/prisma-client.ts` is the one module that names `@prisma/client`.
+`src/lib/prisma-client.ts` is the one module that imports `@prisma/client`.
 It re-exports the whole package (`export *`), so `Prisma`, the model types and
 the enums come from `@/lib/prisma-client`, and it exports `PrismaClient` as a
 type only. `createPrismaClient` there is therefore the one place a TypeScript
 module constructs a client: `new PrismaClient()` anywhere else is a compile
-error (TS1362 for a named import, TS2339 through a namespace import). The exception is the
-CommonJS engine probe, `scripts/prisma-engine-probe.cjs` (#885). `@/lib/db` is
+error (TS1362 for a named import, TS2339 through a namespace import). The
+exception is the CommonJS engine probe, `scripts/prisma-engine-probe.cjs`
+(#885). `@/lib/db` is
 the app singleton built from the factory; tests, scripts and the seed call it
 for clients of their own, and each call is a new pool.
 
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) refuses
 an import of `@prisma/client` or any subpath of it outside that module,
 type-only imports included. It does not see an inline `import('@prisma/client')`
-type query, which is not an import declaration. The rule covers every `.ts`, `.tsx` and `.mts` file outside the config's
-global ignores.
+type query or a dynamic `import()` expression, neither of which is an import
+declaration. The rule covers every `.ts`, `.tsx` and `.mts` file outside the
+config's global ignores.
 
-No other TypeScript module imports the package. The one deliberate use of its
-name outside an import is the `vi.mock('@prisma/client')` seam in
+No other TypeScript module imports the package. Outside an import the name is
+load-bearing in the `vi.mock('@prisma/client')` seam in
 `tests/setup/undefined-filter-guard.ts`, with its `vi.doUnmock` counterpart in
 `src/lib/e2e-prisma-factory.test.ts`: the mock has to name the package because
 the factory constructs the package's own `PrismaClient`. Every remaining
 mention is listed by `git grep -n "@prisma/client" -- ':!docs'`.
+
+`next build` (Turbopack) prints a warning that the `export *` over
+`[externals]/@prisma/client` re-exports a CommonJS module whose exports are
+only available at runtime. It is expected, comes from the re-export, and is
+harmless: the build and the server both work.
 
 The point is that one file changes when the Prisma 7 generator's `output` path
 (#888) or driver-adapter change (#889) lands, plus the probe.
