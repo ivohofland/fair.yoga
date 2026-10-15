@@ -441,14 +441,17 @@ tables as they were before the seed: near empty. For the ceiling tests
 (`src/services/sweep-page-ceiling.test.ts`, `CEILING_ROWS` seeds) that plan
 can grow with the square of the seed. The file therefore runs `analyzeSeed`
 (`tests/stack-ceiling.ts`) in a file-level `beforeEach`. Vitest runs that
-after each describe's `beforeAll` seed and before every test, so each read is
-planned for the rows it was given, including in a describe added later.
+after each describe's `beforeAll` and before every test, so a read whose seed
+is written in `beforeAll` is planned for the rows it was given, in any
+describe. A seed written in a `beforeEach` or in the test itself comes after
+the analyze, and needs its own `analyzeSeed` call.
 
 **What it looked like.** A ceiling test timed out at 5 s in CI's
 `unit-sweeps` step: `readDuePayments` in runs 38164592733 and 38691856080,
 `reconcileWaitlists` in 38365523733. In that last run the test's `afterAll`
-also timed out, and so, about 50 s later, did `waitlist-position-migration.test.ts`.
-Nothing in that run records why. A watchdog on the ceiling clients
+also timed out, and so, about 50 s later, did
+`waitlist-position-migration.test.ts`. Nothing in that run records why. A
+watchdog on the ceiling clients
 (temporary; it logged the client's `pg_stat_activity` row once a query had
 been outstanding 1.5 s) caught one occurrence in 40 CI passes: the
 `reconcileWaitlists` candidate `groupBy` had been `state = active`, with no
@@ -467,7 +470,10 @@ then `EXPLAIN (ANALYZE)` the query.
 **What is and isn't closed.** The mechanism is: a CPU-bound plan chosen from
 pre-seed statistics. The magnitude is not. 974 ms locally against 20 s on CI
 leaves a gap that runner speed alone does not obviously cover, and the 20 s
-instance's plan was not captured. `readDuePayments`, the test that failed
+instance's plan was not captured. `auto_explain` (1 s threshold) was on in
+the stale arm below and logged nothing: its slow runs were several
+statements, none over 1 s, not one slow plan. `readDuePayments`, the test
+that failed
 most often, was never caught stalling at all. The fix covers it by the same
 mechanism: its read joins through the same `Class` and `CalendarEntry`
 tables and is planned from the same statistics. That is an
@@ -483,11 +489,12 @@ job on GitHub's runners, ceiling-file durations recorded, 25 passes per arm
 | with `analyzeSeed` | 454 ms | 276 ms | 170 ms |
 
 Neither arm timed out. At about one stall in 65 unfixed passes, 25 passes
-cannot show that the stall is gone. The tail is the evidence: in those passes it is
-gone once the seed is analyzed.
+cannot show that the stall is gone. The tail is the evidence:
+`reconcileWaitlists` and `autoCompleteClasses` run past 1 s without the
+analyze and not with it. `readDuePayments` has no tail in either arm.
 
 **Why not a longer timeout.** The failing tests run on vitest's default 5 s.
-Raising it would turn a 20 s CPU-bound plan into a slow pass rather than
+Raising it would turn a 20 s CPU-bound stall into a slow pass rather than
 remove it.
 
 **When to call it.** Any test that writes hundreds of rows and then runs a
@@ -496,5 +503,5 @@ the obvious cases, and anything database-wide. Whole-database `ANALYZE`, not a
 per-table list, so a seed that touches a new table cannot be missed. On a
 worktree test database it measured 84 ms over three runs. Only in a serial
 tier: `ANALYZE` takes `SHARE UPDATE EXCLUSIVE` on every table it reads, and in
-the parallel `unit` tier that collides with another file's `LOCK TABLE` or
+the parallel `unit` tier that can collide with another file's `LOCK TABLE` or
 index build.
