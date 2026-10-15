@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser, TeacherSession } from '../types';
@@ -14,8 +14,9 @@ import {
   setSessionCookie,
   clearSessionCookie,
 } from './session';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const uniqueSuffix = Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
 

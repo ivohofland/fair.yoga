@@ -1,14 +1,14 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
 
 import { BASE_URL, uniqueSuffix, freshIp } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { signUnsubscribeToken, invitationSubject } from '@/lib/unsubscribe-token';
 import { erasedAddress } from '@/lib/erased-address';
 import type { UnsubscribeTarget } from '@/lib/unsubscribe-kind';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const studentIds: string[] = [];
 const accountIds: string[] = [];

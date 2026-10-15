@@ -10,15 +10,16 @@
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
 import { createStudioClassFixture } from '../../../../../tests/class-fixtures';
 import { expectRefusal } from '../../../../../tests/api-assertions';
 import { DELETE } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `studio-delete-lock-${uniqueSuffix()}`;
 
 /** How long the holder may take to report that it is in place. */

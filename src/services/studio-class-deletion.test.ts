@@ -1,9 +1,9 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { studioClassDeletability } from './studio-class-deletion';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const AMS = 'Europe/Amsterdam';
 const NYC = 'America/New_York';
@@ -204,7 +204,7 @@ describe('studioClassDeletability', () => {
  * generator always fills that date".
  */
 describe('a removed past generated class frees its week (issue 284)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
   // Schema convention: 0=Mon, 1=Tue, ..., 6=Sun.

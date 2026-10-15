@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type NotificationType } from '@prisma/client';
+import { type PrismaClient, type NotificationType } from '@prisma/client';
 import { log } from '@/lib/log';
 import { isTestDatabaseName } from '@/lib/worktree/identity';
 import {
@@ -8,8 +8,9 @@ import {
   reapExpiredNotifications,
 } from './notification-retention';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const RECIPIENT = randomUUID();
 const NOW = new Date('2026-09-23T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -1,18 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, type NotificationType } from '@prisma/client';
+import { type PrismaClient, type NotificationType } from '@prisma/client';
 import { dispatchPushes, PUSH_BATCH, PUSH_CLAIM_DEADLINE_MS, PUSH_STALE_AFTER_MS, PUSH_WORKERS, PushSendFault, type PushSender } from './push-dispatch';
 import { DEFAULT_TIMEOUT_MS, PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
 import { generateVapidKeyPair } from '@/lib/push/test-support';
 import { scopeSweep, type ScopedSweep } from '../../tests/scoped-sweep';
 import { log } from '@/lib/log';
 import type { VapidConfigProblem } from '@/lib/push/config';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const vapidKeys = { ...generateVapidKeyPair(), subject: 'mailto:ops@fair.yoga' };
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;

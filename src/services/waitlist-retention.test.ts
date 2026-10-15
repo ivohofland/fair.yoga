@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { ClassStatus, WaitlistStatus } from '@prisma/client';
 import { log } from '@/lib/log';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
@@ -13,6 +13,7 @@ import {
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * A pure DB-invariant suite — nothing here calls the app on `:3000` — so it
@@ -45,7 +46,7 @@ import { scopeSweep } from '../../tests/scoped-sweep';
  * fail-closed bail, since a guard that throws in `beforeAll` still runs
  * `afterAll`.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 /** Fixed "today" so every date below is computed, not guessed. */
@@ -613,7 +614,7 @@ describe('reapClosedWaitlistEntries', () => {
     // inflates `summary.failed` past 1.
     const scope = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [HELD, FREE] } } });
 
-    const holderDb = new PrismaClient();
+    const holderDb = createPrismaClient();
     // `warn`, not `error`, and that is the assertion. A lock timeout is
     // `isTransientDbError`, and the sweep classifies its per-class failures on
     // exactly that — `error` is reserved for what should page someone, and this
@@ -840,7 +841,7 @@ describe('reapClosedWaitlistEntries', () => {
     // premise would not hold.
     const scope = scopeSweep(prisma, { WaitlistEntry: { classId: { in: [HELD] } } });
 
-    const holderDb = new PrismaClient();
+    const holderDb = createPrismaClient();
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {

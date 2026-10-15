@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, onTestFinished, vi } from 'vitest';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {
@@ -16,8 +16,9 @@ import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**
@@ -539,7 +540,7 @@ let studentAccountId: string;
 });
 
 describe('GDPR on dual-role accounts', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-dual-${Date.now()}`;
   let accountId: string;
   let teacherId: string;
@@ -654,7 +655,7 @@ describe('GDPR on dual-role accounts', () => {
  * export and the all-false state erasure leaves behind.
  */
 describe('GDPR erasure carries PushSubscription and push preferences (#724)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-push-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
   let dualAccountId: string;
@@ -902,7 +903,7 @@ describe('GDPR erasure carries PushSubscription and push preferences (#724)', ()
 // export first, then student erasure, then teacher erasure — each reads the
 // state the previous one left.
 describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-inv-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   // Used to carry uppercase on purpose, to prove the invitation/block
   // lookups bridged `Student.email`'s typed casing to `Invitation.email` and
@@ -1407,7 +1408,7 @@ describe('GDPR reaches Invitation and TeacherBlock (#166 review I2)', () => {
 });
 
 describe('exportStudentData filters blocks by profile creation (#171)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-export-block-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const email = `${suffix}@test.local`;
   let teacherId: string;
@@ -1492,7 +1493,7 @@ describe('exportStudentData filters blocks by profile creation (#171)', () => {
 // never have matched. Which disagreements can still arise for real is argued
 // at the CAS itself in `gdpr.ts`, and summarised at the mock below.
 describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-cas-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2203,7 +2204,7 @@ describe('deleteTeacherAccount cancels by compare-and-swap (#174)', () => {
  * reports already-erased rather than erasing again.
  */
 describe('deleteTeacherAccount cancel CAS loses to a concurrent cancellation (#367)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-cas-cancelled-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2335,7 +2336,7 @@ describe('deleteTeacherAccount cancel CAS loses to a concurrent cancellation (#3
 });
 
 describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-lockread-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2465,7 +2466,7 @@ describe('deleteTeacherAccount locks and reads the same snapshot (#367)', () => 
  * loop at all.
  */
 describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not just in the SQL text (#245)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-inprogress-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2605,7 +2606,7 @@ describe('deleteTeacherAccount cancels an in_progress class on the CAS loop, not
  * depend on landing in this branch.
  */
 describe('student erasure is retry-safe against a concurrent duplicate (#196)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
 
   /**
    * A student holding the only seat in an open class, with one other student
@@ -3025,7 +3026,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
  * which is exactly why the service is where it has to be tested.
  */
 describe('teacher erasure refuses to erase an already-erased profile (#196)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-twice-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -3076,7 +3077,7 @@ describe('teacher erasure refuses to erase an already-erased profile (#196)', ()
  * This pins that a genuine failure still does.
  */
 describe('deleteTeacherAccount propagates a genuine transaction failure (#213)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-teacher-fail-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const email = `${suffix}@test.local`;
   let teacherId: string;
@@ -3139,7 +3140,7 @@ describe('deleteTeacherAccount propagates a genuine transaction failure (#213)',
  * while sparing past and today's studio classes as income records.
  */
 describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-studio-cancel-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -3293,7 +3294,7 @@ describe('deleteTeacherAccount cancels future studio classes (#280)', () => {
 });
 
 describe('the cancellable-status classification reaches the pre-lock (#245)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-cancellable-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -3361,7 +3362,7 @@ describe('the cancellable-status classification reaches the pre-lock (#245)', ()
  * ("A. `gdpr.ts` — both erasures").
  */
 describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-scope-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let victimTeacherId: string;
   let victimTeacherAccountId: string;
@@ -3585,7 +3586,7 @@ describe('the erasure pre-locks are scoped to their own owner (#453)', () => {
 
 /** #46: the stored photo is personal data — exported with the profile, deleted by erasure. */
 describe('teacher erasure and export reach the profile photo (#46)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const teacherIds: string[] = [];
 
   async function makeTeacher(): Promise<string> {
@@ -3701,7 +3702,7 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
 
 /** #758: every amount in an export names its currency. */
 describe('exports carry currency (#758)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-cur-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -3800,7 +3801,7 @@ describe('exports carry currency (#758)', () => {
 
 /** #819: the VAT a class charged is part of what an export tells the subject. */
 describe('exports carry VAT (#819)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-vat-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;

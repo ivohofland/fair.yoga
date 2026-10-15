@@ -61,7 +61,6 @@
  * `docs/superpowers/specs/2026-09-06-lock-contention-rest-design.md` §2.1.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
   pauseOrResumeStudioTemplate,
@@ -71,8 +70,9 @@ import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // PREFIXED, not just timestamped: this file shares one test database with
 // `studio-class-template-lifecycle.test.ts`, which it was split from, and with
 // its serial tier-mates, and they all mint their fixtures from a clock value,

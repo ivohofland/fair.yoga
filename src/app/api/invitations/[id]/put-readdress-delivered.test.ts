@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
 import { inviteContact, unlinkTeacher } from '@/services/invitations';
 import { PUT } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * #502 Fix #3 (task 4, added after the whole-branch review). `PUT` resets
@@ -24,7 +24,7 @@ import { PUT } from './route';
  * cannot run in a worktree with no dev server on `:3000`, and these three
  * scenarios need to actually run somewhere.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 function put(id: string, body: unknown, token: string): NextRequest {

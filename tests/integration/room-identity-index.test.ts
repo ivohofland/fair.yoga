@@ -8,12 +8,12 @@
  * other, exactly one of these fails.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../helpers';
 import { sameRoomIdentity } from '@/lib/room-identity';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const address = `${suffix} Agreement St`;
 const variantAddress = address.toLowerCase();

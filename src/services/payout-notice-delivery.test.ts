@@ -4,9 +4,10 @@
  * the raw value whose hash the token row holds. Only the sender is mocked.
  */
 import { describe, it, expect, vi, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const sendPayoutChangedEmail = vi.hoisted(() => vi.fn<(to: string, input: { pauseUrl: string }) => Promise<void>>());
 vi.mock('@/lib/email', () => ({ sendPayoutChangedEmail }));
@@ -15,7 +16,7 @@ const { saveBankAccount } = await import('./bank-accounts');
 const { deliverPayoutChangedNotice, PAUSE_TOKEN_FOREIGN_KEYS } = await import('./payout-notice');
 const { mintPayoutPauseToken, PAUSE_TOKEN_TTL_DAYS } = await import('./payout-pause-token');
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const DAY_MS = 24 * 60 * 60 * 1000;
 const teacherIds: string[] = [];
 const accountIds: string[] = [];

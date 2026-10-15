@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import path from 'node:path';
-import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../../tests/helpers';
 import { RESERVED_SLUGS } from '../lib/reserved-slugs';
 import { findReservedSlugHolders } from './reserved-slug-holders';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const suffix = uniqueSuffix();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];

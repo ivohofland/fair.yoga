@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Bite tests for the VAT `CHECK` constraints
@@ -10,7 +10,7 @@ import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtur
  * `toThrow` assertions match the constraint's own name, so a masking failure
  * elsewhere cannot satisfy them.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `vat-check-${Date.now()}`;
 
 let teacherId: string;

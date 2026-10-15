@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { expectRefusal } from '../../../../tests/api-assertions';
 import { POST } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * @serial-tier lock-contention — holds a transaction open on an uncommitted
@@ -22,7 +22,7 @@ import { POST } from './route';
  * docblock in `tests/helpers.ts` covers the override), and the race below
  * needs to actually run somewhere.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 describe('POST /api/classes — room deleted between the ownership check and the transaction (#339)', () => {
@@ -75,7 +75,7 @@ describe('POST /api/classes — room deleted between the ownership check and the
       data: { teacherId, roomId: room.id, capacityOverride: 8, rentalRate: 15 },
     });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });

@@ -5,7 +5,6 @@
  * by calling the auth library functions directly against the DB.
  */
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import {
   createSession,
   validateSession,
@@ -14,8 +13,9 @@ import {
   verifyMagicLinkToken,
 } from '@/lib/auth';
 import { hashToken, uniqueSuffix, BASE_URL, cookie } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;

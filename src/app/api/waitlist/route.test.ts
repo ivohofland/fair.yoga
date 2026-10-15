@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import * as dbLocks from '@/lib/db-locks';
 import { prisma as appPrisma } from '@/lib/db';
 import { log } from '@/lib/log';
@@ -8,13 +8,14 @@ import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { expectRefusal } from '../../../../tests/api-assertions';
 import { POST } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * A student erased between the session check and the join's `Student` lock.
  * A live session never belongs to an erased profile, so the erasure is stood
  * in for at the lock; the service and the route that map it are real.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 describe('POST /api/waitlist — a student erased under the join', () => {
@@ -129,7 +130,7 @@ describe('POST /api/waitlist — a student erased under the join', () => {
  * needs and does not provide.
  */
 describe('POST /api/waitlist — a failed tier-marker write after the join committed', () => {
-  const db = new PrismaClient();
+  const db = createPrismaClient();
   const suffix2 = uniqueSuffix();
   let teacherId: string;
   let roomId: string;

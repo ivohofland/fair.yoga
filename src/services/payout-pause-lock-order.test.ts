@@ -15,13 +15,14 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { isLockTimeout } from '@/lib/api-errors';
 import { pausePayments } from './payout-pause';
 import { uniqueSuffix, seedSession } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 
@@ -88,7 +89,7 @@ describe('pausePayments, failing after the consume', () => {
     // the wait falls on the session delete.
     const sessionId = hashToken(await seedSession(prisma, t.accountId));
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

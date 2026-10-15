@@ -1,8 +1,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { lockAccountForSignOut, type AccountSignOutLock, type TransactionClientOnly } from '@/lib/db-locks';
 import { deletePasskey, lockForPasskeyRemoval, removePasskeyLocked } from './passkey-credentials';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 async function accountLock(tx: TransactionClientOnly, accountId: string): Promise<AccountSignOutLock> {
   const lock = await lockAccountForSignOut(tx, accountId);
@@ -10,7 +10,7 @@ async function accountLock(tx: TransactionClientOnly, accountId: string): Promis
   return lock;
 }
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const accountIds: string[] = [];
 const teacherIds: string[] = [];
 

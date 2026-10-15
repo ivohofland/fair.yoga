@@ -7,10 +7,10 @@
  * belt and braces; each gets its own test at its own level.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 describe('Room.isPublic column default', () => {

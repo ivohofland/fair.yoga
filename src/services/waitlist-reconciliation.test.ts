@@ -1,5 +1,5 @@
 import { describe, it, beforeAll, afterAll, expect, vi, onTestFinished } from 'vitest';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -23,8 +23,9 @@ import {
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `recon-${Date.now()}`;
 
 const CLASS_DATE = new Date('2099-06-01');
@@ -329,7 +330,7 @@ describe('reconcileWaitlists (DB)', () => {
     const clocks = windowClocks(cls.startTime);
 
     // A SEPARATE client, so the holder cannot share the caller's connection.
-    const holderClient = new PrismaClient();
+    const holderClient = createPrismaClient();
     let released = false;
     let signalHeld!: () => void;
     const lockHeld = new Promise<void>((r) => {
@@ -879,7 +880,7 @@ describe('reconcileWaitlists (DB)', () => {
     const healthy = await makeFreedSeat('IsoHealthy', { waiters: 2 });
     const clocks = windowClocks(blocked.startTime);
 
-    const holderClient = new PrismaClient();
+    const holderClient = createPrismaClient();
     let signalHeld!: () => void;
     const lockHeld = new Promise<void>((r) => {
       signalHeld = r;
@@ -1690,7 +1691,7 @@ describe('reconcileWaitlists (DB)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     onTestFinished(() => warn.mockRestore());
 
-    const holderClient = new PrismaClient();
+    const holderClient = createPrismaClient();
     let signalHeld!: () => void;
     const lockHeld = new Promise<void>((r) => { signalHeld = r; });
     const holder = holderClient.$transaction(

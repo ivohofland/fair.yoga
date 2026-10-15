@@ -1,12 +1,12 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
 
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { expectApplied, expectRefusal } from '../api-assertions';
 import { mintPasskeyRevokeToken } from '@/services/passkey-revoke-token';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 

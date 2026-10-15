@@ -5,7 +5,7 @@
  * this file would read as the defect it watches for.
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { acceptInvitation, declineInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';
@@ -15,6 +15,7 @@ import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Concurrency invariants for the table pairs the describes below name, each
@@ -38,7 +39,7 @@ import { expectErased } from '../../tests/erasure-assertions';
  * this reasoning, and its docblock spells it out; these two describes were
  * written before that and stayed behind.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 function uniqueSuffix(): string {
   return `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;

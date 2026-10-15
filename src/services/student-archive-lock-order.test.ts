@@ -9,7 +9,7 @@
  * "The `TeacherStudent` row is the archive's gate".
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { archiveStudent, type ArchiveOutcome } from './student-archive';
 import { reopenPayment } from './payments';
@@ -20,10 +20,11 @@ import { isLockTimeout } from '@/lib/api-errors';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /** Client A holds; client B races; `prisma` also observes and seeds. */
-const prisma = new PrismaClient();
-const racer = new PrismaClient();
+const prisma = createPrismaClient();
+const racer = createPrismaClient();
 
 afterAll(async () => {
   await prisma.$disconnect();

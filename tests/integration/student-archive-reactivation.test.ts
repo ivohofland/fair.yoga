@@ -6,15 +6,16 @@
  * beside their own fixtures (`src/services/waitlist.test.ts`).
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, seedSession, teardownStudent, uniqueSuffix } from '../helpers';
 import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied, expectRefusal } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 /** Holds a transaction open while `prisma` observes and seeds. */
-const holder = new PrismaClient();
+const holder = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;

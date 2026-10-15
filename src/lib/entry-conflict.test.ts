@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import { probeConflictingEntry, entryConflictMessage } from './entry-conflict';
 import { hhmmToTime } from './time-of-day';
 import { log } from './log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `entry-conflict-${Date.now()}`;
 let teacherId: string;
 let otherTeacherId: string;

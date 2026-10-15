@@ -683,7 +683,7 @@ describe('startScheduler', () => {
 
   /**
    * The real dynamic imports run here, but under fake timers nothing fires:
-   * `new PrismaClient()` (`@/lib/db`) is only constructed, never connected,
+   * `createPrismaClient()` (`@/lib/db`) is only constructed, never connected,
    * since no tick ever reaches a query. The clock is never advanced.
    */
   it('registers a health entry per job and starts at most once', async () => {

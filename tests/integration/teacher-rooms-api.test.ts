@@ -19,13 +19,13 @@
  * decision, in whichever direction that goes.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let ownerId: string;
@@ -842,7 +842,7 @@ describe('POST /api/teacher-rooms decides a raced duplicate from the link that w
     holderLink: { rentalRate: number; capacityOverride: number; isArchived?: boolean },
     body: { capacityOverride: number; rentalRate: number },
   ): Promise<Response> {
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
     const released = new Promise<void>((r) => { release = r; });

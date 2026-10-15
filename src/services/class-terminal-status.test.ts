@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import type { ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * A pure DB-invariant test — no HTTP surface, nothing here calls the app on
@@ -52,7 +53,7 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
  *        ON "Class" FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
  *        EXECUTE FUNCTION class_reject_terminal_status_change();'
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 let teacherId: string;

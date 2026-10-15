@@ -8,12 +8,13 @@
  * clause and leaves the other empty. See the mutation record at the foot.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived, describeRoomBlockers } from './room-archive';
 import { pauseOrResumeTemplate } from './class-template-lifecycle';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // `ra-` distinguishes this file's rows from `room-archive-doors.test.ts`'s,
 // so each file's cleanup sweeps only its own.
 const fx = fixtureRun('ra');

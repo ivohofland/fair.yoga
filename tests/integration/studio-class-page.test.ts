@@ -14,14 +14,14 @@
  * the cancelled branch.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { startOfLocalDay } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, teardownTeacher } from '../helpers';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createStudioClassFixture } from '../class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 /** The `Teacher.defaultTimezone` default, and what every fixture here assumes. */

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { resolveOrClaimAccount } from './account';
 import { uniqueSuffix } from '../../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherAccountId: string;

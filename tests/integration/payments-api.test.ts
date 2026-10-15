@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { MANUAL_REMIND_COOLDOWN_MS } from '@/services/payments';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherToken: string;
@@ -458,7 +458,7 @@ describe('POST /api/payments/[id]/remind', () => {
       // payment row locked BEFORE either request runs, so both read `pending`
       // with no stamp (uncommitted state is invisible under READ COMMITTED)
       // and both park on the lock at the `updateMany`.
-      const holder = new PrismaClient();
+      const holder = createPrismaClient();
       let release!: () => void;
       let locked!: () => void;
       const released = new Promise<void>((r) => {

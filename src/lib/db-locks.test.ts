@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import {
@@ -30,8 +30,9 @@ import { signOutEverywhereTx } from '@/services/account-sign-out';
 import { deleteAccountPasskeys, removePasskeyLocked } from '@/services/passkey-credentials';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { seedSession, uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 afterAll(async () => {
   await prisma.$disconnect();

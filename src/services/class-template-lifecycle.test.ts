@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import type { RegistrationStatus } from '@prisma/client';
 import {
   updateClassTemplate,
@@ -67,8 +67,9 @@ async function _templateForbiddenFieldsAreRejected(
   await updateClassTemplate(db, 'never-called', 'never-called', archivedRule);
 }
 import { createClassFixture, createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 // Hoisted to module scope: a pure function of `label` (plus the module-scope

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { inviteContact } from '@/services/invitations';
@@ -12,6 +12,7 @@ import * as rateLimit from '@/lib/rate-limit';
 import { erasedAddress } from '@/lib/erased-address';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied, expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -40,7 +41,7 @@ import { expectApplied, expectRefusal, expectUnchanged } from '../../../../tests
  * The integration test over this same route stays where it is: it exercises
  * the HTTP stack this file skips, and CI is where its verdict comes from.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 describe('POST /api/registrations — resolveInvitationOnLink wiring (#418)', () => {

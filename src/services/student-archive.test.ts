@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
-  PrismaClient,
   type ClassStatus,
   type PaymentStatus,
   type RegistrationStatus,
@@ -8,8 +7,9 @@ import {
 import { archiveStudent, type ArchiveOutcome } from './student-archive';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = Date.now();
 
 /** The code a refused outcome carries; throws, naming the outcome, otherwise. */

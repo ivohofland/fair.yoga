@@ -13,12 +13,13 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { cookie, seedSession } from '../../../../../../../tests/helpers';
 import { PUT, DELETE } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const WAIT_MS = 1_500;
 
@@ -56,7 +57,7 @@ async function raceBehindHolder(
   hold: (tx: Prisma.TransactionClient) => Promise<void>,
   request: () => Promise<Response>,
 ): Promise<{ res: Response; parked: boolean }> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   const held = latch();
   const release = latch();
   let holderPid = 0;

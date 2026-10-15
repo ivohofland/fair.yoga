@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
 import { expectUnchanged, expectApplied } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 /**
@@ -1196,7 +1196,7 @@ describe('POST /api/account/student-profile answers a raced join unchanged (#161
   });
 
   it('answers unchanged, naming the winner, when the create loses to a concurrent join', async () => {
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
     const released = new Promise<void>((r) => { release = r; });

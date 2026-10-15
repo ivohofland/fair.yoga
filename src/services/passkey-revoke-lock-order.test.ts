@@ -20,13 +20,14 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { isLockTimeout } from '@/lib/api-errors';
 import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { revokePasskeyByLink } from './passkey-revoke';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const accountIds: string[] = [];
 const teacherIds: string[] = [];
 
@@ -93,7 +94,7 @@ describe('revokePasskeyByLink, failing after the consume', () => {
     });
     const raw = await mintPasskeyRevokeToken(prisma, { accountId: account.id, credentialId });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     const holding = holder.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -136,7 +137,7 @@ describe('revokePasskeyByLink behind a pause in flight', () => {
     });
     const raw = await mintPasskeyRevokeToken(prisma, { accountId: teacher.accountId, credentialId });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

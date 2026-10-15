@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { createLogger } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const suffix = `logredact-${Date.now()}`;
 const email = `pii-${suffix}@test.local`;
@@ -10,8 +10,8 @@ const studentIds: string[] = [];
 // `minimal` is what production gets: Prisma picks it when NODE_ENV is
 // `production` and no format is passed.
 const clients = {
-  colorless: new PrismaClient({ errorFormat: 'colorless' }),
-  minimal: new PrismaClient({ errorFormat: 'minimal' }),
+  colorless: createPrismaClient({ errorFormat: 'colorless' }),
+  minimal: createPrismaClient({ errorFormat: 'minimal' }),
 } as const;
 
 beforeAll(async () => {

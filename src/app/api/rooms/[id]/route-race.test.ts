@@ -9,13 +9,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
 import { expectRefusal, expectUnchanged } from '../../../../../tests/api-assertions';
 import { DELETE } from './route';
 import { POST as PUBLISH } from './publish/route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 async function ownPid(tx: Prisma.TransactionClient): Promise<number> {
@@ -46,7 +47,7 @@ async function behindUncommitted(
   write: (tx: Prisma.TransactionClient) => Promise<unknown>,
   request: () => Promise<Response>,
 ): Promise<Response> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   let release!: () => void;
   const released = new Promise<void>((r) => { release = r; });
   let holding!: Promise<unknown>;

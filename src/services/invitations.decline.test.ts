@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   inviteContact,
@@ -10,6 +10,7 @@ import {
 } from './invitations';
 import { deleteStudentAccount } from './gdpr';
 import { resolveInvitationOnLink } from './link-consent';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // `invitations.ts` imports `@/lib/log`, so the specifier here must match
 // that one — the same constraint `invitations.gate.test.ts` documents for
@@ -18,7 +19,7 @@ vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 describe('a decline writes a suppression entry that survives erasure (#522)', () => {

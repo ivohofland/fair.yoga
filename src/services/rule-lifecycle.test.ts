@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@prisma/client';
 import {
   archiveOrUnarchiveRule,
@@ -17,8 +17,9 @@ import { CLASS_GENERATOR } from './class-generator';
 import { STUDIO_GENERATOR } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 /**

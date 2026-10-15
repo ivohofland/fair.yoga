@@ -13,13 +13,13 @@
  * the wire.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { transitionClass } from './class-lifecycle';
 import { pauseOrResumeTemplate, updateClassTemplate } from './class-template-lifecycle';
 import { isCheckViolationOn } from '@/lib/check-violation';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // `rad-` distinguishes this file's rows from `room-archive.test.ts`'s,
 // so each file's cleanup sweeps only its own.
 const fx = fixtureRun('rad');

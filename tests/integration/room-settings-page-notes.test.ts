@@ -4,10 +4,10 @@
  * links it and carries their own equipment notes on the link.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, teardownTeacher } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const SECRET = 'door code 4821';
 const OWN_NOTES = `my own props ${suffix}`;

@@ -23,15 +23,15 @@
  * and is fine in parallel.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { completeClass } from './class-lifecycle';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // Its own client, as `class-lifecycle.test.ts` has its own: this file was split
 // out of that one and the module-level declaration stayed behind with the
 // cases that remain there.
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // PREFIXED, not just timestamped. This file and `class-lifecycle.test.ts` share
 // one test database and both mint fixtures from a clock value; a bare
 // `Date.now()` in each could collide on a unique email or slug. The prefix

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, teardownStudent, teardownTeacher, waitFor } from '../helpers';
 import { generateMagicLinkToken } from '@/lib/auth/magic-link';
 import { hashNonce } from '@/lib/auth/origin-nonce';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const email = `claim-http-${suffix}@test.local`;
 const redirect = `/class/http-claim-${suffix}`;
@@ -246,7 +246,7 @@ describe('POST /api/auth/magic-link/claim — a held budget row', () => {
       data: { email: heldEmail, attempts: 0, windowStartsAt: new Date() },
     });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release: () => void = () => undefined;
     try {
       let onLocked: () => void = () => undefined;

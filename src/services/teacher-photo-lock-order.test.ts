@@ -10,14 +10,15 @@
  * the photo upload's gate (#46)".
  */
 import { describe, it, expect, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import * as dbLocks from '@/lib/db-locks';
 import { deleteTeacherAccount } from './gdpr';
 import { saveTeacherPhoto } from './teacher-photo';
 import { uniqueSuffix } from '../../tests/helpers';
 import { expectErased } from '../../tests/erasure-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 
 const WAIT_MS = 1_500;
@@ -114,7 +115,7 @@ describe('a photo upload and a teacher erasure serialise on the Teacher row (#46
 
   it('an upload that waits behind an erasure is refused and writes nothing', async () => {
     const teacherId = await makeTeacher();
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch(); const release = latch();
     let holderPid = 0;
     const holding = holder.$transaction(async (tx) => {

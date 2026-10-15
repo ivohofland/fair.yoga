@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // LETTERMINT_API_TOKEN is unset in the test environment, so `sendEmail`
 // outside production dry-runs (logs instead of delivering) and the adapter is
@@ -18,7 +19,7 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 const deliverMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const teacherEmail = `fallback-teacher-${uniqueSuffix}@test.local`;
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { notifyInvitee, deliverInvitation, inviteContact } from './invitations';
 import { log } from '@/lib/log';
 import { invitationSubject, verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { teardownTeacher } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // `notifyInvitee`'s dry-run branch (src/lib/email.ts) can't tell "sent" from
 // "not reached" — a dry run just logs either way. Proving the registered
@@ -14,7 +14,7 @@ import { teardownTeacher } from '../../tests/helpers';
 const deliverMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 describe('notifyInvitee — send-channel guards (#166 task 8, F3/F4 review)', () => {

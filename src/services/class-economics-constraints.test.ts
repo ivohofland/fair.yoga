@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import type { ClassEconomics } from '@/lib/class-economics';
 import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Bite tests for the six `CHECK` constraints
@@ -16,7 +16,7 @@ import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtur
  * identifier, not a Prisma internal), so a masking failure elsewhere (a slot
  * collision, an FK violation) cannot satisfy them.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `econ-check-${Date.now()}`;
 
 let teacherId: string;

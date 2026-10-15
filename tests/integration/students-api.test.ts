@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, uniqueSuffix, seedSession, waitFor, teardownStudent } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../class-fixtures';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;
@@ -2071,7 +2071,7 @@ describe('POST /api/students answers a raced invite with ALREADY_INVITED (#161)'
   it('returns 409 ALREADY_INVITED when the create loses to a concurrent invite', async () => {
     // The holder's names differ from the request's. A twin with the same
     // names answers unchanged: `src/app/api/students/route-lock-order.test.ts`.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let holding!: Promise<unknown>;
     const released = new Promise<void>((r) => { release = r; });

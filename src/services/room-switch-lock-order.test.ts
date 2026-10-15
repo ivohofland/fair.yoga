@@ -34,15 +34,16 @@
  * order would go undetected.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { fixtureRun } from '../../tests/room-fixtures';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { switchToSharedRoom } from './room-switch';
 import { claimTemplateForGeneration, generateInstancesForTemplate } from './class-generator';
 import type { GenerationResult } from '@/lib/generation';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const fx = fixtureRun('rswl');
 const HELD_CASE_TIMEOUT_MS = 20_000;
 const HOLD_CEILING_MS = 4_000;
@@ -109,7 +110,7 @@ async function withHeld<T>(
     release: 'after-body' | 'after-start';
   },
 ): Promise<T> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   await holder.$connect();
   let acquired!: (pid: number) => void;
   let release!: () => void;
@@ -178,7 +179,7 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
     const f = await fx.makeFixture(prisma);
     const shared = await addSharedTwin(f);
     const tpl = await fx.addTemplate(prisma, f, { isActive: true, isArchived: false, dayOfWeek: 1 });
-    const prober = new PrismaClient();
+    const prober = createPrismaClient();
     await prober.$connect();
     try {
       await withHeld(Prisma.sql`SELECT id FROM "ClassTemplate" WHERE id = ${tpl.id} FOR UPDATE`, async (holderPid) => {

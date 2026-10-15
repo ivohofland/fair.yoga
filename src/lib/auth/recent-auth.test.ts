@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hasRecentAuth, RECENT_AUTH_WINDOW_MS } from './recent-auth';
 import { seedSession, uniqueSuffix } from '../../../tests/helpers';
 import { hashToken } from './magic-link';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const suffix = uniqueSuffix();
 let accountId: string;
 

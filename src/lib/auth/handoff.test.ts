@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type PrismaClient, type Prisma } from '@prisma/client';
 import { generateMagicLinkToken, hashToken } from './magic-link';
 import { hashNonce } from './origin-nonce';
 import {
@@ -14,8 +14,9 @@ import {
 import { asBrowserNonce } from './test-support';
 import { classifyApiError, isLockTimeout } from '@/lib/api-errors';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 
 async function mint(email: string, nonce: string | null) {
   return generateMagicLinkToken(db, email, {
@@ -1065,7 +1066,7 @@ describe('the per-address comparison budget', () => {
     await db.handoffAttemptBudget.create({ data: { email, attempts: 0, windowStartsAt: new Date() } });
 
     const HOLD_MS = 4_000;
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     try {
       let onLocked!: () => void;
       const locked = new Promise<void>((resolve) => (onLocked = resolve));
@@ -1125,9 +1126,9 @@ describe('the per-address comparison budget', () => {
     // before the lock is taken, so connecting costs none of the time below.
     const url = new URL(process.env.DATABASE_URL!);
     url.searchParams.set('connection_limit', String(nonces.length + 5));
-    const wide = new PrismaClient({ datasourceUrl: url.toString() });
+    const wide = createPrismaClient({ url: url.toString() });
     await Promise.all(nonces.map(() => wide.$queryRaw`SELECT 1`));
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>>[] = [];
     try {
       let waiting = 0;

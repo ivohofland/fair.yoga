@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { mintPasskeyRevokeToken, PASSKEY_REVOKE_TOKEN_TTL_DAYS } from './passkey-revoke-token';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const accountIds: string[] = [];
 
 afterAll(async () => {

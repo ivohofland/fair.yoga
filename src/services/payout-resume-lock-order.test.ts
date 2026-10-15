@@ -24,7 +24,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import { bankAccountDataSelect } from '@/lib/payment-methods';
@@ -35,8 +35,9 @@ import { uniqueSuffix } from '../../tests/helpers';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const WAIT_MS = 1_500;
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
@@ -98,7 +99,7 @@ describe('resumePayments behind a bank-account save in flight', () => {
     await prisma.session.create({ data: { id: sessionId, accountId: t.accountId, expiresAt: new Date(now.getTime() + 86_400_000) } });
     const shown = payoutFingerprint(t);
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;
@@ -248,8 +249,8 @@ describe('resumePayments against a student erasure on two completed classes', ()
     const hi = ordered[1]?.id;
     if (hi === undefined) throw new Error('the two classes did not come back');
 
-    const holder = new PrismaClient();
-    const resumer = new PrismaClient();
+    const holder = createPrismaClient();
+    const resumer = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket, generateMagicLinkToken, hashNonce, validateSession } from '@/lib/auth';
 import { expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const freshEmail = `teacher-signup-${suffix}@test.local`;
 const ticketEmail = `teacher-signup-ticket-${suffix}@test.local`;

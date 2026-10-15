@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
@@ -26,6 +26,7 @@ import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import * as dbLocks from '@/lib/db-locks';
 import { lockClassRow } from '@/lib/db-locks';
 import { unlinkTeacher } from './invitations';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // ===========================================================================
 // Pure logic tests — getWaitlistWindow
@@ -158,7 +159,7 @@ describe('cancelDeadlineInstant', () => {
 // Integration tests — addToWaitlist, removeFromWaitlist, promoteNext
 // ===========================================================================
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 describe('addToWaitlist + removeFromWaitlist (DB)', () => {

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../../tests/helpers';
 import { grantAdmin, revokeAdmin, listAdmins } from './admin-grants';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const suffix = uniqueSuffix();
 const emailOf = (label: string) => `admin-grants-${label}-${suffix}@test.local`;
 const accountIds: string[] = [];

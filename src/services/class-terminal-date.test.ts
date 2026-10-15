@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
+import { Prisma, ClassStatus } from '@prisma/client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * A pure DB-invariant test for `entry_frozen_schedule_guard` — no HTTP
@@ -68,7 +69,7 @@ import { createClassFixture, slotDate } from '../../tests/class-fixtures';
  *        ON "CalendarEntry" FOR EACH ROW
  *        EXECUTE FUNCTION entry_reject_frozen_schedule_change();'
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 let teacherId: string;

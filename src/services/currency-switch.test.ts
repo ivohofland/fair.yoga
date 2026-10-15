@@ -9,15 +9,16 @@
  * teacher's own zone, which uses two zones far from UTC.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { switchTeacherCurrency } from './currency-switch';
 import { createClassTemplate } from './class-template-lifecycle';
 import { createStudioClassTemplate } from './studio-class-template-lifecycle';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const fx = fixtureRun('cursw');
 
 beforeAll(async () => { await prisma.$connect(); });

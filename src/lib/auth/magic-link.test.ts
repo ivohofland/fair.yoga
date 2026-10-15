@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import {
   generateMagicLinkToken,
   mintMagicLinkToken,
@@ -9,8 +8,9 @@ import {
 } from './magic-link';
 import { log } from '@/lib/log';
 import { scopeSweep } from '../../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 
 // The `cleanupExpiredTokens` tests mint through this. The `Date.now()`
 // suffix is what makes a scope built from an address match this run's rows

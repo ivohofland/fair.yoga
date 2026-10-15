@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, freshIp, seedSession, uniqueSuffix } from '../helpers';
 import { expectRefusal } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const email = `json-only-teacher-${suffix}@test.local`;
 const venueName = `JSON-only venue ${suffix}`;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, freshIp, cookie, seedSession, uniqueSuffix } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 describe('GET /manifest.webmanifest', () => {
   it('serves the install manifest', async () => {
@@ -26,7 +26,7 @@ describe('the document head', () => {
   });
 });
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const teacherEmail = `pwa-start-teacher-${suffix}@test.local`;
 const studentEmail = `pwa-start-student-${suffix}@test.local`;

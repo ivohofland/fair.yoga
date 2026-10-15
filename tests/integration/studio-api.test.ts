@@ -18,15 +18,15 @@
  * generator half is pinned in `src/services/studio-class-generator.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { generateStudioInstancesForTemplate } from '@/services/studio-class-generator';
 import { startOfLocalDay, mondayOf } from '@/lib/timezone';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 import { expectRefusal } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let ownerId: string;

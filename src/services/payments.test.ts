@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
-import { PrismaClient, type Payment, type PaymentStatus } from '@prisma/client';
+import { type PrismaClient, type Payment, type PaymentStatus } from '@prisma/client';
 import {
   markPaymentPaid,
   markPaymentOverdue,
@@ -17,8 +17,9 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 /** The row an `applied` or `unchanged` outcome carries; throws, naming the outcome, otherwise. */

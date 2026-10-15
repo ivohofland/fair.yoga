@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { PrismaClient, type MagicLinkPurpose } from '@prisma/client';
+import { type MagicLinkPurpose } from '@prisma/client';
 import {
   mintSignupTicket,
   peekSignupTicket,
@@ -11,8 +11,9 @@ import {
 import { generateMagicLinkToken } from './magic-link';
 import { TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 const email = 'ticket-family@example.com';
 
 beforeAll(async () => {

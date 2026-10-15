@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { Prisma, PrismaClient, type ClassStatus } from '@prisma/client';
+import { Prisma, type ClassStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -9,8 +9,9 @@ import { VAT_PERCENT_MAX, vatThousandths, withVat } from '@/lib/vat';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let ownerToken: string;
@@ -808,7 +809,7 @@ describe('POST /api/classes/[id]/transition', () => {
     // `'answers 503 rather than blocking when another transaction holds the
     // class row'`, and `account-api.test.ts:615`. It appears in eight
     // integration files.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -932,7 +933,7 @@ describe('POST /api/classes/[id]/transition', () => {
     // also what makes the scenario real — the archive path only hard-deletes
     // instances carrying no charged registration.
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -1854,7 +1855,7 @@ describe('POST /api/classes', () => {
       data: { teacherId: ownerId, roomId: raceRoom.id, capacityOverride: 8, rentalRate: 15 },
     });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });

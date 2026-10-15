@@ -20,7 +20,7 @@
  * probe — nothing added by #459 uses it or `awaitHandshake`.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import {
   type ErasureOutcome,
@@ -40,6 +40,7 @@ import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 import { expectErased } from '../../tests/erasure-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -134,7 +135,7 @@ async function awaitHandshake(signal: Promise<void>, label: string): Promise<voi
  * shaped "like" either one.
  */
 describe('the two erasures take multiple Class rows in one order (#174)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-lockorder-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   // Explicit ids, low and high, so "ascending by id" is a known sequence
   // rather than whatever two `uuid()` calls happened to produce. The pair is
@@ -903,7 +904,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
   }, 30_000);
 });
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 /**
  * Self-contained fixture: a fresh teacher, room, and open class with one
@@ -1675,7 +1676,7 @@ afterAll(async () => {
  * before the class lock runs".
  */
 describe('deleteTeacherAccount blocks concurrent registrations on classes it locks (#367)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-notify-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -1833,7 +1834,7 @@ describe('deleteTeacherAccount blocks concurrent registrations on classes it loc
 });
 
 describe('student erasure is retry-safe against a concurrent duplicate (#196)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
 
   /**
    * A student holding the only seat in an open class, with one other student
@@ -1955,7 +1956,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
     const fixture = await makeStudentWithFreedSpot();
     // A second client, so the lock below is held by a transaction neither
     // erasure can be scheduled inside.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     try {
       // What each assertion below pins, because it is not the obvious split.
       // The notification assertion passes EVEN WITH THE ABORT REMOVED, and
@@ -2056,7 +2057,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
  * CAS: that writes `ScheduleRule`, which no sweep touches.
  */
 describe('deleteTeacherAccount serialises against a claim in progress (#315)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-claim-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2196,7 +2197,7 @@ describe('deleteTeacherAccount serialises against a claim in progress (#315)', (
  * than an inference from the `ct` one.
  */
 describe('deleteTeacherAccount serialises against a studio claim in progress (#315)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const suffix = `gdpr-studio-claim-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   let teacherId: string;
   let accountId: string;
@@ -2297,7 +2298,7 @@ describe('deleteTeacherAccount serialises against a studio claim in progress (#3
 });
 
 describe('the erasure takes the Student row before any Class row (#183)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
 
   afterAll(async () => {
     await prisma.$disconnect();
@@ -2915,7 +2916,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
  * lock (#758)").
  */
 describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
 
   afterAll(async () => {
     await prisma.$disconnect();
@@ -3186,7 +3187,7 @@ describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
  * each, chosen by when the parked delete is released.
  */
 describe('the archive escape against a student erasure ends in an abort, not an unheld delete', () => {
-  const prisma = new PrismaClient();
+  const prisma = createPrismaClient();
   const DAY = 24 * 60 * 60 * 1000;
 
   afterAll(async () => {

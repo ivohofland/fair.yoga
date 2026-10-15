@@ -77,7 +77,6 @@
  * carries the per-file figures.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -99,8 +98,9 @@ import {
 } from './class-template-lifecycle';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // PREFIXED rather than left as a bare clock read: this file shares one test
 // database with `class-generator.test.ts`, which it was split from, and with
 // its serial tier-mates, and they all mint their fixtures from a clock value,
@@ -861,7 +861,7 @@ describe('the class generator under staged lock contention (DB)', () => {
       // calls that date free, and the generator's own insert then parks on the
       // holder's pending unique-index entry and loses the race when the holder
       // commits — the same lever the #164 resume tests use.
-      const holder = new PrismaClient();
+      const holder = createPrismaClient();
       let release!: () => void;
       let collided!: () => void;
       const released = new Promise<void>((r) => { release = r; });
@@ -963,7 +963,7 @@ describe('the class generator under staged lock contention (DB)', () => {
       const dates = candidates(now);
       const collide = dates[1]!;
 
-      const holder = new PrismaClient();
+      const holder = createPrismaClient();
       let release!: () => void;
       let collided!: () => void;
       const released = new Promise<void>((r) => { release = r; });
@@ -1166,7 +1166,7 @@ describe('the class generator under staged lock contention (DB)', () => {
       holderError: unknown;
     }> {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
-      const holder = new PrismaClient();
+      const holder = createPrismaClient();
       let release!: () => void;
       let collided!: () => void;
       const released = new Promise<void>((r) => { release = r; });
@@ -1344,7 +1344,7 @@ describe('the class generator under staged lock contention (DB)', () => {
         const dates = candidates(now);
         for (const d of dates.slice(0, 3)) await createClassFixture(prisma, classRow(d));
 
-        const holder = new PrismaClient();
+        const holder = createPrismaClient();
         let release!: () => void;
         let collided!: () => void;
         const released = new Promise<void>((r) => {
@@ -1481,7 +1481,7 @@ describe('the class generator under staged lock contention (DB)', () => {
           include: { scheduleRule: true },
         });
 
-        const holder = new PrismaClient();
+        const holder = createPrismaClient();
         let release!: () => void;
         const released = new Promise<void>((r) => {
           release = r;

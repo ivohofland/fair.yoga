@@ -7,12 +7,13 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { revokePasskeyByLink } from './passkey-revoke';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const accountIds: string[] = [];
 

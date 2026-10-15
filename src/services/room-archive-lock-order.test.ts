@@ -36,13 +36,13 @@
  * this serial file rather than the parallel tier.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived } from './room-archive';
 import { pauseOrResumeTemplate } from './class-template-lifecycle';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // `ral-` distinguishes this file's rows from `room-archive.test.ts`'s (`ra-`)
 // and `room-archive-doors.test.ts`'s, so each file's cleanup sweeps only its
 // own.
@@ -84,7 +84,7 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
    * `body` now cannot start until the `FOR UPDATE` has actually landed.
    */
   async function withHeldChild<T>(templateId: string, body: () => Promise<T>): Promise<T> {
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     await holder.$connect();
     let acquired!: () => void;
     let release!: () => void;
@@ -192,7 +192,7 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
     const cls = await addClass(f, 'draft');
-    const prober = new PrismaClient();
+    const prober = createPrismaClient();
     await prober.$connect();
 
     try {
@@ -244,7 +244,7 @@ describe('setTeacherRoomArchived — the mid-request resume race (issue 272)', (
   it('answers busy when the archive already holds the child row', async () => {
     const f = await makeFixture();
     const tpl = await addTemplate(f, { isActive: false, isArchived: false });
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     await holder.$connect();
     let acquired!: () => void;
     let release!: () => void;
@@ -331,7 +331,7 @@ describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () =
    * describe's `ClassTemplate`-specific literal SQL for no reader's benefit.
    */
   async function withHeldClassRow<T>(classId: string, body: () => Promise<T>): Promise<T> {
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     await holder.$connect();
     let acquired!: () => void;
     let release!: () => void;

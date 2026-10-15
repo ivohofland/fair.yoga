@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
 import { MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT, savePushSubscription } from './push-subscriptions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const accountIds: string[] = [];
 
