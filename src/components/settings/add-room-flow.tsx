@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { RoomCitySearchResult, RoomResult } from '@/lib/room-search';
 import { RoomSearchStep } from './room-search-step';
 import { RoomSettingsStep } from './room-settings-step';

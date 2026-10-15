@@ -24,7 +24,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import { bankAccountDataSelect } from '@/lib/payment-methods';

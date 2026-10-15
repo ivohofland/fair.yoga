@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { SpotFreedError } from '@/services/waitlist';
 

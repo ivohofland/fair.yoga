@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { inviteContact } from '@/services/invitations';

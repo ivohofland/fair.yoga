@@ -1,4 +1,4 @@
-import type { CalendarEntry, Class, TeacherRoom, Room } from '@prisma/client';
+import type { CalendarEntry, Class, TeacherRoom, Room } from '@/lib/prisma-client';
 import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { RegistrationProgress } from '@/components/ui/registration-progress';

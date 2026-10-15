@@ -23,7 +23,7 @@
  * class starts; whether it can still be resolved depends on the class's status,
  * which is the caller's business, not this module's.
  */
-import type { WaitlistStatus } from '@prisma/client';
+import type { WaitlistStatus } from '@/lib/prisma-client';
 
 /**
  * Every status, and what it says about the student's standing in the queue.

@@ -1,5 +1,5 @@
 import { NextRequest, type NextResponse } from 'next/server';
-import type { RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@/lib/prisma-client';
 import { lockClassRow } from '@/lib/db-locks';
 import { prisma } from '@/lib/db';
 import {

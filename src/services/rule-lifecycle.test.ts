@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
-import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
+import type { ClassFamily, ClassTemplate, Prisma, StudioClassTemplate } from '@/lib/prisma-client';
 import {
   archiveOrUnarchiveRule,
   pauseOrResumeRule,

@@ -1,6 +1,6 @@
 'use client';
 
-import type { Currency, PaymentStatus } from '@prisma/client';
+import type { Currency, PaymentStatus } from '@/lib/prisma-client';
 import { ListRow } from '@/components/ui/list-row';
 import { formatMoney, paymentStateText } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';

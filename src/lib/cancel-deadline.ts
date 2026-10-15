@@ -1,4 +1,4 @@
-import type { CancelDeadline, WaitlistStatus } from '@prisma/client';
+import type { CancelDeadline, WaitlistStatus } from '@/lib/prisma-client';
 
 /** Maps CancelDeadline enum to hours before class start. */
 export const DEADLINE_HOURS: Record<CancelDeadline, number> = {

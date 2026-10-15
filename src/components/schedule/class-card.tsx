@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import type { CalendarEntry, Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@prisma/client';
+import type { CalendarEntry, Class, TeacherRoom, Room, StudioClass, PaymentStatus } from '@/lib/prisma-client';
 import { Card } from '@/components/ui/card';
 import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant, type BadgeVariant } from '@/components/ui/status-badge';
 import { RegistrationProgress, RegistrationProgressSkeleton } from '@/components/ui/registration-progress';

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 
 const sendPasskeyAddedEmail = vi.hoisted(() => vi.fn<(to: string, addedAt: Date, revokeUrl?: string | null) => Promise<void>>());

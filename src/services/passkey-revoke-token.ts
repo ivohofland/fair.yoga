@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 
 /** How long a passkey-added email's "This wasn't me" link works. */

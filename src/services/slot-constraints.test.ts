@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';

@@ -1,7 +1,7 @@
 import { estimateTierPrices, estimateAttendanceSpread, type TierPrices, type AttendanceSpread } from '@/lib/tier-estimates';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import type { IncomeTier } from '@/lib/tiers';
-import type { RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@/lib/prisma-client';
 
 export type PriceLineResult =
   | { kind: 'personal'; spread: AttendanceSpread }

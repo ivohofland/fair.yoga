@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { NotificationType } from '@prisma/client';
+import { NotificationType } from '@/lib/prisma-client';
 import {
   NOTIFICATION_RETENTION_DAYS,
   SHORT_RETENTION_DAYS,

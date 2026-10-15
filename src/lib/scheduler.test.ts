@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, onTestFinished, afterEach, type Mock } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { log } from './log';
 import { beginShutdown } from './shutdown';
 import type { NoneOf } from './type-pins';

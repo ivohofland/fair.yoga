@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Notification, RecipientType } from '@prisma/client';
+import type { Notification, RecipientType } from '@/lib/prisma-client';
 import { EmptyState } from '@/components/ui/empty-state';
 import { listRowClass } from '@/components/ui/list-row';
 import { LIST_ROOT, ROW_FRAME, ROW_INSET } from './notification-list-skeleton';

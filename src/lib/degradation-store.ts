@@ -1,5 +1,5 @@
 import 'server-only';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 
 export interface DegradationWrite {
   readonly code: string;

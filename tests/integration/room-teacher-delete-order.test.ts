@@ -8,7 +8,7 @@
  * needing a separate cascade case.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { uniqueSuffix } from '../helpers';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import { createPrismaClient } from '@/lib/prisma-client';

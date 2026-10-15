@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { Input } from '@/components/ui/input';

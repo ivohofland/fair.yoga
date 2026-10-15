@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { ROOM_SEARCH_SELECT } from '@/lib/room-projection';
 import { ROOM_CITY_SEARCH_LIMIT, type RoomCitySearchResult, type RoomResult } from '@/lib/room-search';
 

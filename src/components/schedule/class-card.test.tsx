@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@/lib/prisma-client';
 import {
   ClassCard,
   ClassCardSkeleton,
@@ -47,7 +47,7 @@ function studioRow(overrides?: { cancelled?: boolean; studentCount?: number | nu
     location: 'Studio Zen',
     currency: 'EUR' as const,
     studentCount: overrides?.studentCount ?? null,
-    hourlyRate: new Decimal(50),
+    hourlyRate: new Prisma.Decimal(50),
     createdAt: AT,
     updatedAt: AT,
   };

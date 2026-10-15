@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import type { OnboardingStep } from '@prisma/client';
+import type { OnboardingStep } from '@/lib/prisma-client';
 import { QuietPostButton } from '@/components/ui/quiet-post-button';
 
 interface OnboardingSkipButtonProps {

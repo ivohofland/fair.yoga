@@ -24,8 +24,8 @@
  * value-import it.
  */
 
-import { Prisma } from '@prisma/client';
-import type { ClassFamily, Currency, PrismaClient, ScheduleRule } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { ClassFamily, Currency, PrismaClient, ScheduleRule } from '@/lib/prisma-client';
 import { spansOverlap } from '@/lib/generation';
 import type { GenerationCaller, GenerationResult, SkippedSlot } from '@/lib/generation';
 import { probeOverlappingCandidates } from '@/lib/entry-conflict';

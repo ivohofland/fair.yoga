@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { resolvePaymentBreakdown, type ResolvePaymentBreakdownInput } from './payment-breakdown';
 
 const d = (value: string) => new Prisma.Decimal(value);

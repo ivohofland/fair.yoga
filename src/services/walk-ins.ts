@@ -14,7 +14,7 @@
  * `resolveInvitationOnLink` is never called here: it deletes the block, and a
  * teacher's act must not lift a student's refusal.
  */
-import type { InvitationStatus, Prisma } from '@prisma/client';
+import type { InvitationStatus, Prisma } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { requireNormalised, type createInvitationSchema } from '@/lib/schemas';
 import { isErasedAddress } from '@/lib/erased-address';

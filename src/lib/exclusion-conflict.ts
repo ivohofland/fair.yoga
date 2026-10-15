@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 
 /**
  * True when `err` is a PostgreSQL 23P01 raised by the exclusion constraint

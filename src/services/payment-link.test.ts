@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { Prisma, type PayoutChangeEvent } from '@prisma/client';
+import { Prisma, type PayoutChangeEvent } from '@/lib/prisma-client';
 import { savePaymentLink, removePaymentLink } from './payment-link';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';

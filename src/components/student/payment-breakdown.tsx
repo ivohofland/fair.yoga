@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { formatDayHeader, formatMoneyCents } from '@/lib/format';
 import type { PaymentBreakdownLines } from '@/lib/payment-breakdown';
 

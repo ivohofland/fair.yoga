@@ -49,7 +49,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { wallSlotAt } from '../../tests/class-fixtures';
 import { lockClassRow } from '@/lib/db-locks';

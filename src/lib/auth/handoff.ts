@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
+import type { PrismaClient, MagicLinkPurpose } from '@/lib/prisma-client';
 import { hashToken, consumeTokenRow } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { log } from '@/lib/log';

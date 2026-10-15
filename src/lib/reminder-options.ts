@@ -1,4 +1,4 @@
-import type { ReminderChannel, ReminderTiming } from '@prisma/client';
+import type { ReminderChannel, ReminderTiming } from '@/lib/prisma-client';
 import type { NoneOf } from './type-pins';
 
 export const REMINDER_TIMING_OPTIONS = [

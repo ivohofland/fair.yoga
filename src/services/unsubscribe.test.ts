@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { erasedAddress } from '@/lib/erased-address';
 import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
 import { invitationSubject } from '@/lib/unsubscribe-token';

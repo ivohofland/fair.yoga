@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { Currency, type TeacherBankAccount } from '@prisma/client';
+import { Currency, type TeacherBankAccount } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import {

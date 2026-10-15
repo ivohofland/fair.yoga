@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser, TeacherSession } from '../types';

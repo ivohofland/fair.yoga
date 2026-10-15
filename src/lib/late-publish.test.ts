@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { AutoCancelCheck, CancelDeadline } from '@prisma/client';
+import type { AutoCancelCheck, CancelDeadline } from '@/lib/prisma-client';
 import { cancelDeadlineInstant } from '@/services/waitlist';
 import { DEADLINE_HOURS, isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { CANCEL_CHECK_HOURS, MAX_CANCEL_CHECK_HOURS } from '@/lib/cancel-check';

@@ -19,8 +19,8 @@
  * Each test file passes its own `prefix` so its afterAll sweep cannot delete
  * another file's rows.
  */
-import type { PrismaClient } from '@prisma/client';
-import { Prisma } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from './class-fixtures';

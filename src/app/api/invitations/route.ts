@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { respondOk, requireTeacher, isErrorResponse, withErrorHandler } from '@/lib/api-utils';
 import type { TeacherFacingInvitationSelect } from '@/lib/contacts';

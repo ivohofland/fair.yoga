@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { PageHeader } from '@/components/layout/page-header';

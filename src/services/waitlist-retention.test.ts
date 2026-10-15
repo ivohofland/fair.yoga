@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Prisma, type PrismaClient } from '@prisma/client';
-import type { ClassStatus, WaitlistStatus } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import type { ClassStatus, WaitlistStatus } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { isTestDatabaseName } from '@/lib/worktree/identity';

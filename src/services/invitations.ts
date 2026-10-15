@@ -8,8 +8,8 @@
  * teacher already owns.
  */
 
-import { Prisma } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import type { VisibilityFlags } from '@/lib/student-visibility';
 import { withdrawWaitingEntriesForTeacher } from './waitlist';
 import { linkTeacherStudent, RosterLinkVanishedError } from './roster-link';

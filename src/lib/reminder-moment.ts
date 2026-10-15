@@ -1,4 +1,4 @@
-import type { ReminderTiming } from '@prisma/client';
+import type { ReminderTiming } from '@/lib/prisma-client';
 import { classStartInstant } from './timezone';
 import { hhmmToTime } from './time-of-day';
 

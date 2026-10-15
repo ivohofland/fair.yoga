@@ -11,7 +11,7 @@
  *   nudge, not a threat.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';

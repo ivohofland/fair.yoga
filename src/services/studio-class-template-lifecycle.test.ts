@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import {
   archiveOrUnarchiveStudioTemplate,
   pauseOrResumeStudioTemplate,

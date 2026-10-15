@@ -19,7 +19,7 @@
  * WHICH refusal can tell the closed oracle from the open one.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import type { InvitationStatus } from '@prisma/client';
+import type { InvitationStatus } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { resolveInvitationOnLink } from './link-consent';
 import { inviteContact } from './invitations';

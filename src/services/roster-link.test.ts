@@ -6,7 +6,7 @@
  * lock while a linker queues behind it.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import {
   linkTeacherStudent,

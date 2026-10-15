@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { PaymentStatus } from '@prisma/client';
+import type { PaymentStatus } from '@/lib/prisma-client';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { readUndoStatus } from '@/lib/payment-status';
 

@@ -4,7 +4,7 @@
  * tell from the defect it watches for.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { lockClassRowsOrdered, lockLiveStudent, lockStudentForErasure } from './db-locks';

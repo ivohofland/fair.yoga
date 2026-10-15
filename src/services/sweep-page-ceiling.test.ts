@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
 import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';

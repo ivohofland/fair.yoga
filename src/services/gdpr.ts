@@ -12,8 +12,8 @@
 import crypto from 'crypto';
 import { erasedAddress } from '@/lib/erased-address';
 import { DEFAULT_INCOME_TIER } from '@/lib/tiers';
-import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassStatus, WaitlistStatus } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient, ClassStatus, WaitlistStatus } from '@/lib/prisma-client';
 import type { VisibilityFlags } from '@/lib/student-visibility';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { formatDayHeader } from '@/lib/format';

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma, ClassStatus } from '@prisma/client';
+import { Prisma, ClassStatus } from '@/lib/prisma-client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';

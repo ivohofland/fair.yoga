@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, getNodeText } from '@testing-library/react';
-// The pure-JS Decimal — a component test must not pull in the query engine.
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@/lib/prisma-client';
 import { StudioTemplateList, type StudioTemplateListItem } from './studio-template-list';
 
 /**
@@ -24,7 +23,7 @@ const base = {
   startTime: '09:00',
   durationMinutes: 60,
   location: 'Yoga Studio Centrum',
-  hourlyRate: new Decimal(45),
+  hourlyRate: new Prisma.Decimal(45),
   isActive: true,
   isArchived: false,
   archivedAt: null,

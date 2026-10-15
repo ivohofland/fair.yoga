@@ -8,7 +8,7 @@
  * clause and leaves the other empty. See the mutation record at the foot.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { setTeacherRoomArchived, describeRoomBlockers } from './room-archive';
 import { pauseOrResumeTemplate } from './class-template-lifecycle';

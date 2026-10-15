@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
-import type { PaymentStatus } from '@prisma/client';
-import { Decimal } from '@prisma/client/runtime/library';
+import type { PaymentStatus } from '@/lib/prisma-client';
+import { Prisma } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { ClassList } from './class-list';
 
@@ -10,10 +10,7 @@ import { ClassList } from './class-list';
  *
  * `ClassRow` is typed as `ClassList`'s own prop element (not a hand-written
  * interface) so no assertion is needed and so a schema change breaks this
- * file rather than silently drifting from it. `Decimal` comes from
- * `@prisma/client/runtime/library`, the pure-JS decimal implementation, not
- * from `@prisma/client` itself: no engine, no database, nothing for jsdom to
- * choke on.
+ * file rather than silently drifting from it.
  *
  * Named without a `.test.` suffix on purpose — this module has no `describe`/
  * `it` of its own, so a name matching a vitest project's test-file glob
@@ -46,7 +43,7 @@ export const teacherRoom = {
   teacherId: 'teacher-1',
   roomId: 'room-1',
   capacityOverride: 12,
-  rentalRate: new Decimal(20),
+  rentalRate: new Prisma.Decimal(20),
   equipmentNotes: null,
   isArchived: false,
   createdAt: AT,
@@ -97,9 +94,9 @@ export function classRow(
     roomArchived: false,
     description: null,
     currency: 'EUR' as const,
-    roomCost: new Decimal(20),
-    minRate: new Decimal(40),
-    targetRate: new Decimal(80),
+    roomCost: new Prisma.Decimal(20),
+    minRate: new Prisma.Decimal(40),
+    targetRate: new Prisma.Decimal(80),
     minStudents: 4,
     maxStudents: 12,
     cancelDeadline: 'HOURS_24',
@@ -110,7 +107,7 @@ export function classRow(
     totalStudents: null,
     totalRevenue: null,
     vatTotal: null,
-    vatPercent: new Decimal(0),
+    vatPercent: new Prisma.Decimal(0),
     spotBroadcastAt: null,
     autoCancelDecidedAt: null,
     teacherReminderSentAt: null,

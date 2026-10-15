@@ -9,7 +9,7 @@
  * "The `TeacherStudent` row is the archive's gate".
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { archiveStudent, type ArchiveOutcome } from './student-archive';
 import { reopenPayment } from './payments';

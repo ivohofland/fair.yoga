@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { PricingPreview } from './pricing-preview';
 import { billAtLeastMinimum } from '@/lib/tier-estimates';
 import { formatMoney } from '@/lib/format';

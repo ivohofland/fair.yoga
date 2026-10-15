@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { bankAccountSchema } from '@/lib/schemas';
 import { SCHEME_FOR_CURRENCY, type BankScheme } from '@/lib/bank-details';

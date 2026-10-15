@@ -11,7 +11,7 @@
  * consume these types.
  */
 
-import type { RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@/lib/prisma-client';
 import type { SkipCounts } from '@/lib/generation';
 import type { LateFirstClass } from '@/lib/late-publish';
 import type { TemplateGenerationState } from '@/lib/template-selection';

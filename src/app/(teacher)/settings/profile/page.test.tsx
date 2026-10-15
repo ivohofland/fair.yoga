@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 
 const { requireTeacherSession, findUniqueOrThrow } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),

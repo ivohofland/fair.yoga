@@ -9,7 +9,7 @@
  * and refuses the removal.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { deletePasskey, type DeletePasskeyOutcome } from './passkey-credentials';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';

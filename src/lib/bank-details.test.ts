@@ -1,5 +1,5 @@
 import { describe, it, expect, expectTypeOf } from 'vitest';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { bankAccountSchema } from '@/lib/schemas';
 import {

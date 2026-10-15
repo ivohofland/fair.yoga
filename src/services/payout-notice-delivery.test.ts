@@ -4,7 +4,7 @@
  * the raw value whose hash the token row holds. Only the sender is mocked.
  */
 import { describe, it, expect, vi, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';

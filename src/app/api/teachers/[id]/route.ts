@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { Teacher } from '@prisma/client';
+import type { Teacher } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import {

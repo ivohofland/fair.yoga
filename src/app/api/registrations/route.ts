@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { RegistrationStatus, Student } from '@prisma/client';
+import type { RegistrationStatus, Student } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {

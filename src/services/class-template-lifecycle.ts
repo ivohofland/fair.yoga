@@ -27,8 +27,8 @@
  *     classification; the enumeration sits with each CAS.
  */
 
-import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';

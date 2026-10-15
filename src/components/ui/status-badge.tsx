@@ -1,4 +1,4 @@
-import type { ClassStatus } from '@prisma/client';
+import type { ClassStatus } from '@/lib/prisma-client';
 import { surfaceFill, type SkeletonSurface } from '@/components/ui/skeleton';
 
 export type BadgeVariant =

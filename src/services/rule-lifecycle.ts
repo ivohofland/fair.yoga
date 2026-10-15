@@ -5,8 +5,8 @@
  * which family it is holding.
  */
 
-import { Prisma } from '@prisma/client';
-import type { PrismaClient, ClassFamily, ClassTemplate, StudioClassTemplate } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient, ClassFamily, ClassTemplate, StudioClassTemplate } from '@/lib/prisma-client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { setLockTimeout } from '@/lib/db-locks';
 import { startOfLocalDay } from '@/lib/timezone';

@@ -10,7 +10,7 @@
  * is the operation and the identifiers lifted below. An error that throws
  * while being read becomes `UNSERIALIZABLE`; it is never returned raw.
  */
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
 
 type Identifiers = string | readonly string[];

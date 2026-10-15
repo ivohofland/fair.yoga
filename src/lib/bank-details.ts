@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { CURRENCY_INFO } from '@/lib/currency';
 
 export type BankDetails =

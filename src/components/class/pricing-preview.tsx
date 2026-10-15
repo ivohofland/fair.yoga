@@ -1,4 +1,4 @@
-import type { Class, Registration } from '@prisma/client';
+import type { Class, Registration } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';
 import { toIncomeTier } from '@/lib/tiers.server';

@@ -18,7 +18,7 @@
  * the cycle through the back door.
  */
 
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/lib/prisma-client';
 import type { LinkOutcome } from '@/services/roster-link';
 import { requireNormalised } from '@/lib/schemas';
 

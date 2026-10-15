@@ -1,4 +1,4 @@
-import type { ClassStatus } from '@prisma/client';
+import type { ClassStatus } from '@/lib/prisma-client';
 import { classStartInstant } from '@/lib/timezone';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';

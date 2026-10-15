@@ -5,7 +5,7 @@
  * Real database, fresh fixture per case (`tests/room-fixtures.ts`).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { switchToSharedRoom } from './room-switch';

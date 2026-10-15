@@ -9,7 +9,7 @@
  * teacher's own zone, which uses two zones far from UTC.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

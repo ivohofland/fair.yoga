@@ -1,4 +1,4 @@
-import type { TeacherRoom, Room, Currency } from '@prisma/client';
+import type { TeacherRoom, Room, Currency } from '@/lib/prisma-client';
 import { Icon } from '@/components/ui/icon';
 import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';

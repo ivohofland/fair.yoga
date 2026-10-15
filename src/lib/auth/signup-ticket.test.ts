@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { type MagicLinkPurpose } from '@prisma/client';
+import { type MagicLinkPurpose } from '@/lib/prisma-client';
 import {
   mintSignupTicket,
   peekSignupTicket,

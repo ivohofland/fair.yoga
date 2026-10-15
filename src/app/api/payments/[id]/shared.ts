@@ -1,5 +1,5 @@
 import type { NextResponse } from 'next/server';
-import { Prisma, type Payment } from '@prisma/client';
+import { Prisma, type Payment } from '@/lib/prisma-client';
 import { respondError, respondOk, respondRefusal, respondUnchanged } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { PAYMENT_GONE, type PaymentOutcome, type PaymentRefusal } from '@/services/payments';

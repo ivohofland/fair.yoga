@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { ruleSlotHolder } from './rule-slot-holder';
 import { log } from './log';
 import { createPrismaClient } from '@/lib/prisma-client';

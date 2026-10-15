@@ -1,6 +1,6 @@
 'use client';
 
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { CopyFieldList } from '@/components/student/copy-field-list';
 import { formatMoney } from '@/lib/format';
 

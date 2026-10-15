@@ -43,7 +43,7 @@
  *     comment carries why that matters (#94).
  */
 
-import type { Prisma, PrismaClient, StudioClassTemplate, ScheduleRule } from '@prisma/client';
+import type { Prisma, PrismaClient, StudioClassTemplate, ScheduleRule } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { createStudioClassTemplateSchema, updateStudioClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';

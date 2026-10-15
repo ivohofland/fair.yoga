@@ -1,4 +1,4 @@
-import type { ClassStatus } from '@prisma/client';
+import type { ClassStatus } from '@/lib/prisma-client';
 import { classStartInstant } from './timezone';
 
 interface UpcomingLedgerClass {

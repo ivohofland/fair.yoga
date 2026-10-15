@@ -1,4 +1,4 @@
-import type { Currency, PaymentStatus, PayoutChangeKind, Prisma, PrismaClient } from '@prisma/client';
+import type { Currency, PaymentStatus, PayoutChangeKind, Prisma, PrismaClient } from '@/lib/prisma-client';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import {

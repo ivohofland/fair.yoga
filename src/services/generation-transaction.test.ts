@@ -41,7 +41,7 @@
  * can see it.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { generateInstancesForTemplate } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';

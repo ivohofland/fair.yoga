@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 
 /**
  * Extracts the underlying column identifier from a raw or PostgreSQL-decompiled

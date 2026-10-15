@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { isRefusal, logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { TIER_INFO, TIER_PROMPT, type IncomeTier } from '@/lib/tiers';

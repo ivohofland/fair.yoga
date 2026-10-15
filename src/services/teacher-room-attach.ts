@@ -1,4 +1,4 @@
-import { Prisma, type TeacherRoom } from '@prisma/client';
+import { Prisma, type TeacherRoom } from '@/lib/prisma-client';
 
 /**
  * What an attach request finds when the teacher already holds a link to the

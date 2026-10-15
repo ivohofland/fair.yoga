@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { routerRefresh } from '../../../tests/setup/components';
 import { BankAccountForm, EMPTY_BANK_ACCOUNT, type BankAccountValues } from './bank-account-form';
 

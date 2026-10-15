@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { isCheckViolationOn } from './check-violation';
 
 const NAME = 'ClassTemplate_live_needs_open_room';

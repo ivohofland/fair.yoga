@@ -10,7 +10,7 @@
  * the photo upload's gate (#46)".
  */
 import { describe, it, expect, afterAll, afterEach, vi } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import * as dbLocks from '@/lib/db-locks';
 import { deleteTeacherAccount } from './gdpr';
 import { saveTeacherPhoto } from './teacher-photo';

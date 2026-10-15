@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { expect } from 'vitest';
 import { runWaitlistReconciliationTick, type SkipReason } from '@/services/waitlist-reconciliation';
 import { scopeSweep } from './scoped-sweep';

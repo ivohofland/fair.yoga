@@ -6,7 +6,7 @@
  * palette inlined (email clients ignore stylesheets).
  */
 
-import type { Currency, NotificationType, PayoutChangeKind } from '@prisma/client';
+import type { Currency, NotificationType, PayoutChangeKind } from '@/lib/prisma-client';
 import type { PayGuidance } from './payment-methods';
 import { PAUSE_TOKEN_TTL_DAYS } from '@/services/payout-pause-token';
 import {

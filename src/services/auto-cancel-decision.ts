@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/lib/prisma-client';
 import { isPastCancelCheck } from '@/lib/auto-cancel-check';
 
 const DECISION_SELECT = {

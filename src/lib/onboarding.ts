@@ -1,4 +1,4 @@
-import type { OnboardingStep } from '@prisma/client';
+import type { OnboardingStep } from '@/lib/prisma-client';
 
 /** Steps that gate retirement but carry no Skip control. */
 export type RequiredStepKey = 'room' | 'class';

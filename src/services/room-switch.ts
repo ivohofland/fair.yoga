@@ -1,4 +1,4 @@
-import { Prisma, type ClassStatus, type PrismaClient } from '@prisma/client';
+import { Prisma, type ClassStatus, type PrismaClient } from '@/lib/prisma-client';
 import { lockClassRowsOrdered, setLockTimeout, statusInList } from '@/lib/db-locks';
 import { sameRoomIdentity } from '@/lib/room-identity';
 import { log } from '@/lib/log';

@@ -34,7 +34,7 @@
  * order would go undetected.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { fixtureRun } from '../../tests/room-fixtures';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

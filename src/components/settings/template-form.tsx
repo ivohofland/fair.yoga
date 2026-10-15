@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
-import type { CancelDeadline, AutoCancelCheck, Currency } from '@prisma/client';
+import type { CancelDeadline, AutoCancelCheck, Currency } from '@/lib/prisma-client';
 import {
   CLASS_TYPE_MAX,
   DURATION_MAX_MINUTES,

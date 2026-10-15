@@ -4,7 +4,7 @@
  * are asserted by code elsewhere.
  */
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import {
   owedPhrase,
   unbilledRefusal,

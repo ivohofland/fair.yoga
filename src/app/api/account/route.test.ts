@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import type { SessionUser } from '@/lib/types';
 import { log } from '@/lib/log';
 import { ErasureLockSetError } from '@/services/gdpr';

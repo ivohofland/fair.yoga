@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import type { ClassFamily, PrismaClient } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { ClassFamily, PrismaClient } from '@/lib/prisma-client';
 import { formatDateWithYear } from './format';
 import { log } from './log';
 import { logDegraded } from './degradation';

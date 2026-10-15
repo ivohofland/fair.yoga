@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { isRecordNotFound } from '@/lib/api-errors';

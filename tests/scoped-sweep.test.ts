@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scopeSweep } from './scoped-sweep';
 import { uniqueSuffix } from './helpers';

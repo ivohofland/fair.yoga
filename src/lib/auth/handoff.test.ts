@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
-import { type PrismaClient, type Prisma } from '@prisma/client';
+import { type PrismaClient, type Prisma } from '@/lib/prisma-client';
 import { generateMagicLinkToken, hashToken } from './magic-link';
 import { hashNonce } from './origin-nonce';
 import {

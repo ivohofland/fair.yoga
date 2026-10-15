@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { type Currency, type PayoutChangeEvent } from '@prisma/client';
+import { type Currency, type PayoutChangeEvent } from '@/lib/prisma-client';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './bank-accounts';
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';

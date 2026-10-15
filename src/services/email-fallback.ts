@@ -9,7 +9,7 @@
  * 3. Email fallback (this service)
  */
 
-import type { NotificationType, PrismaClient } from '@prisma/client';
+import type { NotificationType, PrismaClient } from '@/lib/prisma-client';
 import { getUnreadForEmailFallback, claimEmailFallback } from './notifications';
 import {
   shouldEmailStudent,

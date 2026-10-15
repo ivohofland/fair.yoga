@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { BrowserContext } from '@playwright/test';
-import type { PaymentStatus } from '@prisma/client';
+import type { PaymentStatus } from '@/lib/prisma-client';
 import AxeBuilder from '@axe-core/playwright';
 import { createGuardedPrismaClient } from './prisma';
 import { accountIdOfTeacher, accountIdOfStudent } from './account-helpers';

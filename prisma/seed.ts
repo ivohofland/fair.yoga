@@ -1,4 +1,4 @@
-import { Prisma, type Currency } from '@prisma/client';
+import { Prisma, type Currency } from '@/lib/prisma-client';
 import { createPrismaClient } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { billAtLeastMinimum } from '@/lib/tier-estimates';

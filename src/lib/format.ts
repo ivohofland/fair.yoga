@@ -1,4 +1,4 @@
-import type { PaymentStatus, Currency, Prisma } from '@prisma/client';
+import type { PaymentStatus, Currency, Prisma } from '@/lib/prisma-client';
 import { CURRENCY_INFO } from '@/lib/currency';
 import { timeToHHmm } from '@/lib/time-of-day';
 import type { BirthdayDayMonth } from '@/lib/birthday';

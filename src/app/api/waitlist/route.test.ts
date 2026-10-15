@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import * as dbLocks from '@/lib/db-locks';
 import { prisma as appPrisma } from '@/lib/db';
 import { log } from '@/lib/log';

@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 
 /**
  * A client for handing a DATABASE-WIDE sweep in a test, narrowed to the

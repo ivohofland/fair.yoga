@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import type { PushTarget } from '@/lib/push/send';
 
 export type SavePushSubscriptionResult = 'created' | 'updated' | 'moved' | 'unchanged';

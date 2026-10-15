@@ -5,7 +5,7 @@
  * them bounded.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { HANDOFF_EMAIL_WINDOW_MS } from '@/lib/auth/handoff';
 
 export async function cleanupExpiredAuth(

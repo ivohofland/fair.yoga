@@ -1,5 +1,5 @@
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
-import type { ClassStatus, PaymentStatus, Prisma } from '@prisma/client';
+import type { ClassStatus, PaymentStatus, Prisma } from '@/lib/prisma-client';
 
 /** The lines of a completed class's breakdown, in whole cents. */
 export interface PaymentBreakdownLines {

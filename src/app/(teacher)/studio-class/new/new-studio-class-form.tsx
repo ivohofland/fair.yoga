@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { createStudioClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import { currencyLabel } from '@/lib/format';

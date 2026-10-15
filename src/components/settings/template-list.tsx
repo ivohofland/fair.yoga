@@ -1,6 +1,6 @@
 import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
-import type { TeacherRoom, Room } from '@prisma/client';
+import type { TeacherRoom, Room } from '@/lib/prisma-client';
 import type { ClassTemplateWithSlot } from '@/services/class-template-lifecycle';
 import { formatRoomLocation } from '@/lib/format';
 

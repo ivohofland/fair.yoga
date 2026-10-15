@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma, type Currency, type PaymentStatus } from '@prisma/client';
+import { Prisma, type Currency, type PaymentStatus } from '@/lib/prisma-client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

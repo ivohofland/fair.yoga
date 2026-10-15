@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { resolveReportedPaymentBreakdown } from './payment-breakdown.server';
 

@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect, suppressInstallPromptOn } from './fixtures';
-import type { MagicLinkPurpose } from '@prisma/client';
+import type { MagicLinkPurpose } from '@/lib/prisma-client';
 import { createGuardedPrismaClient } from './prisma';
 import crypto from 'crypto';
 import { uniqueSuffix, hashToken } from '../helpers';

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import type { PaymentStatus } from '@prisma/client';
+import type { PaymentStatus } from '@/lib/prisma-client';
 import { ClassList, ClassListSkeleton } from './class-list';
 import { type ClassRow, classRow } from './class-list-fixtures';
 

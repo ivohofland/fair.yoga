@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll, afterAll } from 'vitest';
 import type { MockInstance } from 'vitest';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { deliverInvitation } from './invitations';
 import { __resetDispatchFailureTrackingForTests, recordDispatchFailure } from '@/lib/notify-health';

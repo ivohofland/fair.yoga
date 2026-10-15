@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import type { ApiErrorCode } from '@/lib/api-error-codes';
 

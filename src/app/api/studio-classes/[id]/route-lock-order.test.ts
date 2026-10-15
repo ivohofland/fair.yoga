@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';

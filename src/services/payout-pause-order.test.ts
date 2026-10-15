@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { pausePayments } from './payout-pause';
 import { uniqueSuffix, seedSession } from '../../tests/helpers';

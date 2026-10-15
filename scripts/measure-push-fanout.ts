@@ -13,7 +13,7 @@
 // rows it created. `--conditions=react-server` makes `server-only`, which
 // `src/lib/log.ts` imports, resolve to its empty module outside Next.
 import crypto from 'crypto';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../src/lib/prisma-client';
 import { createPrismaClient } from '../src/lib/prisma-client';
 import { dispatchPushes, PUSH_WORKERS, type PushSender } from '../src/services/push-dispatch';
 import { getWorktreeIdentity } from '../src/lib/worktree/identity';

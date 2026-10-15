@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { PricingBreakdown } from './pricing-breakdown';
 
-import type { Class } from '@prisma/client';
+import type { Class } from '@/lib/prisma-client';
 
 function makeClass(overrides: Partial<Class> = {}): Class {
   return {

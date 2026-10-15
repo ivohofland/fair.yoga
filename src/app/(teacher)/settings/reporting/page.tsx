@@ -1,4 +1,4 @@
-import type { Currency, Prisma } from '@prisma/client';
+import type { Currency, Prisma } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { teacherCurrency } from '@/lib/teacher-currency.server';

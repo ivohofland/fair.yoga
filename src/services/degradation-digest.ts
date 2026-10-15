@@ -19,7 +19,7 @@
  * unhealthy on the verdict `/api/health` already reports.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { DEGRADATION_CODES, isDegradationCode } from '@/lib/degradation-codes';
 import { sendEmail } from '@/lib/email';
 import { renderDegradationDigestEmail, type DegradationDigestEntry } from '@/lib/email-templates';

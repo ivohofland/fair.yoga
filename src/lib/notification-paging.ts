@@ -1,4 +1,4 @@
-import type { Notification } from '@prisma/client';
+import type { Notification } from '@/lib/prisma-client';
 
 export const NOTIFICATION_PAGE_SIZE = 50;
 export const NOTIFICATION_MAX_PAGE_SIZE = 100;

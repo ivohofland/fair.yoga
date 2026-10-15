@@ -1,4 +1,4 @@
-import type { AutoCancelCheck, CancelDeadline } from '@prisma/client';
+import type { AutoCancelCheck, CancelDeadline } from '@/lib/prisma-client';
 import { latePublishInstants, latePublishState, type LateFirstClass } from '@/lib/late-publish';
 import { classStartInstant } from '@/lib/timezone';
 

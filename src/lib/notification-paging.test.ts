@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Notification } from '@prisma/client';
+import type { Notification } from '@/lib/prisma-client';
 import {
   decodeNotificationCursor,
   encodeNotificationCursor,

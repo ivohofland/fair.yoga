@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import type { NextRequest } from 'next/server';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';

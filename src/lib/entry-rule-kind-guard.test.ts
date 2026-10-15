@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { classifyApiError } from './api-errors';
 import { hhmmToTime } from './time-of-day';
 import { createPrismaClient } from '@/lib/prisma-client';

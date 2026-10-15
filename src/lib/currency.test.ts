@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Currency } from '@prisma/client';
+import { Currency } from '@/lib/prisma-client';
 import { CURRENCY_INFO, labelInSentence, suggestedCurrency } from './currency';
 import { CURRENCY_PREFIX } from './format';
 import { SCHEME_FOR_CURRENCY } from './bank-details';
