@@ -88,6 +88,25 @@ describe('PUT /api/teachers/[id]/bank-accounts/[currency]', () => {
     expect(body.error.message.startsWith('sortCode: ')).toBe(true);
   });
 
+  it('saves an AUD account by BSB, separators stripped', async () => {
+    const t = await makeTeacher('AUD');
+    const data = await expectApplied(await send('PUT', t.id, 'AUD', t.token, { holderName: 'A. Teacher', bankCode: '062-000', accountNumber: '1234 5678' }));
+    expect(data).toMatchObject({ currency: 'AUD', bankCode: '062000', accountNumber: '12345678', iban: null });
+  });
+
+  it.each([
+    ['INR', { bankCode: '!!', accountNumber: '123456789012' }, 'bankCode: Enter a valid IFSC.'],
+    ['CAD', { bankCode: '-', accountNumber: '1234567' }, 'bankCode: Enter a valid institution & transit.'],
+    ['MXN', { accountNumber: 'ABC' }, 'accountNumber: Enter a valid CLABE.'],
+    ['AUD', { bankCode: '062000', accountNumber: '12' }, 'accountNumber: Enter a valid account number.'],
+  ] as const)('names a %s field by the label the form shows it under', async (currency, fields, message) => {
+    const t = await makeTeacher(currency);
+    const res = await send('PUT', t.id, currency, t.token, { holderName: 'A. Teacher', ...fields });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe(message);
+  });
+
   it('names, in words, a field the currency’s scheme does not use', async () => {
     const t = await makeTeacher('GBP');
     const res = await send('PUT', t.id, 'GBP', t.token, { holderName: 'A. Teacher', iban: 'GB82WEST12345698765432' });

@@ -154,7 +154,7 @@ describe('PaymentDetails', () => {
     expect(screen.getByText('062000')).toBeInTheDocument();
     expect(screen.getByText('Account number')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy BSB' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Copy Account number' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy account number' })).toBeInTheDocument();
   });
 
   it('shows a Mexican account as its CLABE alone', () => {
@@ -162,5 +162,11 @@ describe('PaymentDetails', () => {
     expect(screen.getByText('CLABE')).toBeInTheDocument();
     expect(screen.queryByText('Account number')).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy CLABE' })).toBeInTheDocument();
+  });
+
+  it('names a worded bank-code label mid-sentence in lower case', () => {
+    renderScheme({ scheme: 'local', currency: 'BRL', bankCode: '0011234', accountNumber: '123456789' });
+    expect(screen.getByText('Bank & agency')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy bank & agency' })).toBeInTheDocument();
   });
 });

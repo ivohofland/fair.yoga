@@ -27,7 +27,7 @@ export const EMPTY_BANK_ACCOUNT = {
 
 type SchemeField = { key: Exclude<BankAccountField, 'holderName'>; label: string };
 
-/** Each fixed scheme's fields, in the order the block shows them, above the holder name. */
+/** Each scheme's fields except `local`'s (see `fieldsFor`), in the order the block shows them, above the holder name. */
 const SCHEME_FIELDS = {
   sepa: [
     { key: 'iban', label: 'IBAN' },

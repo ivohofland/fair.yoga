@@ -1,7 +1,7 @@
 'use client';
 
 import type { BankDetails } from '@/lib/bank-details';
-import { CURRENCY_INFO } from '@/lib/currency';
+import { CURRENCY_INFO, labelInSentence } from '@/lib/currency';
 import { CopyFieldList, type CopyField } from '@/components/student/copy-field-list';
 
 interface PaymentDetailsProps {
@@ -42,8 +42,8 @@ function accountFields(details: BankDetails): CopyField[] {
       return [
         ...(bankCodeLabel === null || details.bankCode === null
           ? []
-          : [{ key: bankCodeLabel, label: bankCodeLabel, shown: details.bankCode, copied: details.bankCode }]),
-        { key: accountLabel, label: accountLabel, shown: details.accountNumber, copied: details.accountNumber },
+          : [{ key: labelInSentence(bankCodeLabel), label: bankCodeLabel, shown: details.bankCode, copied: details.bankCode }]),
+        { key: labelInSentence(accountLabel), label: accountLabel, shown: details.accountNumber, copied: details.accountNumber },
       ];
     }
     default: {

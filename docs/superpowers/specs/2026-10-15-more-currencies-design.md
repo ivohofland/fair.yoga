@@ -57,7 +57,7 @@ export const CURRENCY_INFO = {
 
 `CURRENCY_PREFIX`, `SCHEME_FOR_CURRENCY` and the picker's option labels derive
 from it; their exported names and shapes stay, so call sites do not change.
-All strings are hand-written, never `Intl`, for the reason `CURRENCY_PREFIX`'s
+All strings are hand-written, never `Intl`, for the reason `CURRENCY_INFO`'s
 docblock gives (ICU output differs between server and browser).
 
 Prefixes for the new members:
@@ -102,9 +102,13 @@ bank code and what the form and the student's payment page call it:
 
 The account-field label is a second `CURRENCY_INFO` entry (`accountLabel`).
 
-**Validation (`parseBankDetails`).** Whitespace-trimmed; allowed characters
-letters, digits, spaces and dashes; `bankCode` 1–20 characters and required
-exactly when `bankCodeLabel` is non-null; `accountNumber` 4–34 characters. A
+**Validation (`parseBankDetails`).** Allowed characters letters, digits,
+spaces and dashes; spaces and dashes are stripped before storing, so a copied
+value pastes whole; each value holds at least one digit; `bankCode` 1–20
+characters once stripped, uppercased, and required exactly when
+`bankCodeLabel` is non-null; `accountNumber` 4–34 characters once stripped,
+case kept. A refusal names the field by its label ("Enter a valid IFSC.",
+"Enter a valid CLABE."). A
 `bankCode` sent for NZD or MXN, or any `iban`/`bic`/`sortCode`/
 `routingNumber`, is `field_not_in_scheme`. New errors:
 `bank_code_invalid` (field `bankCode`); `account_number_invalid` is reused.
@@ -130,8 +134,8 @@ own transaction; applying `local_bank_scheme` after `add_currencies` succeeded.
 **Consumers.** `BankAccountData`, `bankAccountDataSelect` and
 `BankDetailsInput` gain `bankCode` (the `_bankAccountDataIsEveryDetailColumn`
 tether enforces it). `bank-account-form.tsx` renders the code field when the
-currency has a label. `payment-details.tsx` shows the code and account under
-their labels. `maskedIdentifier` already falls back to `accountNumber`. The
+currency has a label. `payment-details.tsx` and the resume-payments screen show the code and
+account under their labels. `maskedIdentifier` already falls back to `accountNumber`. The
 GDPR export reads `bankAccountDataSelect`, so it carries `bankCode` without
 further change; its test's expected rows gain `bankCode: null`.
 
@@ -167,7 +171,7 @@ country's main zones (`Australia/`, `Pacific/Auckland`, `Asia/Kolkata`,
 Brazilian and Mexican ones, `Africa/Johannesburg`, `Europe/Warsaw`,
 `Europe/Prague`, `Asia/Jerusalem`, `Asia/Dubai`, and the existing seven's).
 A zone two currencies could claim (none among these) would return the first in
-`CURRENCIES` order.
+`CURRENCY_INFO` key order.
 
 ## Testing
 

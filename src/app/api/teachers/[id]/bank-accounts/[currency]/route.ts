@@ -9,6 +9,7 @@ import {
 import { bankAccountSchema } from '@/lib/schemas';
 import { formatIssues } from '@/lib/validation-message';
 import type { BankDetailsInput } from '@/lib/bank-details';
+import { CURRENCY_INFO, labelInSentence } from '@/lib/currency';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from '@/services/bank-accounts';
 import { deliverPayoutChangedNotice } from '@/services/payout-notice';
 
@@ -22,11 +23,12 @@ const INVALID_MESSAGES = {
   bic_invalid: 'Enter a valid BIC.',
   bic_required: 'Add the BIC. This IBAN is from outside the EEA.',
   sort_code_invalid: 'Enter a six-digit sort code.',
-  account_number_invalid: 'Enter a valid account number.',
   routing_number_invalid: 'Enter a valid nine-digit routing number.',
-  bank_code_invalid: 'Enter a valid bank code.',
   holder_required: 'Enter the account holder’s name.',
-} as const satisfies Record<Exclude<BankAccountFailure['error'], 'field_not_in_scheme'>, string>;
+} as const satisfies Record<
+  Exclude<BankAccountFailure['error'], 'field_not_in_scheme' | 'account_number_invalid' | 'bank_code_invalid'>,
+  string
+>;
 
 /** Each scheme field in words, as a sentence names it. */
 const FIELD_IN_WORDS = {
@@ -38,18 +40,27 @@ const FIELD_IN_WORDS = {
   bankCode: 'a bank code',
 } as const satisfies Record<keyof BankDetailsInput, string>;
 
-function invalidMessage(failure: BankAccountFailure): string {
-  return failure.error === 'field_not_in_scheme'
-    ? `Accounts in this currency don’t use ${FIELD_IN_WORDS[failure.field]}.`
-    : INVALID_MESSAGES[failure.error];
+/** The message for `failure`; an account or bank-code refusal names the field by `currency`'s label for it. */
+function invalidMessage(failure: BankAccountFailure, currency: Currency): string {
+  const { accountLabel, bankCodeLabel } = CURRENCY_INFO[currency];
+  switch (failure.error) {
+    case 'field_not_in_scheme':
+      return `Accounts in this currency don’t use ${FIELD_IN_WORDS[failure.field]}.`;
+    case 'account_number_invalid':
+      return `Enter a valid ${labelInSentence(accountLabel)}.`;
+    case 'bank_code_invalid':
+      return `Enter a valid ${labelInSentence(bankCodeLabel ?? 'bank code')}.`;
+    default:
+      return INVALID_MESSAGES[failure.error];
+  }
 }
 
 /**
  * The 400 for an invalid field, in `parseBody`'s `path: message` shape so a
  * client reads the field back the same way. `bic_required` carries its code.
  */
-function respondInvalid(failure: BankAccountFailure): NextResponse {
-  const message = formatIssues([{ path: [failure.field], message: invalidMessage(failure) }]);
+function respondInvalid(failure: BankAccountFailure, currency: Currency): NextResponse {
+  const message = formatIssues([{ path: [failure.field], message: invalidMessage(failure, currency) }]);
   return failure.error === 'bic_required'
     ? respondError(message, 400, 'BIC_REQUIRED')
     : respondError(message, 400);
@@ -84,7 +95,7 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
     case 'unchanged':
       return respondUnchanged<TeacherBankAccount>(outcome.account);
     case 'invalid':
-      return respondInvalid(outcome.failure);
+      return respondInvalid(outcome.failure, target.currency);
     case 'teacher_gone':
       log.info({ teacherId: target.id }, 'bank account save refused: the teacher was erased');
       return respondError('Teacher not found', 404);
