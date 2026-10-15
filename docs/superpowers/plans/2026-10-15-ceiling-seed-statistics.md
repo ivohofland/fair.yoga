@@ -1,9 +1,9 @@
 # Ceiling tests analyze their seed (#891) — plan
 
 **Goal.** `src/services/sweep-page-ceiling.test.ts` stops timing out in CI's
-`unit-sweeps` step. The cause has been measured rather than inferred (method
-and numbers in `docs/test-database.md` §7 and the PR body), and the fix is
-the one that cause calls for, not a longer timeout.
+`unit-sweeps` step. The mechanism is measured, and so is what is still open
+(`docs/test-database.md` §7 and the PR body). The fix targets that
+mechanism, not the timeout.
 
 **Premise check.** The issue reads the failure as a one-off stall in
 `readDuePayments`, and its first candidate is a bad plan on freshly
@@ -12,28 +12,35 @@ the one that cause calls for, not a longer timeout.
 - It is not one test. The same file failed the same way in runs 38164592733
   (`readDuePayments`, 5 s test timeout) and 38365523733 (`reconcileWaitlists`,
   5 s test timeout and then a 10 s hook timeout). About 50 s later in that
-  run, `waitlist-position-migration.test.ts` timed out on its table lock too.
+  run, `waitlist-position-migration.test.ts` timed out too, and nothing
+  recorded why.
 - It is not a lock wait. A watchdog on the ceiling clients, run as 40
   sweep-tier passes on CI runners, caught one stall: the `reconcileWaitlists`
   candidate `groupBy` had been `state = active` with no wait event for 20+ s.
   The backend was computing the whole time.
-- It is a plan chosen from statistics older than the seed. Locally, with
+- The plan is chosen from statistics older than the seed. Locally, with
   statistics from before the seed, that query runs as a nested loop that
   re-scans live `CalendarEntry` rows for each of the 1000 waitlist rows:
   500,500 rows removed by the join filter, 974 ms. After `ANALYZE` the same
   query runs as hash joins in 3.4 ms. The issue's candidate was right in kind.
+  The magnitude is open: 974 ms locally against 20 s on CI, and the 20 s plan
+  was not captured. `readDuePayments`, the test that failed most, was never
+  caught stalling. That it shares the mechanism is an inference.
 
 **Direction.** Refresh planner statistics after each ceiling seed. Rejected:
 raising the timeout, which hides a 20 s plan; analyzing a per-describe table
 list, which a future describe that seeds a new table would silently miss.
 Whole-database `ANALYZE` has no list to drift, and the test database is small.
 
-## Task 1 — `analyzeSeed`, called at the end of every ceiling `beforeAll`
+## Task 1 — `analyzeSeed` before every ceiling read
 
 - `tests/stack-ceiling.ts`: export `analyzeSeed(db)`, which runs a
   whole-database `ANALYZE`. Its docblock says when to call it and links §7.
-- `src/services/sweep-page-ceiling.test.ts`: every `beforeAll` ends with
-  `await analyzeSeed(prisma)`, after its last write.
+- `src/services/sweep-page-ceiling.test.ts`: call it after each describe's
+  seed and before its read. Built as a call at the end of every `beforeAll`.
+  The whole-branch review moved it to one file-level `beforeEach`, which
+  vitest runs after each describe's `beforeAll`, so a future describe cannot
+  leave it out.
 - Verify: the ceiling file passes locally. On CI, with the call skipped and
   with it in place, compare per-test duration distributions across repeated
   sweep-tier passes (temporary diagnostic workflow, dropped before the PR).

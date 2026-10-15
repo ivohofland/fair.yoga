@@ -6,7 +6,7 @@
  * parent set and asserts the read completes on the lowered stack. The design
  * is `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import crypto from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
@@ -35,6 +35,12 @@ const prisma = new PrismaClient();
 
 afterAll(async () => {
   await prisma.$disconnect();
+});
+
+// After each describe's `beforeAll` seed, before its read: the read must be
+// planned for the rows it was given (`docs/test-database.md` §7).
+beforeEach(async () => {
+  await analyzeSeed(prisma);
 });
 
 /**
@@ -80,7 +86,6 @@ describe('ceiling harness', () => {
       minStudents: 1,
       maxStudents: 10,
     }));
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -148,7 +153,6 @@ describe('autoCancelClasses', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -197,7 +201,6 @@ describe('autoTransitionToInProgress', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -235,7 +238,6 @@ describe('autoCompleteClasses', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -302,7 +304,6 @@ describe('reconcileWaitlists', () => {
         status: 'waiting' as const,
       })),
     });
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -416,7 +417,6 @@ describe('readGenerationCandidates', () => {
       });
     });
     await prisma.classTemplate.createMany({ data: templates });
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -465,7 +465,6 @@ describe('readStudioGenerationCandidates', () => {
       };
     });
     await prisma.studioClassTemplate.createMany({ data: templates });
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -548,7 +547,6 @@ describe('getUnreadForEmailFallback', () => {
         emailSent: false,
       },
     });
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -652,7 +650,6 @@ describe('readDuePayments', () => {
         amount: 1,
       },
     });
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -714,7 +711,6 @@ describe('processClassReminders', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
-    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
