@@ -430,3 +430,60 @@ values:
 The census reports; it does not gate. The guard is the gate: an unguarded
 `test` row whose `beforeAll` failed now throws in its `afterAll` instead of
 wiping a table.
+
+## 7. Planner statistics after a bulk seed (#891)
+
+A test that bulk-seeds rows and then runs a database-wide read is planned
+from whatever statistics the tables last had. Autovacuum wakes about once a
+minute (`autovacuum_naptime`) and analyzes a table once enough of it has
+changed, so a read that runs inside that window is often planned for the
+tables as they were before the seed: near empty. For the ceiling tests (`src/services/sweep-page-ceiling.test.ts`,
+1000-row seeds) that plan can grow with the square of the seed. They call
+`analyzeSeed` (`tests/stack-ceiling.ts`) at the end of every `beforeAll`, so
+each read is planned for the rows it was actually given.
+
+**What it looked like.** A test timed out at 5 s in CI's `unit-sweeps` step,
+in a different ceiling test each time: `readDuePayments` (runs 38164592733
+and 38691856080), `reconcileWaitlists` (38365523733). In 38365523733 the
+test's own `afterAll` timed out too, and so, about 50 s later, did a later
+file's (`waitlist-position-migration.test.ts`, which takes a table lock on
+`WaitlistEntry`). That is what a session left running mid-transaction would
+do, though that run recorded nothing that names the blocker. A watchdog on the ceiling clients (temporary; method
+below) caught one occurrence: the `reconcileWaitlists` candidate `groupBy`
+had been `state = active` with no `wait_event` for over 20 s. That is not a
+lock wait. The backend was executing the whole time.
+
+**The plan, measured locally.** Run on the ceiling seed with statistics
+analyzed before it, that `groupBy` became a nested loop that re-scans live
+`CalendarEntry` rows once per waitlist row. `EXPLAIN (ANALYZE)` reported 1000
+loops returning about 502 rows each, 500,500 of them removed by the join
+filter, and 974 ms. After `ANALYZE`, the same query on the same rows ran
+as hash joins in 3.4 ms. Reproduce it on a worktree test database: disable
+autovacuum on its tables, `ANALYZE` while the seed tables are empty, seed,
+then `EXPLAIN (ANALYZE)` the query.
+
+**On CI, before and after.** The full `unit-sweeps` tier, five passes per
+job on GitHub's runners, with the per-test durations of the ceiling file
+recorded (2026-10-15):
+
+| | passes | timeouts | `reconcileWaitlists` max | `autoCompleteClasses` max | `readDuePayments` max |
+|---|---|---|---|---|---|
+| without `analyzeSeed` | 40 + 25 | 1 (the stall above) | 1746 ms | 1060 ms | 303 ms |
+| with `analyzeSeed` | 25 | 0 | 454 ms | 276 ms | 170 ms |
+
+The 40 passes logged only the stall itself and no per-test durations, so the
+max columns come from the 25-pass arms. The 20 s instance's exact plan was not
+captured. `auto_explain` (threshold 1 s) was on for the second round, and no
+single ceiling statement crossed the threshold in it.
+
+**Why not a longer timeout.** The failing tests run on vitest's default 5 s.
+Raising it would turn a 20 s CPU-bound plan into a slow pass, and would leave
+the cascade in place: a session stuck mid-transaction holds its locks past its
+own test and fails the next one.
+
+**When to call it.** Any test that writes hundreds of rows and then runs a
+read whose plan depends on how many rows there are. Joins and `groupBy` are
+the obvious cases, and anything database-wide. Whole-database `ANALYZE`, not a
+per-table list, so that a later seed that touches a new table cannot be
+forgotten. On a worktree test database it measured 84 ms (34 tables, three
+runs), so the ceiling file's ten calls cost about a second.
