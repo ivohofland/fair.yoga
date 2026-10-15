@@ -574,7 +574,8 @@ children of more than one class. `deleteTeacherAccount`'s
 `createBulkNotifications` does, inside the per-class loop, on the class whose
 CAS it has just taken, so the `FOR KEY SHARE` lands on a row it already holds a
 stronger lock on, in the same ascending sequence. `resumePayments`
-(`payout-resume.ts`) does too, and with no order — see its row below. Every
+(`payout-resume.ts`) does too, in ascending class id — see its row and the
+paragraph below it. Every
 other child-insert in `src/` is scoped to one class per transaction.
 
 That was checked across every `createBulkNotifications` call site, and "every"
@@ -605,7 +606,7 @@ Against each, the class its notifications carry:
 | `POST /api/announcements` | at most one — the class of a class-scoped send; an all-students or custom send names none (#196, #48) |
 | `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
-| `resumePayments` (`payout-resume.ts`) | **many** — one reminder per owed payment, each carrying its completed class as `relatedClassId` |
+| `resumePayments` (`payout-resume.ts`) | **many** — one reminder per owed payment, each carrying its completed class as `relatedClassId`, in ascending class id (the owed-payment read's `orderBy`) |
 
 > **Three `createBulkNotifications` sites take no `Class` row lock.**
 > `sendPaymentReminder` (`payments.ts`) and `sendPaymentReminders`
@@ -621,20 +622,33 @@ Against each, the class its notifications carry:
 > `FOR UPDATE`, exactly as `deleteTeacherAccount`'s named exception above. One
 > class per transaction, so it adds no edge.
 
-**`resumePayments` takes `FOR KEY SHARE` on many classes in no order.** Its
-reminders carry `relatedClassId`, and their `createMany` takes the FK's
-`FOR KEY SHARE` on each owed payment's class in the order the payments were
-read — not ascending. Its classes are completed (a `Payment` exists only after
-`completeClass`), which keeps it clear of every ordered `FOR UPDATE` locker
-but one: `deleteStudentAccount`'s pre-lock covers every class the student holds
-a `WaitlistEntry` of ANY status on, so a `claimed` or `promoted` entry on a
-completed class is in it. A student who owes this teacher on two such classes,
-erased while the teacher resumes payments, can therefore close a cycle — the
-erasure holding the lower class `FOR UPDATE` and waiting on the higher, the
-resume holding the higher `FOR KEY SHARE` and waiting on the lower. Postgres
-detects it and aborts one side; nothing lands unheld. Reasoned, not pinned by
-a test; reading the owed payments in ascending class order would remove the
-edge.
+**`resumePayments` takes `FOR KEY SHARE` on many classes in ascending class
+id.** Its reminders carry `relatedClassId`, and their `createMany` takes the
+FK's `FOR KEY SHARE` on each owed payment's class in the order the payments
+were read, which is ascending class id (`orderBy: { registration: { classId:
+'asc' } }`) — the direction of every ordered `FOR UPDATE` locker. Its classes
+are completed (a `Payment` exists only after `completeClass`), which leaves one
+ordered locker it can meet: `deleteStudentAccount`'s pre-lock covers every
+class the student holds a `WaitlistEntry` of ANY status on, so a `claimed` or
+`promoted` entry on a completed class is in it. Two lockers both ascending
+cannot cycle through that set. Taken in the other direction a cycle closes: a
+student who owes this teacher on two such classes, erased while the teacher
+resumes payments, has the erasure holding the lower class `FOR UPDATE` and
+waiting on the higher, and the resume holding the higher `FOR KEY SHARE` and
+waiting on the lower.
+`src/services/payout-resume-lock-order.test.ts` stages exactly that: a third
+connection holds the higher class, so the erasure stops between its two locks,
+the resume parks behind the erasure, and the test asserts both complete. With
+the read ordered descending it fails every run with `40P01` (`deadlock
+detected`, "Process N waits for ShareLock on transaction X; blocked by process
+M."); with the `orderBy` removed it fails only on the runs where the planner
+happens to return the higher class first.
+
+The residual is the one the ordering does not touch: the resume may write its
+reminder after the erasure has committed, so a reminder can name an erased
+student. That is the same accepted residual as an announcement send, described
+under "A send that read before the erasure and commits after the scrub writes
+the id back".
 
 **`archiveOrUnarchiveTemplate` is the other site above that notifies across
 classes in one transaction** (#112): it notifies the waiting students of every
@@ -2060,7 +2074,7 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   teacher's `PayoutPauseToken` rows; a read of its outstanding `Payment` rows,
   an `UPDATE` of their `reminderSentAt`, and `Notification` inserts, each of
   whose foreign-key check takes `FOR KEY SHARE` on its `Class`
-  (`relatedClassId`). The `Payment` `UPDATE` can wait on a holder of one of
+  (`relatedClassId`) in ascending class id. The `Payment` `UPDATE` can wait on a holder of one of
   those rows, such as a mark-paid in flight, and a `Notification` insert on a
   `Class` `FOR UPDATE` holder (`completeClass` through `lockClassRow`,
   `updateClass`); none of those holders waits on `Teacher`, since each that
@@ -2069,7 +2083,10 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   bank-account or link save in flight finishes first, and the resume reads
   what it wrote. `src/services/payout-resume-lock-order.test.ts` holds a
   save's lock and its account change on a second connection, and asserts the
-  resume parks and then answers `details_changed`. A resume arriving during an
+  resume parks and then answers `details_changed`; its second case holds the
+  higher of two completed classes against a student erasure and asserts the
+  resume queues behind the erasure instead of deadlocking on the classes they
+  share. A resume arriving during an
   erasure waits, finds the row erased and answers 404.
 - The passkey removal (`deletePasskey`, `src/services/passkey-credentials.ts`,
   behind `DELETE /api/auth/passkey/[id]`): a plain read of the account's live
