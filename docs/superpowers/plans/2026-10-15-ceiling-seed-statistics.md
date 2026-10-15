@@ -1,7 +1,7 @@
 # Ceiling tests analyze their seed (#891) — plan
 
 **Goal.** `src/services/sweep-page-ceiling.test.ts` stops timing out in CI's
-`unit-sweeps` step. The mechanism is measured, and so is what is still open
+`unit-sweeps` step. The mechanism is measured; what is still open is named
 (`docs/test-database.md` §7 and the PR body). The fix targets that
 mechanism, not the timeout.
 
@@ -9,8 +9,9 @@ mechanism, not the timeout.
 `readDuePayments`, and its first candidate is a bad plan on freshly
 `createMany`'d rows. Measured:
 
-- It is not one test. The same file failed the same way in runs 38164592733
-  (`readDuePayments`, 5 s test timeout) and 38365523733 (`reconcileWaitlists`,
+- It is not one run. The same file failed the same way in runs 38164592733
+  and 38691856080 (`readDuePayments`, 5 s test timeout) and 38365523733
+  (`reconcileWaitlists`,
   5 s test timeout and then a 10 s hook timeout). About 50 s later in that
   run, `waitlist-position-migration.test.ts` timed out too, and nothing
   recorded why.
@@ -20,15 +21,17 @@ mechanism, not the timeout.
   The backend was computing the whole time.
 - The plan is chosen from statistics older than the seed. Locally, with
   statistics from before the seed, that query runs as a nested loop that
-  re-scans live `CalendarEntry` rows for each of the 1000 waitlist rows:
+  re-scans live `CalendarEntry` rows for each of the `CEILING_ROWS` waitlist
+  rows:
   500,500 rows removed by the join filter, 974 ms. After `ANALYZE` the same
   query runs as hash joins in 3.4 ms. The issue's candidate was right in kind.
-  The magnitude is open: 974 ms locally against 20 s on CI, and the 20 s plan
-  was not captured. `readDuePayments`, the test that failed most, was never
+  The magnitude is open: 974 ms locally against 20 s on CI, and the 20 s
+  stall's plan was not captured. `readDuePayments`, the test that failed most,
+  was never
   caught stalling. That it shares the mechanism is an inference.
 
 **Direction.** Refresh planner statistics after each ceiling seed. Rejected:
-raising the timeout, which hides a 20 s plan; analyzing a per-describe table
+raising the timeout, which hides a 20 s stall; analyzing a per-describe table
 list, which a future describe that seeds a new table would silently miss.
 Whole-database `ANALYZE` has no list to drift, and the test database is small.
 
@@ -39,8 +42,8 @@ Whole-database `ANALYZE` has no list to drift, and the test database is small.
 - `src/services/sweep-page-ceiling.test.ts`: call it after each describe's
   seed and before its read. Built as a call at the end of every `beforeAll`.
   The whole-branch review moved it to one file-level `beforeEach`, which
-  vitest runs after each describe's `beforeAll`, so a future describe cannot
-  leave it out.
+  vitest runs after each describe's `beforeAll`, so a future describe that
+  seeds in `beforeAll` cannot leave it out.
 - Verify: the ceiling file passes locally. On CI, with the call skipped and
   with it in place, compare per-test duration distributions across repeated
   sweep-tier passes (temporary diagnostic workflow, dropped before the PR).
