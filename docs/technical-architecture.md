@@ -1375,17 +1375,15 @@ for clients of their own, and each call is a new pool.
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) refuses
 an import of `@prisma/client` or any subpath of it outside that module,
 type-only imports included. It does not see an inline `import('@prisma/client')`
-type query, which is not an import declaration. The rule covers the TypeScript
-files (`.ts`, `.tsx`, `.mts`) under `src/`, `tests/` and `scripts/`, and
-`prisma/seed.ts`; none of them is in the config's global ignores.
+type query, which is not an import declaration. The rule covers every `.ts`, `.tsx` and `.mts` file outside the config's
+global ignores.
 
-No other code imports the package. The other hits of the grep below are the
-`vi.mock('@prisma/client')` in `tests/setup/undefined-filter-guard.ts`, which
-has to replace the package's own `PrismaClient` (the one the factory
-constructs), with its `vi.doUnmock` counterpart in
-`src/lib/e2e-prisma-factory.test.ts`; the CJS probe; comments; test assertions
-and fixtures; and package metadata. Re-derive with
-`git grep -n "@prisma/client" -- ':!docs'`.
+No other TypeScript module imports the package. The one deliberate use of its
+name outside an import is the `vi.mock('@prisma/client')` seam in
+`tests/setup/undefined-filter-guard.ts`, with its `vi.doUnmock` counterpart in
+`src/lib/e2e-prisma-factory.test.ts`: the mock has to name the package because
+the factory constructs the package's own `PrismaClient`. Every remaining
+mention is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 
 The point is that one file changes when the Prisma 7 generator's `output` path
 (#888) or driver-adapter change (#889) lands, plus the probe.
