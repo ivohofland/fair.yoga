@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '../lib/prisma-client';
 
 export type GrantRefusal = 'no_account' | 'no_passkey' | 'no_operator';
 export type GrantOutcome = { kind: 'granted' } | { kind: 'unchanged' } | { kind: 'refused'; reason: GrantRefusal };

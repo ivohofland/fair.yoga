@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../lib/prisma-client';
 
 /** A teacher whose page slug is a reserved name. */
 export interface ReservedSlugHolder {

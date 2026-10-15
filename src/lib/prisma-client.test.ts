@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { createPrismaClient } from './prisma-client';
+import { createPrismaClient, Prisma, ClassStatus } from './prisma-client';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
 
@@ -51,5 +51,10 @@ describe('prisma-client.ts imports', () => {
     const specifiers = [...source.matchAll(/(?:\bfrom\s+|\bimport\s*\(?\s*)(['"])([^'"]+)\1/g)].map((m) => m[2]);
     expect(specifiers.length).toBeGreaterThan(0);
     expect(specifiers.every((s) => s === '@prisma/client')).toBe(true);
+  });
+
+  it('re-exports the package, so its runtime values come from this module', () => {
+    expect(new Prisma.Decimal('1.50').toFixed(2)).toBe('1.50');
+    expect(ClassStatus.open).toBe('open');
   });
 });

@@ -1,5 +1,15 @@
 import { PrismaClient, type Prisma } from '@prisma/client';
 
+/**
+ * This module is the codebase's one importer of `@prisma/client`; everything
+ * else takes `Prisma`, the model types and the enums from here. `PrismaClient`
+ * is exported as a type only, so `createPrismaClient` below stays the one
+ * constructor: `new PrismaClient()` anywhere else is a compile error. Why:
+ * `docs/technical-architecture.md`, "Where Prisma comes from".
+ */
+export * from '@prisma/client';
+export type { PrismaClient } from '@prisma/client';
+
 export interface PrismaClientFactoryOptions {
   /** Connection URL. Omitted, Prisma reads `DATABASE_URL`. */
   url?: string;
