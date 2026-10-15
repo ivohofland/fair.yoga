@@ -306,9 +306,10 @@ export async function resumePayments(
       },
       // The reminders below are inserted in this order, and each one's
       // `relatedClassId` foreign key takes `FOR KEY SHARE` on its class as it
-      // goes; ascending matches the ordered `FOR UPDATE` lockers, so this
+      // goes; ascending is the ordered `FOR UPDATE` lockers' direction, so this
       // transaction and such a locker cannot wait on each other in a cycle
-      // (`docs/lock-order.md`, the fourth path).
+      // through the classes they share (`docs/lock-order.md`, "`resumePayments`
+      // takes `FOR KEY SHARE` on many classes in ascending class id").
       orderBy: { registration: { classId: 'asc' } },
       select: {
         id: true,
