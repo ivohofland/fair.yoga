@@ -99,7 +99,8 @@ ethical-yoga/
 │   │   └── class-generator.ts # Class family's half — see Entry Generator below
 │   ├── lib/                   # Shared utilities
 │   │   ├── auth.ts            # Session management, magic link tokens
-│   │   ├── db.ts              # Prisma client singleton
+│   │   ├── db.ts              # Prisma client singleton, built by prisma-client.ts
+│   │   ├── prisma-client.ts   # createPrismaClient, the one PrismaClient constructor
 │   │   ├── email.ts           # sendEmail seam
 │   │   ├── email-lettermint.ts # the provider adapter
 │   │   └── types.ts           # Shared TypeScript types
@@ -1358,6 +1359,16 @@ snapshot. The service returns the parts and no total field, so a total cannot di
 with them.
 
 ## Database
+
+### Where a Prisma client comes from (#884)
+
+`src/lib/prisma-client.ts` (`createPrismaClient`) is the one place a
+`PrismaClient` is constructed. `@/lib/db` is the app singleton built from it;
+tests, scripts and the seed call the factory for clients of their own, and
+each call is a new pool. Lint (`@typescript-eslint/no-restricted-imports`)
+refuses a value import of `PrismaClient` anywhere else; a type-only import is
+fine. The point is that the Prisma 7 driver-adapter change (#889) lands in
+that one file.
 
 ### PostgreSQL Configuration
 

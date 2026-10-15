@@ -339,16 +339,18 @@ inside `where` is `undefined`, before the query runs. Two installers put it on
 the clients test code builds:
 
 - vitest: `tests/setup/undefined-filter-guard.ts`, in the `setupFiles` of the
-  `unit`, `unit-sweeps` and `integration` projects. A `new PrismaClient()` in
-  test code comes back guarded.
-- Playwright: `createGuardedPrismaClient()` from `tests/e2e/prisma.ts`; an
-  ESLint `no-restricted-syntax` rule bans `new PrismaClient` under
-  `tests/e2e`.
+  `unit`, `unit-sweeps` and `integration` projects. A client test code builds
+  through `createPrismaClient()` (`src/lib/prisma-client.ts`) comes back
+  guarded: the installer skips the factory's frame along with its own, so the
+  factory's caller decides.
+- Playwright: `createGuardedPrismaClient()` from `tests/e2e/prisma.ts`, which
+  wraps `createPrismaClient()`; an ESLint `no-restricted-syntax` rule refuses
+  `createPrismaClient` under `tests/e2e`.
 
 The vitest installer decides per client, from the stack its constructor
 captures (up to 50 frames, so a run of library frames cannot push the call
-site off it). The first frame outside `node:` internals, `node_modules` and
-the setup file is the call site. Inside the repo root, a `.test`/`.spec` file
+site off it). The first frame outside `node:` internals, `node_modules`, the
+setup file and the factory is the call site. Inside the repo root, a `.test`/`.spec` file
 or a module under `tests/` gets the guard; any other frame, including one
 outside the repo root, gets a plain client. A stack with no such frame at all
 makes the constructor throw an `[undefined-filter-guard]` error naming the

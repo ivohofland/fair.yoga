@@ -102,6 +102,30 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
+  // A PrismaClient is constructed in one place, createPrismaClient
+  // (src/lib/prisma-client.ts), so the Prisma 7 driver adapter lands in that
+  // one file (#884). This bans the VALUE import; `import type` and an inline
+  // `type PrismaClient` specifier stay allowed.
+  {
+    files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
+    ignores: ['src/lib/prisma-client.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@prisma/client',
+              importNames: ['PrismaClient'],
+              allowTypeImports: true,
+              message:
+                'Build clients with createPrismaClient() from @/lib/prisma-client (#884). A type-only import is fine.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // In ESLint flat config, a later config object that sets
   // `no-restricted-syntax` for a file already matched by an earlier one
   // REPLACES that rule's options for that file rather than merging them. So

@@ -43,7 +43,7 @@ vi.mock('@prisma/client', async (importOriginal) => {
       if (site === 'undecided') {
         throw new Error(
           `${UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX} cannot tell whether test or app code built this PrismaClient: ` +
-            `no stack frame outside node:, node_modules and ${path.relative(REPO_ROOT, SELF)}.\n${stack}`,
+            `no stack frame outside node:, node_modules, ${path.relative(REPO_ROOT, SELF)} and ${path.relative(REPO_ROOT, FACTORY)}.\n${stack}`,
         );
       }
       if (site === 'test') {
