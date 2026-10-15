@@ -175,8 +175,8 @@ describe('readResumeReview', () => {
 
     expect(review?.details.paymentLink).toBe('https://revolut.me/annadevries');
     expect(review?.details.bankAccounts).toEqual([
-      { currency: 'EUR', holderName: 'Anna de Vries', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A', sortCode: null, accountNumber: null, routingNumber: null },
-      { currency: 'GBP', holderName: 'Anna de Vries', iban: null, bic: null, sortCode: '200000', accountNumber: '55779911', routingNumber: null },
+      { currency: 'EUR', holderName: 'Anna de Vries', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A', sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
+      { currency: 'GBP', holderName: 'Anna de Vries', iban: null, bic: null, sortCode: '200000', accountNumber: '55779911', routingNumber: null, bankCode: null },
     ]);
     expect(review?.fingerprint).toBe(await currentFingerprint(t.teacherId));
   });

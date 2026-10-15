@@ -42,6 +42,7 @@ export type BankDetailsInput = {
   sortCode?: string | null;
   accountNumber?: string | null;
   routingNumber?: string | null;
+  bankCode?: string | null;
 };
 /** Every scheme column of a stored account, `null` where the scheme does not use it. */
 export type BankAccountColumns = { [K in keyof BankDetailsInput]-?: string | null };
@@ -54,6 +55,7 @@ type FieldFor = {
   sort_code_invalid: 'sortCode';
   account_number_invalid: 'accountNumber';
   routing_number_invalid: 'routingNumber';
+  bank_code_invalid: 'bankCode';
   field_not_in_scheme: keyof BankDetailsInput;
 };
 
@@ -66,7 +68,7 @@ export type ParseResult =
   | { ok: true; details: BankDetails }
   | { ok: false; failure: BankDetailsFailure };
 
-const FIELDS = ['iban', 'bic', 'sortCode', 'accountNumber', 'routingNumber'] as const satisfies readonly (keyof BankDetailsInput)[];
+const FIELDS = ['iban', 'bic', 'sortCode', 'accountNumber', 'routingNumber', 'bankCode'] as const satisfies readonly (keyof BankDetailsInput)[];
 
 const BIC_PATTERN = /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/;
 

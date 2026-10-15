@@ -42,7 +42,7 @@ type StoredValues = BankAccountColumns & { holderName: string };
 
 /** Every column a save writes, so the unchanged check compares each one. */
 const STORED_KEYS = {
-  holderName: true, iban: true, bic: true, sortCode: true, accountNumber: true, routingNumber: true,
+  holderName: true, iban: true, bic: true, sortCode: true, accountNumber: true, routingNumber: true, bankCode: true,
 } as const satisfies Record<keyof StoredValues, true>;
 
 function storesAlready(current: TeacherBankAccount, next: StoredValues): boolean {
@@ -55,7 +55,7 @@ function storesAlready(current: TeacherBankAccount, next: StoredValues): boolean
  * routes to the same account.
  */
 const IDENTIFIER_COLUMNS = {
-  iban: true, bic: false, sortCode: true, accountNumber: true, routingNumber: true,
+  iban: true, bic: false, sortCode: true, accountNumber: true, routingNumber: true, bankCode: true,
 } as const satisfies Record<keyof BankAccountColumns, boolean>;
 
 /**
@@ -74,11 +74,11 @@ function columnsFor(details: BankDetails): BankAccountColumns {
   switch (details.scheme) {
     case 'sepa':
     case 'iban':
-      return { iban: details.iban, bic: details.bic, sortCode: null, accountNumber: null, routingNumber: null };
+      return { iban: details.iban, bic: details.bic, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
     case 'uk':
-      return { iban: null, bic: null, sortCode: details.sortCode, accountNumber: details.accountNumber, routingNumber: null };
+      return { iban: null, bic: null, sortCode: details.sortCode, accountNumber: details.accountNumber, routingNumber: null, bankCode: null };
     case 'us':
-      return { iban: null, bic: null, sortCode: null, accountNumber: details.accountNumber, routingNumber: details.routingNumber };
+      return { iban: null, bic: null, sortCode: null, accountNumber: details.accountNumber, routingNumber: details.routingNumber, bankCode: null };
     default: {
       const unhandled: never = details;
       throw new Error(`unhandled bank scheme ${String((unhandled as { scheme?: unknown }).scheme)}`);

@@ -22,6 +22,7 @@ const DETAIL_LABELS = {
   sortCode: 'Sort code',
   accountNumber: 'Account number',
   routingNumber: 'Routing number',
+  bankCode: 'Bank code',
 } as const satisfies Record<Exclude<keyof BankAccountData, 'currency'>, string>;
 
 const DETAIL_KEYS = Object.keys(DETAIL_LABELS) as (keyof typeof DETAIL_LABELS)[];

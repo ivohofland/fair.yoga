@@ -21,7 +21,7 @@ type BankAccountField = keyof BankAccountWire;
 export type BankAccountValues = Record<BankAccountField, string>;
 
 export const EMPTY_BANK_ACCOUNT = {
-  holderName: '', iban: '', bic: '', sortCode: '', accountNumber: '', routingNumber: '',
+  holderName: '', iban: '', bic: '', sortCode: '', accountNumber: '', routingNumber: '', bankCode: '',
 } as const satisfies BankAccountValues;
 
 /** Each scheme's fields, in the order the block shows them, above the holder name. */

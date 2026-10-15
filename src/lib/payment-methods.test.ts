@@ -23,7 +23,7 @@ import {
 const IBAN = 'NL91ABNA0417164300';
 const HOLDER = 'I. Hofland';
 const TEACHER_ID = 'teacher-1';
-const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
 
 function account(fields: Partial<StoredBankAccount> & Pick<StoredBankAccount, 'currency'>): StoredBankAccount {
   return { ...blank, id: `acct-${fields.currency}`, teacherId: TEACHER_ID, holderName: HOLDER, ...fields };

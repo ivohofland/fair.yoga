@@ -3631,8 +3631,8 @@ describe('teacher erasure and export reach the profile photo (#46)', () => {
     });
     const exported = await exportTeacherData(prisma, teacherId);
     expect(exported.bankAccounts).toEqual([
-      { currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A', sortCode: null, accountNumber: null, routingNumber: null },
-      { currency: 'GBP', holderName: 'P. Teacher', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null },
+      { currency: 'EUR', holderName: 'P. Teacher', iban: 'NL91ABNA0417164300', bic: 'ABNANL2A', sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
+      { currency: 'GBP', holderName: 'P. Teacher', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null, bankCode: null },
     ]);
     await expectErased(deleteTeacherAccount(prisma, teacherId));
     expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);

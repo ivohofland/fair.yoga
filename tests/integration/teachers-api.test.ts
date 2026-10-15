@@ -251,7 +251,7 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
    * scheme's columns, and the holder name is never blank.
    */
   describe('the database holds each currency to its scheme', () => {
-    const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
     type Row = { currency: Currency; holderName: string } & Partial<Record<keyof typeof blank, string>>;
 
     async function store(row: Row): Promise<unknown> {
@@ -287,6 +287,9 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
       ['a CHF account with a routing number', { currency: 'CHF', holderName: 'H. Teacher', iban: 'CH9300762011623852957', routingNumber: '021000021' }],
       ['a GBP account with an IBAN', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', iban: 'GB29NWBK60161331926819' }],
       ['a GBP account with a BIC', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' }],
+      ['a EUR account with a bank code', { currency: 'EUR', holderName: 'H. Teacher', iban: 'NL91ABNA0417164300', bankCode: '062000' }],
+      ['a GBP account with a bank code', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', bankCode: '062000' }],
+      ['a USD account with a bank code', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', bankCode: '062000' }],
       ['a GBP account with a routing number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678', routingNumber: '021000021' }],
       ['a GBP account with no account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456' }],
       ['a GBP sort code of only spaces', { currency: 'GBP', holderName: 'H. Teacher', sortCode: ' ', accountNumber: '12345678' }],
