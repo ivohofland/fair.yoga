@@ -19,6 +19,7 @@ import { readDuePayments, REMIND_EVERY_DAYS } from './payment-reminders';
 import { processClassReminders } from './class-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
+  analyzeSeed,
   CEILING_ROWS,
   CEILING_STACK,
   expectLowered,
@@ -79,6 +80,7 @@ describe('ceiling harness', () => {
       minStudents: 1,
       maxStudents: 10,
     }));
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -146,6 +148,7 @@ describe('autoCancelClasses', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -194,6 +197,7 @@ describe('autoTransitionToInProgress', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -231,6 +235,7 @@ describe('autoCompleteClasses', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -297,6 +302,7 @@ describe('reconcileWaitlists', () => {
         status: 'waiting' as const,
       })),
     });
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -410,6 +416,7 @@ describe('readGenerationCandidates', () => {
       });
     });
     await prisma.classTemplate.createMany({ data: templates });
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -458,6 +465,7 @@ describe('readStudioGenerationCandidates', () => {
       };
     });
     await prisma.studioClassTemplate.createMany({ data: templates });
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -540,6 +548,7 @@ describe('getUnreadForEmailFallback', () => {
         emailSent: false,
       },
     });
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -643,6 +652,7 @@ describe('readDuePayments', () => {
         amount: 1,
       },
     });
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
@@ -704,6 +714,7 @@ describe('processClassReminders', () => {
       minStudents: 0,
       maxStudents: 10,
     }));
+    await analyzeSeed(prisma);
   }, 60_000);
 
   afterAll(async () => {
