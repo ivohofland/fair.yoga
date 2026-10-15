@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession, hashToken } from '../helpers';
 import { expectApplied, expectRefusal } from '../api-assertions';
 import { forgedNoneRegistration } from '../passkey-fixtures';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 interface Fixture {

@@ -13,7 +13,7 @@
  * it was. See the mutation recorded in commit `70baade`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { fixtureRun } from '../../tests/room-fixtures';
 import {
   countTeacherRoomDeleteBlockers,
@@ -23,8 +23,9 @@ import {
   ROOM_DELETE_BLOCKED_MESSAGE,
   TEACHER_ROOM_UNLINK_BLOCKED_MESSAGE,
 } from './room-deletion';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // `rd-` distinguishes this file's rows from `room-archive.test.ts`'s (`ra-`)
 // and `room-archive-doors.test.ts`'s, so each file's cleanup sweeps only its own.
 const fx = fixtureRun('rd');

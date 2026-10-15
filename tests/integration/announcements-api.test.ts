@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { ANNOUNCEMENT_DEDUPE_WINDOW_MS } from '@/services/announcements';
 import { ANNOUNCEMENTS_PER_HOUR, NO_RECIPIENTS_MESSAGE } from '@/app/api/announcements/shared';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;
@@ -299,7 +299,7 @@ describe('POST /api/announcements: is retry-safe against a duplicate send (#196)
     // committed anything the other can see — and then park, because
     // inserting a `Notification` carrying `relatedClassId` takes `FOR KEY
     // SHARE` on that parent row (`docs/lock-order.md`, "the fourth path").
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => {

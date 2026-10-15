@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll, beforeAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import * as dbLocks from '@/lib/db-locks';
 import * as waitlist from '@/services/waitlist';
@@ -12,6 +12,7 @@ import { cookie, seedSession } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
 import { expectErased } from '../../../../tests/erasure-assertions';
 import { POST } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * @serial-tier lock-contention — the tests below stage this route against
@@ -26,7 +27,7 @@ import { POST } from './route';
  * each ordering means, and which of these tests pins it: `docs/lock-order.md`,
  * "The `Student` row is the erasure's gate".
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 /**
  * How long a racer may take to start waiting on a lock. Well inside the

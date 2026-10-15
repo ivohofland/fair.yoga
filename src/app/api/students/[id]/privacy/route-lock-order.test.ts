@@ -11,15 +11,16 @@
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import * as dbLocks from '@/lib/db-locks';
 import { deleteStudentAccount } from '@/services/gdpr';
 import { cookie, seedSession } from '../../../../../../tests/helpers';
 import { expectErased } from '../../../../../../tests/erasure-assertions';
 import { PUT } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const HANDSHAKE_MS = 2_000;
 const WAIT_MS = 1_500;

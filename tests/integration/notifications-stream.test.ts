@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, hashToken, uniqueSuffix, seedSession, waitFor } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 const STREAM_URL = `${BASE_URL}/api/notifications/stream`;

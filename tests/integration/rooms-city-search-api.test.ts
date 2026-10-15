@@ -2,10 +2,10 @@
  * GET /api/rooms?city=…&q=… — browsing shared rooms by city (#805).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 // Unique per run; the accented spelling is what is stored.
 const city = `Zürich-${suffix}`;

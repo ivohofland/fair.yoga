@@ -1,9 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, Prisma, type PayoutChangeEvent } from '@prisma/client';
+import { Prisma, type PayoutChangeEvent } from '@prisma/client';
 import { savePaymentLink, removePaymentLink } from './payment-link';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 
 async function makeTeacher(paymentLink: string | null = null): Promise<string> {
@@ -69,7 +70,7 @@ async function raceBehind<T>(
   hold: (tx: Prisma.TransactionClient) => Promise<void>,
   call: () => Promise<T>,
 ): Promise<{ result: T; parked: boolean; waitedIn: string | null }> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   const held = latch();
   const release = latch();
   let holderPid = 0;

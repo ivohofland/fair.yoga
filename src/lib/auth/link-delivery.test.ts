@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { deliverSignInLink, deliverSignInLinkIfRegistered } from './link-delivery';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 
@@ -9,8 +8,9 @@ vi.mock('@/lib/email', async (importOriginal) => {
 });
 import { sendMagicLinkEmail } from '@/lib/email';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 
 describe('deliverSignInLink', () => {
   beforeEach(() => vi.clearAllMocks());

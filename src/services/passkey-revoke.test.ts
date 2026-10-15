@@ -1,12 +1,12 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { revokePasskeyByLink } from './passkey-revoke';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const accountIds: string[] = [];
 const teacherIds: string[] = [];
 const DAY_MS = 24 * 60 * 60 * 1000;

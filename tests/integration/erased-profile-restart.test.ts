@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { deleteStudentAccount, deleteTeacherAccount } from '@/services/gdpr';
 import { BASE_URL, cookie, freshIp, seedSession, uniqueSuffix } from '../helpers';
 import { expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const accountIds: string[] = [];
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `slot-${Date.now()}`;
 let teacherId: string;
 let otherTeacherId: string;

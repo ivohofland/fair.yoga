@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass } from '@/services/class-lifecycle';
@@ -18,8 +18,9 @@ import { cookie, seedSession, uniqueSuffix } from '../../../../../../tests/helpe
 import { createClassFixture } from '../../../../../../tests/class-fixtures';
 import { expectRefusal, expectUnchanged } from '../../../../../../tests/api-assertions';
 import { POST } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `complete-lock-${uniqueSuffix()}`;
 
 /** How long a pause or holder may take to report that it is in place. */

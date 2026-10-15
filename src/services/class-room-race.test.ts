@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
 import { setTeacherRoomArchived } from './room-archive';
 import { transitionClass } from './class-lifecycle';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * @serial-tier lock-contention — each of its two cases holds a real row lock
@@ -16,8 +16,8 @@ import { transitionClass } from './class-lifecycle';
  * because one connection cannot hold a transaction open for another
  * (`template-room-race.test.ts`, this file's model).
  */
-const a = new PrismaClient();
-const b = new PrismaClient();
+const a = createPrismaClient();
+const b = createPrismaClient();
 const suffix = `croom-race-${Date.now()}`;
 let teacherId: string;
 let accountId: string;

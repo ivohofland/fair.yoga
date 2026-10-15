@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { inviteContact, unlinkTeacher } from './invitations';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**

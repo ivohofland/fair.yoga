@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { generateInstancesForTemplate } from '@/services/class-generator';
 import { getNextOccurrences } from '@/services/entry-generation';
 // The production week key, used here as the assertion's own notion of "same
@@ -12,8 +11,9 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { economicsViolations, formatEconomicsViolations } from '@/lib/class-economics';
 import { createClassFixture } from '../class-fixtures';
 import { expectRefusal } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;

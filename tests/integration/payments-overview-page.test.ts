@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import type { PaymentStatus } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 // React's SSR splices `<!-- -->` around a dynamic text node that sits beside

@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // The dry-run tests in email-fallback.test.ts can't tell "emailed" from
 // "skipped and marked" — both end in emailSent=true. This file makes the
@@ -18,7 +18,7 @@ vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const studentEmail = `consent-student-${uniqueSuffix}@test.local`;
 

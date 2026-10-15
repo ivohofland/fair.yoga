@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
 import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
@@ -30,8 +30,9 @@ import {
   SLOTS_PER_DAY,
   type SeededTeachers,
 } from '../../tests/stack-ceiling';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 afterAll(async () => {
   await prisma.$disconnect();

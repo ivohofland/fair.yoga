@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import {
   createNotification,
   createBulkNotifications,
@@ -9,8 +8,9 @@ import {
 } from './notifications';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 // ===========================================================================

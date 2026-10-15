@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { cleanupExpiredAuth } from './auth-cleanup';
 import { HANDOFF_EMAIL_WINDOW_MS } from '@/lib/auth/handoff';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 const liveSessionId = crypto.randomBytes(32).toString('hex');

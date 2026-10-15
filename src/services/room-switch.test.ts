@@ -5,12 +5,13 @@
  * Real database, fresh fixture per case (`tests/room-fixtures.ts`).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { fixtureRun, type RoomFixture, type ClassFixtureStatus } from '../../tests/room-fixtures';
 import { switchToSharedRoom } from './room-switch';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const fx = fixtureRun('rsw');
 const makeFixture = () => fx.makeFixture(prisma);
 const addClass = (f: RoomFixture, status: ClassFixtureStatus, daysAhead: number) =>

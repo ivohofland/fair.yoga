@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Bite tests for `Teacher_payment_link_check` (#785). Each case writes
@@ -7,7 +7,7 @@ import { PrismaClient } from '@prisma/client';
  * means the DATABASE refuses the row. The `toThrow` assertions match the
  * constraint's own name, so an unrelated failure cannot satisfy them.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `paylink-check-${Date.now()}`;
 
 let teacherId: string;

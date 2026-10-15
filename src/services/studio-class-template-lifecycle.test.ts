@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import {
   archiveOrUnarchiveStudioTemplate,
   pauseOrResumeStudioTemplate,
@@ -37,8 +37,9 @@ import { mondayOf } from '@/lib/timezone';
 import { CLASS_GENERATION_INTERVAL_MS } from '@/lib/generation';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 // Hoisted to module scope, mirroring class-template-lifecycle.test.ts: a pure

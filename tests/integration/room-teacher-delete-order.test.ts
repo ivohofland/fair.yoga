@@ -8,11 +8,12 @@
  * needing a separate cascade case.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { uniqueSuffix } from '../helpers';
 import { isRestrictViolationOn } from '@/lib/api-errors';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 let seq = 0;
 

@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
 import { sendAnnouncement, ANNOUNCEMENT_DEDUPE_WINDOW_MS } from './announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { CreateNotificationInput } from './notifications';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `announce-svc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 function to(
@@ -468,7 +468,7 @@ describe('Announcement Service', () => {
   });
 
   it('makes sendAnnouncement wait when another transaction holds the advisory lock for the same slot', async () => {
-    const other = new PrismaClient();
+    const other = createPrismaClient();
     const message = `Advisory wait test ${suffix}`;
     const recipients: CreateNotificationInput[] = [
       {
@@ -541,9 +541,9 @@ describe('Announcement Service', () => {
     // recomputed here, so a key that drops or adds a column changes which of
     // the sends below park. The neighbours carry no relatedClassId, so none of
     // them needs the Class row and only the advisory lock can park them.
-    const holderClient = new PrismaClient();
-    const classHolder = new PrismaClient();
-    const parkedClient = new PrismaClient();
+    const holderClient = createPrismaClient();
+    const classHolder = createPrismaClient();
+    const parkedClient = createPrismaClient();
 
     let release: () => void = () => {};
     let holdingClass: Promise<unknown> = Promise.resolve();
@@ -664,9 +664,9 @@ describe('Announcement Service', () => {
     // The second send must then park on the advisory lock before its own findMany.
     // Without the advisory lock, the second send passes findMany, sees no committed
     // announcement, and also attempts to insert, creating duplicates.
-    const holder = new PrismaClient();
-    const clientA = new PrismaClient();
-    const clientB = new PrismaClient();
+    const holder = createPrismaClient();
+    const clientA = createPrismaClient();
+    const clientB = createPrismaClient();
 
     let release!: () => void;
     let locked!: () => void;

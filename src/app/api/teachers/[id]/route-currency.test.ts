@@ -6,15 +6,16 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { fixtureRun, type RoomFixture } from '../../../../../tests/room-fixtures';
 import { createClassFixture } from '../../../../../tests/class-fixtures';
 import { cookie, seedSession } from '../../../../../tests/helpers';
 import { expectRefusal } from '../../../../../tests/api-assertions';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { PUT } from './route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const fx = fixtureRun('curput');
 
 beforeAll(async () => { await prisma.$connect(); });

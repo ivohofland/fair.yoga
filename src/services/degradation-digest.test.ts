@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterAll, onTestFinished } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const sendEmail = vi.fn();
 vi.mock('@/lib/email', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
 
 const { notifyOperatorOfDegradations, DegradationDigestError } = await import('./degradation-digest');
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const PREFIX = 'test-digest-';
 const run = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 const A = `${PREFIX}${run}-A`;

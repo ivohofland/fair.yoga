@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, type ClassStatus } from '@prisma/client';
+import { type ClassStatus } from '@prisma/client';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import { BLOCKING_CLASS_STATUSES } from './room-archive';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `croom-${Date.now()}`;
 const CHECK = 'Class_live_needs_open_room';
 const ROOM_FK = 'Class_teacherRoomId_roomArchived_fkey';

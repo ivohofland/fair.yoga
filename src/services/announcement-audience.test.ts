@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { listAnnouncementAudience } from './announcements';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `audience-svc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 describe('listAnnouncementAudience', () => {

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, uniqueSuffix, cookie, seedSession } from '../helpers';
 import { expectApplied, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const URL_ = `${BASE_URL}/api/account/student-push-card`;
 

@@ -41,15 +41,16 @@
  * can see it.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
 import { generateInstancesForTemplate } from './class-generator';
 import { getNextOccurrences } from './entry-generation';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `gentx-${Date.now()}`;
 
 let teacherId: string;

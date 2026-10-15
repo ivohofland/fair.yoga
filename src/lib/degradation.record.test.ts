@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * The one path no other test walks end to end: `logDegraded` through the real
@@ -10,7 +10,7 @@ import { PrismaClient } from '@prisma/client';
  * Fresh modules, with the store mocked back to the actual module, because the
  * stub is registered for every file in this tier.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const zone = `Test/Record-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 beforeAll(async () => {

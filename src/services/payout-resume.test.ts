@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, type Currency, type PaymentStatus } from '@prisma/client';
+import { type Currency, type PaymentStatus } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
@@ -10,8 +10,9 @@ import { PAUSE_PASSKEY_FALLBACK_DAYS, readResumeReview, resumePayments } from '.
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = new Date('2026-07-20T12:00:00Z');
 const daysBefore = (at: Date, days: number) => new Date(at.getTime() - days * DAY_MS);

@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { isLockTimeout } from '@/lib/api-errors';
 import { signOutEverywhere } from './account-sign-out';
@@ -29,8 +29,9 @@ import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { deletePasskey } from './passkey-credentials';
 import { deleteStudentAccount, deleteTeacherAccount } from './gdpr';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const WAIT_MS = 1_500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const accountIds: string[] = [];
@@ -113,7 +114,7 @@ async function underHeldAccount<T>(
   writer: () => Promise<T>,
   holdMs?: number,
 ): Promise<{ parkedOn: string | null; lockedWhileParked: number | null; result: PromiseSettledResult<T> }> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   const held = latch();
   const release = latch();
   let holderPid = 0;
@@ -332,7 +333,7 @@ describe('the reported deadlock: a pause and sign-out-everywhere on one account'
 
     // Holds S_a, so the pause stops at its session delete with P gone and
     // S_b locked: the moment the review's sign-out arrived.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

@@ -1007,7 +1007,7 @@ export async function deleteStudentAccount(
     // arithmetic below is computed from it). One cost of that number,
     // recorded as a cost rather than argued away: 20s is twice Prisma's
     // default `pool_timeout` of 10s, and `src/lib/db.ts` is a bare
-    // `new PrismaClient()` — `connection_limit` is set nowhere in `src/`,
+    // `createPrismaClient()` — `connection_limit` is set nowhere in `src/`,
     // `docker-compose*.yml`, the `Dockerfile` or `DEPLOYMENT.md`, only on one
     // test's dedicated client — so the pool is `physical_cores * 2 + 1`,
     // which is three connections at that one vCPU. One erasure occupying one

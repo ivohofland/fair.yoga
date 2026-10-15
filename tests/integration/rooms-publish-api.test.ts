@@ -17,11 +17,11 @@
  *     the unchanged 200 meant for a repeat of the creator's own share.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const address = `${suffix} Publish St`;
 

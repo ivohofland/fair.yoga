@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * `CalendarEntry`'s database-level guarantees, asserted against the real
@@ -23,7 +23,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
  * calendar nobody else writes to — EXCEPT inside the exclusion describe, where
  * the tight spacing IS the test.
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 const suffix = `entry-${Date.now()}`;
 const teacherIds: string[] = [];

@@ -15,7 +15,6 @@
  * test below builds the one class it locks.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import {
   addToWaitlist,
   removeFromWaitlist,
@@ -28,8 +27,9 @@ import {
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import * as dbLocks from '@/lib/db-locks';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 let teacherId: string;
@@ -207,7 +207,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
       },
     });
 
-    const holderClient = new PrismaClient();
+    const holderClient = createPrismaClient();
     let signalHeld!: () => void;
     const held = new Promise<void>((r) => {
       signalHeld = r;
@@ -314,7 +314,7 @@ describe('promoteNext (DB)', () => {
         data: { status: 'cancelled', cancelledAt: new Date() },
       });
 
-      const holderClient = new PrismaClient();
+      const holderClient = createPrismaClient();
       let signalHeld!: () => void;
       const held = new Promise<void>((r) => {
         signalHeld = r;
@@ -430,7 +430,7 @@ describe('claimSpot (DB)', () => {
       data: { status: 'cancelled', cancelledAt: new Date() },
     });
 
-    const holderClient = new PrismaClient();
+    const holderClient = createPrismaClient();
     let signalHeld!: () => void;
     const held = new Promise<void>((r) => {
       signalHeld = r;

@@ -1,17 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { uniqueSuffix } from '../../tests/helpers';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { TEST_ADMIN_HOST, createAdminFixture, seedPasskeySession, cleanupAdminFixtures, type AdminFixture } from '../../tests/admin-fixtures';
 import { resolveAdminAccess, type AdminProof } from '@/lib/admin-access';
 import { getPlatformCounts } from './admin-metrics';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Counts are whole-table, and this file runs in the parallel `unit` tier, so
  * every call goes through a `scopeSweep` client narrowed to this file's own
  * rows. Expected counts are pairwise distinct, so a swapped field cannot pass.
  */
-const db = new PrismaClient();
+const db = createPrismaClient();
 const suffix = uniqueSuffix();
 let admin: AdminFixture;
 let proof: AdminProof;

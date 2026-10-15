@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { seedSession } from '../../tests/helpers';
 import {
   TEST_ADMIN_HOST,
@@ -9,8 +8,9 @@ import {
   type AdminFixture,
 } from '../../tests/admin-fixtures';
 import { resolveAdminAccess, assertAdminProof, ADMIN_AUTH_WINDOW_MS, type AdminProof } from './admin-access';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const db = new PrismaClient();
+const db = createPrismaClient();
 let admin: AdminFixture;
 let plain: AdminFixture;
 

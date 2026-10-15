@@ -6,7 +6,7 @@
  * lock while a linker queues behind it.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import {
   linkTeacherStudent,
@@ -15,10 +15,11 @@ import {
   RosterLinkVanishedError,
   type LinkOutcome,
 } from './roster-link';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 /** Holds the link row's lock while `prisma` runs the linker and observes. */
-const holder = new PrismaClient();
+const holder = createPrismaClient();
 
 /**
  * The brand's compile-time pin, one directive per function, in the pattern

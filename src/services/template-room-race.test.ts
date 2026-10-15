@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import { isCheckViolationOn } from '@/lib/check-violation';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * @serial-tier lock-contention — the case below parks a transaction on a real
@@ -31,8 +32,8 @@ import { isCheckViolationOn } from '@/lib/check-violation';
  *
  * Only `archiveDb` is one connection; `a` and `probe` each hold a pool.
  */
-const a = new PrismaClient();
-const probe = new PrismaClient();
+const a = createPrismaClient();
+const probe = createPrismaClient();
 
 /**
  * A client with exactly one connection, so `pg_backend_pid()` read from it once
@@ -49,7 +50,7 @@ function singleConnectionClient(): PrismaClient {
   if (!configured) throw new Error('DATABASE_URL is not set; this file needs the test database');
   const url = new URL(configured);
   url.searchParams.set('connection_limit', '1');
-  return new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  return createPrismaClient({ url: url.toString() });
 }
 const archiveDb = singleConnectionClient();
 

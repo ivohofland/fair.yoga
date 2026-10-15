@@ -1,9 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, type Currency } from '@prisma/client';
+import { type Currency } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 

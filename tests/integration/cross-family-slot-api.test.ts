@@ -39,13 +39,13 @@
  * constraint's payload, and that pre-check sees the family directly.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { getNextOccurrences } from '@/services/entry-generation';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;

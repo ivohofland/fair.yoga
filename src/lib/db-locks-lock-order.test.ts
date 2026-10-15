@@ -4,14 +4,15 @@
  * tell from the defect it watches for.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { lockClassRowsOrdered, lockLiveStudent, lockStudentForErasure } from './db-locks';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 /**
  * Forces both callers off every scan path that returns physical order, so each

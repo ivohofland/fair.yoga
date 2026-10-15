@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { classifyApiError } from './api-errors';
 import { hhmmToTime } from './time-of-day';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
  * Pure DB-invariant tests for issue 328's triggers:
@@ -28,7 +29,7 @@ import { hhmmToTime } from './time-of-day';
  *        ON "CalendarEntry" FOR EACH ROW
  *        EXECUTE FUNCTION entry_reject_rule_kind_mismatch();'
  */
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `rule-kind-guard-${Date.now()}`;
 
 let teacherId: string;

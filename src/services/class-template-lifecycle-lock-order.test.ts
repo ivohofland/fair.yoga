@@ -21,7 +21,7 @@
  * spacing schemes onto one counter.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import {
   updateClassTemplate,
   archiveOrUnarchiveTemplate,
@@ -33,8 +33,9 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 // Hoisted to module scope, like `class-template-lifecycle.test.ts`'s own
@@ -655,7 +656,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
       const t = await makeTemplate('Claim Blocks Insert');
       await prisma.scheduleRule.update({ where: { id: t.scheduleRuleId }, data: { isActive: false } });
 
-      const holder = new PrismaClient();
+      const holder = createPrismaClient();
       let release!: () => void;
       let holdEstablished!: () => void;
       const released = new Promise<void>((r) => {

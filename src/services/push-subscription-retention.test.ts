@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import { log } from '@/lib/log';
 import { isTestDatabaseName } from '@/lib/worktree/identity';
 import {
@@ -8,8 +8,9 @@ import {
   reapStalePushSubscriptions,
 } from './push-subscription-retention';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const ACCOUNT = randomUUID();
 const NOW = new Date('2026-10-03T12:00:00.000Z');
 const DAY_MS = 24 * 60 * 60 * 1000;

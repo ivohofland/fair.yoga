@@ -1,13 +1,14 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, type Currency, type PayoutChangeEvent } from '@prisma/client';
+import { type Currency, type PayoutChangeEvent } from '@prisma/client';
 import { saveBankAccount, removeBankAccount, type BankAccountFailure } from './bank-accounts';
 import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
 import { hasPayoutDetails } from '@/lib/payment-methods';
 import { payoutMasksAlikeNote } from '@/lib/email-templates';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 
 async function makeTeacher(currency: Currency = 'EUR'): Promise<string> {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, onTestFinished, vi } from 'vitest';
 import {
-  PrismaClient,
+  type PrismaClient,
   type ClassStatus,
   type RegistrationStatus,
   type ReminderChannel,
@@ -16,6 +16,7 @@ import { verifyUnsubscribeToken } from '@/lib/unsubscribe-token';
 import { STUDENT_BOOKINGS_PATH } from '@/lib/notification-links';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const deliverMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
@@ -24,7 +25,7 @@ vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 let n = 0;
 

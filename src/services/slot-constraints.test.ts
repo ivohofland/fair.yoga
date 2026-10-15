@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `slot-${Date.now()}`;
 let teacherId: string;
 let otherTeacherId: string;

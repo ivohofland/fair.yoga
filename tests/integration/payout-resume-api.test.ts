@@ -1,13 +1,13 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { generateMagicLinkToken, hashNonce } from '@/lib/auth';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import { bankAccountDataSelect } from '@/lib/payment-methods';
 import { mintPayoutPauseToken } from '@/services/payout-pause-token';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession, hashToken } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 const emails: string[] = [];

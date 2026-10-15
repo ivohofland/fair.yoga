@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient, ClassStatus, type Currency } from '@prisma/client';
+import { type PrismaClient, ClassStatus, type Currency } from '@prisma/client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -29,6 +29,7 @@ import { estimateTierPrices } from '@/lib/tier-estimates';
 import { calculateClassPricing } from './pricing';
 import { includedVatCents } from '@/lib/vat';
 import type { IncomeTier } from '@/lib/tiers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // We use string literals matching the Prisma ClassStatus enum values.
 // This keeps tests independent of the Prisma client being generated.
@@ -344,7 +345,7 @@ describe('ECONOMIC_FIELDS', () => {
 // Integration tests — DB operations
 // ===========================================================================
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
 
 describe('transitionClass (DB)', () => {

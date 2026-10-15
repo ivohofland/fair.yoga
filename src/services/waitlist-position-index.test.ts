@@ -8,13 +8,14 @@
  * immediate: `docs/data-model.md` (WaitlistEntry).
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, type WaitlistStatus } from '@prisma/client';
+import { type WaitlistStatus } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { createClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `wl-pos-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 let teacherId: string;

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, onTestFinished } from 'vitest';
 import { randomUUID } from 'crypto';
-import { PrismaClient, type CancelDeadline } from '@prisma/client';
+import { type CancelDeadline } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
@@ -14,8 +14,9 @@ import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 import { scopeSweep } from '../scoped-sweep';
 import { runWaitlistReconciliationTick } from '@/services/waitlist-reconciliation';
 import { completeClass } from '@/services/class-lifecycle';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 // Sessions
@@ -2222,7 +2223,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     // request runs, so both pass the pre-check (uncommitted state is
     // invisible under READ COMMITTED) and both park on the lock at the
     // write — the interleaving a plain Promise.all cannot force.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -2292,7 +2293,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -2348,7 +2349,7 @@ describe('registration cancel is retry-safe against a concurrent duplicate (#196
     const created = await post(studentTokens[0]!, { classId });
     const { data } = (await created.json()) as { data: { id: string } };
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });

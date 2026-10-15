@@ -1,12 +1,12 @@
 import { request as httpRequest, type ClientRequest } from 'node:http';
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import sharp from 'sharp';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectApplied, expectUnchanged } from '../api-assertions';
 import { PHOTO_MESSAGES } from '@/lib/teacher-photo-limits';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 const studentIds: string[] = [];

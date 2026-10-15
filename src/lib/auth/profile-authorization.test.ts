@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from './signup-ticket';
 import * as signupTicket from './signup-ticket';
 import {
@@ -11,6 +10,7 @@ import {
 import { teacherProfileSchema, studentProfileSchema } from '@/lib/schemas';
 import { log } from '@/lib/log';
 import { uniqueSuffix } from '../../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // Real by default (importOriginal) — `ticketAuthorization`'s call to
 // `consumeSignupTicket` only goes through this mock at all when a specific
@@ -22,7 +22,7 @@ vi.mock('./signup-ticket', async (importOriginal) => {
   return { ...actual };
 });
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `pa-${uniqueSuffix()}`;
 
 beforeAll(async () => { await prisma.$connect(); });

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll, afterAll } from 'vitest';
 import type { MockInstance } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { deliverInvitation } from './invitations';
 import { __resetDispatchFailureTrackingForTests, recordDispatchFailure } from '@/lib/notify-health';
 import { log } from '@/lib/log';
 import { teardownTeacher, waitFor } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // One test below needs a stranger-branch dispatch to actually fail, which
 // means reaching the real send rather than the dry-run branch that logs and
@@ -38,7 +38,7 @@ vi.mock('./notifications', async (importOriginal) => {
   };
 });
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**

@@ -1,6 +1,5 @@
 import { describe, it, expect, afterAll, vi } from 'vitest';
 import crypto from 'crypto';
-import { PrismaClient } from '@prisma/client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import { bankAccountDataSelect } from '@/lib/payment-methods';
@@ -10,6 +9,7 @@ import { deletePasskey } from './passkey-credentials';
 import { savePaymentLink } from './payment-link';
 import { PAUSE_PASSKEY_FALLBACK_DAYS, resumePayments } from './payout-resume';
 import { uniqueSuffix, seedSession } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 const sendPasskeyRemovedEmail = vi.hoisted(() => vi.fn<(to: string, removedAt: Date) => Promise<void>>());
 vi.mock('@/lib/email', async (importOriginal) => ({
@@ -17,7 +17,7 @@ vi.mock('@/lib/email', async (importOriginal) => ({
   sendPasskeyRemovedEmail,
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 const emails: string[] = [];

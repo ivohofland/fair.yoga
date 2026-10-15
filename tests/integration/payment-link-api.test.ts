@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { PAYMENT_LINK_MESSAGES } from '@/lib/payment-link';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectApplied, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 

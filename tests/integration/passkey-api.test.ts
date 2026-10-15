@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { z } from 'zod';
 
@@ -13,8 +12,9 @@ import {
 } from '../passkey-fixtures';
 import { formatIssues } from '@/lib/validation-message';
 import { passkeyRegisterVerifySchema, passkeyAuthVerifySchema } from '@/lib/schemas';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 /**
  * A syntactically valid credential id — base64url characters only — for

@@ -2,7 +2,6 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import { crc32, deflateSync } from 'node:zlib';
-import { PrismaClient } from '@prisma/client';
 import {
   processTeacherPhoto,
   PHOTO_EDGE_PX,
@@ -11,8 +10,9 @@ import {
   readTeacherPhoto,
 } from './teacher-photo';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 
 async function makeTeacher(): Promise<string> {

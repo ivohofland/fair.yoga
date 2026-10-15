@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import {
   autoTransitionToInProgress,
   autoCancelClasses,
@@ -16,6 +16,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -23,7 +24,7 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 // stored as date 2026-07-20 / startTime "18:00" starts at 16:00Z.
 // ===========================================================================
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 // ===========================================================================
 // The auto-cancel date window (pure). A zone's offset moves a class's start

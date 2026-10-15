@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { inviteContact, unlinkTeacher } from './invitations';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 // Keeps `invitations.ts`'s logger quiet. It imports `@/lib/log`, so the
 // specifier here must match that one — the same constraint `api-utils.test.ts`
@@ -10,7 +10,7 @@ vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**

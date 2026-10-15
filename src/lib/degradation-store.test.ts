@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll, beforeEach, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const PREFIX = 'test-store-';
 const code = `${PREFIX}${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 

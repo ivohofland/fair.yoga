@@ -25,7 +25,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { cookie, seedSession } from '../../tests/helpers';
@@ -37,8 +37,9 @@ import { POST as postClass } from '@/app/api/classes/route';
 import { POST as postStudioClass } from '@/app/api/studio-classes/route';
 import { POST as postClassTemplate } from '@/app/api/class-templates/route';
 import { POST as postStudioClassTemplate } from '@/app/api/studio-class-templates/route';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const fx = fixtureRun('curswl');
 const WAIT_MS = 1_500;
 const CASE_TIMEOUT_MS = 20_000;
@@ -90,7 +91,7 @@ async function raceBehindHolder<T>(
   hold: (tx: Prisma.TransactionClient) => Promise<void>,
   request: () => Promise<T>,
 ): Promise<{ result: T; parked: boolean }> {
-  const holder = new PrismaClient();
+  const holder = createPrismaClient();
   const held = latch();
   const release = latch();
   let holderPid = 0;
@@ -330,7 +331,7 @@ describe('a create under no existing template against a switch holding the teach
   it('POST /api/classes takes the Teacher row before its room', async () => {
     const f = await utcTeacher();
     const token = await seedSession(prisma, f.accountId);
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

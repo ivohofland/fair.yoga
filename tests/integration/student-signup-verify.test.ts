@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { hashNonce } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, hashToken } from '../helpers';
 import crypto from 'crypto';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const freshEmail = `student-verify-fresh-${suffix}@test.local`;
 const crmEmail = `student-verify-crm-${suffix}@test.local`;

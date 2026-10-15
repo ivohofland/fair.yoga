@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, onTestFinished, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { log } from '@/lib/log';
 import { classStartInstant, startOfLocalDay } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
@@ -24,6 +24,7 @@ import {
 } from './class-template-lifecycle';
 import { createClassFixture, createStudioClassFixture, wallSlotAt } from '../../tests/class-fixtures';
 import { anyBlocked, countSkipReasons, type SkippedSlot } from '@/lib/generation';
+import { createPrismaClient } from '@/lib/prisma-client';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -31,7 +32,7 @@ type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1
 // Integration tests — generateClassInstances
 // ===========================================================================
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `gen-${Date.now()}`;
 
 describe('generateClassInstances (DB)', () => {

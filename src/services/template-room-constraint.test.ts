@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { isRestrictViolationOn } from '@/lib/api-errors';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `troom-${Date.now()}`;
 const accountIds: string[] = [];
 let teacherId: string;

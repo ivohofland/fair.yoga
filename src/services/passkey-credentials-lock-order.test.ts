@@ -9,11 +9,12 @@
  * and refuses the removal.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { deletePasskey, type DeletePasskeyOutcome } from './passkey-credentials';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const WAIT_MS = 1_500;
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
@@ -70,7 +71,7 @@ describe('deletePasskey behind a pause in flight', () => {
       data: { id: credentialId, accountId: t.accountId, publicKey: Buffer.from('k'), counter: 0, transports: [] },
     });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch();
     const release = latch();
     let holderPid = 0;

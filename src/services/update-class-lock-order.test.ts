@@ -59,12 +59,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass, updateClass } from './class-lifecycle';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 /**
  * A client with exactly one connection, so `pg_backend_pid()` read from it once
@@ -76,13 +77,13 @@ const prisma = new PrismaClient();
 function singleConnectionClient(): PrismaClient {
   const url = new URL(process.env.DATABASE_URL ?? '');
   url.searchParams.set('connection_limit', '1');
-  return new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  return createPrismaClient({ url: url.toString() });
 }
 
 describe('updateClass against a completion that already holds the class', () => {
   const suffix = `updcls-lock-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
   const rescheduleDb = singleConnectionClient();
-  const completionDb = new PrismaClient();
+  const completionDb = createPrismaClient();
   let teacherId: string;
   let roomId: string;
   let classId: string;

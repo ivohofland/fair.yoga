@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { mintSignupTicket } from '@/lib/auth';
 import { BASE_URL, uniqueSuffix, freshIp, seedSession } from '../helpers';
 import { expectRefusal, expectUnchanged } from '../api-assertions';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 beforeAll(async () => { await prisma.$connect(); });

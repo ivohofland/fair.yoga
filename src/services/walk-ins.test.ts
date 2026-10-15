@@ -10,7 +10,7 @@
  * Refusals are asserted by `refusal`, never by message.
  */
 import { describe, it, expect, afterAll, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { erasedAddress } from '@/lib/erased-address';
@@ -23,8 +23,9 @@ import {
   type WalkInRefusal,
   type WalkInSubject,
 } from './walk-ins';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**
@@ -364,7 +365,7 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     const { teacherId, classId } = await seedTeacher('race');
     const email = `walkin-race-${suffix}@test.local`;
     const inv = await prisma.invitation.create({ data: { teacherId, email, firstName: 'Race', status: 'pending', delivered: false } });
-    const other = new PrismaClient();
+    const other = createPrismaClient();
     // The emit precedes the commit, and a rolled-back one still delivers its
     // payload to the recipient's connected client: a refused walk-in must not
     // reach the bus.
@@ -398,7 +399,7 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     const { teacherId, classId } = await seedTeacher('decline-race');
     const email = `walkin-decline-race-${suffix}@test.local`;
     const inv = await prisma.invitation.create({ data: { teacherId, email, firstName: 'Late', status: 'pending' } });
-    const other = new PrismaClient();
+    const other = createPrismaClient();
     try {
       await expectRefused(
         prisma.$transaction(async (tx) => {

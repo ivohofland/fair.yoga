@@ -7,12 +7,12 @@
  * links it and has a class template on that link. Each case reads as B.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, teardownTeacher } from '../helpers';
 import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const SECRET = 'door code 4821';
 

@@ -8,14 +8,15 @@
  * `Registration`, for the student claim in `processClassReminders`.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { processClassReminders } from './class-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { uniqueSuffix } from '../../tests/helpers';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const teacherIds: string[] = [];
 const accountIds: string[] = [];
 const roomIds: string[] = [];
@@ -121,7 +122,7 @@ afterAll(async () => {
 describe('the student reminder claim takes Class before Registration', () => {
   it('queues behind a held class without having locked the registration', async () => {
     const f = await seed();
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     const held = latch(); const release = latch();
     let holderPid = 0;
     // The class held `FOR UPDATE`, as `docs/lock-order.md` records the

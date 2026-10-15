@@ -50,12 +50,13 @@
  * instead of being appended to it.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient, ClassStatus } from '@prisma/client';
+import { ClassStatus } from '@prisma/client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass, transitionClass } from './class-lifecycle';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 // PREFIXED, not just timestamped — the convention
 // `class-lifecycle-tier-guard.test.ts` states in its own header, and for the
 // same reason: every file on `LOCK_CONTENTION_TESTS` shares one test database

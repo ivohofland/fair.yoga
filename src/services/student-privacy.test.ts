@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import crypto from 'crypto';
 import { updateStudentPrivacy } from './student-privacy';
 import { deleteStudentAccount } from './gdpr';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 afterAll(async () => {
   await prisma.$disconnect();

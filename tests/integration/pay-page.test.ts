@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { formatInstantInZone } from '@/lib/timezone';
 import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const IBAN = 'NL91ABNA0417164300';
 const BIC = 'ABNANL2A';

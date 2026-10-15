@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 // `notifyInvitee` is no longer imported: the one test that called it directly
 // ("finds a Student row whose OWN address carries uppercase") was removed in
 // #170, because the row it built is unrepresentable under
@@ -18,8 +17,9 @@ import { createClassFixture } from '../class-fixtures';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 import { erasedAddress } from '@/lib/erased-address';
 import { randomUUID } from 'crypto';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 let teacherId: string;
@@ -1244,7 +1244,7 @@ describe('resend answers 404 for a row deleted while the request was in flight (
     // uncommitted writer under READ COMMITTED) still sees the row as
     // `pending`, but its later write — the marker `updateMany`, keyed only
     // on `{ id }` — blocks on the row lock until the holder releases.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let deleted!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -4022,7 +4022,7 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
     // The holder declines and holds it UNCOMMITTED, so the route's own
     // pre-check still reads `pending` and its write then parks on the
     // holder's row lock — the same lever the generator race tests use.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let declined!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -4085,7 +4085,7 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
 
     // Same lever as the delete test: the edit's own pre-check reads
     // `pending`, and the write parks on the holder's uncommitted decline.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let declined!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -4145,7 +4145,7 @@ describe('invitation writes are retry-safe against a concurrent decline (#196)',
       data: { teacherId: raceTeacherId, email, firstName: 'Race', lastName: 'Gone', status: 'pending' },
     });
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let locked!: () => void;
     const released = new Promise<void>((r) => { release = r; });
@@ -4228,7 +4228,7 @@ describe('PUT /api/invitations/[id] is retry-safe against a concurrent acceptanc
     // The invitee accepts and holds it UNCOMMITTED, so the route's own
     // pre-check still reads `pending` and its write then parks on the
     // holder's row lock — same lever as the #196 block's decline races.
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let accepted!: () => void;
     const released = new Promise<void>((r) => { release = r; });

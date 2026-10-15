@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
 import {
@@ -24,8 +24,9 @@ import {
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
+import { createPrismaClient } from '@/lib/prisma-client';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 /**
@@ -918,7 +919,7 @@ describe('generateStudioInstancesForTemplate (DB)', () => {
       .slice(0, 4);
     const collide = dates[2]!;
 
-    const holder = new PrismaClient();
+    const holder = createPrismaClient();
     let release!: () => void;
     let parkedResolve!: () => void;
     const released = new Promise<void>((r) => { release = r; });
