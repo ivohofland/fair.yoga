@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 import {
   findUndefinedFilterPaths,
   classifyCallSite,
@@ -102,7 +103,7 @@ describe('undefinedFilterGuard handler', () => {
   });
 });
 
-const base = new PrismaClient();
+const base = createPrismaClient();
 const guarded = base.$extends(undefinedFilterGuard);
 const sentinels = [`ufg-783-${uniqueSuffix()}-a`, `ufg-783-${uniqueSuffix()}-b`];
 // Stands in for a beforeAll-assigned binding that never got its value.
@@ -175,9 +176,9 @@ describe('undefinedFilterGuard against the database', () => {
   });
 });
 
-const moduleLevel = new PrismaClient();
+const moduleLevel = createPrismaClient();
 function build(): PrismaClient {
-  return new PrismaClient();
+  return createPrismaClient();
 }
 
 describe('the vitest installer (tests/setup/undefined-filter-guard.ts)', () => {
@@ -204,11 +205,13 @@ describe('the vitest installer (tests/setup/undefined-filter-guard.ts)', () => {
     expect(await remaining()).toBe(2);
   });
   it('throws rather than guess when no frame of the construction stack can decide', async () => {
-    // A bound native constructor run as a promise reaction that nothing awaits
-    // leaves no file frame on the construction stack but the installer's own.
+    // The factory handed straight to a promise reaction that nothing awaits
+    // leaves no file frame on the construction stack but the factory's and the
+    // installer's, both skipped. An arrow wrapping the call would put a test
+    // file frame there and decide `test`.
     let outcome: unknown;
-    void Promise.resolve([])
-      .then(Reflect.construct.bind(null, PrismaClient))
+    void Promise.resolve(undefined)
+      .then(createPrismaClient)
       .then(
         (client: unknown) => {
           outcome = client;
