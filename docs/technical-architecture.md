@@ -1366,8 +1366,8 @@ with them.
 It re-exports the whole package (`export *`), so `Prisma`, the model types and
 the enums come from `@/lib/prisma-client`, and it exports `PrismaClient` as a
 type only. `createPrismaClient` there is therefore the one place a TypeScript
-module constructs a client: `new PrismaClient()` anywhere else is compile
-error TS1362, including through a namespace import. The exception is the
+module constructs a client: `new PrismaClient()` anywhere else is a compile
+error (TS1362 for a named import, TS2339 through a namespace import). The exception is the
 CommonJS engine probe, `scripts/prisma-engine-probe.cjs` (#885). `@/lib/db` is
 the app singleton built from the factory; tests, scripts and the seed call it
 for clients of their own, and each call is a new pool.
@@ -1375,14 +1375,16 @@ for clients of their own, and each call is a new pool.
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) refuses
 an import of `@prisma/client` or any subpath of it outside that module,
 type-only imports included. It does not see an inline `import('@prisma/client')`
-type query, which is not an import declaration. ESLint covers `src/`, `tests/`,
-`scripts/` and `prisma/seed.ts`; none of them is in the config's global ignores.
+type query, which is not an import declaration. The rule covers the TypeScript
+files (`.ts`, `.tsx`, `.mts`) under `src/`, `tests/` and `scripts/`, and
+`prisma/seed.ts`; none of them is in the config's global ignores.
 
-The package name survives outside the module only where a name string is the
-point: the `vi.mock('@prisma/client')` in `tests/setup/undefined-filter-guard.ts`,
-which has to replace the package's own `PrismaClient` (the one the factory
-constructs); the `vi.doUnmock` in `src/lib/e2e-prisma-factory.test.ts`; the CJS
-probe; and package metadata. Re-derive with
+No other code imports the package. The other hits of the grep below are the
+`vi.mock('@prisma/client')` in `tests/setup/undefined-filter-guard.ts`, which
+has to replace the package's own `PrismaClient` (the one the factory
+constructs), with its `vi.doUnmock` counterpart in
+`src/lib/e2e-prisma-factory.test.ts`; the CJS probe; comments; test assertions
+and fixtures; and package metadata. Re-derive with
 `git grep -n "@prisma/client" -- ':!docs'`.
 
 The point is that one file changes when the Prisma 7 generator's `output` path
