@@ -208,14 +208,12 @@ describe('the local scheme', () => {
   });
 
   it.each([
-    ['a character outside letters, digits, spaces and dashes', { bankCode: '062/000', accountNumber: '12345678' }, 'bankCode'],
-    ['an account number under four characters', { bankCode: '062000', accountNumber: '123' }, 'accountNumber'],
-    ['an account number over 34 characters', { bankCode: '062000', accountNumber: '1'.repeat(35) }, 'accountNumber'],
-    ['a bank code over 20 characters', { bankCode: '1'.repeat(21), accountNumber: '12345678' }, 'bankCode'],
-  ] as const)('refuses %s', (_label, input, field) => {
-    const result = parseBankDetails('AUD', input);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.failure.field).toBe(field);
+    ['a character outside letters, digits, spaces and dashes', { bankCode: '062/000', accountNumber: '12345678' }, 'bank_code_invalid', 'bankCode'],
+    ['an account number under four characters', { bankCode: '062000', accountNumber: '123' }, 'account_number_invalid', 'accountNumber'],
+    ['an account number over 34 characters', { bankCode: '062000', accountNumber: '1'.repeat(35) }, 'account_number_invalid', 'accountNumber'],
+    ['a bank code over 20 characters', { bankCode: '1'.repeat(21), accountNumber: '12345678' }, 'bank_code_invalid', 'bankCode'],
+  ] as const)('refuses %s', (_label, input, error, field) => {
+    expect(parseBankDetails('AUD', input)).toEqual({ ok: false, failure: { error, field } });
   });
 
   it('reads a stored AUD row and an NZD row, and refuses an AUD row with no BSB', () => {

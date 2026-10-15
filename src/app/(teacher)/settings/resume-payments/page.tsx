@@ -8,6 +8,7 @@ import { ResumePaymentsForm, RESUME_SIGN_IN_PATH } from '@/components/settings/r
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 import { PAYOUT_CHANGE_PHRASES, payoutMasksAlikeNote } from '@/lib/email-templates';
 import { formatClassContext, formatDateWithYear, formatMoney, paymentStateInlineText } from '@/lib/format';
+import { CURRENCY_INFO } from '@/lib/currency';
 import type { BankAccountData } from '@/lib/payment-methods';
 import { startOfLocalDay } from '@/lib/timezone';
 import { readResumeReview, type ReviewPayment } from '@/services/payout-resume';
@@ -58,6 +59,10 @@ function PaymentRow({ payment, timeZone }: { payment: ReviewPayment; timeZone: s
 }
 
 function AccountDetails({ account }: { account: BankAccountData }) {
+  const info = CURRENCY_INFO[account.currency];
+  const labels: Record<keyof typeof DETAIL_LABELS, string> = info.scheme === 'local'
+    ? { ...DETAIL_LABELS, bankCode: info.bankCodeLabel ?? DETAIL_LABELS.bankCode, accountNumber: info.accountLabel }
+    : DETAIL_LABELS;
   return (
     <div className="bg-sand-soft border border-border rounded-card p-5">
       <h3 className="type-label mb-2">{account.currency} account</h3>
@@ -67,7 +72,7 @@ function AccountDetails({ account }: { account: BankAccountData }) {
           if (value === null) return [];
           return [
             <div key={key}>
-              <dt className="type-caption">{DETAIL_LABELS[key]}</dt>
+              <dt className="type-caption">{labels[key]}</dt>
               <dd className="type-body break-all">{value}</dd>
             </div>,
           ];

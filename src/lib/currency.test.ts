@@ -44,7 +44,7 @@ describe('CURRENCY_INFO', () => {
 
 describe('suggestedCurrency', () => {
   it.each([
-    ['Europe/Amsterdam', 'EUR'],
+    ['Europe/Amsterdam', 'EUR'], ['Europe/Sofia', 'EUR'], ['Europe/Podgorica', 'EUR'],
     ['Europe/London', 'GBP'],
     ['America/New_York', 'USD'],
     ['America/Indiana/Indianapolis', 'USD'],

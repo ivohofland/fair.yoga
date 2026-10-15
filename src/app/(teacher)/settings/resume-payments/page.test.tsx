@@ -146,4 +146,19 @@ describe('the resume-payments change list', () => {
 
     expect(screen.getByText('The new link looks like the old one here, but it is a different link. Check it in full in your settings.')).toBeInTheDocument();
   });
+
+  it('labels a local account’s details with its currency’s own names', async () => {
+    readResumeReview.mockResolvedValue(review({
+      details: {
+        paymentLink: null,
+        bankAccounts: [{
+          currency: 'AUD', holderName: 'Anna', iban: null, bic: null, sortCode: null,
+          routingNumber: null, bankCode: '062000', accountNumber: '12345678',
+        }],
+      },
+    }));
+    render(await ResumePaymentsPage());
+    expect(screen.getByText('BSB')).toBeInTheDocument();
+    expect(screen.queryByText('Bank code')).toBeNull();
+  });
 });

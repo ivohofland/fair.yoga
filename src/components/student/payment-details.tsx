@@ -42,8 +42,8 @@ function accountFields(details: BankDetails): CopyField[] {
       return [
         ...(bankCodeLabel === null || details.bankCode === null
           ? []
-          : [{ key: 'bank code', label: bankCodeLabel, shown: details.bankCode, copied: details.bankCode }]),
-        { key: 'account number', label: accountLabel, shown: details.accountNumber, copied: details.accountNumber },
+          : [{ key: bankCodeLabel, label: bankCodeLabel, shown: details.bankCode, copied: details.bankCode }]),
+        { key: accountLabel, label: accountLabel, shown: details.accountNumber, copied: details.accountNumber },
       ];
     }
     default: {
