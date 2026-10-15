@@ -153,11 +153,14 @@ describe('PaymentDetails', () => {
     expect(screen.getByText('BSB')).toBeInTheDocument();
     expect(screen.getByText('062000')).toBeInTheDocument();
     expect(screen.getByText('Account number')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy BSB' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy Account number' })).toBeInTheDocument();
   });
 
   it('shows a Mexican account as its CLABE alone', () => {
     renderScheme({ scheme: 'local', currency: 'MXN', bankCode: null, accountNumber: '012345678901234567' });
     expect(screen.getByText('CLABE')).toBeInTheDocument();
     expect(screen.queryByText('Account number')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy CLABE' })).toBeInTheDocument();
   });
 });

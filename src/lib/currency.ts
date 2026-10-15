@@ -28,7 +28,7 @@ export const CURRENCY_INFO = {
       'Europe/Busingen', 'Europe/Dublin', 'Europe/Helsinki', 'Europe/Lisbon', 'Europe/Ljubljana',
       'Europe/Luxembourg', 'Europe/Madrid', 'Europe/Malta', 'Europe/Mariehamn', 'Europe/Monaco',
       'Europe/Paris', 'Europe/Riga', 'Europe/Rome', 'Europe/San_Marino', 'Europe/Tallinn',
-      'Europe/Vatican', 'Europe/Vienna', 'Europe/Vilnius', 'Europe/Zagreb', 'Europe/Andorra',
+      'Europe/Vatican', 'Europe/Vienna', 'Europe/Vilnius', 'Europe/Zagreb', 'Europe/Andorra', 'Europe/Sofia', 'Europe/Podgorica',
       'Atlantic/Azores', 'Atlantic/Canary', 'Atlantic/Madeira', 'Africa/Ceuta', 'Asia/Nicosia',
       'Asia/Famagusta', 'Europe/Nicosia',
     ],
