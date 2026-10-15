@@ -39,7 +39,8 @@ afterAll(async () => {
 
 // After each describe's `beforeAll` seed, before its read: the read must be
 // planned for the rows it was given (`docs/test-database.md` §7). A seed
-// written in a `beforeEach` or a test body comes after this, not before.
+// written in a `beforeEach` or a test body comes after this and needs its own
+// `analyzeSeed` call.
 beforeEach(async () => {
   await analyzeSeed(prisma);
 });

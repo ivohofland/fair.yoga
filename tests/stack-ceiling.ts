@@ -40,8 +40,9 @@ export async function lowStackClient(): Promise<PrismaClient> {
  * Refreshes the planner's statistics for the whole database. Call it once a
  * ceiling test's seed is written and before its read runs: a plan chosen from
  * statistics taken before a `CEILING_ROWS` seed can be quadratic in it, and
- * nothing guarantees autovacuum has analyzed the seed by then. Why, measured,
- * is `docs/test-database.md` §7.
+ * nothing guarantees autovacuum has analyzed the seed by then. Serial-tier
+ * files only. Why, measured, and what enforces the tier, is
+ * `docs/test-database.md` §7.
  */
 export async function analyzeSeed(db: PrismaClient): Promise<void> {
   await db.$executeRawUnsafe('ANALYZE');
