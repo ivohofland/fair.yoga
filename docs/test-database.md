@@ -461,8 +461,8 @@ executing the whole time.
 **The plan, measured locally.** Run on the ceiling seed with statistics
 analyzed before it, that `groupBy` became a nested loop that re-scans live
 `CalendarEntry` rows once per waitlist row. `EXPLAIN (ANALYZE)` reported 1000
-loops returning about 502 rows each, 500,500 of them removed by the join
-filter, and 974 ms. After `ANALYZE`, the same query on the same rows ran
+inner loops of about 502 rows each, 500,500 rows removed by the join filter in
+total, and 974 ms. After `ANALYZE`, the same query on the same rows ran
 as hash joins in 3.4 ms. Reproduce it on a worktree test database: disable
 autovacuum on its tables, `ANALYZE` while the seed tables are empty, seed,
 then `EXPLAIN (ANALYZE)` the query.
@@ -480,15 +480,18 @@ tables and is planned from the same statistics. That is an
 inference, not a measurement.
 
 **On CI, before and after.** The full `unit-sweeps` tier, five passes per
-job on GitHub's runners, ceiling-file durations recorded, 25 passes per arm
-(2026-10-15):
+job on GitHub's runners, ceiling-file durations recorded, 25 passes per arm.
+Measured once, on 2026-10-15, by a temporary workflow that is not in this
+tree; PR #892's body names its runs. These numbers cannot be re-derived from
+the repository:
 
 | | `reconcileWaitlists` max | `autoCompleteClasses` max | `readDuePayments` max |
 |---|---|---|---|
 | without `analyzeSeed` | 1746 ms | 1060 ms | 303 ms |
 | with `analyzeSeed` | 454 ms | 276 ms | 170 ms |
 
-Neither arm timed out. At about one stall in 65 unfixed passes, 25 passes
+Neither arm timed out. At about one stall in 65 unfixed passes (the
+watchdog's 40 plus this arm's 25), 25 passes
 cannot show that the stall is gone. The tail is the evidence:
 `reconcileWaitlists` and `autoCompleteClasses` run past 1 s without the
 analyze and not with it. `readDuePayments` has no tail in either arm.
@@ -501,7 +504,11 @@ remove it.
 read whose plan depends on how many rows there are. Joins and `groupBy` are
 the obvious cases, and anything database-wide. Whole-database `ANALYZE`, not a
 per-table list, so a seed that touches a new table cannot be missed. On a
-worktree test database it measured 84 ms over three runs. Only in a serial
-tier: `ANALYZE` takes `SHARE UPDATE EXCLUSIVE` on every table it reads, and in
-the parallel `unit` tier that can collide with another file's `LOCK TABLE` or
-index build.
+worktree test database it measured 84 ms (three runs, psql `\timing` on a
+bare `ANALYZE;`). Only in a serial
+tier, which `src/lib/serial-tier-membership.test.ts` enforces for
+`analyzeSeed`'s importers: `ANALYZE` takes `SHARE UPDATE EXCLUSIVE` on each
+table in turn. That conflicts with `LOCK TABLE` in `SHARE UPDATE EXCLUSIVE`
+mode or stronger, any index build, `TRUNCATE` and other DDL, and a concurrent
+`VACUUM` or `ANALYZE`. In the parallel `unit` tier, another file doing any of
+these can block on it or block it.

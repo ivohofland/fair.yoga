@@ -91,3 +91,23 @@ describe('the serial-tier lists agree with the files they name', () => {
     }).toEqual({ listedButNotMarked: [], markedButNotListed: [] });
   });
 });
+
+/**
+ * `analyzeSeed` (`tests/stack-ceiling.ts`) runs a whole-database `ANALYZE`,
+ * whose table locks collide with a concurrent file's table lock or index
+ * build, so only a serial-tier file may call it (`docs/test-database.md` §7).
+ * Same search scope as the marker check above.
+ */
+describe('analyzeSeed stays in the serial tier', () => {
+  it('is used only by files on SERIAL_TESTS, and by at least one', () => {
+    // An import, not a bare mention: this file names it in prose and would
+    // otherwise find itself.
+    const imports = /import\s*\{[^}]*\banalyzeSeed\b[^}]*\}\s*from\s*'[^']*stack-ceiling'/;
+    const users = markerSearchScope().filter((f) => imports.test(readFileSync(path.join(root, f), 'utf8')));
+    const serial: string[] = [...SERIAL_TESTS];
+    // Non-empty first: a scan that matches nothing would pass the second
+    // assertion vacuously.
+    expect(users).not.toEqual([]);
+    expect(users.filter((f) => !serial.includes(f))).toEqual([]);
+  });
+});

@@ -39,11 +39,11 @@ Whole-database `ANALYZE` has no list to drift, and the test database is small.
 
 - `tests/stack-ceiling.ts`: export `analyzeSeed(db)`, which runs a
   whole-database `ANALYZE`. Its docblock says when to call it and links §7.
-- `src/services/sweep-page-ceiling.test.ts`: call it after each describe's
-  seed and before its read. Built as a call at the end of every `beforeAll`.
-  The whole-branch review moved it to one file-level `beforeEach`, which
-  vitest runs after each describe's `beforeAll`, so a future describe that
-  seeds in `beforeAll` cannot leave it out.
+- `src/services/sweep-page-ceiling.test.ts`: one file-level `beforeEach`
+  calls it. Vitest runs that after each describe's `beforeAll`, so a future
+  describe that seeds in `beforeAll` cannot leave it out.
+- `src/lib/serial-tier-membership.test.ts`: refuses an `analyzeSeed` importer
+  outside `SERIAL_TESTS`, and an empty scan.
 - Verify: the ceiling file passes locally. On CI, with the call skipped and
   with it in place, compare per-test duration distributions across repeated
   sweep-tier passes (temporary diagnostic workflow, dropped before the PR).
