@@ -1,4 +1,4 @@
-import { ClassStatus, Currency, Prisma } from '@prisma/client';
+import { ClassStatus, Currency, Prisma } from '@/lib/prisma-client';
 
 /**
  * A Prisma client that must be an interactive transaction client, never the

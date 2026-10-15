@@ -1,4 +1,4 @@
-import { Prisma, type Currency } from '@prisma/client';
+import { Prisma, type Currency } from '@/lib/prisma-client';
 import { CURRENCIES } from '@/lib/format';
 import {
   CLASS_TO_ENTRY_JOIN,

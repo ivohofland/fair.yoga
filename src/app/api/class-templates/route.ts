@@ -25,7 +25,7 @@ import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
 import { countSkipReasons } from '@/lib/generation';
 import { log } from '@/lib/log';
 import type { TemplateCreateResponse } from '@/lib/api-types';
-import type { ClassTemplate } from '@prisma/client';
+import type { ClassTemplate } from '@/lib/prisma-client';
 
 type CreateResponse = WithSlot<ClassTemplate> & TemplateCreateResponse;
 

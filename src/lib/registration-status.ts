@@ -35,7 +35,7 @@
  * callers do. That is a constraint on the call site, not on the source of
  * truth, and it is unaffected by the annotation change above.
  */
-import type { RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@/lib/prisma-client';
 
 /**
  * Every status, and whether it occupies or frees a seat in the class.
@@ -46,7 +46,7 @@ import type { RegistrationStatus } from '@prisma/client';
  *
  * The values are hand-listed rather than derived from Prisma's runtime enum
  * export because this module is reached from client components and every
- * `@prisma/client` import in a `'use client'` path in this repo is type-only —
+ * `@/lib/prisma-client` import in a `'use client'` path in this repo is type-only —
  * a value import would pull the Prisma runtime into the browser bundle.
  */
 const REGISTRATION_ROLE: Record<RegistrationStatus, 'occupies' | 'frees'> = {

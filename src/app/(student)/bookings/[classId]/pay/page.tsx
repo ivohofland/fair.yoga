@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { Currency, PaymentStatus } from '@prisma/client';
+import type { Currency, PaymentStatus } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';

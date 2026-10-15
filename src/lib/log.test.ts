@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import pino from 'pino';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { createLogger, log } from './log';
 import { serializeErr } from './log-serializers';
 

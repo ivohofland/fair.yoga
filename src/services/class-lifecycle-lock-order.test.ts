@@ -50,7 +50,7 @@
  * instead of being appended to it.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ClassStatus } from '@prisma/client';
+import { ClassStatus } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass, transitionClass } from './class-lifecycle';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';

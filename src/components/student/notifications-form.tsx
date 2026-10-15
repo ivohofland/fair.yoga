@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { z } from 'zod';
-import type { ReminderChannel, ReminderTiming } from '@prisma/client';
+import type { ReminderChannel, ReminderTiming } from '@/lib/prisma-client';
 import type { updateStudentSchema } from '@/lib/schemas';
 import type { StudentPushPrefs } from '@/lib/push-policy';
 import type { NoneOf } from '@/lib/type-pins';

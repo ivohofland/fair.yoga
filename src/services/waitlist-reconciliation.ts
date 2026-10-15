@@ -25,7 +25,7 @@
  *
  * References in this file name symbols, never line numbers.
  */
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { readInPages } from '@/lib/read-in-pages';

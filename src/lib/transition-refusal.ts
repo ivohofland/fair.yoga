@@ -5,7 +5,7 @@
  * anywhere. Each `switch` ends in a `never` default: a new `ClassStatus`
  * fails to compile here until it has its own sentence.
  */
-import type { ClassStatus } from '@prisma/client';
+import type { ClassStatus } from '@/lib/prisma-client';
 
 /**
  * Why moving a class from `from` to `to` is refused. Keyed on `from`; only a

@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { dispatchPushes, PUSH_STALE_AFTER_MS, type MisconfiguredVapid, type PushDispatchResult } from './push-dispatch';
 
 /** Failed ticks, each within the quiet window of the last and with no delivery between, before the push job reports itself degraded. */

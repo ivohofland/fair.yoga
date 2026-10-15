@@ -1,4 +1,4 @@
-import type { Prisma, StudentPrivacy } from '@prisma/client';
+import type { Prisma, StudentPrivacy } from '@/lib/prisma-client';
 import type { NoneOf } from './type-pins';
 import { formatStudentName } from './format';
 import { ageOn, dayMonthOf, type BirthdayDayMonth } from './birthday';

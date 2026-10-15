@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';

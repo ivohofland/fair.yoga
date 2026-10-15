@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { probeConflictingEntry, entryConflictMessage } from './entry-conflict';
 import { hhmmToTime } from './time-of-day';
 import { log } from './log';

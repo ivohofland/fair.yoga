@@ -21,7 +21,7 @@
  * spacing schemes onto one counter.
  */
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import {
   updateClassTemplate,
   archiveOrUnarchiveTemplate,

@@ -11,7 +11,7 @@
  * drift on where an invitation goes, for either reader.
  */
 
-import type { ClassStatus, NotificationType } from '@prisma/client';
+import type { ClassStatus, NotificationType } from '@/lib/prisma-client';
 import { STUDENT_PUSH_GROUP } from './push-policy';
 
 /**

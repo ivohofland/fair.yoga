@@ -20,7 +20,7 @@ import type {
   ReminderChannel,
   ReminderTiming,
   TeacherBookingNotifications,
-} from '@prisma/client';
+} from '@/lib/prisma-client';
 
 import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
 

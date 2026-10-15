@@ -20,7 +20,7 @@ import {
 import type { WithSlot } from '@/services/rule-lifecycle';
 import type { RuleSlotHolder } from '@/lib/rule-slot-holder';
 import type { StudioTemplateToggleResponse, TemplateEditResponse } from '@/lib/api-types';
-import type { StudioClassTemplate } from '@prisma/client';
+import type { StudioClassTemplate } from '@/lib/prisma-client';
 
 type PatchResponse = WithSlot<StudioClassTemplate> & StudioTemplateToggleResponse;
 type PutResponse = WithSlot<StudioClassTemplate> & TemplateEditResponse;

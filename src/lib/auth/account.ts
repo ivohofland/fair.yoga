@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { requireNormalised } from '@/lib/schemas';
 import { liveProfile } from '@/lib/live-profile';
 

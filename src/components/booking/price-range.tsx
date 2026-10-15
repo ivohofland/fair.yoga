@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import type { TierPrices, AttendanceSpread } from '@/lib/tier-estimates';
 import type { PriceLineResult } from '@/lib/price-line';

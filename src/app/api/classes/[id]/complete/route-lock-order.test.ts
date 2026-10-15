@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import * as dbLocks from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass } from '@/services/class-lifecycle';

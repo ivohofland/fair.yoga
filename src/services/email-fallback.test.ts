@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { processEmailFallback } from './email-fallback';
 import { hhmmToTime } from '@/lib/time-of-day';

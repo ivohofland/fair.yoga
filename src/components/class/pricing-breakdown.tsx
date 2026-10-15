@@ -1,4 +1,4 @@
-import type { Class } from '@prisma/client';
+import type { Class } from '@/lib/prisma-client';
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { formatMoney } from '@/lib/format';
 import { INCOME_TIERS, type IncomeTier } from '@/lib/tiers';

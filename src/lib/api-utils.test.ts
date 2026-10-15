@@ -51,7 +51,7 @@ import {
 } from './api-utils';
 import { getSessionToken, validateSession } from './auth';
 import { classifyApiError } from './api-errors';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 
 const mockedGetSessionToken = vi.mocked(getSessionToken);

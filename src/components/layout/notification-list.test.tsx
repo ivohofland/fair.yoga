@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
-import type { Notification } from '@prisma/client';
+import type { Notification } from '@/lib/prisma-client';
 import type { NotificationPage } from '@/services/notifications';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { TEACHER_INVITATION_PATH } from '@/lib/notification-links';

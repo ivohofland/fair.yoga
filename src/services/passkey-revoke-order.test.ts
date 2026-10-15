@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { revokePasskeyByLink } from './passkey-revoke';
 import { uniqueSuffix } from '../../tests/helpers';

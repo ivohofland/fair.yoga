@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma, type Payment } from '@prisma/client';
+import { Prisma, type Payment } from '@/lib/prisma-client';
 import { respondPaymentOutcome } from './shared';
 import { PAYMENT_GONE, type PaymentRefusal } from '@/services/payments';
 import { expectApplied, expectRefusal, expectUnchanged } from '../../../../../tests/api-assertions';

@@ -4,7 +4,7 @@
  * against an erasure are in `src/app/api/teachers/[id]/route-lock-order.test.ts`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

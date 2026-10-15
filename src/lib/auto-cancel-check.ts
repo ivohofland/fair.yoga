@@ -1,4 +1,4 @@
-import type { AutoCancelCheck } from '@prisma/client';
+import type { AutoCancelCheck } from '@/lib/prisma-client';
 import { classStartInstant } from '@/lib/timezone';
 import { cancelCheckFrom } from '@/lib/cancel-check';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type Prisma } from '@prisma/client';
+import { type Prisma } from '@/lib/prisma-client';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession } from '../helpers';
 import { createClassFixture } from '../class-fixtures';
 import { mintSignupTicket, generateMagicLinkToken, hashNonce, validateSession } from '@/lib/auth';

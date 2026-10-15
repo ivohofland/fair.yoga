@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { isLockTimeout } from '@/lib/api-errors';
 import { mintPasskeyRevokeToken } from './passkey-revoke-token';
 import { revokePasskeyByLink } from './passkey-revoke';

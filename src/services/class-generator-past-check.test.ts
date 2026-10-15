@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { ClassTemplate } from '@prisma/client';
+import type { ClassTemplate } from '@/lib/prisma-client';
 import { cancelCheckInstant } from '@/lib/auto-cancel-check';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { CLASS_GENERATOR } from './class-generator';

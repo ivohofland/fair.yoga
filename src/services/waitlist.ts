@@ -8,8 +8,8 @@
  * 3. frozen — from start itself, no more promotions
  */
 
-import { Prisma } from '@prisma/client';
-import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@/lib/prisma-client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { cancelDeadlineFrom, freeCancelUntil, keepsPromotionGrace } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';

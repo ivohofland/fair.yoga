@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
 
 // The measured shape of a 23P01 through Prisma Client: `code` and `meta` are

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { NotificationType } from '@prisma/client';
+import { NotificationType } from '@/lib/prisma-client';
 import {
   STUDENT_PUSH_GROUP, TEACHER_PUSH_GROUP, shouldPush, buildPushPayload, pushUrgency,
   REDACTED_BODY, PUSH_BODY_MAX_BYTES, PUSH_PLAINTEXT_MAX_BYTES, type StudentPushPrefs, type TeacherPushPrefs,

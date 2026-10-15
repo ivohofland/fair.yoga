@@ -10,7 +10,7 @@
  * guard fails to connect instead of touching a database.
  */
 import { describe, it, expect, vi, beforeAll } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
 const GUARD_PREFIX = /^\[undefined-filter-guard\]/;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { log } from '@/lib/log';
 import {
@@ -1542,7 +1542,7 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
       $executeRawUnsafe: async () => 0,
       $queryRaw: async () => [{ id: 'stub' }],
       $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
-    } as unknown as import('@prisma/client').PrismaClient;
+    } as unknown as import('@/lib/prisma-client').PrismaClient;
 
     const spy = vi.spyOn(log, 'error').mockImplementation(() => log);
 
@@ -1599,7 +1599,7 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
       $executeRawUnsafe: async () => 0,
       $queryRaw: async () => [{ id: 'stub' }],
       $transaction: async (fn: (tx: unknown) => Promise<number>) => fn(stub),
-    } as unknown as import('@prisma/client').PrismaClient;
+    } as unknown as import('@/lib/prisma-client').PrismaClient;
     return { stub, created, failure };
   }
 

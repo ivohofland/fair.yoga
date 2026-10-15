@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { WaitlistStatus } from '@prisma/client';
+import type { WaitlistStatus } from '@/lib/prisma-client';
 import { ACTIVE_REGISTRATION_STATUSES, isRegistrationStatus } from './registration-status';
 
 /**

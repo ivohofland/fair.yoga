@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { type PrismaClient, type NotificationType } from '@prisma/client';
+import { type PrismaClient, type NotificationType } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { isTestDatabaseName } from '@/lib/worktree/identity';
 import {

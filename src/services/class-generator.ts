@@ -5,8 +5,8 @@
  * for the same date range will not create duplicate classes.
  */
 
-import { Prisma } from '@prisma/client';
-import type { ClassTemplate, PrismaClient } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { ClassTemplate, PrismaClient } from '@/lib/prisma-client';
 import type { GenerationResult } from '@/lib/generation';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 import { isLockTimeout } from '@/lib/api-errors';

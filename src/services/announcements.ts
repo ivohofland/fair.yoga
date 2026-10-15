@@ -13,7 +13,7 @@
  */
 
 import { createHash } from 'crypto';
-import type { Announcement, PrismaClient } from '@prisma/client';
+import type { Announcement, PrismaClient } from '@/lib/prisma-client';
 import {
   createBulkNotifications,
   type CreateNotificationInput,

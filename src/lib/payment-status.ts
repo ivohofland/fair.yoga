@@ -1,4 +1,4 @@
-import type { PaymentStatus } from '@prisma/client';
+import type { PaymentStatus } from '@/lib/prisma-client';
 
 /**
  * Runtime validation for `PaymentStatus` values arriving from the network.
@@ -10,7 +10,7 @@ import type { PaymentStatus } from '@prisma/client';
  * `payment-status.test.ts`), so the fix is to give the functions a module
  * whose public surface they legitimately are, not to delete them.
  *
- * Imported by a `'use client'` module, so the `@prisma/client` import here is
+ * Imported by a `'use client'` module, so the `@/lib/prisma-client` import here is
  * type-only, like every other one in a client path in this repo.
  */
 
@@ -21,7 +21,7 @@ import type { PaymentStatus } from '@prisma/client';
  *
  * The values are hand-listed rather than derived from Prisma's runtime enum
  * export (which does exist) because this module is reached from client
- * components and every `@prisma/client` import in a `'use client'` path in this
+ * components and every `@/lib/prisma-client` import in a `'use client'` path in this
  * repo is type-only — a value import would be the first, and would risk pulling
  * the Prisma runtime into the browser bundle. The `Record` pin buys the drift
  * protection instead.

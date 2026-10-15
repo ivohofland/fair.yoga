@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, onTestFinished, vi } from 'vitest';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { formatDayHeader } from '@/lib/format';
 import crypto from 'crypto';
 import {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi, onTestFinished } from 'vitest';
-import { type PrismaClient, type Payment, type PaymentStatus } from '@prisma/client';
+import { type PrismaClient, type Payment, type PaymentStatus } from '@/lib/prisma-client';
 import {
   markPaymentPaid,
   markPaymentOverdue,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import sharp, { type Metadata } from 'sharp';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { lockLiveTeacher } from '@/lib/db-locks';
 import { createConcurrencyLimit } from '@/lib/concurrency-limit';

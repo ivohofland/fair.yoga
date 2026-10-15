@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '@/lib/prisma-client';
 import type { TransactionClientOnly } from '@/lib/db-locks';
 
 /**

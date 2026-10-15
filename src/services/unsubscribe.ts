@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@/lib/prisma-client';
 import { isErasedAddress } from '@/lib/erased-address';
 import type { UnsubscribeTarget } from '@/lib/unsubscribe-kind';
 import { addressTag, parseInvitationSubject } from '@/lib/unsubscribe-token';

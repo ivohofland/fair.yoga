@@ -5,7 +5,7 @@
  * This service handles status transitions, reminders, and queries.
  */
 
-import type { PrismaClient, Payment, RegistrationStatus } from '@prisma/client';
+import type { PrismaClient, Payment, RegistrationStatus } from '@/lib/prisma-client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { createBulkNotifications } from './notifications';
 import {

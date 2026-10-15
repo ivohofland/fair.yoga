@@ -1,4 +1,4 @@
-import type { Currency, PrismaClient, TeacherBankAccount } from '@prisma/client';
+import type { Currency, PrismaClient, TeacherBankAccount } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import type { bankAccountSchema } from '@/lib/schemas';

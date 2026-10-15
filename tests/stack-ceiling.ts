@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { createPrismaClient } from '@/lib/prisma-client';
 import { expect } from 'vitest';
 

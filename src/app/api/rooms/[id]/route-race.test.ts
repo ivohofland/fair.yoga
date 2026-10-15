@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { cookie, seedSession, uniqueSuffix } from '../../../../../tests/helpers';
 import { expectRefusal, expectUnchanged } from '../../../../../tests/api-assertions';
 import { DELETE } from './route';

@@ -3,7 +3,7 @@
  * `student-archive.ts`). Pure: every value it formats is handed in.
  */
 
-import type { Currency, Prisma } from '@prisma/client';
+import type { Currency, Prisma } from '@/lib/prisma-client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { formatTotals, totalsByCurrency } from '@/lib/money-totals';
 

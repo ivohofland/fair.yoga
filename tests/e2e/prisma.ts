@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { createPrismaClient, type PrismaClientFactoryOptions } from '@/lib/prisma-client';
 import { undefinedFilterGuard } from '../undefined-filter-guard';
 

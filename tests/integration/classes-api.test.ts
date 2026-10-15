@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { Prisma, type ClassStatus } from '@prisma/client';
+import { Prisma, type ClassStatus } from '@/lib/prisma-client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { formatDayHeader } from '@/lib/format';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';

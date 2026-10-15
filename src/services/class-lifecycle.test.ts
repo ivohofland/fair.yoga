@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
-import { type PrismaClient, ClassStatus, type Currency } from '@prisma/client';
+import { type PrismaClient, ClassStatus, type Currency } from '@/lib/prisma-client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';

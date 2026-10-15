@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { $Enums } from '@prisma/client';
+import { $Enums } from '@/lib/prisma-client';
 import {
   ESSENTIAL_NOTIFICATION_TYPES,
   isEssential,

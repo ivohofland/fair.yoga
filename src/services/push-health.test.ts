@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import type { MisconfiguredVapid, PushDispatchResult } from './push-dispatch';
 import {
   createPushDispatchTick,

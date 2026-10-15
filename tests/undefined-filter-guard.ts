@@ -7,10 +7,10 @@
  *
  * Installers: `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  *
- * Only types come from `@prisma/client`, so this module is callable from
+ * Only types come from `@/lib/prisma-client`, so this module is callable from
  * inside a `vi.mock('@prisma/client')` factory.
  */
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 
 export const UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX = '[undefined-filter-guard]';
 

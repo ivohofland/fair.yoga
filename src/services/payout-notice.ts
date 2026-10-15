@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { sendPayoutChangedEmail } from '@/lib/email';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';

@@ -4,8 +4,8 @@
  * Same rolling 4-week pattern as class-generator.ts. Idempotent.
  */
 
-import { Prisma } from '@prisma/client';
-import type { PrismaClient, StudioClassTemplate } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
+import type { PrismaClient, StudioClassTemplate } from '@/lib/prisma-client';
 import type { GenerationResult } from '@/lib/generation';
 import {
   claimRuleForGeneration,

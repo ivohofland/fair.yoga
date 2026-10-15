@@ -1,4 +1,4 @@
-import type { RegistrationStatus } from '@prisma/client';
+import type { RegistrationStatus } from '@/lib/prisma-client';
 
 /** Why a late-cancelled booking is still charged. */
 export const LATE_CANCEL_CHARGE_NOTE = 'Cancelled after the deadline — this class is still charged.';

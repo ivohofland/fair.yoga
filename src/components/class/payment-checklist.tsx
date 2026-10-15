@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import type { Currency, PaymentStatus } from '@prisma/client';
+import type { Currency, PaymentStatus } from '@/lib/prisma-client';
 import { formatMoney, paymentStateText, timeAgo } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';

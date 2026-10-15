@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { formatClassContext, formatDateShort, formatMoney, paymentStateText } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';

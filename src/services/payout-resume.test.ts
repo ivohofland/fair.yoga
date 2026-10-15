@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { type Currency, type PaymentStatus } from '@prisma/client';
+import { type Currency, type PaymentStatus } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';

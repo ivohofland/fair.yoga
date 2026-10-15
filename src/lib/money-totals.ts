@@ -1,4 +1,4 @@
-import type { Currency, Prisma } from '@prisma/client';
+import type { Currency, Prisma } from '@/lib/prisma-client';
 import { CURRENCIES, formatMoneyCents } from '@/lib/format';
 
 /** One total per currency present, never across currencies. */

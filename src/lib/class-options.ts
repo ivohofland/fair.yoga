@@ -1,4 +1,4 @@
-import type { CancelDeadline, AutoCancelCheck } from '@prisma/client';
+import type { CancelDeadline, AutoCancelCheck } from '@/lib/prisma-client';
 import type { NoneOf } from '@/lib/type-pins';
 
 /**

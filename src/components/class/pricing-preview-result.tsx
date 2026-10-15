@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { TIER_INFO } from '@/lib/tiers';
 import { tierPrices, priceSpread, studentsIn, type TierCounts } from '@/lib/pricing-preview';

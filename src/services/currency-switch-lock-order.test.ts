@@ -25,7 +25,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { cookie, seedSession } from '../../tests/helpers';

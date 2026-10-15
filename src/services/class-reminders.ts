@@ -1,4 +1,4 @@
-import type { PrismaClient, ReminderChannel, ReminderTiming } from '@prisma/client';
+import type { PrismaClient, ReminderChannel, ReminderTiming } from '@/lib/prisma-client';
 import { readInPages } from '@/lib/read-in-pages';
 import { classStartInstant } from '@/lib/timezone';
 import { reminderMoment } from '@/lib/reminder-moment';

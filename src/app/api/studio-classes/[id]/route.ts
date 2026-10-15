@@ -10,7 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { updateStudioClassSchema } from '@/lib/schemas';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { entryConflictMessage, probeConflictingEntry } from '@/lib/entry-conflict';
 import { isRecordNotFound } from '@/lib/api-errors';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { serializeErr, type SerializedErr, type SerializedPrismaMeta } from './log-serializers';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
 

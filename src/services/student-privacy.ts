@@ -1,4 +1,4 @@
-import type { PrismaClient, StudentPrivacy } from '@prisma/client';
+import type { PrismaClient, StudentPrivacy } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { lockLiveStudent, StudentErasedError } from '@/lib/db-locks';
 import type { updatePrivacySchema } from '@/lib/schemas';

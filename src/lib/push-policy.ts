@@ -1,4 +1,4 @@
-import type { NotificationType, RecipientType, Student, Teacher } from '@prisma/client';
+import type { NotificationType, RecipientType, Student, Teacher } from '@/lib/prisma-client';
 import { isTeacherNotificationType, type TeacherNotificationType } from '@/services/notification-policy';
 import type { NoneOf } from '@/lib/type-pins';
 

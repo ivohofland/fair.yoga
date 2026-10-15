@@ -6,7 +6,7 @@
  * beside their own fixtures (`src/services/waitlist.test.ts`).
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { BASE_URL, cookie, freshIp, seedSession, teardownStudent, uniqueSuffix } from '../helpers';
 import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

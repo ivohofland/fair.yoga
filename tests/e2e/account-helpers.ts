@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 
 /** Session seeds need the account behind a profile — resolve it by id. */
 export async function accountIdOfTeacher(db: PrismaClient, teacherId: string): Promise<string> {

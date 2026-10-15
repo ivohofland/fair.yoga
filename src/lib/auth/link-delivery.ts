@@ -1,4 +1,4 @@
-import type { PrismaClient, MagicLinkPurpose } from '@prisma/client';
+import type { PrismaClient, MagicLinkPurpose } from '@/lib/prisma-client';
 import { mintMagicLinkToken } from './magic-link';
 import { hashNonce, type BrowserNonce } from './origin-nonce';
 import { sendMagicLinkEmail } from '@/lib/email';

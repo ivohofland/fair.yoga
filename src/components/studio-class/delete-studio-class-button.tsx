@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/lib/format';
 import { logRequestFailure, readError } from '@/lib/client-errors';

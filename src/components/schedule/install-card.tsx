@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { OnboardingStep } from '@prisma/client';
+import type { OnboardingStep } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { InstallSteps } from '@/components/account/install-steps';
 import { installStore, useCoarsePointer, useInstallSupport } from '@/components/layout/install-store';

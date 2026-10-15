@@ -1,5 +1,5 @@
 import { NextRequest, type NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { respondOk, respondError, respondUnchanged, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';

@@ -1,4 +1,4 @@
-import type { Currency, RegistrationStatus } from '@prisma/client';
+import type { Currency, RegistrationStatus } from '@/lib/prisma-client';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { PAYMENTS_PAUSED_COPY, type PayGuidance } from '@/lib/payment-methods';
 import { timeToHHmm } from '@/lib/time-of-day';

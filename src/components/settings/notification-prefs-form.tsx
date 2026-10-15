@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { z } from 'zod';
-import type { TeacherBookingNotifications } from '@prisma/client';
+import type { TeacherBookingNotifications } from '@/lib/prisma-client';
 import type { updateTeacherSchema } from '@/lib/schemas';
 import type { TeacherNotificationPrefs } from '@/services/notification-policy';
 import type { TeacherPushPrefs } from '@/lib/push-policy';

@@ -20,7 +20,7 @@
  *   it is set.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { CLASS_GENERATION_INTERVAL_MS } from '@/lib/generation';
 import { log } from '@/lib/log';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';

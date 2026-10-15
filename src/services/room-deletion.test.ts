@@ -13,7 +13,7 @@
  * it was. See the mutation recorded in commit `70baade`.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { fixtureRun } from '../../tests/room-fixtures';
 import {
   countTeacherRoomDeleteBlockers,

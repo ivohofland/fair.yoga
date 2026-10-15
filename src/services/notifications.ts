@@ -12,7 +12,7 @@ import type {
   RecipientType,
   NotificationType,
   Notification,
-} from '@prisma/client';
+} from '@/lib/prisma-client';
 import { notificationBus } from '@/lib/event-bus';
 import { log } from '@/lib/log';
 import { isEmailEligible, IMMEDIATE_EMAIL_TYPES } from './notification-policy';

@@ -1,4 +1,4 @@
-import type { MagicLinkPurpose, PrismaClient } from '@prisma/client';
+import type { MagicLinkPurpose, PrismaClient } from '@/lib/prisma-client';
 import { generateMagicLinkToken, verifyMagicLinkToken, hashToken } from './magic-link';
 import { isSafeRelativePath, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { log } from '@/lib/log';

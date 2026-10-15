@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, onTestFinished } from 'vitest';
 import { randomUUID } from 'crypto';
-import { type CancelDeadline } from '@prisma/client';
+import { type CancelDeadline } from '@/lib/prisma-client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession, PROJECTED_STUDENT_KEYS } from '../helpers';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, slotTime, wallSlotAt } from '../class-fixtures';

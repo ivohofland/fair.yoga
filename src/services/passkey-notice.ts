@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { sendPasskeyAddedEmail, sendPasskeyRemovedEmail } from '@/lib/email';
 import { mintPasskeyRevokeToken } from '@/services/passkey-revoke-token';
 import { log } from '@/lib/log';

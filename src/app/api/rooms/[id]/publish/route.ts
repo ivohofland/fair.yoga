@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { Prisma, type Room } from '@prisma/client';
+import { Prisma, type Room } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import {
   respondOk,

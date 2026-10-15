@@ -8,7 +8,7 @@
  *    `FINISH_GRACE_MINUTES`) has passed
  */
 
-import type { AutoCancelCheck, PrismaClient } from '@prisma/client';
+import type { AutoCancelCheck, PrismaClient } from '@/lib/prisma-client';
 import { completeClass, CHARGED_STATUSES } from './class-lifecycle';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { classStartInstant } from '@/lib/timezone';

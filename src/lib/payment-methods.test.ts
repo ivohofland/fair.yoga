@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, onTestFinished } from 'vitest';
-import { Currency } from '@prisma/client';
+import { Currency } from '@/lib/prisma-client';
 import type { PaymentQr } from '@/components/student/payment-qr';
 import { SCHEME_FOR_CURRENCY } from '@/lib/bank-details';
 import { log } from '@/lib/log';

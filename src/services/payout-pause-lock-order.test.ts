@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import crypto from 'crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { isLockTimeout } from '@/lib/api-errors';
 import { pausePayments } from './payout-pause';

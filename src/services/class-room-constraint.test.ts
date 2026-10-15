@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type ClassStatus } from '@prisma/client';
+import { type ClassStatus } from '@/lib/prisma-client';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { isRestrictViolationOn } from '@/lib/api-errors';
 import { BLOCKING_CLASS_STATUSES } from './room-archive';

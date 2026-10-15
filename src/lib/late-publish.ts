@@ -1,4 +1,4 @@
-import type { AutoCancelCheck, CancelDeadline, ClassStatus } from '@prisma/client';
+import type { AutoCancelCheck, CancelDeadline, ClassStatus } from '@/lib/prisma-client';
 import { cancelDeadlineFrom, isPastCancelDeadline } from '@/lib/cancel-deadline';
 import { cancelCheckFrom } from '@/lib/cancel-check';
 

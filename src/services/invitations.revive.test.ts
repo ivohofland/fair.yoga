@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { inviteContact, unlinkTeacher } from './invitations';
 import { createPrismaClient } from '@/lib/prisma-client';

@@ -1,4 +1,4 @@
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { BankScheme } from '@/lib/bank-details';
 
 /** The per-currency facts `CURRENCY_INFO` holds. */

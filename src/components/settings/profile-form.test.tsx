@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { act } from 'react';
-import { Currency } from '@prisma/client';
+import { Currency } from '@/lib/prisma-client';
 import { routerRefresh } from '../../../tests/setup/components';
 import { ProfileForm } from './profile-form';
 import { timeZoneOptions, type TimeZoneOptions } from '@/lib/timezone-options';

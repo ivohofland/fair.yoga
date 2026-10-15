@@ -10,7 +10,7 @@
  * Refusals are asserted by `refusal`, never by message.
  */
 import { describe, it, expect, afterAll, vi } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { erasedAddress } from '@/lib/erased-address';

@@ -9,7 +9,7 @@
  * state — `services/capacity.ts` is where that derivation lives.
  */
 
-import type { PrismaClient, Prisma, ClassStatus } from '@prisma/client';
+import type { PrismaClient, Prisma, ClassStatus } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { updateClassSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';

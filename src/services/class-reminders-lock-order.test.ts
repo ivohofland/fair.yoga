@@ -8,7 +8,7 @@
  * `Registration`, for the student claim in `processClassReminders`.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { processClassReminders } from './class-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';

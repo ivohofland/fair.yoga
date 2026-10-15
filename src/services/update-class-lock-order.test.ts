@@ -59,7 +59,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { type PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass, updateClass } from './class-lifecycle';

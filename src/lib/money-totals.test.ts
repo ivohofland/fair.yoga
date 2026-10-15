@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Currency, Prisma } from '@prisma/client';
+import { Currency, Prisma } from '@/lib/prisma-client';
 import { CURRENCIES } from './format';
 import { totalsByCurrency, formatTotals, orZero } from './money-totals';
 

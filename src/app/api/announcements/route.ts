@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import type { Announcement } from '@prisma/client';
+import type { Announcement } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import {
   respondTyped,

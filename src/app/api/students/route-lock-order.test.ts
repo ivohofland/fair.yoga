@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { cookie, seedSession } from '../../../../tests/helpers';
 import { expectUnchanged } from '../../../../tests/api-assertions';

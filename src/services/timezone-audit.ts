@@ -50,7 +50,7 @@
  * surface reading it.
  */
 
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { isValidTimeZone } from '@/lib/iana-timezone';
 import { log } from '@/lib/log';
 

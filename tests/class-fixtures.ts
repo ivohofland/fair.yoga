@@ -1,4 +1,4 @@
-import type { CalendarEntry, Class, Currency, Prisma, PrismaClient, StudioClass } from '@prisma/client';
+import type { CalendarEntry, Class, Currency, Prisma, PrismaClient, StudioClass } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 /**

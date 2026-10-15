@@ -3,7 +3,7 @@ import {
   type ClassStatus,
   type PaymentStatus,
   type RegistrationStatus,
-} from '@prisma/client';
+} from '@/lib/prisma-client';
 import { archiveStudent, type ArchiveOutcome } from './student-archive';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';

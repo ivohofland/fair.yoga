@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { lockAccountForSignOut } from '@/lib/db-locks';
 import { signOutEverywhereTx } from '@/services/account-sign-out';

@@ -5,7 +5,7 @@
  * `docs/data-model.md` (TeacherStudent).
  */
 
-import type { Currency, Prisma, PrismaClient } from '@prisma/client';
+import type { Currency, Prisma, PrismaClient } from '@/lib/prisma-client';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 import { setLockTimeout } from '@/lib/db-locks';
 import { CHARGED_STATUSES } from './class-lifecycle';

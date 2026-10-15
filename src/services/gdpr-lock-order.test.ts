@@ -20,7 +20,7 @@
  * probe — nothing added by #459 uses it or `awaitHandshake`.
  */
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import {
   type ErasureOutcome,

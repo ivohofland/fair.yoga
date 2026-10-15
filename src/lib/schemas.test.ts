@@ -2,8 +2,8 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { Currency } from '@prisma/client';
-import type { Prisma } from '@prisma/client';
+import { Currency } from '@/lib/prisma-client';
+import type { Prisma } from '@/lib/prisma-client';
 import * as schemas from './schemas';
 import {
   transitionClassSchema,

@@ -1,4 +1,4 @@
-import type { Currency, Prisma, PrismaClient, Teacher } from '@prisma/client';
+import type { Currency, Prisma, PrismaClient, Teacher } from '@/lib/prisma-client';
 import { switchTeacherCurrency, type CurrencySwitchResult } from './currency-switch';
 
 /**

@@ -1,4 +1,4 @@
-import type { NotificationType } from '@prisma/client';
+import type { NotificationType } from '@/lib/prisma-client';
 
 /**
  * How long a `Notification` row is kept, by type (#223). Why deleting is

@@ -1,4 +1,4 @@
-import type { PrismaClient, PushSubscription, RecipientType } from '@prisma/client';
+import type { PrismaClient, PushSubscription, RecipientType } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { diagnoseVapidConfig, type VapidConfigProblem } from '@/lib/push/config';
 import { sendPush, type PushSendResult, type PushTarget } from '@/lib/push/send';

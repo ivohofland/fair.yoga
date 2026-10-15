@@ -18,7 +18,7 @@
  * new site.
  */
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@/lib/prisma-client';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { lockClassRow } from '@/lib/db-locks';
 import { transientDbFailure } from '@/lib/api-errors';

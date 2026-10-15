@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { z } from 'zod';
-import type { Currency } from '@prisma/client';
+import type { Currency } from '@/lib/prisma-client';
 import type { createTeacherRoomSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
 import type { RoomResult } from '@/lib/room-search';

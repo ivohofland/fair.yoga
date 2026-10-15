@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import crypto from 'crypto';
-import { type PrismaClient, type NotificationType } from '@prisma/client';
+import { type PrismaClient, type NotificationType } from '@/lib/prisma-client';
 import { dispatchPushes, PUSH_BATCH, PUSH_CLAIM_DEADLINE_MS, PUSH_STALE_AFTER_MS, PUSH_WORKERS, PushSendFault, type PushSender } from './push-dispatch';
 import { DEFAULT_TIMEOUT_MS, PUSH_TTL_SECONDS, sendPush } from '@/lib/push/send';
 import { generateVapidKeyPair } from '@/lib/push/test-support';

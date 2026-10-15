@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { PrismaClient, MagicLinkPurpose, MagicLinkToken } from '@prisma/client';
+import type { PrismaClient, MagicLinkPurpose, MagicLinkToken } from '@/lib/prisma-client';
 import { sha256 } from '@oslojs/crypto/sha2';
 import { encodeHexLowerCase } from '@oslojs/encoding';
 import { log } from '@/lib/log';

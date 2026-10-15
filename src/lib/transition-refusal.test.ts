@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ClassStatus } from '@prisma/client';
+import { ClassStatus } from '@/lib/prisma-client';
 import { canTransition } from '@/services/class-lifecycle';
 import {
   frozenClassMessage,

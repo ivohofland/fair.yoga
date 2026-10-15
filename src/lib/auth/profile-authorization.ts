@@ -1,5 +1,5 @@
 import type { NextRequest, NextResponse } from 'next/server';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { requireSession, isErrorResponse, parseBody } from '@/lib/api-utils';
 import type { SessionUser } from '@/lib/types';

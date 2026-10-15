@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { type Currency } from '@prisma/client';
+import { type Currency } from '@/lib/prisma-client';
 import { BASE_URL, cookie, uniqueSuffix, seedSession } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { createPrismaClient } from '@/lib/prisma-client';

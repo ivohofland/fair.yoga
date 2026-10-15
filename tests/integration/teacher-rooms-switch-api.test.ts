@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { BASE_URL, cookie, freshIp, uniqueSuffix, seedSession } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';

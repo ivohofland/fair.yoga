@@ -1,4 +1,4 @@
-import type { Currency, Prisma, TeacherBankAccount } from '@prisma/client';
+import type { Currency, Prisma, TeacherBankAccount } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';

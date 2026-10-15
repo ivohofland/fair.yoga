@@ -1,4 +1,4 @@
-import type { PrismaClient, ClassStatus } from '@prisma/client';
+import type { PrismaClient, ClassStatus } from '@/lib/prisma-client';
 import { ACTIVE_TEMPLATE_WHERE } from '@/lib/template-selection';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { setLockTimeout } from '@/lib/db-locks';

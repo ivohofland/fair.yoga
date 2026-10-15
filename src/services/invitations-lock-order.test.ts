@@ -5,7 +5,7 @@
  * this file would read as the defect it watches for.
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
-import { type PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { acceptInvitation, declineInvitation, unlinkTeacher } from './invitations';
 import { resolveInvitationOnLink } from './link-consent';

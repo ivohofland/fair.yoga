@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import type { Notification } from '@prisma/client';
+import type { Notification } from '@/lib/prisma-client';
 import { listRowClass } from '@/components/ui/list-row';
 import { NotificationList } from './notification-list';
 import { NotificationListSkeleton } from './notification-list-skeleton';

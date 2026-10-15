@@ -1,4 +1,4 @@
-import type { InvitationStatus, Prisma } from '@prisma/client';
+import type { InvitationStatus, Prisma } from '@/lib/prisma-client';
 
 /**
  * The shape an `Invitation` select must have to be allowed to reach a
@@ -37,7 +37,7 @@ export type TeacherFacingInvitationSelect = Prisma.InvitationSelect & {
  * against that 409. This function is what a regression in that rendering
  * condition would actually break, so it's what gets the test.
  *
- * Type-only `@prisma/client` import, same as `payment-status.ts`: this stays
+ * Type-only `@/lib/prisma-client` import, same as `payment-status.ts`: this stays
  * safe to import from a `'use client'` module without pulling the Prisma
  * runtime into the browser bundle, should a client component ever need it.
  */

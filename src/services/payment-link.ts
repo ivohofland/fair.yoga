@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { maskPaymentLink, parsePaymentLink, type PaymentLinkFailure } from '@/lib/payment-link';
 

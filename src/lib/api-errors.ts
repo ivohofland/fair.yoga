@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
 import type { CodeWithStatus } from './api-error-codes';
 
@@ -391,7 +391,7 @@ export function isLockTimeout(error: unknown): boolean {
  * two places. This module's own imports stay within that same table —
  * `isExclusionConflictOn` (`./exclusion-conflict`) is the shared DB-error
  * matcher `classifyApiError` reuses below rather than re-implementing, and it
- * in turn imports only `@prisma/client` — so a service using this module for
+ * in turn imports only `@/lib/prisma-client` — so a service using this module for
  * classification alone still pulls in nothing web-framework-shaped.
  */
 export function isRecordNotFound(error: unknown): boolean {

@@ -5,7 +5,7 @@ import {
   type RegistrationStatus,
   type ReminderChannel,
   type ReminderTiming,
-} from '@prisma/client';
+} from '@/lib/prisma-client';
 import crypto from 'crypto';
 import { processClassReminders, reminderCandidateDates } from './class-reminders';
 import { hhmmToTime } from '@/lib/time-of-day';

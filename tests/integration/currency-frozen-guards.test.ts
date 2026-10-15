@@ -8,7 +8,7 @@
  * today.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture } from '../room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';

@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, afterAll, onTestFinished, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import * as dbLocks from '@/lib/db-locks';
 import { deleteStudentAccount } from '@/services/gdpr';

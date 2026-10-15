@@ -1,4 +1,4 @@
-import type { NotificationType, PrismaClient } from '@prisma/client';
+import type { NotificationType, PrismaClient } from '@/lib/prisma-client';
 import { isTransientDbError } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { NOTIFICATION_RETENTION_DAYS } from '@/lib/notification-retention';
