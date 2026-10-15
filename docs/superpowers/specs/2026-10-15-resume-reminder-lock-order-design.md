@@ -28,10 +28,17 @@ the lower `FOR UPDATE` and waits on the higher; resume holds the higher
   transaction — `teacher.update`, `payoutPauseToken.deleteMany`,
   `payment.updateMany` of `reminderSentAt` — change no foreign-key column,
   so they take no `FOR KEY SHARE` on `Class`. The erasure writes no `Payment`
-  row after its pre-lock (its writes are `Registration` for upcoming classes,
-  `StudentPrivacy`, `TeacherStudent`, `WaitlistEntry`, `Invitation`,
-  `Notification` deletes and account rows), so the resume's `Payment` row
-  locks meet nothing the erasure holds. `Class` is the only shared node.
+  row after its pre-lock. What it writes there (`deleteStudentAccount`,
+  `gdpr.ts`): `Registration` status and `cancelledAt` for upcoming classes,
+  `StudentPrivacy` and `TeacherStudent` deletes, `WaitlistEntry` deletes and
+  position renumbering of other students' rows, `Invitation` scrubs, the
+  student's `Notification` deletes and the teachers' `booking_confirmed`
+  body scrub, the student's `Account` sign-out, passkey, token and email
+  writes, `MagicLinkToken` and `HandoffAttemptBudget` deletes, the
+  `Announcement.audienceStudentIds` scrub, and the `Student` update. None of
+  them changes a foreign-key column into `Class` or `Payment`, so none
+  contends with the resume's `FOR KEY SHARE` on `Class` or its `Payment`
+  row locks. `Class` is the only shared node.
 - **Not reproduced before this change:** the issue says so; this branch's test
   is the first reproduction.
 
@@ -42,8 +49,9 @@ Order the owed-payment read by the class it belongs to, ascending:
 that array in order, so the `FOR KEY SHARE` locks arrive in ascending class id
 — the direction of every ordered `FOR UPDATE` locker. Two transactions taking
 row locks on a shared set in one direction cannot wait on each other in a
-cycle through that set. Both orderings are Postgres `ORDER BY` on the same
-`Class.id` column, so they share a collation.
+cycle through that set. The resume orders by `Registration.classId` and the
+lockers by `Class.id`: both are Postgres `ORDER BY` on the same id values, so
+they share a collation.
 
 Alternatives rejected:
 - **Sort in JS after the read** — `String.prototype` comparison is code-unit

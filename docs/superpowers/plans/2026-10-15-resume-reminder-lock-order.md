@@ -86,9 +86,9 @@ below for RED.
 `findMany`, with a short comment on it saying why the order matters (the
 reminders' `relatedClassId` FK locks follow this order; ascending matches the
 ordered `FOR UPDATE` lockers) and linking `docs/lock-order.md` by section
-name — the doc section is updated in Task 2; name it as the paragraph
-beginning "`resumePayments` takes `FOR KEY SHARE`…" will be retitled there:
-use the link text "`docs/lock-order.md`, the fourth path".
+name — the doc passage is updated in Task 2 and keeps its name; use the
+link text "`docs/lock-order.md`, the fourth path", which targets the
+existing "fourth path" passage.
 
 **GREEN**, then **prove the guard bites**, recording the exact error text for
 each and restoring after:
