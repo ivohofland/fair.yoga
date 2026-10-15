@@ -1,4 +1,5 @@
 import type { Currency } from '@prisma/client';
+import { CURRENCY_INFO } from '@/lib/currency';
 
 export type BankDetails =
   | { scheme: 'sepa'; iban: string; bic: string | null }
@@ -6,9 +7,11 @@ export type BankDetails =
   | { scheme: 'uk'; sortCode: string; accountNumber: string }
   | { scheme: 'us'; routingNumber: string; accountNumber: string };
 
-export const SCHEME_FOR_CURRENCY = {
-  EUR: 'sepa', GBP: 'uk', USD: 'us', CHF: 'iban', SEK: 'iban', NOK: 'iban', DKK: 'iban',
-} as const satisfies Record<Currency, BankDetails['scheme']>;
+export type BankScheme = BankDetails['scheme'];
+
+export const SCHEME_FOR_CURRENCY = Object.fromEntries(
+  Object.entries(CURRENCY_INFO).map(([c, info]) => [c, info.scheme]),
+) as { readonly [C in Currency]: (typeof CURRENCY_INFO)[C]['scheme'] };
 
 /** EU member states plus Iceland, Liechtenstein and Norway. */
 export const EEA_COUNTRIES: ReadonlySet<string> = new Set([
