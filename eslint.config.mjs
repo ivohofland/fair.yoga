@@ -184,7 +184,8 @@ const eslintConfig = defineConfig([
     },
   },
   // Playwright has no module mocking, so an e2e spec reaches the undefined-
-  // filter guard (#783) only through createGuardedPrismaClient. A flat-config
+  // filter guard (#783) only through createGuardedPrismaClient; this rule
+  // refuses the bare createPrismaClient factory there. A flat-config
   // block replaces a rule's options rather than merging them, so this block
   // repeats the localhost selector the `tests/**` block above sets.
   {
@@ -195,7 +196,7 @@ const eslintConfig = defineConfig([
         'error',
         localhostOriginSelector,
         {
-          selector: "NewExpression[callee.name='PrismaClient']",
+          selector: "ImportSpecifier[imported.name='createPrismaClient'], CallExpression[callee.name='createPrismaClient']",
           message:
             'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).',
         },

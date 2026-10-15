@@ -1,9 +1,10 @@
-import { PrismaClient, Prisma, type Currency } from '@prisma/client';
+import { Prisma, type Currency } from '@prisma/client';
+import { createPrismaClient } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { billAtLeastMinimum } from '@/lib/tier-estimates';
 import type { IncomeTier } from '@/lib/tiers';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 // ---------------------------------------------------------------------------
 // Helper: relative dates

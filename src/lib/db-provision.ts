@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from './prisma-client';
 
 export function assertSafeDatabaseName(dbName: string): void {
   if (!/^[a-z0-9_]+$/i.test(dbName)) {
@@ -30,7 +30,7 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
   const dbName = new URL(url).pathname.slice(1);
   assertSafeDatabaseName(dbName);
 
-  const admin = new PrismaClient({ datasources: { db: { url: withDatabaseName(url, 'postgres') } } });
+  const admin = createPrismaClient({ url: withDatabaseName(url, 'postgres') });
   try {
     const exists = await admin.$queryRaw<
       { one: number }[]
@@ -49,7 +49,7 @@ export async function provisionDatabase(url: string, options: ProvisionOptions):
   });
 
   if (options.seed) {
-    const target = new PrismaClient({ datasources: { db: { url } } });
+    const target = createPrismaClient({ url });
     let alreadyHasData: boolean;
     try {
       const [row] = await target.$queryRaw<{ count: bigint }[]>`SELECT COUNT(*) as count FROM "Teacher"`;

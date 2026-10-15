@@ -56,6 +56,8 @@ COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
 COPY scripts/check-reserved-slugs.ts ./scripts/check-reserved-slugs.ts
 COPY src/services/reserved-slug-holders.ts ./src/services/reserved-slug-holders.ts
 COPY src/lib/reserved-slugs.ts ./src/lib/reserved-slugs.ts
+# Every PrismaClient is built here; both scripts above import it.
+COPY src/lib/prisma-client.ts ./src/lib/prisma-client.ts
 CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm exec tsx scripts/check-reserved-slugs.ts"]
 
 # ---------------------------------------------------------------------------
