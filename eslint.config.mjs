@@ -103,11 +103,9 @@ const eslintConfig = defineConfig([
     },
   },
   // Refuses a direct import of the Prisma package, `@prisma/client` and every
-  // subpath of it. src/lib/prisma-client.ts is the one module that names the
-  // package; it re-exports it, with `PrismaClient` as a type only so that
-  // `createPrismaClient` stays the one constructor. An inline `import('...')`
-  // type query is not an import declaration and is not seen here. Why:
-  // docs/technical-architecture.md, "Where Prisma comes from (#884, #886)".
+  // subpath of it, everywhere but the module that re-exports it. What this
+  // rule does not see, and why: docs/technical-architecture.md, "Where Prisma
+  // comes from (#884, #886)".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts'],
@@ -118,7 +116,7 @@ const eslintConfig = defineConfig([
           patterns: [
             {
               group: ['@prisma/client', '@prisma/client/*'],
-              message: 'Import Prisma from @/lib/prisma-client (#886); it is the one module that names the package.',
+              message: 'Import Prisma from @/lib/prisma-client (#886); it is the one module that imports the package.',
             },
           ],
         },
