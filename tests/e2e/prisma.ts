@@ -5,8 +5,8 @@ import { undefinedFilterGuard } from '../undefined-filter-guard';
 /**
  * Playwright has no module mocking, so an e2e spec builds its client here and
  * a bulk write whose `where` holds `undefined` rejects instead of matching
- * every row. It wraps `createPrismaClient()` and adds the guard. See `docs/test-database.md`, section "Undefined filters in test
- * cleanup (#783)".
+ * every row. It wraps `createPrismaClient()` and adds the guard. See
+ * `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  */
 export function createGuardedPrismaClient(options?: PrismaClientFactoryOptions): PrismaClient {
   // The cast restores `PrismaClient`'s type; the extended client has no `$on`.

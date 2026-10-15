@@ -220,7 +220,8 @@ const eslintConfig = defineConfig([
         'error',
         localhostOriginSelector,
         {
-          selector: "ImportSpecifier[imported.name='createPrismaClient'], CallExpression[callee.name='createPrismaClient']",
+          selector:
+            "ImportSpecifier[imported.name='createPrismaClient'], CallExpression[callee.name='createPrismaClient'], ImportDeclaration[source.value=/prisma-client$/] > ImportNamespaceSpecifier, ImportExpression[source.value=/prisma-client$/]",
           message:
             'Build e2e Prisma clients with createGuardedPrismaClient() from tests/e2e/prisma.ts; it refuses bulk writes whose filter holds undefined (#783).',
         },

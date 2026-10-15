@@ -1,10 +1,11 @@
 /**
  * A client from `createGuardedPrismaClient` refuses a bulk write whose `where`
- * holds `undefined` (#783), with nothing but the factory guarding it.
+ * holds `undefined` (#783), with nothing but that wrapper guarding it.
  *
  * It unmocks `@prisma/client` first, so that the real `PrismaClient` is the
- * one the factory extends; the plain-client case checks that the factory,
- * imported dynamically so it binds the unmocked module, builds an unguarded one.
+ * one `createGuardedPrismaClient` extends; the plain-client case checks that
+ * `createPrismaClient`, imported dynamically so it binds the unmocked module,
+ * builds an unguarded one.
  * The URL points at a port nothing listens on, so a write that gets past the
  * guard fails to connect instead of touching a database.
  */
