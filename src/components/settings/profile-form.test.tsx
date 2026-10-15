@@ -822,6 +822,14 @@ describe('ProfileForm', () => {
     expect(currencyGroups().map((g) => g.label)).toEqual(['All currencies']);
   });
 
+  it('drops the Suggested group once the teacher picks the suggestion, leaving it selected under All currencies', () => {
+    renderForm({ defaultTimezone: 'Australia/Sydney', currency: 'EUR' });
+    const select = screen.getByLabelText('Currency') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'AUD' } });
+    expect(currencyGroups().map((g) => g.label)).toEqual(['All currencies']);
+    expect(select.value).toBe('AUD');
+  });
+
   it('follows the time zone the teacher picks before saving', () => {
     renderForm({ defaultTimezone: 'Europe/Amsterdam', currency: 'EUR' });
     fireEvent.change(timezoneSelect(), { target: { value: 'Asia/Kolkata' } });
