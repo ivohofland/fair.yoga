@@ -638,11 +638,15 @@ waiting on the higher, and the resume holding the higher `FOR KEY SHARE` and
 waiting on the lower.
 `src/services/payout-resume-lock-order.test.ts` stages exactly that: a third
 connection holds the higher class, so the erasure stops between its two locks,
-the resume parks behind the erasure, and the test asserts both complete. With
-the read ordered descending it fails every run with `40P01` (`deadlock
-detected`, "Process N waits for ShareLock on transaction X; blocked by process
-M."); with the `orderBy` removed it fails only on the runs where the planner
-happens to return the higher class first.
+the resume parks behind the erasure on its `Notification` insert, and the test
+asserts both complete. With the read ordered descending it fails every run with
+`40P01`; that mutation's error reads `deadlock detected`, "Process N waits for
+ShareLock on transaction X; blocked by process M.". A removed `orderBy` is
+caught intermittently, since the unordered read's order is the planner's. To
+re-derive, change that `orderBy` in `payout-resume.ts` to `classId: 'desc'` and
+run the file, expecting `40P01`:
+
+    pnpm exec vitest run --project unit-sweeps src/services/payout-resume-lock-order.test.ts
 
 The residual is the one the ordering does not touch: the resume may write its
 reminder after the erasure has committed, so a reminder can name an erased
