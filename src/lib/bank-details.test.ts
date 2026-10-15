@@ -127,6 +127,13 @@ describe('parseBankDetails', () => {
       expect(parseBankDetails('GBP', { iban: 'GB82WEST12345698765432' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'iban' } });
     });
 
+    it.each(['GBP', 'USD'] as const)('refuses a bank code on a %s account', (currency) => {
+      const input = currency === 'GBP'
+        ? { sortCode: '123456', accountNumber: '12345678', bankCode: '062000' }
+        : { routingNumber: '021000021', accountNumber: '1234567', bankCode: '062000' };
+      expect(parseBankDetails(currency, input)).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'bankCode' } });
+    });
+
     it('refuses a BIC and a routing number', () => {
       expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', bic: 'NWBKGB2L' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'bic' } });
       expect(parseBankDetails('GBP', { sortCode: '123456', accountNumber: '12345678', routingNumber: '021000021' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'routingNumber' } });
@@ -169,6 +176,64 @@ describe('parseBankDetails', () => {
   });
 });
 
+describe('the local scheme', () => {
+  it('accepts a BSB and account number, trimmed, the code uppercased', () => {
+    expect(parseBankDetails('AUD', { bankCode: ' 062-000 ', accountNumber: ' 12345678 ' })).toEqual({
+      ok: true, details: { scheme: 'local', currency: 'AUD', bankCode: '062-000', accountNumber: '12345678' },
+    });
+    expect(parseBankDetails('INR', { bankCode: 'sbin0001234', accountNumber: '123456789012' })).toEqual({
+      ok: true, details: { scheme: 'local', currency: 'INR', bankCode: 'SBIN0001234', accountNumber: '123456789012' },
+    });
+  });
+
+  it('refuses an AUD account with no BSB', () => {
+    expect(parseBankDetails('AUD', { accountNumber: '12345678' }))
+      .toEqual({ ok: false, failure: { error: 'bank_code_invalid', field: 'bankCode' } });
+  });
+
+  it.each(['NZD', 'MXN'] as const)('refuses a bank code for %s', (currency) => {
+    expect(parseBankDetails(currency, { bankCode: '062000', accountNumber: '012345678901234567' }))
+      .toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'bankCode' } });
+  });
+
+  it('accepts an NZD account number on its own', () => {
+    expect(parseBankDetails('NZD', { accountNumber: '12-3456-7890123-00' })).toEqual({
+      ok: true, details: { scheme: 'local', currency: 'NZD', bankCode: null, accountNumber: '12-3456-7890123-00' },
+    });
+  });
+
+  it('refuses an IBAN on a local account', () => {
+    expect(parseBankDetails('AUD', { bankCode: '062000', accountNumber: '12345678', iban: 'NL91ABNA0417164300' }))
+      .toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'iban' } });
+  });
+
+  it.each([
+    ['a character outside letters, digits, spaces and dashes', { bankCode: '062/000', accountNumber: '12345678' }, 'bankCode'],
+    ['an account number under four characters', { bankCode: '062000', accountNumber: '123' }, 'accountNumber'],
+    ['an account number over 34 characters', { bankCode: '062000', accountNumber: '1'.repeat(35) }, 'accountNumber'],
+    ['a bank code over 20 characters', { bankCode: '1'.repeat(21), accountNumber: '12345678' }, 'bankCode'],
+  ] as const)('refuses %s', (_label, input, field) => {
+    const result = parseBankDetails('AUD', input);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.failure.field).toBe(field);
+  });
+
+  it('reads a stored AUD row and an NZD row, and refuses an AUD row with no BSB', () => {
+    const base = { iban: null, bic: null, sortCode: null, routingNumber: null };
+    expect(bankDetailsFromRow({ ...base, currency: 'AUD', bankCode: '062000', accountNumber: '12345678' }))
+      .toEqual({ scheme: 'local', currency: 'AUD', bankCode: '062000', accountNumber: '12345678' });
+    expect(bankDetailsFromRow({ ...base, currency: 'NZD', bankCode: null, accountNumber: '123456789012345' }))
+      .toEqual({ scheme: 'local', currency: 'NZD', bankCode: null, accountNumber: '123456789012345' });
+    expect(bankDetailsFromRow({ ...base, currency: 'AUD', bankCode: null, accountNumber: '12345678' })).toBeNull();
+    expect(bankDetailsFromRow({ ...base, currency: 'NZD', bankCode: '062000', accountNumber: '12345678' })).toBeNull();
+  });
+
+  it('accepts a Polish IBAN under the iban scheme', () => {
+    expect(parseBankDetails('PLN', { iban: 'PL61109010140000071219812874' }))
+      .toEqual({ ok: true, details: { scheme: 'iban', iban: 'PL61109010140000071219812874', bic: null } });
+  });
+});
+
 describe('BankDetailsFailure', () => {
   it('pairs each refusal with the field it names', () => {
     const paired: BankDetailsFailure = { error: 'sort_code_invalid', field: 'sortCode' };
@@ -186,7 +251,11 @@ describe('BankDetailsInput', () => {
 
 describe('scheme tables', () => {
   it('maps every currency to its scheme', () => {
-    expect(SCHEME_FOR_CURRENCY).toEqual({ EUR: 'sepa', GBP: 'uk', USD: 'us', CHF: 'iban', SEK: 'iban', NOK: 'iban', DKK: 'iban' });
+    expect(SCHEME_FOR_CURRENCY).toEqual({
+      EUR: 'sepa', GBP: 'uk', USD: 'us', CHF: 'iban', SEK: 'iban', NOK: 'iban', DKK: 'iban',
+      INR: 'local', SGD: 'local', AUD: 'local', CAD: 'local', NZD: 'local', HKD: 'local',
+      BRL: 'local', MXN: 'local', ZAR: 'local', PLN: 'iban', CZK: 'iban', ILS: 'iban', AED: 'iban',
+    });
   });
 
   it('holds exactly the EU member states plus IS, LI and NO', () => {

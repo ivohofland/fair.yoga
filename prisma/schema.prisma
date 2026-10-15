@@ -19,6 +19,19 @@ enum Currency {
   SEK
   NOK
   DKK
+  INR
+  SGD
+  AUD
+  CAD
+  NZD
+  HKD
+  BRL
+  MXN
+  ZAR
+  PLN
+  CZK
+  ILS
+  AED
 }
 
 enum ReminderTiming {

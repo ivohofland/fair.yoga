@@ -271,6 +271,12 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
       ['a DKK IBAN', { currency: 'DKK', holderName: 'H. Teacher', iban: 'DK5000400440116243' }],
       ['a GBP sort code and account number', { currency: 'GBP', holderName: 'H. Teacher', sortCode: '123456', accountNumber: '12345678' }],
       ['a USD routing and account number', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567' }],
+      ['a PLN IBAN', { currency: 'PLN', holderName: 'H. Teacher', iban: 'PL61109010140000071219812874' }],
+      ['an AED IBAN', { currency: 'AED', holderName: 'H. Teacher', iban: 'AE070331234567890123456' }],
+      ['an AUD BSB and account number', { currency: 'AUD', holderName: 'H. Teacher', bankCode: '062000', accountNumber: '12345678' }],
+      ['an INR IFSC and account number', { currency: 'INR', holderName: 'H. Teacher', bankCode: 'SBIN0001234', accountNumber: '123456789012' }],
+      ['an NZD account number', { currency: 'NZD', holderName: 'H. Teacher', accountNumber: '123456789012345' }],
+      ['an MXN CLABE', { currency: 'MXN', holderName: 'H. Teacher', accountNumber: '012345678901234567' }],
     ])('stores %s', async (_label, row) => {
       expect(await store(row)).toBe('stored');
     });
@@ -297,6 +303,13 @@ describe('PUT /api/teachers/[id] — no bank fields', () => {
       ['a USD account with a sort code', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', sortCode: '123456' }],
       ['a USD account with an IBAN', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', iban: 'NL91ABNA0417164300' }],
       ['a USD account with a BIC', { currency: 'USD', holderName: 'H. Teacher', routingNumber: '021000021', accountNumber: '1234567', bic: 'CHASUS33' }],
+      ['an AUD account with no BSB', { currency: 'AUD', holderName: 'H. Teacher', accountNumber: '12345678' }],
+      ['an AUD BSB of only spaces', { currency: 'AUD', holderName: 'H. Teacher', bankCode: '  ', accountNumber: '12345678' }],
+      ['an AUD account with an IBAN', { currency: 'AUD', holderName: 'H. Teacher', bankCode: '062000', accountNumber: '12345678', iban: 'NL91ABNA0417164300' }],
+      ['an AUD account with a BIC', { currency: 'AUD', holderName: 'H. Teacher', bankCode: '062000', accountNumber: '12345678', bic: 'CTBAAU2S' }],
+      ['an NZD account with a bank code', { currency: 'NZD', holderName: 'H. Teacher', bankCode: '062000', accountNumber: '123456789012345' }],
+      ['an MXN account with no CLABE', { currency: 'MXN', holderName: 'H. Teacher' }],
+      ['a PLN account with a bank code', { currency: 'PLN', holderName: 'H. Teacher', iban: 'PL61109010140000071219812874', bankCode: '062000' }],
     ])('refuses %s', async (_label, row) => {
       const err = await store(row);
       expect(isCheckViolationOn(err, 'TeacherBankAccount_scheme_check')).toBe(true);

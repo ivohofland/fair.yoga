@@ -12,11 +12,23 @@ describe('CURRENCY_INFO', () => {
     }
   });
 
-  it('gives a bank-code label exactly to the local scheme’s currencies that take one', () => {
+  it('gives a bank-code label to no currency outside the local scheme', () => {
     for (const c of Object.values(Currency)) {
-      const scheme: string = CURRENCY_INFO[c].scheme;
-      if (scheme !== 'local') expect(CURRENCY_INFO[c].bankCodeLabel).toBeNull();
+      if (CURRENCY_INFO[c].scheme !== 'local') expect(CURRENCY_INFO[c].bankCodeLabel).toBeNull();
     }
+  });
+
+  it('gives a bank-code label to the local currencies that route by one, and none to NZD and MXN', () => {
+    const withCode = (['AUD', 'CAD', 'INR', 'SGD', 'HKD', 'ZAR', 'BRL'] as const).map((c) => CURRENCY_INFO[c].bankCodeLabel);
+    expect(withCode.every((l) => l !== null)).toBe(true);
+    expect(CURRENCY_INFO.NZD.bankCodeLabel).toBeNull();
+    expect(CURRENCY_INFO.MXN.bankCodeLabel).toBeNull();
+    expect(CURRENCY_INFO.MXN.accountLabel).toBe('CLABE');
+  });
+
+  it('leaves the bank code off exactly NZD and MXN among the local currencies', () => {
+    const local = Object.values(Currency).filter((c) => CURRENCY_INFO[c].scheme === 'local');
+    expect(local.filter((c) => CURRENCY_INFO[c].bankCodeLabel === null)).toEqual(['NZD', 'MXN']);
   });
 
   it('claims each time zone for at most one currency', () => {
@@ -40,6 +52,11 @@ describe('suggestedCurrency', () => {
     ['Europe/Stockholm', 'SEK'],
     ['Europe/Oslo', 'NOK'],
     ['Europe/Copenhagen', 'DKK'],
+    ['Australia/Sydney', 'AUD'], ['Australia/Perth', 'AUD'], ['America/Toronto', 'CAD'],
+    ['America/Vancouver', 'CAD'], ['Asia/Kolkata', 'INR'], ['Asia/Singapore', 'SGD'],
+    ['Pacific/Auckland', 'NZD'], ['Asia/Hong_Kong', 'HKD'], ['America/Sao_Paulo', 'BRL'],
+    ['America/Mexico_City', 'MXN'], ['Africa/Johannesburg', 'ZAR'], ['Europe/Warsaw', 'PLN'],
+    ['Europe/Prague', 'CZK'], ['Asia/Jerusalem', 'ILS'], ['Asia/Dubai', 'AED'],
   ] as const)('suggests %s → %s', (zone, currency) => {
     expect(suggestedCurrency(zone)).toBe(currency);
   });

@@ -1,6 +1,7 @@
 'use client';
 
 import type { BankDetails } from '@/lib/bank-details';
+import { CURRENCY_INFO } from '@/lib/currency';
 import { CopyFieldList, type CopyField } from '@/components/student/copy-field-list';
 
 interface PaymentDetailsProps {
@@ -36,6 +37,15 @@ function accountFields(details: BankDetails): CopyField[] {
         { key: 'routing number', label: 'Routing number', shown: details.routingNumber, copied: details.routingNumber },
         { key: 'account number', label: 'Account number', shown: details.accountNumber, copied: details.accountNumber },
       ];
+    case 'local': {
+      const { bankCodeLabel, accountLabel } = CURRENCY_INFO[details.currency];
+      return [
+        ...(bankCodeLabel === null || details.bankCode === null
+          ? []
+          : [{ key: 'bank code', label: bankCodeLabel, shown: details.bankCode, copied: details.bankCode }]),
+        { key: 'account number', label: accountLabel, shown: details.accountNumber, copied: details.accountNumber },
+      ];
+    }
     default: {
       const unhandled: never = details;
       console.error('[payment-details] unhandled bank scheme', { scheme: String((unhandled as { scheme?: unknown }).scheme) });

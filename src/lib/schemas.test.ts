@@ -1932,7 +1932,10 @@ describe('what the money cap is decided against (#769)', () => {
   });
 
   it('pins the currencies MONEY_MAX was decided for, so a new one forces a re-decision', () => {
-    expect(Object.values(Currency).sort()).toEqual(['CHF', 'DKK', 'EUR', 'GBP', 'NOK', 'SEK', 'USD']);
+    expect(Object.values(Currency).sort()).toEqual([
+      'AED', 'AUD', 'BRL', 'CAD', 'CHF', 'CZK', 'DKK', 'EUR', 'GBP', 'HKD',
+      'ILS', 'INR', 'MXN', 'NOK', 'NZD', 'PLN', 'SEK', 'SGD', 'USD', 'ZAR',
+    ]);
   });
 });
 
