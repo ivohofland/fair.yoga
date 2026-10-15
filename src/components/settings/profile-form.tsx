@@ -15,7 +15,8 @@ import { Button } from '@/components/ui/button';
 import { PageAddressField, type SlugRejection } from '@/components/signup/page-address-field';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import type { TimeZoneOptions } from '@/lib/timezone-options';
-import { CURRENCIES, currencyLabel } from '@/lib/format';
+import { currencyLabel } from '@/lib/format';
+import { CURRENCY_INFO, suggestedCurrency } from '@/lib/currency';
 import { vatPercentViolation } from '@/lib/vat';
 import type { CurrencySwitchResult } from '@/services/currency-switch';
 
@@ -66,34 +67,13 @@ interface ProfileFormProps {
   timeZoneOptions: TimeZoneOptions;
 }
 
-/** Each currency's option label; the select lists them in `CURRENCIES` order. */
-const CURRENCY_OPTION_LABELS = {
-  EUR: 'EUR (€)',
-  GBP: 'GBP (£)',
-  USD: 'USD ($)',
-  CHF: 'CHF (Fr.)',
-  SEK: 'SEK (kr)',
-  NOK: 'NOK (kr)',
-  DKK: 'DKK (kr)',
-  INR: 'INR (₹)',
-  SGD: 'SGD (S$)',
-  AUD: 'AUD (A$)',
-  CAD: 'CAD (C$)',
-  NZD: 'NZD (NZ$)',
-  HKD: 'HKD (HK$)',
-  BRL: 'BRL (R$)',
-  MXN: 'MXN (MX$)',
-  ZAR: 'ZAR (R)',
-  PLN: 'PLN (zł)',
-  CZK: 'CZK (Kč)',
-  ILS: 'ILS (₪)',
-  AED: 'AED (د.إ)',
-} as const satisfies Record<Currency, string>;
-
-const CURRENCY_OPTIONS = CURRENCIES.map((currency) => [currency, CURRENCY_OPTION_LABELS[currency]] as const);
+/** Every currency as the picker lists it, `Name (prefix)`, sorted by name. */
+const CURRENCY_OPTIONS = (Object.keys(CURRENCY_INFO) as Currency[])
+  .map((currency) => [currency, `${CURRENCY_INFO[currency].name} (${currencyLabel(currency)})`] as const)
+  .sort(([, a], [, b]) => (a < b ? -1 : a > b ? 1 : 0));
 
 function isCurrency(value: string): value is Currency {
-  return Object.hasOwn(CURRENCY_OPTION_LABELS, value);
+  return Object.hasOwn(CURRENCY_INFO, value);
 }
 
 /**
@@ -132,6 +112,9 @@ export function currencySwitchLine(result: CurrencySwitchResult, to: Currency): 
 export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: ProfileFormProps) {
   const router = useRouter();
   const [form, setForm] = useState(initial);
+  const suggested = suggestedCurrency(form.defaultTimezone);
+  const suggestion = suggested !== null && suggested !== form.currency ? suggested : null;
+  const suggestionLabel = CURRENCY_OPTIONS.find(([c]) => c === suggestion)?.[1] ?? '';
   // The currency the server last confirmed. A save names `currency` only when
   // the select differs from it, so a save from a tab opened before a switch
   // made elsewhere leaves that switch standing.
@@ -308,9 +291,16 @@ export function ProfileForm({ teacherId, email, initial, timeZoneOptions }: Prof
             if (isCurrency(e.target.value)) update('currency', e.target.value);
           }}
         >
-          {CURRENCY_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
+          {suggestion !== null && (
+            <optgroup label="Suggested">
+              <option value={suggestion}>{suggestionLabel}</option>
+            </optgroup>
+          )}
+          <optgroup label="All currencies">
+            {CURRENCY_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </optgroup>
         </Select>
         <NumberInput
           id="defaultVatPercent"

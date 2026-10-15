@@ -784,10 +784,48 @@ describe('ProfileForm', () => {
     });
   });
 
-  it('offers every Currency, in declaration order', () => {
+  function currencyGroups(): { label: string; values: string[] }[] {
+    const select = screen.getByLabelText('Currency') as HTMLSelectElement;
+    return [...select.querySelectorAll('optgroup')].map((g) => ({
+      label: g.label,
+      values: [...g.querySelectorAll('option')].map((o) => o.value),
+    }));
+  }
+
+  it('lists every Currency once under All currencies, by name', () => {
     renderForm();
-    const options = (screen.getByLabelText('Currency') as HTMLSelectElement).querySelectorAll('option');
-    expect([...options].map((o) => o.value)).toEqual(Object.values(Currency));
+    const all = currencyGroups().find((g) => g.label === 'All currencies');
+    expect(all?.values.slice().sort()).toEqual(Object.values(Currency).slice().sort());
+    const names = [...(screen.getByLabelText('Currency') as HTMLSelectElement).querySelectorAll('optgroup[label="All currencies"] option')]
+      .map((o) => o.textContent ?? '');
+    expect(names).toEqual(names.slice().sort());
+  });
+
+  it('labels each currency by name and prefix', () => {
+    renderForm();
+    expect(screen.getByRole('option', { name: 'Australian dollar (A$)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Swiss franc (CHF)' })).toBeInTheDocument();
+  });
+
+  it('suggests the currency of the teacher’s time zone when it is not already theirs', () => {
+    renderForm({ defaultTimezone: 'Australia/Sydney', currency: 'EUR' });
+    expect(currencyGroups()[0]).toEqual({ label: 'Suggested', values: ['AUD'] });
+  });
+
+  it('suggests nothing when the time zone’s currency is already theirs', () => {
+    renderForm({ defaultTimezone: 'Australia/Sydney', currency: 'AUD' });
+    expect(currencyGroups().map((g) => g.label)).toEqual(['All currencies']);
+  });
+
+  it('suggests nothing for a zone no currency claims', () => {
+    renderForm({ defaultTimezone: 'Etc/UTC' });
+    expect(currencyGroups().map((g) => g.label)).toEqual(['All currencies']);
+  });
+
+  it('follows the time zone the teacher picks before saving', () => {
+    renderForm({ defaultTimezone: 'Europe/Amsterdam', currency: 'EUR' });
+    fireEvent.change(timezoneSelect(), { target: { value: 'Asia/Kolkata' } });
+    expect(currencyGroups()[0]).toEqual({ label: 'Suggested', values: ['INR'] });
   });
 
   // `updateTeacherSchema` names no bank field, so the form neither shows nor sends one.
