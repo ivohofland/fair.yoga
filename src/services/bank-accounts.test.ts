@@ -36,7 +36,7 @@ afterAll(async () => {
 async function storedAccounts(teacherId: string) {
   return prisma.teacherBankAccount.findMany({
     where: { teacherId },
-    select: { currency: true, holderName: true, iban: true, bic: true, sortCode: true, accountNumber: true, routingNumber: true },
+    select: { currency: true, holderName: true, iban: true, bic: true, sortCode: true, accountNumber: true, routingNumber: true, bankCode: true },
     orderBy: { currency: 'asc' },
   });
 }
@@ -72,7 +72,7 @@ describe('saveBankAccount', () => {
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: '  A. Teacher ', iban: 'nl91 abna 0417 1643 00' });
     expect(out.kind).toBe('saved');
     expect(await storedAccounts(teacherId)).toEqual([
-      { currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null },
+      { currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
     ]);
   });
 
@@ -95,7 +95,7 @@ describe('saveBankAccount', () => {
     const out = await saveBankAccount(prisma, teacherId, 'GBP', { holderName: 'A. Teacher', sortCode: '12-34-56', accountNumber: '12345678' });
     expect(out.kind).toBe('saved');
     expect(await storedAccounts(teacherId)).toEqual([
-      { currency: 'GBP', holderName: 'A. Teacher', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null },
+      { currency: 'GBP', holderName: 'A. Teacher', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null, bankCode: null },
     ]);
   });
 
@@ -121,7 +121,7 @@ describe('saveBankAccount', () => {
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'New Name', iban: 'CH9300762011623852957', bic: 'UBSWCHZH80A' });
     expect(out.kind).toBe('saved');
     expect(await storedAccounts(teacherId)).toEqual([
-      { currency: 'EUR', holderName: 'New Name', iban: 'CH9300762011623852957', bic: 'UBSWCHZH80A', sortCode: null, accountNumber: null, routingNumber: null },
+      { currency: 'EUR', holderName: 'New Name', iban: 'CH9300762011623852957', bic: 'UBSWCHZH80A', sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
     ]);
   });
 
@@ -131,7 +131,7 @@ describe('saveBankAccount', () => {
     const out = await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'A. Teacher', iban: 'NL91ABNA0417164300' });
     expect(out.kind).toBe('saved');
     expect(await storedAccounts(teacherId)).toEqual([
-      { currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null },
+      { currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
     ]);
   });
 

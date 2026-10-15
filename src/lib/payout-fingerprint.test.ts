@@ -4,11 +4,11 @@ import { payoutFingerprint } from './payout-fingerprint';
 
 const eur: BankAccountData = {
   currency: 'EUR', holderName: 'Anna de Vries', iban: 'NL91ABNA0417164300', bic: null,
-  sortCode: null, accountNumber: null, routingNumber: null,
+  sortCode: null, accountNumber: null, routingNumber: null, bankCode: null,
 };
 const gbp: BankAccountData = {
   currency: 'GBP', holderName: 'Anna de Vries', iban: null, bic: null,
-  sortCode: '200000', accountNumber: '55779911', routingNumber: null,
+  sortCode: '200000', accountNumber: '55779911', routingNumber: null, bankCode: null,
 };
 const link = 'https://revolut.me/anna';
 

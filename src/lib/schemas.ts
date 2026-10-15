@@ -357,6 +357,7 @@ export const bankAccountSchema = z.object({
   sortCode: bankField,
   accountNumber: bankField,
   routingNumber: bankField,
+  bankCode: bankField,
 }).strict();
 
 /**

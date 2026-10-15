@@ -61,7 +61,7 @@ describe('ProfilePage', () => {
 
   it('hands the bank block the current currency’s account and masks the others', async () => {
     requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
-    const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
       currency: 'GBP', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/London', photo: null, paymentLink: null,
@@ -78,14 +78,14 @@ describe('ProfilePage', () => {
       currency: 'GBP',
       teacherId: 'teacher-1',
       hasAccount: true,
-      initial: { holderName: 'Ada Lovelace', iban: '', bic: '', sortCode: '123456', accountNumber: '12345678', routingNumber: '' },
+      initial: { holderName: 'Ada Lovelace', iban: '', bic: '', sortCode: '123456', accountNumber: '12345678', routingNumber: '', bankCode: '' },
       others: [{ currency: 'EUR', masked: '•••• 4300' }],
     });
   });
 
   it('says there is no current-currency account to remove when only another currency has one', async () => {
     requireTeacherSession.mockResolvedValue({ accountId: 'acct-1', teacherId: 'teacher-1', studentId: null });
-    const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    const none = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
     findUniqueOrThrow.mockResolvedValue({
       id: 'teacher-1', firstName: 'Ada', lastName: 'Lovelace', email: 'ada@example.test', bio: '', pageSlug: 'ada',
       currency: 'GBP', defaultVatPercent: new Prisma.Decimal(9), defaultTimezone: 'Europe/London', photo: null, paymentLink: null,

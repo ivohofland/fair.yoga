@@ -39,6 +39,7 @@ export const bankAccountDataSelect = {
   sortCode: true,
   accountNumber: true,
   routingNumber: true,
+  bankCode: true,
 } as const satisfies Record<keyof BankAccountData, true> & Prisma.TeacherBankAccountSelect;
 
 /** True when `A` and `B` are the same set of keys. */

@@ -24,6 +24,7 @@ const INVALID_MESSAGES = {
   sort_code_invalid: 'Enter a six-digit sort code.',
   account_number_invalid: 'Enter a valid account number.',
   routing_number_invalid: 'Enter a valid nine-digit routing number.',
+  bank_code_invalid: 'Enter a valid bank code.',
   holder_required: 'Enter the account holder’s name.',
 } as const satisfies Record<Exclude<BankAccountFailure['error'], 'field_not_in_scheme'>, string>;
 
@@ -34,6 +35,7 @@ const FIELD_IN_WORDS = {
   sortCode: 'a sort code',
   accountNumber: 'an account number',
   routingNumber: 'a routing number',
+  bankCode: 'a bank code',
 } as const satisfies Record<keyof BankDetailsInput, string>;
 
 function invalidMessage(failure: BankAccountFailure): string {

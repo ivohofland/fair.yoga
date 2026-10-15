@@ -58,6 +58,7 @@ export default async function ProfilePage() {
           sortCode: current?.sortCode ?? '',
           accountNumber: current?.accountNumber ?? '',
           routingNumber: current?.routingNumber ?? '',
+          bankCode: current?.bankCode ?? '',
         }}
         hasAccount={current !== null}
         others={others}

@@ -36,7 +36,7 @@ function sentBody(): unknown {
 
 /** A stored row as the PUT answers it. */
 function storedRow(currency: Currency, columns: Partial<BankAccountValues>): Response {
-  const data = { id: 'a1', teacherId: 't1', currency, holderName: '', iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, ...columns };
+  const data = { id: 'a1', teacherId: 't1', currency, holderName: '', iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null, ...columns };
   return new Response(JSON.stringify({ data }), { status: 200 });
 }
 
@@ -136,7 +136,7 @@ describe('BankAccountForm', () => {
   // A re-save of what is stored answers 200 with `outcome: 'unchanged'` and
   // the stored row (#786): the form shows it exactly as it shows a save.
   it('treats an unchanged answer as saved, showing the stored values', async () => {
-    const data = { id: 'a1', teacherId: 't1', currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+    const data = { id: 'a1', teacherId: 't1', currency: 'EUR', holderName: 'A. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ data, outcome: 'unchanged' }), { status: 200 }));
     renderForm('EUR');
     fireEvent.change(screen.getByLabelText('IBAN'), { target: { value: 'nl91 abna 0417 1643 00' } });

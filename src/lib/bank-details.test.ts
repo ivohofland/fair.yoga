@@ -68,6 +68,11 @@ describe('parseBankDetails', () => {
       expect(ok('EUR', { iban: 'NL91ABNA0417164300', bic: '  ' })).toEqual({ scheme: 'sepa', iban: 'NL91ABNA0417164300', bic: null });
     });
 
+    it('refuses a bank code on an IBAN account', () => {
+      expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', bankCode: '062000' }))
+        .toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'bankCode' } });
+    });
+
     it('refuses fields from another scheme', () => {
       expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', sortCode: '123456' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'sortCode' } });
       expect(parseBankDetails('EUR', { iban: 'NL91ABNA0417164300', accountNumber: '1' })).toEqual({ ok: false, failure: { error: 'field_not_in_scheme', field: 'accountNumber' } });
@@ -219,7 +224,13 @@ describe('scheme tables', () => {
 });
 
 describe('bankDetailsFromRow', () => {
-  const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null };
+  const blank = { iban: null, bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null };
+
+  it('refuses a stored row that sets a bank code outside its scheme', () => {
+    expect(bankDetailsFromRow({
+      currency: 'GBP', iban: null, bic: null, sortCode: '123456', accountNumber: '12345678', routingNumber: null, bankCode: '062000',
+    })).toBeNull();
+  });
 
   it('round-trips each scheme', () => {
     expect(bankDetailsFromRow({ ...blank, currency: 'EUR', iban: 'NL91ABNA0417164300' })).toEqual({ scheme: 'sepa', iban: 'NL91ABNA0417164300', bic: null });
