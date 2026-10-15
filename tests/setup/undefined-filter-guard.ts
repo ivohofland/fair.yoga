@@ -1,6 +1,8 @@
 /**
  * Replaces `@prisma/client`'s `PrismaClient` with one that classifies its
- * construction stack (`classifyCallSite`): a client whose call site is test
+ * construction stack (`classifyCallSite`), skipping frames in this installer and
+ * in `src/lib/prisma-client.ts` so a client built through the factory is
+ * classified by the factory's caller: a client whose call site is test
  * code comes back carrying `undefinedFilterGuard`, one whose call site is app
  * code comes back plain, and a stack with no frame to decide from makes the
  * constructor throw rather than guess. What is exempt, and why:
@@ -15,6 +17,7 @@ import { classifyCallSite, undefinedFilterGuard, UNDEFINED_FILTER_GUARD_MESSAGE_
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(SELF), '../..');
+const FACTORY = path.join(REPO_ROOT, 'src/lib/prisma-client.ts');
 
 // Deep enough that a run of `node_modules` frames cannot push the deciding
 // frame off the captured stack.
@@ -36,7 +39,7 @@ vi.mock('@prisma/client', async (importOriginal) => {
     constructor(...args: ConstructorParameters<typeof actual.PrismaClient>) {
       super(...args);
       const stack = constructionStack();
-      const site = classifyCallSite(stack, [SELF], REPO_ROOT);
+      const site = classifyCallSite(stack, [SELF, FACTORY], REPO_ROOT);
       if (site === 'undecided') {
         throw new Error(
           `${UNDEFINED_FILTER_GUARD_MESSAGE_PREFIX} cannot tell whether test or app code built this PrismaClient: ` +
