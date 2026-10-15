@@ -75,10 +75,14 @@ Prefixes for the new members:
 Formatting rules from #758 are unchanged: two decimals, U+2212 for negatives,
 no thousands separator.
 
+`MONEY_MAX` (100,000, #769) holds for every new currency: in the weakest, INR,
+it is still about €1,000 for one class's room cost or rate. The currency pin in
+`schemas.test.ts` lists the twenty.
+
 ## 2. Bank details: the `local` scheme
 
 ```ts
-| { scheme: 'local'; bankCode: string | null; accountNumber: string }
+| { scheme: 'local'; currency: Currency; bankCode: string | null; accountNumber: string }
 ```
 
 `TeacherBankAccount` gains one nullable column, `bankCode`; `accountNumber` is
@@ -116,10 +120,12 @@ PLN, CZK, ILS, AED; GBP and USD add `"bankCode" IS NULL`; two new branches:
 - NZD, MXN: `accountNumber` non-blank, every other scheme column null.
 `ELSE false` stays.
 
-**Two migrations.** Postgres refuses to use an enum value in the transaction
-that added it, so `add_currencies` adds the values and `bank_code_scheme` adds
-the column and replaces the CHECK. Verify while building that Prisma applies
-them in separate transactions.
+**Three migrations.** `bank_code_column` lands first: it adds the column and
+replaces the CHECK so the existing schemes hold `bankCode` null. Postgres
+refuses to use an enum value in the transaction that added it, so
+`add_currencies` adds the values and `local_bank_scheme` replaces the CHECK
+again with the new currencies' branches. Prisma applies each migration in its
+own transaction; applying `local_bank_scheme` after `add_currencies` succeeded.
 
 **Consumers.** `BankAccountData`, `bankAccountDataSelect` and
 `BankDetailsInput` gain `bankCode` (the `_bankAccountDataIsEveryDetailColumn`

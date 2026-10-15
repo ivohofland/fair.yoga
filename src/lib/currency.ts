@@ -63,6 +63,74 @@ export const CURRENCY_INFO = {
     prefix: 'DKK ', name: 'Danish krone', scheme: 'iban', bankCodeLabel: null, accountLabel: ACCOUNT,
     timeZones: ['Europe/Copenhagen', 'Atlantic/Faroe', 'America/Nuuk'],
   },
+  INR: {
+    prefix: '₹', name: 'Indian rupee', scheme: 'local', bankCodeLabel: 'IFSC', accountLabel: ACCOUNT,
+    timeZones: ['Asia/Kolkata', 'Asia/Calcutta'],
+  },
+  SGD: {
+    prefix: 'S$', name: 'Singapore dollar', scheme: 'local', bankCodeLabel: 'Bank code', accountLabel: ACCOUNT,
+    timeZones: ['Asia/Singapore', 'Singapore'],
+  },
+  AUD: {
+    prefix: 'A$', name: 'Australian dollar', scheme: 'local', bankCodeLabel: 'BSB', accountLabel: ACCOUNT,
+    timeZones: ['Australia/'],
+  },
+  CAD: {
+    prefix: 'C$', name: 'Canadian dollar', scheme: 'local', bankCodeLabel: 'Institution & transit', accountLabel: ACCOUNT,
+    timeZones: [
+      'America/Toronto', 'America/Montreal', 'America/Vancouver', 'America/Edmonton', 'America/Winnipeg',
+      'America/Regina', 'America/Swift_Current', 'America/Halifax', 'America/Glace_Bay', 'America/Moncton',
+      'America/Goose_Bay', 'America/St_Johns', 'America/Whitehorse', 'America/Dawson', 'America/Dawson_Creek',
+      'America/Fort_Nelson', 'America/Creston', 'America/Yellowknife', 'America/Inuvik', 'America/Cambridge_Bay',
+      'America/Rankin_Inlet', 'America/Resolute', 'America/Iqaluit', 'America/Atikokan', 'America/Nipigon',
+      'America/Thunder_Bay', 'America/Rainy_River', 'America/Pangnirtung', 'Canada/',
+    ],
+  },
+  NZD: {
+    prefix: 'NZ$', name: 'New Zealand dollar', scheme: 'local', bankCodeLabel: null, accountLabel: ACCOUNT,
+    timeZones: ['Pacific/Auckland', 'Pacific/Chatham', 'NZ'],
+  },
+  HKD: {
+    prefix: 'HK$', name: 'Hong Kong dollar', scheme: 'local', bankCodeLabel: 'Bank code', accountLabel: ACCOUNT,
+    timeZones: ['Asia/Hong_Kong', 'Hongkong'],
+  },
+  BRL: {
+    prefix: 'R$', name: 'Brazilian real', scheme: 'local', bankCodeLabel: 'Bank & agency', accountLabel: ACCOUNT,
+    timeZones: [
+      'America/Sao_Paulo', 'America/Bahia', 'America/Fortaleza', 'America/Recife', 'America/Maceio',
+      'America/Belem', 'America/Araguaina', 'America/Santarem', 'America/Manaus', 'America/Boa_Vista',
+      'America/Porto_Velho', 'America/Rio_Branco', 'America/Eirunepe', 'America/Cuiaba',
+      'America/Campo_Grande', 'America/Noronha', 'Brazil/',
+    ],
+  },
+  MXN: {
+    prefix: 'MX$', name: 'Mexican peso', scheme: 'local', bankCodeLabel: null, accountLabel: 'CLABE',
+    timeZones: [
+      'America/Mexico_City', 'America/Cancun', 'America/Merida', 'America/Monterrey', 'America/Matamoros',
+      'America/Chihuahua', 'America/Ciudad_Juarez', 'America/Ojinaga', 'America/Hermosillo',
+      'America/Mazatlan', 'America/Bahia_Banderas', 'America/Tijuana', 'Mexico/',
+    ],
+  },
+  ZAR: {
+    prefix: 'ZAR ', name: 'South African rand', scheme: 'local', bankCodeLabel: 'Branch code', accountLabel: ACCOUNT,
+    timeZones: ['Africa/Johannesburg'],
+  },
+  PLN: {
+    prefix: 'PLN ', name: 'Polish złoty', scheme: 'iban', bankCodeLabel: null, accountLabel: ACCOUNT,
+    timeZones: ['Europe/Warsaw', 'Poland'],
+  },
+  CZK: {
+    prefix: 'CZK ', name: 'Czech koruna', scheme: 'iban', bankCodeLabel: null, accountLabel: ACCOUNT,
+    timeZones: ['Europe/Prague'],
+  },
+  ILS: {
+    prefix: 'ILS ', name: 'Israeli shekel', scheme: 'iban', bankCodeLabel: null, accountLabel: ACCOUNT,
+    timeZones: ['Asia/Jerusalem', 'Asia/Tel_Aviv', 'Israel'],
+  },
+  AED: {
+    prefix: 'AED ', name: 'UAE dirham', scheme: 'iban', bankCodeLabel: null, accountLabel: ACCOUNT,
+    timeZones: ['Asia/Dubai'],
+  },
 } as const satisfies Record<Currency, CurrencyInfo>;
 
 function matches(entry: string, timeZone: string): boolean {

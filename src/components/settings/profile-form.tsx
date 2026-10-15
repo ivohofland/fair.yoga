@@ -75,6 +75,19 @@ const CURRENCY_OPTION_LABELS = {
   SEK: 'SEK (kr)',
   NOK: 'NOK (kr)',
   DKK: 'DKK (kr)',
+  INR: 'INR (₹)',
+  SGD: 'SGD (S$)',
+  AUD: 'AUD (A$)',
+  CAD: 'CAD (C$)',
+  NZD: 'NZD (NZ$)',
+  HKD: 'HKD (HK$)',
+  BRL: 'BRL (R$)',
+  MXN: 'MXN (MX$)',
+  ZAR: 'ZAR (R)',
+  PLN: 'PLN (zł)',
+  CZK: 'CZK (Kč)',
+  ILS: 'ILS (₪)',
+  AED: 'AED (د.إ)',
 } as const satisfies Record<Currency, string>;
 
 const CURRENCY_OPTIONS = CURRENCIES.map((currency) => [currency, CURRENCY_OPTION_LABELS[currency]] as const);

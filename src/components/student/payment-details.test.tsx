@@ -147,4 +147,17 @@ describe('PaymentDetails', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy account number' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('1234567'));
   });
+
+  it('shows an Australian account’s BSB and account number under their own labels', () => {
+    renderScheme({ scheme: 'local', currency: 'AUD', bankCode: '062000', accountNumber: '12345678' });
+    expect(screen.getByText('BSB')).toBeInTheDocument();
+    expect(screen.getByText('062000')).toBeInTheDocument();
+    expect(screen.getByText('Account number')).toBeInTheDocument();
+  });
+
+  it('shows a Mexican account as its CLABE alone', () => {
+    renderScheme({ scheme: 'local', currency: 'MXN', bankCode: null, accountNumber: '012345678901234567' });
+    expect(screen.getByText('CLABE')).toBeInTheDocument();
+    expect(screen.queryByText('Account number')).toBeNull();
+  });
 });

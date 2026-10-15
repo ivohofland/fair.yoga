@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import type { Currency } from '@prisma/client';
 import type { z } from 'zod';
 import type { bankAccountSchema } from '@/lib/schemas';
-import { SCHEME_FOR_CURRENCY, type BankDetails } from '@/lib/bank-details';
+import { SCHEME_FOR_CURRENCY, type BankScheme } from '@/lib/bank-details';
+import { CURRENCY_INFO } from '@/lib/currency';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { listRowClass } from '@/components/ui/list-row';
@@ -24,7 +25,9 @@ export const EMPTY_BANK_ACCOUNT = {
   holderName: '', iban: '', bic: '', sortCode: '', accountNumber: '', routingNumber: '', bankCode: '',
 } as const satisfies BankAccountValues;
 
-/** Each scheme's fields, in the order the block shows them, above the holder name. */
+type SchemeField = { key: Exclude<BankAccountField, 'holderName'>; label: string };
+
+/** Each fixed scheme's fields, in the order the block shows them, above the holder name. */
 const SCHEME_FIELDS = {
   sepa: [
     { key: 'iban', label: 'IBAN' },
@@ -42,7 +45,18 @@ const SCHEME_FIELDS = {
     { key: 'routingNumber', label: 'Routing number' },
     { key: 'accountNumber', label: 'Account number' },
   ],
-} as const satisfies Record<BankDetails['scheme'], readonly { key: Exclude<BankAccountField, 'holderName'>; label: string }[]>;
+} as const satisfies Record<Exclude<BankScheme, 'local'>, readonly SchemeField[]>;
+
+/** The fields `currency`'s account takes, in the order the block shows them. */
+function fieldsFor(currency: Currency): readonly SchemeField[] {
+  const scheme = SCHEME_FOR_CURRENCY[currency];
+  if (scheme !== 'local') return SCHEME_FIELDS[scheme];
+  const { bankCodeLabel, accountLabel } = CURRENCY_INFO[currency];
+  return [
+    ...(bankCodeLabel === null ? [] : [{ key: 'bankCode' as const, label: bankCodeLabel }]),
+    { key: 'accountNumber' as const, label: accountLabel },
+  ];
+}
 
 function isField(key: string): key is BankAccountField {
   return Object.hasOwn(EMPTY_BANK_ACCOUNT, key);
@@ -103,7 +117,7 @@ export function BankAccountForm({ teacherId, currency, initial, hasAccount, othe
   const [removeError, setRemoveError] = useState<{ currency: Currency; message: string } | null>(null);
   const [removed, setRemoved] = useState('');
   const busy = saving || removing !== null;
-  const fields = SCHEME_FIELDS[SCHEME_FOR_CURRENCY[currency]];
+  const fields = fieldsFor(currency);
   const shownFields: readonly BankAccountField[] = [...fields.map((f) => f.key), 'holderName'];
 
   function update(key: BankAccountField, value: string) {

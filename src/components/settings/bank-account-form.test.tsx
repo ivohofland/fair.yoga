@@ -70,6 +70,17 @@ describe('BankAccountForm', () => {
     expect(fieldLabels()).toEqual(['IBAN', 'BIC (optional)', 'Account holder name']);
   });
 
+  it.each([
+    ['AUD', ['BSB', 'Account number', 'Account holder name']],
+    ['INR', ['IFSC', 'Account number', 'Account holder name']],
+    ['NZD', ['Account number', 'Account holder name']],
+    ['MXN', ['CLABE', 'Account holder name']],
+    ['PLN', ['IBAN', 'BIC (optional)', 'Account holder name']],
+  ] as const)('shows %s’s own fields', (currency, labels) => {
+    renderForm(currency);
+    expect(fieldLabels()).toEqual(labels);
+  });
+
   it('saves to the current currency’s URL with only its scheme’s fields, and refreshes', async () => {
     fetchMock.mockResolvedValue(storedRow('GBP', { holderName: 'A. Teacher', sortCode: '123456', accountNumber: '12345678' }));
     renderForm('GBP');

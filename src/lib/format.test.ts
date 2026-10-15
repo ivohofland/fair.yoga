@@ -501,3 +501,22 @@ describe('currencyLabel', () => {
     expect(currencyLabel('EUR')).toBe('€');
   });
 });
+
+describe('formatMoneyCents in the added currencies', () => {
+  it.each([
+    ['INR', '₹12.50'], ['SGD', 'S$12.50'], ['AUD', 'A$12.50'], ['CAD', 'C$12.50'],
+    ['NZD', 'NZ$12.50'], ['HKD', 'HK$12.50'], ['BRL', 'R$12.50'], ['MXN', 'MX$12.50'],
+    ['ZAR', 'ZAR 12.50'], ['PLN', 'PLN 12.50'], ['CZK', 'CZK 12.50'], ['ILS', 'ILS 12.50'], ['AED', 'AED 12.50'],
+  ] as const)('%s → %s', (currency, shown) => {
+    expect(formatMoneyCents(1250, currency)).toBe(shown);
+  });
+
+  it('puts the minus before a symbol prefix', () => {
+    expect(formatMoneyCents(-1250, 'AUD')).toBe('−A$12.50');
+  });
+
+  it('labels a symbol currency by its symbol and a code currency by its code', () => {
+    expect(currencyLabel('INR')).toBe('₹');
+    expect(currencyLabel('PLN')).toBe('PLN');
+  });
+});

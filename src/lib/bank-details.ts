@@ -5,7 +5,8 @@ export type BankDetails =
   | { scheme: 'sepa'; iban: string; bic: string | null }
   | { scheme: 'iban'; iban: string; bic: string | null }
   | { scheme: 'uk'; sortCode: string; accountNumber: string }
-  | { scheme: 'us'; routingNumber: string; accountNumber: string };
+  | { scheme: 'us'; routingNumber: string; accountNumber: string }
+  | { scheme: 'local'; currency: Currency; bankCode: string | null; accountNumber: string };
 
 export type BankScheme = BankDetails['scheme'];
 
@@ -167,6 +168,26 @@ function parseUs(input: BankDetailsInput): ParseResult {
   return { ok: true, details: { scheme: 'us', routingNumber, accountNumber } };
 }
 
+const LOCAL_PART = /^[A-Za-z0-9 -]+$/;
+
+function parseLocal(currency: Currency, input: BankDetailsInput): ParseResult {
+  const takesCode = CURRENCY_INFO[currency].bankCodeLabel !== null;
+  const foreign = firstForeignField(input, takesCode ? ['bankCode', 'accountNumber'] : ['accountNumber']);
+  if (foreign) return fail({ error: 'field_not_in_scheme', field: foreign });
+
+  let bankCode: string | null = null;
+  if (takesCode) {
+    const raw = present(input.bankCode);
+    if (raw === null || raw.length > 20 || !LOCAL_PART.test(raw)) return fail({ error: 'bank_code_invalid', field: 'bankCode' });
+    bankCode = raw.toUpperCase();
+  }
+  const accountNumber = present(input.accountNumber) ?? '';
+  if (accountNumber.length < 4 || accountNumber.length > 34 || !LOCAL_PART.test(accountNumber)) {
+    return fail({ error: 'account_number_invalid', field: 'accountNumber' });
+  }
+  return { ok: true, details: { scheme: 'local', currency, bankCode, accountNumber } };
+}
+
 /** Normalises and validates `input` against `currency`'s scheme. */
 export function parseBankDetails(currency: Currency, input: BankDetailsInput): ParseResult {
   const scheme = SCHEME_FOR_CURRENCY[currency];
@@ -178,6 +199,8 @@ export function parseBankDetails(currency: Currency, input: BankDetailsInput): P
       return parseUk(input);
     case 'us':
       return parseUs(input);
+    case 'local':
+      return parseLocal(currency, input);
     default: {
       const unhandled: never = scheme;
       throw new Error(`unhandled bank scheme ${String(unhandled)}`);
@@ -209,6 +232,12 @@ export function bankDetailsFromRow(row: { currency: Currency } & BankAccountColu
     case 'us':
       if (!only(['routingNumber', 'accountNumber']) || !has(row.routingNumber) || !has(row.accountNumber)) return null;
       return { scheme, routingNumber: row.routingNumber, accountNumber: row.accountNumber };
+    case 'local': {
+      const takesCode = CURRENCY_INFO[row.currency].bankCodeLabel !== null;
+      if (!only(takesCode ? ['bankCode', 'accountNumber'] : ['accountNumber']) || !has(row.accountNumber)) return null;
+      if (takesCode && !has(row.bankCode)) return null;
+      return { scheme, currency: row.currency, bankCode: takesCode ? row.bankCode : null, accountNumber: row.accountNumber };
+    }
     default: {
       const unhandled: never = scheme;
       throw new Error(`unhandled bank scheme ${String(unhandled)}`);

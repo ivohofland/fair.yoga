@@ -240,7 +240,10 @@ export function formatMonthLabel(year: number, monthIndex: number): string {
  * fails the build at `_currenciesCoverEnum`; the order is held to the enum's
  * declaration order by `money-totals.test.ts`.
  */
-export const CURRENCIES = ['EUR', 'GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK'] as const satisfies readonly Currency[];
+export const CURRENCIES = [
+  'EUR', 'GBP', 'USD', 'CHF', 'SEK', 'NOK', 'DKK',
+  'INR', 'SGD', 'AUD', 'CAD', 'NZD', 'HKD', 'BRL', 'MXN', 'ZAR', 'PLN', 'CZK', 'ILS', 'AED',
+] as const satisfies readonly Currency[];
 const _currenciesCoverEnum: NoneOf<Exclude<Currency, (typeof CURRENCIES)[number]>> = true;
 void _currenciesCoverEnum;
 

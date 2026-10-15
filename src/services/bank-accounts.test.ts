@@ -135,6 +135,26 @@ describe('saveBankAccount', () => {
     ]);
   });
 
+  it('saves an AUD account by BSB and keeps the euro account beside it', async () => {
+    const teacherId = await makeTeacher('AUD');
+    await saveBankAccount(prisma, teacherId, 'EUR', { holderName: 'B. Teacher', iban: 'NL91ABNA0417164300' });
+    const outcome = await saveBankAccount(prisma, teacherId, 'AUD', { holderName: 'B. Teacher', bankCode: '062-000', accountNumber: '12345678' });
+    expect(outcome.kind).toBe('saved');
+    expect(await storedAccounts(teacherId)).toEqual([
+      { currency: 'EUR', holderName: 'B. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
+      { currency: 'AUD', holderName: 'B. Teacher', iban: null, bic: null, sortCode: null, accountNumber: '12345678', routingNumber: null, bankCode: '062-000' },
+    ]);
+  });
+
+  it('records a changed identifier when only the BSB moves', async () => {
+    const teacherId = await makeTeacher('AUD');
+    await saveBankAccount(prisma, teacherId, 'AUD', { holderName: 'B. Teacher', bankCode: '062000', accountNumber: '12345678' });
+    const outcome = await saveBankAccount(prisma, teacherId, 'AUD', { holderName: 'B. Teacher', bankCode: '063000', accountNumber: '12345678' });
+    if (outcome.kind !== 'saved') throw new Error(`expected saved, got ${outcome.kind}`);
+    const event = await prisma.payoutChangeEvent.findUniqueOrThrow({ where: { id: outcome.eventId } });
+    expect(event.identifierChanged).toBe(true);
+  });
+
   it('answers teacher_gone for an erased teacher and stores nothing', async () => {
     const teacherId = await makeTeacher();
     await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: new Date() } });

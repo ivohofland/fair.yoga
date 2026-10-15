@@ -79,6 +79,8 @@ function columnsFor(details: BankDetails): BankAccountColumns {
       return { iban: null, bic: null, sortCode: details.sortCode, accountNumber: details.accountNumber, routingNumber: null, bankCode: null };
     case 'us':
       return { iban: null, bic: null, sortCode: null, accountNumber: details.accountNumber, routingNumber: details.routingNumber, bankCode: null };
+    case 'local':
+      return { iban: null, bic: null, sortCode: null, accountNumber: details.accountNumber, routingNumber: null, bankCode: details.bankCode };
     default: {
       const unhandled: never = details;
       throw new Error(`unhandled bank scheme ${String((unhandled as { scheme?: unknown }).scheme)}`);
