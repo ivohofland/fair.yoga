@@ -177,9 +177,9 @@ describe('parseBankDetails', () => {
 });
 
 describe('the local scheme', () => {
-  it('accepts a BSB and account number, trimmed, the code uppercased', () => {
-    expect(parseBankDetails('AUD', { bankCode: ' 062-000 ', accountNumber: ' 12345678 ' })).toEqual({
-      ok: true, details: { scheme: 'local', currency: 'AUD', bankCode: '062-000', accountNumber: '12345678' },
+  it('accepts a BSB and account number, spaces and dashes stripped, the code uppercased', () => {
+    expect(parseBankDetails('AUD', { bankCode: ' 062-000 ', accountNumber: ' 1234 5678 ' })).toEqual({
+      ok: true, details: { scheme: 'local', currency: 'AUD', bankCode: '062000', accountNumber: '12345678' },
     });
     expect(parseBankDetails('INR', { bankCode: 'sbin0001234', accountNumber: '123456789012' })).toEqual({
       ok: true, details: { scheme: 'local', currency: 'INR', bankCode: 'SBIN0001234', accountNumber: '123456789012' },
@@ -198,7 +198,7 @@ describe('the local scheme', () => {
 
   it('accepts an NZD account number on its own', () => {
     expect(parseBankDetails('NZD', { accountNumber: '12-3456-7890123-00' })).toEqual({
-      ok: true, details: { scheme: 'local', currency: 'NZD', bankCode: null, accountNumber: '12-3456-7890123-00' },
+      ok: true, details: { scheme: 'local', currency: 'NZD', bankCode: null, accountNumber: '123456789012300' },
     });
   });
 
@@ -212,6 +212,11 @@ describe('the local scheme', () => {
     ['an account number under four characters', { bankCode: '062000', accountNumber: '123' }, 'account_number_invalid', 'accountNumber'],
     ['an account number over 34 characters', { bankCode: '062000', accountNumber: '1'.repeat(35) }, 'account_number_invalid', 'accountNumber'],
     ['a bank code over 20 characters', { bankCode: '1'.repeat(21), accountNumber: '12345678' }, 'bank_code_invalid', 'bankCode'],
+    ['a bank code of separators only', { bankCode: '-', accountNumber: '12345678' }, 'bank_code_invalid', 'bankCode'],
+    ['a bank code with no digit', { bankCode: 'ABCDEF', accountNumber: '12345678' }, 'bank_code_invalid', 'bankCode'],
+    ['an account number of separators only', { bankCode: '062000', accountNumber: '- - -' }, 'account_number_invalid', 'accountNumber'],
+    ['an account number with no digit', { bankCode: '062000', accountNumber: 'ABCDEFGH' }, 'account_number_invalid', 'accountNumber'],
+    ['an account number under four characters once separators go', { bankCode: '062000', accountNumber: '1-2-3' }, 'account_number_invalid', 'accountNumber'],
   ] as const)('refuses %s', (_label, input, error, field) => {
     expect(parseBankDetails('AUD', input)).toEqual({ ok: false, failure: { error, field } });
   });

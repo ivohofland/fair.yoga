@@ -275,7 +275,7 @@ export function formatMoney(amount: number | Prisma.Decimal, currency: Currency)
   return formatMoneyCents(Math.round(n * 100), currency);
 }
 
-/** The currency as a word in running text: `€`, `£`, `$`, or the code (`CHF`). */
+/** The currency as a word in running text: its `CURRENCY_INFO` prefix, trimmed (`€`, `A$`, `CHF`). */
 export function currencyLabel(currency: Currency): string {
   return CURRENCY_PREFIX[currency].trim();
 }

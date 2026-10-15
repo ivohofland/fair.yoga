@@ -5,6 +5,9 @@ import { updateTeacherProfile } from './teacher-profile';
 import { resolveSteps } from '@/lib/onboarding';
 import { hasPayoutDetails } from '@/lib/payment-methods';
 import { payoutMasksAlikeNote } from '@/lib/email-templates';
+import { bankDetailsFromRow, type BankDetailsInput, type BankScheme } from '@/lib/bank-details';
+import { CURRENCY_INFO } from '@/lib/currency';
+import { CURRENCIES } from '@/lib/format';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -142,7 +145,7 @@ describe('saveBankAccount', () => {
     expect(outcome.kind).toBe('saved');
     expect(await storedAccounts(teacherId)).toEqual([
       { currency: 'EUR', holderName: 'B. Teacher', iban: 'NL91ABNA0417164300', bic: null, sortCode: null, accountNumber: null, routingNumber: null, bankCode: null },
-      { currency: 'AUD', holderName: 'B. Teacher', iban: null, bic: null, sortCode: null, accountNumber: '12345678', routingNumber: null, bankCode: '062-000' },
+      { currency: 'AUD', holderName: 'B. Teacher', iban: null, bic: null, sortCode: null, accountNumber: '12345678', routingNumber: null, bankCode: '062000' },
     ]);
   });
 
@@ -153,6 +156,23 @@ describe('saveBankAccount', () => {
     if (outcome.kind !== 'saved') throw new Error(`expected saved, got ${outcome.kind}`);
     const event = await prisma.payoutChangeEvent.findUniqueOrThrow({ where: { id: outcome.eventId } });
     expect(event.identifierChanged).toBe(true);
+  });
+
+  it('answers unchanged to a re-save of a local account whose bank code differs only in case and separators', async () => {
+    const teacherId = await makeTeacher('INR');
+    await saveBankAccount(prisma, teacherId, 'INR', { holderName: 'B. Teacher', bankCode: 'SBIN0001234', accountNumber: '123456789012' });
+    const out = await saveBankAccount(prisma, teacherId, 'INR', { holderName: 'B. Teacher', bankCode: 'sbin 0001234', accountNumber: '1234-5678-9012' });
+    expect(out.kind).toBe('unchanged');
+    expect(await events(teacherId)).toHaveLength(1);
+  });
+
+  it('records an unchanged identifier when only a local account’s holder name moves', async () => {
+    const teacherId = await makeTeacher('AUD');
+    await saveBankAccount(prisma, teacherId, 'AUD', { holderName: 'B. Teacher', bankCode: '062000', accountNumber: '12345678' });
+    const outcome = await saveBankAccount(prisma, teacherId, 'AUD', { holderName: 'B. Teacher-Smith', bankCode: '062000', accountNumber: '12345678' });
+    if (outcome.kind !== 'saved') throw new Error(`expected saved, got ${outcome.kind}`);
+    const event = await prisma.payoutChangeEvent.findUniqueOrThrow({ where: { id: outcome.eventId } });
+    expect(event.identifierChanged).toBe(false);
   });
 
   it('answers teacher_gone for an erased teacher and stores nothing', async () => {
@@ -249,6 +269,30 @@ describe('saveBankAccount records a payout-change event (#786)', () => {
       tone: 'warning',
       text: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
     });
+  });
+});
+
+/** A valid input per scheme; the `local` scheme's takes a bank code only where the currency names one. */
+const VALID_INPUT = {
+  sepa: { iban: 'NL91ABNA0417164300' },
+  iban: { iban: 'CH9300762011623852957' },
+  uk: { sortCode: '200000', accountNumber: '55779911' },
+  us: { routingNumber: '021000021', accountNumber: '123456789' },
+  local: { bankCode: '062000', accountNumber: '12345678' },
+} as const satisfies Record<BankScheme, BankDetailsInput>;
+
+describe('saveBankAccount against the scheme CHECK, for every currency', () => {
+  it.each(CURRENCIES)('stores a valid %s account and reads it back', async (currency) => {
+    const info = CURRENCY_INFO[currency];
+    const input: BankDetailsInput = info.scheme === 'local' && info.bankCodeLabel === null
+      ? { accountNumber: VALID_INPUT.local.accountNumber }
+      : VALID_INPUT[info.scheme];
+    const teacherId = await makeTeacher(currency);
+    const out = await saveBankAccount(prisma, teacherId, currency, { holderName: 'C. Teacher', ...input });
+    expect(out.kind).toBe('saved');
+    const [row] = await storedAccounts(teacherId);
+    if (row === undefined) throw new Error(`no ${currency} row stored`);
+    expect(bankDetailsFromRow(row)).not.toBeNull();
   });
 });
 

@@ -1,25 +1,27 @@
 import type { Currency } from '@prisma/client';
 import type { BankScheme } from '@/lib/bank-details';
 
-/**
- * Everything the app knows about one currency. Hand-written, never `Intl`:
- * ICU output differs between the server render and the browser.
- */
+/** The per-currency facts `CURRENCY_INFO` holds. */
 export type CurrencyInfo = {
   /** Before the amount: a symbol, or the code with its trailing space. */
   prefix: string;
   /** The currency in words, as the picker lists it. */
   name: string;
-  scheme: BankScheme;
-  /** What the bank-code field is called; null when the scheme takes none. */
-  bankCodeLabel: string | null;
   accountLabel: string;
   /** IANA zones that suggest this currency; an entry ending in `/` matches as a prefix. */
   timeZones: readonly string[];
-};
+} & (
+  | { scheme: Exclude<BankScheme, 'local'>; bankCodeLabel: null }
+  | {
+    scheme: 'local';
+    /** What the bank-code field is called; null when this currency's account takes no bank code. */
+    bankCodeLabel: string | null;
+  }
+);
 
 const ACCOUNT = 'Account number';
 
+/** Hand-written, never `Intl`: ICU output differs between the server render and the browser. */
 export const CURRENCY_INFO = {
   EUR: {
     prefix: '€', name: 'Euro', scheme: 'sepa', bankCodeLabel: null, accountLabel: ACCOUNT,
@@ -132,6 +134,11 @@ export const CURRENCY_INFO = {
     timeZones: ['Asia/Dubai'],
   },
 } as const satisfies Record<Currency, CurrencyInfo>;
+
+/** `label` as it reads mid-sentence: an acronym (`BSB`, `CLABE`) as written, words lowercased. */
+export function labelInSentence(label: string): string {
+  return label === label.toUpperCase() ? label : label.toLowerCase();
+}
 
 function matches(entry: string, timeZone: string): boolean {
   return entry.endsWith('/') ? timeZone.startsWith(entry) && timeZone.length > entry.length : entry === timeZone;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Currency } from '@prisma/client';
-import { CURRENCY_INFO, suggestedCurrency } from './currency';
+import { CURRENCY_INFO, labelInSentence, suggestedCurrency } from './currency';
 import { CURRENCY_PREFIX } from './format';
 import { SCHEME_FOR_CURRENCY } from './bank-details';
 
@@ -9,12 +9,6 @@ describe('CURRENCY_INFO', () => {
     for (const c of Object.values(Currency)) {
       expect(CURRENCY_PREFIX[c]).toBe(CURRENCY_INFO[c].prefix);
       expect(SCHEME_FOR_CURRENCY[c]).toBe(CURRENCY_INFO[c].scheme);
-    }
-  });
-
-  it('gives a bank-code label to no currency outside the local scheme', () => {
-    for (const c of Object.values(Currency)) {
-      if (CURRENCY_INFO[c].scheme !== 'local') expect(CURRENCY_INFO[c].bankCodeLabel).toBeNull();
     }
   });
 
@@ -63,5 +57,14 @@ describe('suggestedCurrency', () => {
 
   it.each(['Etc/UTC', 'Antarctica/Troll', '', 'Europe/'])('suggests nothing for %j', (zone) => {
     expect(suggestedCurrency(zone)).toBeNull();
+  });
+});
+
+describe('labelInSentence', () => {
+  it('keeps an acronym and lowercases words', () => {
+    expect(labelInSentence('BSB')).toBe('BSB');
+    expect(labelInSentence('CLABE')).toBe('CLABE');
+    expect(labelInSentence('Account number')).toBe('account number');
+    expect(labelInSentence('Institution & transit')).toBe('institution & transit');
   });
 });

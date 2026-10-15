@@ -15,7 +15,7 @@ import { readResumeReview, type ReviewPayment } from '@/services/payout-resume';
 
 export const dynamic = 'force-dynamic';
 
-/** Each detail column an account can hold, as the screen labels it. */
+/** Each detail column an account can hold, as the screen labels it; a `local` account's bank code and account number take their currency's labels instead. */
 const DETAIL_LABELS = {
   holderName: 'Account holder',
   iban: 'IBAN',

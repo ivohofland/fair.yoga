@@ -102,9 +102,15 @@ describe('paymentMethodsFor', () => {
     ]);
   });
 
-  it.each(['CHF', 'SEK', 'NOK', 'DKK'] as const)('offers a %s account an IBAN transfer and no QR code', (currency) => {
+  it.each(['CHF', 'SEK', 'NOK', 'DKK', 'PLN'] as const)('offers a %s account an IBAN transfer and no QR code', (currency) => {
     expect(methodsFor(account({ currency, iban: 'CH9300762011623852957' }))).toEqual([
       { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'iban', iban: 'CH9300762011623852957', bic: null } },
+    ]);
+  });
+
+  it('offers an Australian account a local transfer carrying its currency, and no QR code', () => {
+    expect(methodsFor(account({ currency: 'AUD', bankCode: '062000', accountNumber: '12345678' }))).toEqual([
+      { kind: 'bank_transfer', beneficiary: HOLDER, details: { scheme: 'local', currency: 'AUD', bankCode: '062000', accountNumber: '12345678' } },
     ]);
   });
 

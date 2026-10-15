@@ -168,7 +168,16 @@ function parseUs(input: BankDetailsInput): ParseResult {
   return { ok: true, details: { scheme: 'us', routingNumber, accountNumber } };
 }
 
-const LOCAL_PART = /^[A-Za-z0-9 -]+$/;
+/**
+ * `raw` without its spaces and dashes, so a copied value pastes whole into a
+ * length-capped field; null unless `raw` is letters, digits, spaces and dashes
+ * holding at least one digit and between `min` and `max` characters once stripped.
+ */
+function localPart(raw: string | null, min: number, max: number): string | null {
+  if (raw === null || !/^[A-Za-z0-9 -]+$/.test(raw)) return null;
+  const stripped = raw.replace(/[-\s]/g, '');
+  return stripped.length >= min && stripped.length <= max && /[0-9]/.test(stripped) ? stripped : null;
+}
 
 function parseLocal(currency: Currency, input: BankDetailsInput): ParseResult {
   const takesCode = CURRENCY_INFO[currency].bankCodeLabel !== null;
@@ -177,14 +186,12 @@ function parseLocal(currency: Currency, input: BankDetailsInput): ParseResult {
 
   let bankCode: string | null = null;
   if (takesCode) {
-    const raw = present(input.bankCode);
-    if (raw === null || raw.length > 20 || !LOCAL_PART.test(raw)) return fail({ error: 'bank_code_invalid', field: 'bankCode' });
-    bankCode = raw.toUpperCase();
+    const code = localPart(present(input.bankCode), 1, 20);
+    if (code === null) return fail({ error: 'bank_code_invalid', field: 'bankCode' });
+    bankCode = code.toUpperCase();
   }
-  const accountNumber = present(input.accountNumber) ?? '';
-  if (accountNumber.length < 4 || accountNumber.length > 34 || !LOCAL_PART.test(accountNumber)) {
-    return fail({ error: 'account_number_invalid', field: 'accountNumber' });
-  }
+  const accountNumber = localPart(present(input.accountNumber), 4, 34);
+  if (accountNumber === null) return fail({ error: 'account_number_invalid', field: 'accountNumber' });
   return { ok: true, details: { scheme: 'local', currency, bankCode, accountNumber } };
 }
 
