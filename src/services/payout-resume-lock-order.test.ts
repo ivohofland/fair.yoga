@@ -232,6 +232,10 @@ describe('resumePayments against a student erasure on two completed classes', ()
 
     const holder = new PrismaClient();
     const resumer = new PrismaClient();
+    // Connected before the hold, so engine and pool startup cannot run inside
+    // the erasure's `lock_timeout` window.
+    await holder.$connect();
+    await resumer.$connect();
     const held = latch();
     const release = latch();
     let holderPid = 0;
