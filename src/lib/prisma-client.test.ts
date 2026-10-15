@@ -24,6 +24,25 @@ describe('createPrismaClient', () => {
       await client.$disconnect();
     }
   });
+
+  it('passes errorFormat through, so a model-query error drops its source excerpt', async () => {
+    const messageOf = async (errorFormat?: 'minimal'): Promise<string> => {
+      const client = createPrismaClient({ url: UNREACHABLE, errorFormat });
+      try {
+        await client.teacher.findFirst();
+        return '';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      } finally {
+        await client.$disconnect();
+      }
+    };
+    const minimal = await messageOf('minimal');
+    const standard = await messageOf();
+    expect(minimal).toContain('`prisma.teacher.findFirst()` invocation:');
+    expect(minimal).not.toContain('→');
+    expect(standard).toContain('→');
+  });
 });
 
 describe('prisma-client.ts imports', () => {
