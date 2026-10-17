@@ -104,8 +104,9 @@ const eslintConfig = defineConfig([
   },
   // Refuses a direct import of the Prisma package (`@prisma/client` and every
   // subpath of it) and of the generated output under `src/generated`,
-  // everywhere but the two funnels, which re-export the generated output. What this rule does not
-  // see, and why: docs/technical-architecture.md, "Where Prisma comes from".
+  // everywhere but the two funnels, which re-export the generated output.
+  // What this rule does not see, and why: docs/technical-architecture.md,
+  // "Where Prisma comes from".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts', 'src/lib/prisma-enums.ts'],
@@ -267,6 +268,7 @@ const eslintConfig = defineConfig([
     'playwright-report/**',
     'test-results/**',
     'coverage/**',
+    // The Prisma client `prisma generate` writes; never authored.
     'src/generated/**',
   ]),
 ]);
