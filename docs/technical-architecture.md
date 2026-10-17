@@ -299,47 +299,89 @@ values `CodedRefusal`, so each entry's status is checked against its own code.
 ### Relation loads over platform-wide sets
 
 **The mechanism.** Prisma loads a relation (`include` / nested `select`) with
-a second statement, one parent key per row. For a **composite** relation —
-one keyed on more than one column, such as `Class.calendarEntry` — that key
-is a row value, and the statement Prisma sends is a row-value `IN` list:
-`WHERE ("id","kind","live") IN (($1, $2, $3), ...)`. Postgres parses that
-list into a nested expression tree and fails with `54001 stack depth limit
-exceeded` at about 7,500 tuples on the default `max_stack_depth` (2 MB) —
-measured by bisection on Prisma's bound-parameter path, between about 7,500
-and 7,750 parents (#674); in plain SQL, 3,000 tuples pass and 8,000 fail. A
-**single-column** `IN` list is flat — Postgres compiles it to
-`= ANY(array)` — and stays safe at any size tested (32,000 values). Relation
-**filters** (`where: { calendarEntry: { cancelledAt: null } }`) compile to a
-`JOIN`, not an `IN` list, and are unaffected. Only relation *loads* over a
-composite key are exposed.
+a second statement that binds the parent keys as parameters. For a
+**composite** relation — one keyed on more than one column, such as
+`Class.calendarEntry` — the query compiler sends one scalar `IN` list per key
+column, `"id" IN ($1…) AND "kind" IN (…) AND "live" IN (…)`, so the statement
+binds 3n + 1 parameters for n parents. Postgres's wire protocol carries at
+most 65,535 parameters in one statement, and the query compiler does not split
+a relation load: 21,844 parents resolve, and 21,845 fail with `08P01`
+(`bind message supplies 0 parameters, but prepared statement "" requires
+65536`), which reaches the caller as a 500. A scalar `IN` list is flat in
+Postgres, so the load no longer overflows the parser's stack: 21,844 parents
+resolve even under a 200 kB `max_stack_depth`. A top-level scalar `in:`
+**filter** (`where: { id: { in: ids } }`) is different again: the query
+compiler splits it into statements of at most 32,765 values, and 200,000 ids
+resolve. Relation **filters** (`where: { calendarEntry: { cancelledAt: null } }`)
+compile to a `JOIN`, not an `IN` list, and are unaffected. Only relation
+*loads* are exposed.
+
+Re-deriving the numbers: the composite limit is the `bind-parameter limit`
+test, which seeds 21,845 classes by `generate_series` and loads 21,844 and
+21,845 of them unpaged (about 4 s of seed and loads on a dev machine):
+
+```bash
+pnpm exec vitest run --project unit-sweeps src/services/sweep-page-ceiling.test.ts -t "bind-parameter limit"
+```
+
+The filter split, from the repo root (`pnpm exec tsx split.ts 32765 32766 200000`
+with this as `split.ts`; it prints the parameter count of every statement):
+
+```ts
+import 'dotenv/config';
+import { createPrismaClient, type Prisma } from '@/lib/prisma-client';
+
+const db = createPrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+const counts: number[] = [];
+(db as unknown as { $on(e: 'query', cb: (e: Prisma.QueryEvent) => void): void }).$on('query', (e) => {
+  counts.push((JSON.parse(e.params) as unknown[]).length);
+});
+void (async () => {
+  for (const n of process.argv.slice(2).map(Number)) {
+    counts.length = 0;
+    const ids = Array.from({ length: n }, (_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`);
+    await db.class.findMany({ where: { id: { in: ids } } });
+    console.log(n, counts);
+  }
+  await db.$disconnect();
+})();
+```
 
 **The rule.** A sweep whose parent set grows with the whole platform never
 loads a relation over that set in one statement — it reads its snapshot in
 keyset pages through `readInPages` (`src/lib/read-in-pages.ts`), which pages
-at `SWEEP_PAGE_SIZE` (500) and leaves the keyset — the `where` and matching
-`orderBy` — to the caller, so every site keeps Prisma's nested result type.
-Per-tenant reads (a teacher's or a student's own history) are left alone: see
-the verdict below.
+at `SWEEP_PAGE_SIZE` (500, so a composite load binds at most 1,501
+parameters) and leaves the keyset — the `where` and matching `orderBy` — to
+the caller, so every site keeps Prisma's nested result type. Per-tenant reads
+(a teacher's or a student's own history) are left alone: see the verdict
+below.
 
 **How the ceiling tests reproduce it.** `tests/stack-ceiling.ts`'s
-`lowStackClient` opens a `connection_limit=1` Prisma client and lowers
-`max_stack_depth` for that session (a `connection_limit=1` client is what
-makes a session-level `SET` reach every later query on it). The harness
-asserts that an unpaged `CEILING_ROWS` load fails with `54001`
-(`isStackDepthError`) and that a `SWEEP_PAGE_SIZE` page passes. Each per-site
-test then seeds a `CEILING_ROWS` parent set and asserts the paged read
-completes on the lowered stack without returning a row twice;
-`expectLowered` confirms the session is actually running under it, so a
-test cannot pass by silently running on a default-stack connection. Un-paging a site's read turns its test red with
-`54001`, which is how each was verified. The per-site tests live in
-`src/services/sweep-page-ceiling.test.ts`.
+`lowStackClient` builds a client whose `options` startup parameter carries
+`-c max_stack_depth=200kB` (`CEILING_STACK`), so every connection its pool
+opens parses under it, and it records the most parameters any one statement
+on that client binds (`peakBoundParams`, read from Prisma's `query` event).
+The harness asserts that a `SWEEP_PAGE_SIZE` relation load binds
+3 × `SWEEP_PAGE_SIZE` + 1 parameters and an unpaged `CEILING_ROWS` (1,000)
+load 3 × `CEILING_ROWS` + 1. Each per-site test then seeds a `CEILING_ROWS`
+parent set and asserts that no statement the paged read sends binds more
+than a page's parameters — 3 × `SWEEP_PAGE_SIZE` + 1, or 2 ×
+`SWEEP_PAGE_SIZE` + 1 for `readStudioGenerationCandidates`, whose
+`StudioClassTemplate.scheduleRule` key has two columns. Un-paging a site's
+read sends the whole set in one statement and turns its test red on the
+number, which is how each was verified. One stack test remains, for SQL the
+app writes itself: a `CEILING_ROWS` row-value `IN` list through `$queryRaw`
+still overflows the lowered stack (`54001`, `isStackDepthError`), and a
+`SWEEP_PAGE_SIZE` one does not; `expectLowered` confirms each client really
+runs under the lowered stack. A last test proves the bind limit above is
+real. The per-site tests live in `src/services/sweep-page-ceiling.test.ts`.
 
 **Per-tenant verdict.** A read bounded by one teacher's or one student's own
 history is left unpaged — including the GDPR export, `/schedule/past`,
 reporting, and the unfiltered `GET /api/classes` / `GET /api/studio-classes`,
 among other per-tenant reads. At 6
-classes a week, one teacher reaches 7,500 calendar entries only after about
-24 years (7,500 ÷ 6 ÷ 52 ≈ 24), and a student's bookings or GDPR export is
+classes a week, one teacher reaches 21,845 calendar entries only after about
+70 years (21,845 ÷ 6 ÷ 52 ≈ 70), and a student's bookings or GDPR export is
 smaller again. Not a defect anyone will hit.
 
 **Re-deriving the census.** Composite relations:

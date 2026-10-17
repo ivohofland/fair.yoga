@@ -1,20 +1,69 @@
 import crypto from 'crypto';
 import { Prisma, type PrismaClient } from '@/lib/prisma-client';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { pgErrorOf } from '@/lib/pg-error';
 import { expect } from 'vitest';
 
 /**
- * Fixtures for the relation-load ceiling tests (#674): a client whose session
- * parses under a lowered `max_stack_depth`, and bulk seeders that put enough
- * rows in front of a sweep to overflow it. The design is
- * `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
+ * Fixtures for the ceiling tests (#674, #885): a client whose session parses
+ * under a lowered `max_stack_depth`, so app-authored row-value SQL can be
+ * shown to overflow the parser's stack; a count of the parameters each
+ * statement on that client binds, so a sweep can be shown to page its
+ * relation loads; and bulk seeders that put more than a page of parents in
+ * front of a sweep. Why sweeps page, and the numbers behind each constant:
+ * `docs/technical-architecture.md`, "Relation loads over platform-wide sets".
  */
 
 /** The session stack a ceiling client runs under. */
 export const CEILING_STACK = '200kB';
 
-/** A parent-set size that overflows `CEILING_STACK` when loaded unpaged. */
+/**
+ * A parent set larger than a page: a read that loads it unpaged binds more
+ * parameters in one statement than any paged read can, and its row-value
+ * tuples overflow `CEILING_STACK`.
+ */
 export const CEILING_ROWS = 1000;
+
+/** The largest composite relation load that binds: 3n + 1 parameters, against a wire-protocol maximum of 65,535. */
+export const BIND_LIMIT_PARENTS = 21_844;
+
+type QueryEvents = { $on(event: 'query', cb: (e: Prisma.QueryEvent) => void): void };
+
+/**
+ * The client `$on` lives on. Under vitest the undefined-filter guard hands a
+ * test-built client back extended (`tests/setup/undefined-filter-guard.ts`),
+ * and an extended client sets `$on` to undefined; Prisma's `_originalClient`
+ * is the unextended client behind it, and a plain client's own.
+ */
+function queryEventsOf(client: PrismaClient): QueryEvents {
+  const base: unknown = (client as unknown as { _originalClient?: unknown })._originalClient;
+  if (typeof (base as Partial<QueryEvents> | undefined)?.$on !== 'function') {
+    throw new Error('lowStackClient: no $on on the client or its _originalClient');
+  }
+  return base as QueryEvents;
+}
+
+const peaks = new WeakMap<PrismaClient, { peak: number }>();
+
+/** Parameters bound by one statement, from Prisma's query event. */
+function paramCount(event: Prisma.QueryEvent): number {
+  const params: unknown = JSON.parse(event.params);
+  return Array.isArray(params) ? params.length : 0;
+}
+
+/** The most parameters any one statement on `client` has bound since its last reset. */
+export function peakBoundParams(client: PrismaClient): number {
+  const entry = peaks.get(client);
+  if (!entry) throw new Error('peakBoundParams: not a lowStackClient');
+  return entry.peak;
+}
+
+/** Starts `client`'s peak over, before the read a test measures. */
+export function resetBoundParams(client: PrismaClient): void {
+  const entry = peaks.get(client);
+  if (!entry) throw new Error('resetBoundParams: not a lowStackClient');
+  entry.peak = 0;
+}
 
 /**
  * A client whose every connection parses under `CEILING_STACK`. The URL's
@@ -28,7 +77,12 @@ export async function lowStackClient(): Promise<PrismaClient> {
   if (!base) throw new Error('lowStackClient: DATABASE_URL is not set');
   const url = new URL(base);
   url.searchParams.set('options', `-c max_stack_depth=${CEILING_STACK}`);
-  const client = createPrismaClient({ url: url.toString() });
+  const client = createPrismaClient({ url: url.toString(), log: [{ emit: 'event', level: 'query' }] });
+  const entry = { peak: 0 };
+  peaks.set(client, entry);
+  queryEventsOf(client).$on('query', (e) => {
+    entry.peak = Math.max(entry.peak, paramCount(e));
+  });
   const [row] = await client.$queryRawUnsafe<{ max_stack_depth: string }[]>('SHOW max_stack_depth');
   if (row?.max_stack_depth !== CEILING_STACK) {
     await client.$disconnect();
@@ -62,22 +116,12 @@ export async function expectLowered(db: PrismaClient): Promise<void> {
 }
 
 /**
- * True only for Postgres SQLSTATE 54001 (stack depth limit exceeded), in the
- * two shapes Prisma surfaces it in.
+ * True only for Postgres SQLSTATE 54001 (stack depth limit exceeded). Its
+ * producer is app-authored row-value SQL through `$queryRaw`; a Prisma
+ * relation load sends scalar `IN` lists and never reaches it.
  */
 export function isStackDepthError(err: unknown): boolean {
-  // `$queryRaw`: a known request error, SQLSTATE in `meta.code`.
-  if (err instanceof Prisma.PrismaClientKnownRequestError) {
-    const meta = err.meta as { code?: unknown } | undefined;
-    return err.code === 'P2010' && meta?.code === '54001';
-  }
-  // `findMany` relation load (measured 2026-09-24): an unknown request error
-  // with no `code` or `meta`; the SQLSTATE is only in the engine's
-  // `PostgresError { code: "54001", … }` text.
-  if (err instanceof Prisma.PrismaClientUnknownRequestError) {
-    return err.message.includes('PostgresError { code: "54001"');
-  }
-  return false;
+  return pgErrorOf(err)?.sqlState === '54001';
 }
 
 export interface SeededTeachers {
