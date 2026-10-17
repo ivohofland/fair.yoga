@@ -183,10 +183,14 @@ retracting sent notifications is out of proportion to a claim.
   `studentReportedAt` and show the claim line. A claim made while payouts may
   have pointed at a changed account is exactly what the teacher checks before
   resuming.
-- **`/bookings`** (past classes): a standing claim replaces the row's status
-  label with "Marked as sent" in brown, and replaces Pay now (or the
-  pay-directly / hold-off line) with a "View payment →" link to the pay page,
-  where Undo is.
+- **Student status label**: on `/bookings` (past classes) and in the pay
+  page's header, a standing claim reads "Marked as sent" in brown in place of
+  the status (`studentPaymentStateText`, `src/lib/payment-claim.ts`). Teacher
+  surfaces keep the overdue mark; the student has done their part.
+- **`/bookings` action**: a standing claim replaces Pay now (or the
+  pay-directly line) with a "View payment →" link to the pay page, where Undo
+  is. While payments are paused the row keeps its hold-off line instead: the
+  pay page then shows only the hold-off copy, with no claim line to link to.
 - **Ordering**: claimed outstanding payments first on the settings outstanding
   list (the page's own query/split) and in the checklist (the overview page's
   `registeredAt asc` items); the existing order holds within each group.

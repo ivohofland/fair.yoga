@@ -12,13 +12,14 @@ const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 
 /**
- * `/bookings` — the Pay now link's payment-status gate.
+ * `/bookings` — what each payment state asks of the student.
  *
  * A `not_charged` payment must not solicit payment: no Pay now link. An
- * actually-unpaid payment links to its pay page. The bank details themselves
- * live on that page, so the IBAN appears on `/bookings` in neither case.
+ * actually-unpaid payment links to its pay page, and a standing claim swaps
+ * that ask for a link to the same page. The bank details live on the pay
+ * page, so the IBAN appears on `/bookings` in none of these cases.
  */
-describe('GET /bookings (page) — payment status gate', () => {
+describe('GET /bookings (page) — payment state', () => {
   const TEACHER_IBAN = 'NL91ABNA0417164300';
 
   let teacherId = '';
@@ -185,17 +186,58 @@ describe('GET /bookings (page) — payment status gate', () => {
   });
 
   it('shows the sent claim, not pay directly, when the teacher has no method in the class’s currency', async () => {
-    await prisma.payment.update({ where: { id: paymentId }, data: { studentReportedAt: new Date() } });
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', notChargedAt: null, studentReportedAt: new Date() },
+    });
     await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
     try {
       const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
       expect(html).toContain('Marked as sent');
       expect(html).not.toContain('○ Unpaid');
       expect(html).not.toContain('Pay Bookings directly');
+      expect(html).toContain('View payment');
     } finally {
       await prisma.payment.update({ where: { id: paymentId }, data: { studentReportedAt: null } });
       await prisma.teacherBankAccount.create({
         data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
+      });
+    }
+  });
+
+  // The pay page shows only the hold-off copy while paused, so a link there
+  // would lead to no claim and no Undo: the row keeps its hold-off line.
+  it('keeps the hold-off line, not View payment, on a claimed payment while the teacher has paused payments', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', notChargedAt: null, studentReportedAt: new Date() },
+    });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: new Date() } });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('Marked as sent');
+      expect(html).toContain(PAYMENTS_PAUSED_COPY);
+      expect(html).not.toContain('View payment');
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null } });
+      await prisma.payment.update({ where: { id: paymentId }, data: { studentReportedAt: null } });
+    }
+  });
+
+  // The timestamp outlives settlement; a paid row reads as paid.
+  it('shows a paid payment as paid even though the student had marked it sent', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'paid', paidAt: new Date(), notChargedAt: null, studentReportedAt: new Date() },
+    });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).not.toContain('Marked as sent');
+      expect(html).not.toContain('View payment');
+    } finally {
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: { status: 'pending', paidAt: null, studentReportedAt: null },
       });
     }
   });

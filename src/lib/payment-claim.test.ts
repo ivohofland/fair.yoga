@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PaymentStatus } from '@/lib/prisma-client';
-import { claimedFirst, isClaimStanding } from './payment-claim';
+import { claimedFirst, isClaimStanding, studentPaymentStateText } from './payment-claim';
+import { paymentStateText } from '@/lib/format';
 
 describe('isClaimStanding', () => {
   const reportedAt = new Date('2026-10-12T10:00:00Z');
@@ -45,5 +46,25 @@ describe('claimedFirst', () => {
     const rows = [row('a', 'pending', null), row('b', 'pending', at)];
     claimedFirst(rows, (r) => r);
     expect(rows.map((r) => r.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('studentPaymentStateText', () => {
+  const reportedAt = new Date('2026-10-12T10:00:00Z');
+
+  it.each<PaymentStatus>(['pending', 'overdue'])('reads "Marked as sent" in brown for a %s payment with a standing claim', (status) => {
+    expect(studentPaymentStateText({ status, studentReportedAt: reportedAt })).toEqual({
+      label: 'Marked as sent',
+      className: 'text-brown',
+    });
+  });
+
+  it.each<[PaymentStatus, Date | null]>([
+    ['pending', null],
+    ['overdue', null],
+    ['paid', reportedAt],
+    ['not_charged', reportedAt],
+  ])('reads the status itself for %s with claim %s', (status, studentReportedAt) => {
+    expect(studentPaymentStateText({ status, studentReportedAt })).toEqual(paymentStateText(status));
   });
 });

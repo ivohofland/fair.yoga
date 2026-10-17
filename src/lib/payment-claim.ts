@@ -1,5 +1,6 @@
 import type { Payment } from '@/lib/prisma-client';
 import { isOutstanding } from '@/lib/payment-status';
+import { paymentStateText } from '@/lib/format';
 
 /**
  * Is the student's "I've sent it" still awaiting the teacher's confirmation?
@@ -11,6 +12,18 @@ import { isOutstanding } from '@/lib/payment-status';
  */
 export function isClaimStanding(payment: Pick<Payment, 'status' | 'studentReportedAt'>): boolean {
   return isOutstanding(payment.status) && payment.studentReportedAt !== null;
+}
+
+/**
+ * The payment state as the student reads it. A standing claim replaces the
+ * status: the student has done their part, so the row says that instead of
+ * asking again.
+ */
+export function studentPaymentStateText(
+  payment: Pick<Payment, 'status' | 'studentReportedAt'>,
+): { label: string; className: string } {
+  if (isClaimStanding(payment)) return { label: 'Marked as sent', className: 'text-brown' };
+  return paymentStateText(payment.status);
 }
 
 /**
