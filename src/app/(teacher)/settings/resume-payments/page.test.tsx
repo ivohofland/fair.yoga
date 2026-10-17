@@ -181,4 +181,27 @@ describe('the resume-payments change list', () => {
     expect(screen.getAllByText('Says paid · 19 Jul')).toHaveLength(1);
     expect(screen.getByText('Says paid on 19 July')).toBeInTheDocument();
   });
+
+  // The claim line is a claimed row's only state marker; an unclaimed row
+  // keeps its suffix.
+  it('drops the overdue suffix from a claimed row only', async () => {
+    const payment: ReviewPayment = {
+      id: 'p1', studentName: 'Ana de Vries', classType: 'Vinyasa',
+      classDate: new Date('2026-07-15T00:00:00Z'), startTime: new Date('1970-01-01T09:30:00Z'),
+      amount: 18, currency: 'EUR', status: 'overdue', paidAt: null, notChargedAt: null,
+      studentReportedAt: new Date('2026-07-18T10:00:00Z'),
+    };
+    readResumeReview.mockResolvedValue(review({
+      outstanding: [payment, { ...payment, id: 'p2', studentName: 'Bo Jansen', studentReportedAt: null }],
+    }));
+
+    render(await ResumePaymentsPage());
+
+    const claimed = screen.getByText('Ana de Vries').closest('li')!;
+    const unclaimed = screen.getByText('Bo Jansen').closest('li')!;
+    expect(claimed.textContent).not.toContain('! overdue');
+    expect(claimed.textContent!.match(/overdue/gi)).toHaveLength(1);
+    expect(claimed.textContent).toContain('Overdue, says paid on 18 July');
+    expect(unclaimed.textContent).toContain(' · ! overdue');
+  });
 });

@@ -54,10 +54,14 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
             <ListRow key={item.paymentId} className="flex justify-between items-center gap-3">
               <div className="min-w-0">
                 <p className="text-base text-ink">{item.classType}</p>
-                {/* Payment state is text, never a badge */}
-                <p className={`type-caption ${paymentStateText(status).className}`}>
-                  {item.classDate} &middot; {paymentStateText(status).label}
-                </p>
+                {/* Payment state is text, never a badge; a claim line carries it itself. */}
+                {claimedOn ? (
+                  <p className="type-caption">{item.classDate}</p>
+                ) : (
+                  <p className={`type-caption ${paymentStateText(status).className}`}>
+                    {item.classDate} &middot; {paymentStateText(status).label}
+                  </p>
+                )}
                 {claimedOn && <PaymentClaimLine overdue={status === 'overdue'} reportedOn={claimedOn} />}
               </div>
               <div className="flex items-center gap-3 shrink-0">
