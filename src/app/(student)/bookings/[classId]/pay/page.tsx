@@ -8,12 +8,13 @@ import { Icon } from '@/components/ui/icon';
 import { PaymentDetails } from '@/components/student/payment-details';
 import { PaymentLinkPanel } from '@/components/student/payment-link-panel';
 import { PaymentQr } from '@/components/student/payment-qr';
+import { MarkSentControl } from '@/components/student/mark-sent-control';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
-import { markedPaidLine, reportMissingPayment } from '@/lib/pay-page.server';
+import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
 import {
   PAYMENTS_PAUSED_COPY,
   PAYMENT_METHOD_COPY,
@@ -174,6 +175,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         teacherFirstName={teacher.firstName}
         paymentId={payment.id}
         paidAt={payment.paidAt}
+        reportedAt={payment.studentReportedAt}
         timeZone={teacher.defaultTimezone}
       />
       {breakdown.kind === 'shown' && (
@@ -192,6 +194,7 @@ function PayBody({
   teacherFirstName,
   paymentId,
   paidAt,
+  reportedAt,
   timeZone,
 }: {
   status: PaymentStatus;
@@ -202,8 +205,15 @@ function PayBody({
   teacherFirstName: string;
   paymentId: string;
   paidAt: Date | null;
+  reportedAt: Date | null;
   timeZone: string;
 }) {
+  const sentControl = (
+    <MarkSentControl
+      paymentId={paymentId}
+      claimedLine={reportedAt === null ? null : sentClaimLine(reportedAt, timeZone)}
+    />
+  );
   switch (status) {
     case 'paid':
       return <p className="type-body mb-6">{markedPaidLine(paidAt, timeZone, paymentId)}</p>;
@@ -218,29 +228,35 @@ function PayBody({
       }
       if (methods.methods.length === 0) {
         return (
-          <p className="type-body mb-6">
-            {`Pay ${teacherFirstName} directly — cash or transfer, whatever you two agreed. They’ll mark it as received.`}
-          </p>
+          <>
+            <p className="type-body mb-6">
+              {`Pay ${teacherFirstName} directly — cash or transfer, whatever you two agreed. They’ll mark it as received.`}
+            </p>
+            {sentControl}
+          </>
         );
       }
       return (
-        <section className="mb-6">
-          <h2 className="type-subtitle mb-3">How would you like to pay?</h2>
-          <div className="border-t border-border">
-            {methods.methods.map((method) => (
-              // A shared `name` makes the rows exclusive: opening one closes the others.
-              <details key={method.kind} name="pay-method" className="border-b border-border">
-                <summary className="min-h-14 py-3 cursor-pointer">
-                  <span className="text-base text-ink">{PAYMENT_METHOD_COPY[method.kind].label}</span>
-                  <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
-                </summary>
-                <div className="pb-4">
-                  <MethodPanel method={method} amount={amount} currency={currency} reference={reference} />
-                </div>
-              </details>
-            ))}
-          </div>
-        </section>
+        <>
+          <section className="mb-6">
+            <h2 className="type-subtitle mb-3">How would you like to pay?</h2>
+            <div className="border-t border-border">
+              {methods.methods.map((method) => (
+                // A shared `name` makes the rows exclusive: opening one closes the others.
+                <details key={method.kind} name="pay-method" className="border-b border-border">
+                  <summary className="min-h-14 py-3 cursor-pointer">
+                    <span className="text-base text-ink">{PAYMENT_METHOD_COPY[method.kind].label}</span>
+                    <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
+                  </summary>
+                  <div className="pb-4">
+                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} />
+                  </div>
+                </details>
+              ))}
+            </div>
+          </section>
+          {sentControl}
+        </>
       );
     default: {
       // A status added to `PaymentStatus` without a body fails the build here.
