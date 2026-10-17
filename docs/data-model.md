@@ -961,7 +961,7 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 | method | string, nullable | e.g. "cash", "bank_transfer", "mollie", "stripe" |
 | processor_ref | string, nullable | External transaction ID (Level 2) |
 | reminder_sent_at | datetime, nullable | Stamped by every reminder, automatic or manual, and by the teacher's "Not received" notice; the overdue-reminder sweep dedupes on it |
-| student_reported_at | datetime, nullable | The student's "I've sent it" claim on a Level 1 payment (#898). Set by `reportPaymentSent`, cleared by the student (`withdrawPaymentReport`) or the teacher (`rejectPaymentReport`). Meaningful only while the payment is outstanding; see the note below |
+| student_reported_at | datetime, nullable | The student's "I've sent it" claim on a Level 1 payment (#898). Set by `reportPaymentSent`, cleared by the student (`withdrawPaymentReport`) or the teacher (`rejectPaymentReport`). It displays as a standing claim only while the payment is outstanding; a paid row keeps it as the student's half of the record. See the note below |
 | **Timestamps** | | |
 | created_at | datetime | |
 | paid_at | datetime, nullable | |

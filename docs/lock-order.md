@@ -1734,7 +1734,8 @@ beside a live registration or an owed payment. Replacing only
 ### What the archive does not lock: the payment it waives
 
 `markPaymentPaid`, `markPaymentNotCharged`, `markPaymentOverdue`, the claim
-writers (`reportPaymentSent`, `withdrawPaymentReport`, `rejectPaymentReport`) and the
+writers (`reportPaymentSent`, `withdrawPaymentReport`,
+`rejectPaymentReport`) and the
 reminder writers (`src/services/payments.ts`,
 `src/services/payment-reminders.ts`) write a `Payment` row without taking the
 link lock. So a payment the archive read as open can be settled between that
@@ -1781,9 +1782,8 @@ lines = 8 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
 `class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
 (`archiveStudent`'s waive) + 1 in `payout-resume.ts` (`resumePayments`'s
 `reminderSentAt` stamp). The arithmetic: 8 + 2 + 1 + 1 + 1 = 13. `origin/main`
-returned 10 (`git grep -nE` with the same pattern, `-- src ':!*.test.*'`):
-the 9 of 2026-09-28 plus the `payout-resume.ts` stamp that census never
-listed; #898 adds the three claim writers, 10 + 3 = 13. Two of the thirteen
+returned 10 (`git grep -nE` with the same pattern, `-- src ':!*.test.*'`);
+#898 adds the three claim writers, 10 + 3 = 13. Two of the thirteen
 also lock `TeacherStudent` — `reopenPayment` and `archiveStudent`, both
 link-first — and none touches `Invitation` or `TeacherBlock`. The three claim
 writers take no link lock and no `Class` row lock; each is a single-row
