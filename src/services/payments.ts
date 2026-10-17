@@ -135,6 +135,8 @@ export type TeacherPaymentRow = Payment & {
  * Applies from 'pending' or 'overdue'. A payment already paid with the same
  * method is `unchanged`; with another method it is refused, because answering
  * "done" would discard the method this call carries.
+ *
+ * `studentReportedAt` is kept as the student's half of the record.
  */
 export async function markPaymentPaid(
   db: PrismaClient,
@@ -233,6 +235,9 @@ export async function markPaymentOverdue(
  * A missing link (student never on the roster, or unlinked since) writes
  * nothing, and an applied reopen on one is logged; an `unchanged` reopen leaves the link exactly as it was, since
  * nothing about the payment newly became live.
+ *
+ * `studentReportedAt` is left as it is: reopen is also the Undo after Mark
+ * paid, and the student's claim is not the teacher's to lose by a mis-tap.
  */
 export async function reopenPayment(
   db: PrismaClient,
@@ -392,6 +397,9 @@ export const MANUAL_REMIND_COOLDOWN_MS = 2 * 60 * 1000;
  * students are asked to hold off. The check reads the teacher after the stamp,
  * so a settled or missing payment answers as such first, and the refusal
  * rolls the stamp back.
+ *
+ * A standing claim does not stop it, and it leaves `studentReportedAt` as it
+ * is: the teacher asked for this reminder.
  */
 export async function sendPaymentReminder(
   db: PrismaClient,
@@ -415,6 +423,11 @@ class RefusedInTransaction extends Error {
 const PAYMENTS_PAUSED: PaymentRefusal = codedRefusal(
   'PAYMENTS_PAUSED',
   'Payments are paused, so your students are holding off. Resume payments before sending a reminder.',
+);
+
+const PAYMENTS_PAUSED_NOT_RECEIVED: PaymentRefusal = codedRefusal(
+  'PAYMENTS_PAUSED',
+  "Payments are paused, so your students are holding off. Resume payments before telling a student their payment hasn't arrived.",
 );
 
 function remindInTransaction(db: PrismaClient, paymentId: string): Promise<PaymentOutcome> {
@@ -608,8 +621,8 @@ export async function withdrawPaymentReport(
 /**
  * The teacher's "Not received": clears the student's standing claim and tells
  * the student, in one transaction. The notice is a `reminder` and stamps
- * `reminderSentAt` like one, so the automatic sweep does not send a second
- * message for the same event. A paused teacher is refused after the write,
+ * `reminderSentAt` like one (the column the overdue sweep dedupes on,
+ * `docs/data-model.md`, Payment). A paused teacher is refused after the write,
  * rolling it back, as `sendPaymentReminder` is. An outstanding payment with no
  * claim is `unchanged`: no standing claim is what the teacher asks for.
  */
@@ -685,7 +698,7 @@ function rejectInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
 
     const { calendarEntry, currency } = registration.class;
     const guidance = payGuidanceFor(paymentMethodsForTeacher(calendarEntry.teacher, currency));
-    if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
+    if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED_NOT_RECEIVED);
 
     await createBulkNotifications(tx, [
       {

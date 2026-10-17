@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma, type Payment } from '@/lib/prisma-client';
-import { respondPaymentOutcome } from './shared';
+import { respondPaymentOutcome, respondStudentPaymentOutcome } from './shared';
 import { PAYMENT_GONE, type PaymentRefusal } from '@/services/payments';
 import { expectApplied, expectRefusal, expectUnchanged } from '../../../../../tests/api-assertions';
 
@@ -60,4 +60,35 @@ describe('respondPaymentOutcome', () => {
       );
     },
   );
+});
+
+describe('respondStudentPaymentOutcome', () => {
+  const claimed: Payment = {
+    ...payment,
+    status: 'pending',
+    method: null,
+    paidAt: null,
+    processorRef: 'tr_123',
+    reminderSentAt: new Date('2026-09-02T10:00:00.000Z'),
+    studentReportedAt: new Date('2026-09-03T10:00:00.000Z'),
+  };
+  const VIEW = {
+    id: 'pay-1',
+    status: 'pending',
+    studentReportedAt: '2026-09-03T10:00:00.000Z',
+    paidAt: null,
+    notChargedAt: null,
+  };
+
+  it('answers an applied action with the student view only', async () => {
+    expect(await expectApplied(respondStudentPaymentOutcome({ kind: 'applied', payment: claimed }))).toEqual(VIEW);
+  });
+
+  it('answers an unchanged action with the student view only', async () => {
+    expect(await expectUnchanged(respondStudentPaymentOutcome({ kind: 'unchanged', payment: claimed }))).toEqual(VIEW);
+  });
+
+  it('answers a refusal at its registered status', async () => {
+    await expectRefusal(respondStudentPaymentOutcome({ kind: 'refused', refusal: PAYMENT_GONE }), 'NOT_FOUND');
+  });
 });

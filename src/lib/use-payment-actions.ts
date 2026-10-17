@@ -26,9 +26,9 @@ function readReminderStamp(json: unknown): Date | null {
 }
 
 /**
- * Mark-paid and mark-not-charged, both with transient undo. "Mark paid" is
- * the app's most repeated action, so it stays one tap — no confirm; "Not
- * charged" mirrors that shape for the grace policy. The safety net is Undo,
+ * Mark-paid and mark-not-charged, both with transient undo, and the teacher's
+ * "Not received" on a student's claim. "Mark paid" is the app's most repeated
+ * action, so it stays one tap — no confirm; "Not charged" mirrors that shape for the grace policy. The safety net is Undo,
  * offered only where a tap on this page settled the payment or found it
  * already settled that way (justMarked) — the answer a retried tap gets — so
  * a record settled before the page loaded can't be unmarked casually. Undo
@@ -130,8 +130,9 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
           const json: unknown = await res.json();
           const stamp = readReminderStamp(json);
           if (stamp !== null) onStamped?.(stamp);
-        } catch {
+        } catch (err) {
           // The claim is cleared whatever the body held; only the caption is lost.
+          logRequestFailure('payment-not-received-body', { paymentId }, err);
         }
       } else {
         setError(await readErrorMessage(res, 'Could not mark as not received. Try again.'));

@@ -6,7 +6,8 @@ import { PAYMENT_GONE, type PaymentOutcome, type PaymentRefusal } from '@/servic
 
 /**
  * Shared by this resource's `route.ts` files: the answer-building functions
- * (`respondPaymentRefusal`, `respondPaymentOutcome`) and the ownership gate
+ * (`respondPaymentRefusal`, `respondPaymentOutcome`,
+ * `respondStudentPaymentOutcome`) and the ownership gate
  * (`loadOwnedPayment`) a POST door runs before calling into the service. A
  * file of its own because a `route.ts` may export only HTTP verbs and Next's
  * config names.
@@ -19,11 +20,33 @@ export function respondPaymentRefusal(refusal: PaymentRefusal): NextResponse {
 
 /** What a payment action did. `data` is the payment row whether or not this call wrote it. */
 export function respondPaymentOutcome(outcome: PaymentOutcome): NextResponse {
+  return respondOutcomeAs(outcome, (payment) => payment);
+}
+
+/** What a student's own payment door answers with: the settlement and the claim, nothing of the teacher's bookkeeping. */
+export type StudentPaymentView = Pick<Payment, 'id' | 'status' | 'studentReportedAt' | 'paidAt' | 'notChargedAt'>;
+
+function studentPaymentView(payment: Payment): StudentPaymentView {
+  return {
+    id: payment.id,
+    status: payment.status,
+    studentReportedAt: payment.studentReportedAt,
+    paidAt: payment.paidAt,
+    notChargedAt: payment.notChargedAt,
+  };
+}
+
+/** `respondPaymentOutcome` for a student's door: `data` is the row as `StudentPaymentView`. */
+export function respondStudentPaymentOutcome(outcome: PaymentOutcome): NextResponse {
+  return respondOutcomeAs(outcome, studentPaymentView);
+}
+
+function respondOutcomeAs<T>(outcome: PaymentOutcome, view: (payment: Payment) => T): NextResponse {
   switch (outcome.kind) {
     case 'applied':
-      return respondOk(outcome.payment);
+      return respondOk(view(outcome.payment));
     case 'unchanged':
-      return respondUnchanged<Payment>(outcome.payment);
+      return respondUnchanged<T>(view(outcome.payment));
     case 'refused':
       return respondPaymentRefusal(outcome.refusal);
     default: {

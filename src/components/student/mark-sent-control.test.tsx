@@ -40,6 +40,35 @@ describe('MarkSentControl', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/payments/pay-1/sent', { method: 'DELETE' });
   });
 
+  it('announces a mark and moves focus to Undo once the claim arrives', async () => {
+    fetchMock.mockResolvedValue(reply(200, { data: {}, outcome: 'done' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { rerender } = render(<MarkSentControl paymentId="pay-1" claimedLine={null} />);
+
+    fireEvent.click(screen.getByRole('button', { name: "I've sent it" }));
+
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(screen.getByRole('status')).toHaveTextContent('Marked as sent.');
+    rerender(<MarkSentControl paymentId="pay-1" claimedLine="You marked this as sent on 17 Oct." />);
+    expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent('Marked as sent.');
+  });
+
+  it('announces an Undo and moves focus to "I\'ve sent it" once the claim is gone', async () => {
+    fetchMock.mockResolvedValue(reply(200, { data: {}, outcome: 'done' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { rerender } = render(
+      <MarkSentControl paymentId="pay-1" claimedLine="You marked this as sent on 17 Oct." />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(screen.getByRole('status')).toHaveTextContent('Marked as not sent.');
+    rerender(<MarkSentControl paymentId="pay-1" claimedLine={null} />);
+    expect(screen.getByRole('button', { name: "I've sent it" })).toHaveFocus();
+  });
+
   it('shows a refusal\'s message in a status region and still refreshes', async () => {
     fetchMock.mockResolvedValue(
       reply(409, { error: { code: 'PAYMENT_ALREADY_PAID', message: 'Your teacher already marked this paid.' } }),
