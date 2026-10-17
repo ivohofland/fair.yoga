@@ -600,6 +600,7 @@ Against each, the class its notifications carry:
 | `claimSpot` (`waitlist.ts`) | one — `classId` |
 | `handleSpotFreed` broadcast (`waitlist.ts`) | one — `classId`, inside its own transaction under `lockClassRow` (#212) |
 | `sendPaymentReminder` (`payments.ts`) | one — the payment's registration's class |
+| `rejectPaymentReport` (`payments.ts`) | one — the payment's registration's class |
 | `sendPaymentReminders` (`payment-reminders.ts`) | one — per-payment, one transaction each |
 | `POST /api/registrations` | one — the class being booked |
 | `completeWalkIn` (`walk-ins.ts`) | one — the class being walked into, under the `lockClassRow` `POST /api/registrations` already holds |
@@ -608,11 +609,15 @@ Against each, the class its notifications carry:
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 | `resumePayments` (`payout-resume.ts`) | **many** — one reminder per owed payment, each carrying its completed class as `relatedClassId`, in ascending class id (the owed-payment read's `orderBy`) |
 
-> **Three `createBulkNotifications` sites take no `Class` row lock.**
-> `sendPaymentReminder` (`payments.ts`) and `sendPaymentReminders`
-> (`payment-reminders.ts`), both payment-scoped and reaching a class only
-> through the `relatedClassId` on the notification they write — neither file
-> contains `lockClassRow` or `FOR UPDATE`, which is one grep; and
+> **Four `createBulkNotifications` sites take no `Class` row lock.**
+> `sendPaymentReminder` and `rejectPaymentReport` (`payments.ts`) and
+> `sendPaymentReminders` (`payment-reminders.ts`), all payment-scoped and
+> reaching a class only through the `relatedClassId` on the notification they
+> write — neither file contains `lockClassRow` or `FOR UPDATE`, which is one
+> grep. `rejectPaymentReport` (#898) has `sendPaymentReminder`'s shape: it
+> holds the `Payment` row its claim-clearing `UPDATE` took, then `FOR KEY SHARE`
+> on the class through `relatedClassId`, and adds no edge. It never touches
+> `TeacherStudent`, so it cannot cycle with `reopenPayment` or the archive. And
 > `sendAnnouncement` (`services/announcements.ts`, called by
 > `POST /api/announcements`), whose `lockAnnouncementSlot` is an **advisory**
 > lock, not a `Class` row lock — as the #196/#215 section of this document
@@ -1728,7 +1733,8 @@ beside a live registration or an owed payment. Replacing only
 
 ### What the archive does not lock: the payment it waives
 
-`markPaymentPaid`, `markPaymentNotCharged`, `markPaymentOverdue` and the
+`markPaymentPaid`, `markPaymentNotCharged`, `markPaymentOverdue`, the claim
+writers (`reportPaymentSent`, `withdrawPaymentReport`, `rejectPaymentReport`) and the
 reminder writers (`src/services/payments.ts`,
 `src/services/payment-reminders.ts`) write a `Payment` row without taking the
 link lock. So a payment the archive read as open can be settled between that
@@ -1767,16 +1773,24 @@ which of them also locks `TeacherStudent`:
 
     grep -rnE "payment\.(create|update|updateMany|delete|deleteMany|upsert)\(" src | grep -v "\.test\."
 
-On 2026-09-28 (branch `fix/265-student-archive-semantics`) it returned 9
-lines = 5 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
-`reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`) + 2 in
+On 2026-10-17 (branch `feat/898-student-marks-sent`) it returned 13
+lines = 8 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
+`reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`,
+`reportPaymentSent`, `withdrawPaymentReport`, `rejectPaymentReport`) + 2 in
 `payment-reminders.ts` (`markOverduePayments`, `sendPaymentReminders`) + 1 in
 `class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
-(`archiveStudent`'s waive). Two of the nine also lock `TeacherStudent` —
-`reopenPayment` and `archiveStudent`, both link-first — and none touches
-`Invitation` or `TeacherBlock`. A wider pattern,
+(`archiveStudent`'s waive) + 1 in `payout-resume.ts` (`resumePayments`'s
+`reminderSentAt` stamp). The arithmetic: 8 + 2 + 1 + 1 + 1 = 13. `origin/main`
+returned 10 (`git grep -nE` with the same pattern, `-- src ':!*.test.*'`):
+the 9 of 2026-09-28 plus the `payout-resume.ts` stamp that census never
+listed; #898 adds the three claim writers, 10 + 3 = 13. Two of the thirteen
+also lock `TeacherStudent` — `reopenPayment` and `archiveStudent`, both
+link-first — and none touches `Invitation` or `TeacherBlock`. The three claim
+writers take no link lock and no `Class` row lock; each is a single-row
+`UPDATE` of the payment, scoped by `id` (the student doors also by the
+registration's `studentId`). A wider pattern,
 `payment\.[a-zA-Z]+\(` minus the `find*`/`count`/`aggregate`/`groupBy`
-readers, returned the same nine.
+readers, returns the same thirteen.
 
 The erasures, read rather than grepped (`src/services/gdpr.ts`): neither
 `deleteStudentAccount`'s nor `deleteTeacherAccount`'s transaction writes a
