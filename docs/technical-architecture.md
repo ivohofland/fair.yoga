@@ -1383,10 +1383,9 @@ Two modules import the output, and nothing else does:
   exports `PrismaClient` as a type only. `createPrismaClient` there is
   therefore the one place a TypeScript module constructs a client:
   `new PrismaClient()` anywhere else is a compile error (TS1362 for a named
-  import, TS2339 through a namespace import). The exception is the CommonJS
-  engine probe, `scripts/prisma-engine-probe.cjs`, which does not construct a
-  client at all but boots the built server (`docs/supply-chain.md`, "Prisma's
-  engine in the images"). `@/lib/db` is the app singleton built from the
+  import, TS2339 through a namespace import). The CommonJS engine probe,
+  `scripts/prisma-engine-probe.cjs`, constructs no client; it boots the built
+  server (`docs/supply-chain.md`, "Prisma's engine in the images"). `@/lib/db` is the app singleton built from the
   factory; tests, scripts and the seed call it for clients of their own, and
   each call is a new pool. The specifier is relative because the migrate image
   copies this file without a `tsconfig.json` to resolve `@/`.
@@ -1414,8 +1413,8 @@ neither of which is an import declaration. The rule covers every `.ts`,
 `.tsx` and `.mts` file outside the config's global ignores, and `src/generated`
 is one of those.
 
-No TypeScript module imports the package. Outside an import the name is
-load-bearing in the vitest seam: `vi.mock('../../src/generated/prisma/client')`
+No TypeScript module imports the package. Besides the two funnels, the vitest
+seam names the generated client module: `vi.mock('../../src/generated/prisma/client')`
 in `tests/setup/undefined-filter-guard.ts`, with its `vi.doUnmock` counterpart
 in `src/lib/e2e-prisma-factory.test.ts`. The mock names the generated client
 module because that is the module the factory constructs `PrismaClient` from;
@@ -1428,8 +1427,16 @@ the package is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 `@prisma/client/runtime/library` stays an external, so there is no `export *`
 warning over a CommonJS external.
 
-The point is that two files change when the Prisma 7 driver-adapter change
-(#889) lands, plus the probe.
+The Prisma 7 upgrade (#889) changes the `createPrismaClient` factory in
+`src/lib/prisma-client.ts` and the schema's generator and datasource blocks,
+plus the probe.
+
+The generated client does not load `.env`; `prisma-client-js` did (Prisma 7
+behaves the same as the generated client). Next, vitest (`vitest.config.ts`),
+Playwright (`playwright.config.ts`) and the Prisma CLI (`prisma.config.ts`)
+load it themselves, and a `tsx` entry point that constructs a client imports
+`dotenv/config` first. Without it the client answers `P1012 Environment
+variable not found: DATABASE_URL`.
 
 ### How the CLI gets its config and URL (#887)
 

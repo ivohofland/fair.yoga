@@ -57,8 +57,9 @@ standalone server, and both Docker targets — not from the Prisma docs.
 5. **Correction: the runner-image engine probe cannot survive in its current
    shape.** `scripts/prisma-engine-probe.cjs` does
    `createRequire('/app/')('@prisma/client')`. In the new runner image that
-   fails with `Cannot find module '@prisma/client'` — the package is no
-   longer traced into the image at all, and in any fresh install its
+   fails with `Cannot find module '@prisma/client'` — the package is
+   present only under `.pnpm` as the runtime the bundle's external resolves
+   to, with no top-level link, and in any fresh install its
    `default.js` requires a `.prisma/client` that this generator never writes.
    The generated client exists in the runner only inside Turbopack chunks, so
    nothing outside the bundle can construct it. The probe therefore has to
@@ -101,11 +102,19 @@ standalone server, and both Docker targets — not from the Prisma docs.
     would otherwise carry a developer's local output (a darwin engine) into
     the context. The stage regenerates anyway; the ignore keeps the context
     honest and 19 MB smaller.
+11. **The generated client does not load `.env`.** `prisma-client-js` called
+    `tryLoadEnvs`; the generated client reads `DATABASE_URL` from the
+    environment only. Measured: `env -u DATABASE_URL pnpm exec tsx
+    scripts/check-reserved-slugs.ts` answered `P1012 Environment variable not
+    found: DATABASE_URL`, where main reached the database. Fix: the three
+    `tsx` scripts that construct a client import `dotenv/config` first.
 
 ## Design
 
 - `prisma/schema.prisma`: `provider = "prisma-client"`, `output =
   "../src/generated/prisma"`, `moduleFormat = "cjs"`, `runtime = "nodejs"`.
+- `scripts/admin-grant.ts`, `scripts/check-reserved-slugs.ts` and
+  `scripts/measure-push-fanout.ts` import `dotenv/config` first.
 - `src/lib/prisma-client.ts` imports `../generated/prisma/client` (relative,
   because the migrate image copies this file without a `tsconfig.json` to
   resolve `@/`).

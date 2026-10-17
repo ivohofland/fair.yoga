@@ -842,9 +842,11 @@ engine (the schema engine under
 plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
 without `--network none`.
 
-The runner image carries no Prisma package: the generated client exists there
-only inside the Next bundle, with its engine traced to
-`/app/src/generated/prisma/`. Nothing outside the bundle can construct it, so
+The runner image carries `@prisma/client` only as the runtime the bundle's one
+external (`@prisma/client/runtime/library`) resolves to, under
+`/app/node_modules/.pnpm` with no top-level `/app/node_modules/@prisma` link,
+and no generated client outside the bundle: the client exists there only inside
+the Next bundle, with its engine traced to `/app/src/generated/prisma/`. Nothing outside the bundle can construct it, so
 `scripts/prisma-engine-probe.cjs` boots the real `/app/server.js` with
 `DATABASE_URL` at `203.0.113.1` (RFC 5737, unroutable) and waits for the
 health route's log line whose `msg` is `health check: database probe failed`.
@@ -861,8 +863,7 @@ so it is not the generator's doing. Revisiting the P-codes and the serializer
 belongs to #885.
 
 Re-derive the runner probe: build a scratch image `FROM` the runner with
-`RUN rm /app/src/generated/prisma/*.node` (as root, before the `USER` line
-takes effect) and run the CI probe step on it. It fails with
+`RUN rm /app/src/generated/prisma/*.node` and run the CI probe step on it. It fails with
 `prisma-engine-probe: the query engine did not load: the bundle has no engine for this platform`,
 followed by the server's own `Prisma Client could not locate the Query Engine`.
 
