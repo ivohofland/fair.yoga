@@ -281,6 +281,29 @@ beforeEach(async () => {
   await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: [teacherId, otherTeacherId] } } });
 });
 
+/**
+ * Runs `run` under a teacher of its own and removes everything that teacher
+ * owns afterwards, so a case needing a slot no shared-teacher fixture can
+ * hold on any weekday has one.
+ */
+async function withOwner(
+  label: string,
+  run: (owner: Awaited<ReturnType<typeof seedTeacher>>) => Promise<void>,
+): Promise<void> {
+  const owner = await seedTeacher(label);
+  try {
+    await run(owner);
+  } finally {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
+    await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
+    await prisma.room.delete({ where: { id: owner.roomId } });
+    await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
+    await prisma.teacher.delete({ where: { id: owner.teacherId } });
+    await prisma.account.delete({ where: { id: owner.accountId } });
+  }
+}
+
 describe('POST /api/class-templates', () => {
   it('creates the template and its four-week instance window in one request', async () => {
     const res = await fetch(`${BASE_URL}/api/class-templates`, {
@@ -2836,24 +2859,6 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
     };
   };
 
-  const withOwner = async (
-    label: string,
-    run: (owner: Awaited<ReturnType<typeof seedTeacher>>) => Promise<void>,
-  ): Promise<void> => {
-    const owner = await seedTeacher(`late-first-${label}`);
-    try {
-      await run(owner);
-    } finally {
-      await prisma.calendarEntry.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.scheduleRule.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.teacherRoom.deleteMany({ where: { teacherId: owner.teacherId } });
-      await prisma.room.delete({ where: { id: owner.roomId } });
-      await prisma.session.deleteMany({ where: { accountId: owner.accountId } });
-      await prisma.teacher.delete({ where: { id: owner.teacherId } });
-      await prisma.account.delete({ where: { id: owner.accountId } });
-    }
-  };
-
   type LateWire = { date: string; state: string; minStudents: number } | null;
 
   const postTemplate = (sessionTokenOfOwner: string, body: object) =>
@@ -2864,7 +2869,7 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
     });
 
   it('POST names a first class inside its deadline', () =>
-    withOwner('post-late', async (owner) => {
+    withOwner('late-first-post-late', async (owner) => {
       const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
       const res = await postTemplate(owner.sessionToken, body);
       expect(res.status).toBe(201);
@@ -2875,7 +2880,7 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
     }));
 
   it('POST answers null when the first class is clear of its deadline', () =>
-    withOwner('post-clear', async (owner) => {
+    withOwner('late-first-post-clear', async (owner) => {
       const { body } = bodyStartingIn(owner, 6 * 24, 'Clear Flow');
       const res = await postTemplate(owner.sessionToken, body);
       expect(res.status).toBe(201);
@@ -2886,7 +2891,7 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
     }));
 
   it('PUT names the first class the edit will add when it is inside its deadline', () =>
-    withOwner('put-late', async (owner) => {
+    withOwner('late-first-put-late', async (owner) => {
       const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
       const created = await postTemplate(owner.sessionToken, body);
       expect(created.status).toBe(201);
@@ -2905,7 +2910,7 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
     }));
 
   it('PATCH resume names the first class it adds when it is inside its deadline', () =>
-    withOwner('resume-late', async (owner) => {
+    withOwner('late-first-resume-late', async (owner) => {
       const { date, body } = bodyStartingIn(owner, 30, 'Late Flow');
       const created = await postTemplate(owner.sessionToken, body);
       expect(created.status).toBe(201);
@@ -2928,12 +2933,13 @@ describe('class-template responses carry lateFirstClass (#849)', () => {
 });
 
 describe('the VAT % a class template stamps (#819)', () => {
-  const post = (body: Record<string, unknown>) =>
+  const postAs = (token: string, body: Record<string, unknown>) =>
     fetch(`${BASE_URL}/api/class-templates`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
       body: JSON.stringify(body),
     });
+  const post = (body: Record<string, unknown>) => postAs(sessionToken, body);
 
   async function setDefaultVat(percent: number): Promise<void> {
     const before = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: { defaultVatPercent: true } });
@@ -2953,9 +2959,10 @@ describe('the VAT % a class template stamps (#819)', () => {
     expect(template.vatPercent.toNumber()).toBe(9);
   });
 
-  it('a template at 9 generates classes at 9; a PUT to 21 leaves them, and the next generated read 21', async () => {
+  it('a template at 9 generates classes at 9; a PUT to 21 leaves them, and the next generated read 21', () =>
+    withOwner('vat-stamp', async (owner) => {
     const [OLD_DAY, NEW_DAY] = sameWeekDayPair();
-    const create = await post({ ...templateBody('Vat Stamp', '04:20', OLD_DAY), vatPercent: 9 });
+    const create = await postAs(owner.sessionToken, { ...templateBody('Vat Stamp', '04:20', OLD_DAY), teacherRoomId: owner.teacherRoomId, vatPercent: 9 });
     expect(create.status).toBe(201);
     const { data: created } = (await create.json()) as { data: { id: string } };
     const id = created.id;
@@ -2967,7 +2974,7 @@ describe('the VAT % a class template stamps (#819)', () => {
 
     const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      headers: { 'Content-Type': 'application/json', ...cookie(owner.sessionToken) },
       body: JSON.stringify({ vatPercent: 21, dayOfWeek: NEW_DAY }),
     });
     expect(res.status).toBe(200);
@@ -2986,5 +2993,5 @@ describe('the VAT % a class template stamps (#819)', () => {
     const after = await prisma.class.findMany({ where: { ...owned, id: { notIn: before.map((c) => c.id) } } });
     expect(after.length).toBe(later.created);
     expect(after.every((c) => c.vatPercent.toNumber() === 21)).toBe(true);
-  });
+  }));
 });
