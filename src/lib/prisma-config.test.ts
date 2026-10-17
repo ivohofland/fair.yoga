@@ -29,6 +29,7 @@ function freshClone(): string {
   fs.copyFileSync(path.join(REPO_ROOT, 'prisma.config.ts'), path.join(dir, 'prisma.config.ts'));
   fs.mkdirSync(path.join(dir, 'prisma'));
   const schema = fs.readFileSync(path.join(REPO_ROOT, 'prisma', 'schema.prisma'), 'utf8');
+  expect(schema.match(/output\s*=\s*"[^"]*"/g)).toHaveLength(1);
   const redirected = schema.replace(
     /output\s*=\s*"[^"]*"/,
     `output       = "${path.join(dir, 'generated-client')}"`,
