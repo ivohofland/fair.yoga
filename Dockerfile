@@ -48,6 +48,8 @@ RUN pnpm exec prisma generate && pnpm run build
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
+# The CLI's config; it loads env and names the schema and migrations.
+COPY prisma.config.ts ./
 # Not a migration: the operator's admin-grant CLI, run from this stage
 # (DEPLOYMENT.md §8).
 COPY scripts/admin-grant.ts ./scripts/admin-grant.ts
