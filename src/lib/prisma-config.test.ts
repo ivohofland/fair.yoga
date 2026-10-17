@@ -39,13 +39,19 @@ function freshClone(): string {
   return dir;
 }
 
-/** The Prisma CLI in `cwd`, with no database URL inherited from the worker. */
+/**
+ * The Prisma CLI in `cwd`, with no database URL inherited from the worker. It
+ * must report loading the config file: without it the CLI falls back to the
+ * schema's own URL and the callers' other assertions would still pass.
+ */
 function runPrisma(cwd: string, args: string[]): { status: number | null; output: string } {
   const env = { ...process.env };
   delete env.DATABASE_URL;
   delete env.DATABASE_URL_TEST;
   const result = spawnSync(PRISMA_BIN, args, { cwd, env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS });
-  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+  const output = `${result.stdout}${result.stderr}`;
+  expect(output).toContain('Loaded Prisma config from prisma.config.ts');
+  return { status: result.status, output };
 }
 
 describe('prisma.config.ts', () => {

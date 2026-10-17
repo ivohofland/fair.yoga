@@ -251,17 +251,17 @@ roll back. Running the recorded commit, or an older one, instead refuses,
 naming both commits, rather than answering that it is already there. The app
 is unreachable for the few seconds the container swap takes.
 
-The migrate image carries `prisma.config.ts` and takes `DATABASE_URL` from
-compose; it has no `.env`. The migrate output starts with `Loaded Prisma config
-from prisma.config.ts.` when the file was found. Without the file the CLI would
-still migrate through the schema's own URL, so that line is how to tell, and
-CI's migration-image step asserts it.
-
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
 running against it: a new column is nullable or has a default (the old code's
 inserts leave it out), and a column or table is renamed or removed only once
 no deployed code reads it.
+
+The migrate image carries `prisma.config.ts` and takes `DATABASE_URL` from
+compose; it has no `.env`. The migrate output contains `Loaded Prisma config
+from prisma.config.ts.` when the file was found. Without the file the CLI would
+still migrate through the schema's own URL, so that line is how to tell, and
+CI's migration-image step asserts it.
 
 It only moves forward along `origin/main`. A commit already deployed (the one
 recorded in `.deployed`; a run that finds no such file records the checkout's
