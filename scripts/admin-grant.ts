@@ -5,7 +5,7 @@
  *   pnpm admin:list
  * In production it runs from the `migrate` image (DEPLOYMENT.md, Admin access).
  */
-// The generated Prisma client reads DATABASE_URL from the environment only.
+// Loads .env; the generated Prisma client does not (docs/technical-architecture.md, "Where Prisma comes from").
 import 'dotenv/config';
 import { createPrismaClient } from '../src/lib/prisma-client';
 import { grantAdmin, revokeAdmin, listAdmins } from '../src/services/admin-grants';

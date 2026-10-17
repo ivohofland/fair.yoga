@@ -104,7 +104,8 @@ const eslintConfig = defineConfig([
   },
   // Refuses a direct import of the Prisma package (`@prisma/client` and every
   // subpath of it) and of the generated output under `src/generated`,
-  // everywhere but the two funnels, which re-export the generated output.
+  // everywhere but the funnels listed in `ignores` below, which re-export the
+  // generated output.
   // What this rule does not see, and why: docs/technical-architecture.md,
   // "Where Prisma comes from".
   {

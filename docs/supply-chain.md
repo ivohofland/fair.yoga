@@ -842,7 +842,7 @@ engine (the schema engine under
 plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
 without `--network none`.
 
-The runner image carries `@prisma/client` only as the runtime the bundle's one
+The runner image carries `@prisma/client` only as the runtime the bundle's
 external (`@prisma/client/runtime/library`) resolves to, under
 `/app/node_modules/.pnpm` with no top-level `/app/node_modules/@prisma` link,
 and no generated client outside the bundle: the client exists there only inside
@@ -854,6 +854,12 @@ It passes only when that line's error message is Prisma's
 can't-reach-database text, which can only come from an engine that loaded and
 tried the connection. That proves the bundle finds its own engine, which a
 `require` of a package copy beside the bundle never did.
+
+The bundle's external is re-derived after `pnpm run build` by
+`grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u`,
+which prints `@prisma/client/runtime/library` and nothing else. Measured
+2026-10-17 on `node:24-alpine`, arm64 locally and amd64 in CI, Prisma 6.19.3,
+Next 16.4.0.
 
 The probe matches the message, not a code, because the logged
 `PrismaClientInitializationError` carries none: the serializer takes `code`

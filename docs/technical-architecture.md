@@ -1376,7 +1376,10 @@ also carries the query engine (`libquery_engine-<platform>.node`) beside the
 `.ts` files, and Turbopack's standalone trace takes it from there into the
 runner image, so `next.config` needs no `outputFileTracingIncludes`.
 
-Two modules import the output, and nothing else does:
+`src/lib/prisma-client.ts` and `src/lib/prisma-enums.ts` import the output,
+and no other module in `src`, `tests` or `scripts` does (re-derive:
+`git grep -ln "generated/prisma" -- src tests scripts ':!src/generated'`; the
+hits besides those two are the tests and the vitest seam described below):
 
 - `src/lib/prisma-client.ts` re-exports `../generated/prisma/client`, so
   `Prisma`, the model types and the enums come from `@/lib/prisma-client`. It
@@ -1396,31 +1399,33 @@ Two modules import the output, and nothing else does:
   import of `@/lib/prisma-client` pulls the Prisma runtime into the client
   bundle and `next build` panics with
   `the chunking context (unknown) does not support external modules (request: node:module)`.
-  `enums.ts` imports nothing, so the second funnel is safe there, and on the
-  server both funnels hand back the same module, so an enum object has one
+  `enums.ts` imports nothing, so `prisma-enums.ts` is safe there, and on the
+  server both modules hand back the same module, so an enum object has one
   identity. The generated `browser.ts` is not used: it exports a browser
   `Prisma` namespace whose `Decimal` is a different class from the server's.
   Server-only code, and anything that needs a type, imports
   `@/lib/prisma-client`.
 
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) holds
-this with two patterns: `@prisma/client` and every subpath of it are refused
-everywhere, and the generated output (`@/generated/*`, `**/generated/prisma`,
-`**/generated/prisma/*`) is refused everywhere except the two funnels.
+this: `@prisma/client` and every subpath of it are refused everywhere, and the
+generated output (`@/generated/*`, `**/generated/prisma`,
+`**/generated/prisma/*`) is refused everywhere except the modules in the
+rule's `ignores`, which are those two.
 Type-only imports are included. It does not see an inline
 `import('@prisma/client')` type query or a dynamic `import()` expression,
 neither of which is an import declaration. The rule covers every `.ts`,
 `.tsx` and `.mts` file outside the config's global ignores, and `src/generated`
-is one of those.
+is among the global ignores, so the rule never sees the generated files.
 
-No TypeScript module imports the package. Besides the two funnels, the vitest
+No TypeScript module imports the package. Besides `prisma-client.ts` and
+`prisma-enums.ts`, the vitest
 seam names the generated client module: `vi.mock('../../src/generated/prisma/client')`
 in `tests/setup/undefined-filter-guard.ts`, with its `vi.doUnmock` counterpart
 in `src/lib/e2e-prisma-factory.test.ts`. The mock names the generated client
 module because that is the module the factory constructs `PrismaClient` from;
 a mock left on any other specifier no longer reaches it.
-`src/lib/prisma-client.test.ts` pins each funnel to its one specifier and
-asserts that the two return the same enum object. Every remaining mention of
+`src/lib/prisma-client.test.ts` pins each of the two modules to its one
+specifier and asserts that they return the same enum object. Every remaining mention of
 the package is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 
 `next build` bundles the generated client; only
@@ -1431,11 +1436,11 @@ The Prisma 7 upgrade (#889) changes the `createPrismaClient` factory in
 `src/lib/prisma-client.ts` and the schema's generator and datasource blocks,
 plus the probe.
 
-The generated client does not load `.env`; `prisma-client-js` did (Prisma 7
-behaves the same as the generated client). Next, vitest (`vitest.config.ts`),
+The generated client reads `DATABASE_URL` from the process environment only
+and does not load `.env`. Next, vitest (`vitest.config.ts`),
 Playwright (`playwright.config.ts`) and the Prisma CLI (`prisma.config.ts`)
 load it themselves, and a `tsx` entry point that constructs a client imports
-`dotenv/config` first. Without it the client answers `P1012 Environment
+`dotenv/config` first; without it the client answers `P1012 Environment
 variable not found: DATABASE_URL`.
 
 ### How the CLI gets its config and URL (#887)
