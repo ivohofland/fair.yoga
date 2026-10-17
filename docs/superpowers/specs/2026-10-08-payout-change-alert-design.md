@@ -242,7 +242,8 @@ The schedule home shows a "Payments are paused" card linking to
 Success clears `paymentsPausedAt`, `pauseWindowStart` and `pausePasskeyCutoff`, sets
 `paymentsResumedAt`, deletes the teacher's pause tokens, and sends each
 student with an outstanding payment a `reminder` notification that they can
-pay now (stamping `reminderSentAt`).
+pay now (stamping `reminderSentAt`) — except a payment its student has marked
+sent (#898).
 
 ## Docs
 

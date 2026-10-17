@@ -91,9 +91,9 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
                   <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>
                 )}
                 {/*
-                  Under the claim rather than beside Send reminder: the right
-                  cluster has no room for a third control on a phone. It still
-                  comes first in reading and tab order.
+                  Under the claim rather than in the right-hand cluster, which
+                  has no room for another control on a phone. It still comes
+                  first in reading and tab order.
                 */}
                 {claimedOn && (
                   <button

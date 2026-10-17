@@ -6,7 +6,8 @@
  *   its creation (at class completion) and the teacher's last resume of
  *   payments; never while the teacher has payments paused.
  * - Overdue payments get a reminder notification, repeated at most once
- *   every REMIND_EVERY_DAYS (deduped via Payment.reminderSentAt).
+ *   every REMIND_EVERY_DAYS (deduped via Payment.reminderSentAt), unless the
+ *   student has marked the payment sent (Payment.studentReportedAt).
  * - Tone stays calm: unpaid is brown, never alarming — the reminder is a
  *   nudge, not a threat.
  */
@@ -104,8 +105,8 @@ export type DuePayment = Awaited<ReturnType<typeof readDuePaymentPage>>[number];
 
 /**
  * The overdue payments `sendPaymentReminders` reminds: not reminded since
- * `remindCutoff`, that the student has not marked sent, with neither side of the payment erased and the teacher's
- * payments not paused. Read
+ * `remindCutoff`, whose student has not marked them sent, with neither side of
+ * the payment erased and the teacher's payments not paused. Read
  * `SWEEP_PAGE_SIZE` at a time via `readInPages` (`@/lib/read-in-pages`); why
  * is in `docs/technical-architecture.md` ("Relation loads over platform-wide
  * sets").
@@ -116,7 +117,8 @@ export function readDuePayments(db: PrismaClient, remindCutoff: Date): Promise<D
 
 /**
  * Sends a reminder notification for each overdue payment that has not been
- * reminded in the last REMIND_EVERY_DAYS. Returns the number of reminders.
+ * reminded in the last REMIND_EVERY_DAYS and whose student has not marked it
+ * sent. Returns the number of reminders.
  */
 export async function sendPaymentReminders(
   db: PrismaClient,
