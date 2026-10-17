@@ -1403,12 +1403,21 @@ The Prisma CLI gets its configuration from `prisma.config.ts` at the repo root
 silent no-op when there is none and never overrides a variable already set, so
 an explicit `DATABASE_URL` (CI, `src/lib/db-provision.ts`, compose) wins over
 `.env`. With the variable set, the file passes it as the datasource URL; with
-it unset, it adds no datasource and the schema's `env("DATABASE_URL")`
-applies, so `prisma generate` (the `postinstall`, which can run before any `.env` exists: a fresh
-clone's install, the image's `deps` stage) still works and a command that needs a URL fails with `P1012`. The
+it unset, it adds no datasource and, on Prisma 6, the schema's
+`env("DATABASE_URL")` applies. So `prisma generate` (the `postinstall`, which
+can run before any `.env` exists: a fresh clone's install, the image's `deps`
+stage) still works and a command that needs a URL fails with `P1012`. The
 `env()` helper from `prisma/config` is not used because it throws while the
 config loads, and every command loads it, `generate` included.
-`src/lib/prisma-config.test.ts` drives the real CLI for both cases.
+`src/lib/prisma-config.test.ts` drives the real CLI for the `.env`-only case,
+the explicit-env-wins case, the no-URL `generate` case and the no-URL `P1012`
+case.
+
+Run the Prisma CLI from the repo root. The config is found only in the working
+directory; from elsewhere it is not loaded and `db seed` exits 0 without
+seeding (measured: `cd src && pnpm exec prisma db seed --schema
+../prisma/schema.prisma` exits 0 and seeds nothing). pnpm scripts and CI run
+from the root.
 
 ### PostgreSQL Configuration
 

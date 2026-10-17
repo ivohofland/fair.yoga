@@ -258,12 +258,12 @@ inserts leave it out), and a column or table is renamed or removed only once
 no deployed code reads it.
 
 The migrate image carries `prisma.config.ts` and takes `DATABASE_URL` from
-compose; it has no `.env`. The migrate output contains `Loaded Prisma config
-from prisma.config.ts.` when the file was found. Without the file the CLI would
+compose; it has no `.env`. The migrate output contains
+`Loaded Prisma config from prisma.config.ts` when the file was found. Without the file the CLI would
 still migrate through the schema's own URL, so that line is how to tell, and
 CI's migration-image step asserts it.
 
-It only moves forward along `origin/main`. A commit already deployed (the one
+The deploy only moves forward along `origin/main`. A commit already deployed (the one
 recorded in `.deployed`; a run that finds no such file records the checkout's
 HEAD), or an older one, answers success and changes nothing, so two runs
 finishing out of order cannot roll the server back. While the checkout is off

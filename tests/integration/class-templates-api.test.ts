@@ -282,9 +282,8 @@ beforeEach(async () => {
 });
 
 /**
- * Runs `run` under a teacher of its own and removes everything that teacher
- * owns afterwards, so a case needing a slot no shared-teacher fixture can
- * hold on any weekday has one.
+ * Runs `run` under its own freshly seeded teacher and tears down that
+ * teacher's rows afterwards, whether or not `run` throws.
  */
 async function withOwner(
   label: string,
