@@ -482,7 +482,7 @@ jobs:
   # executes a stage nothing depends on — migrate isn't in runner's COPY
   # --from graph, so it silently goes unbuilt without its own step.
   # Nothing is pushed. The images are started only far enough to prove that
-  # Prisma can load its engine in each, and in the migrate image that the deploy
+  # Prisma's engine loads in each, and in the migrate image that the deploy
   # gate's imports resolve; each check aims at an address nothing
   # can answer and passes only on P1001. Every container runs with
   # --network none, for a reason docs/supply-chain.md keeps (Prisma's engine
@@ -499,7 +499,9 @@ jobs:
       - name: Build migration runner image (migrate)
         run: docker build --target migrate -t fairyoga-migrate .
 
-      # The script goes in over stdin because the runner image has no
+      # The probe boots the bundle's server and reads what its health route
+      # logs, because the generated client is reachable only from inside the
+      # bundle. The script goes in over stdin because the runner image has no
       # scripts/ directory. The output is captured and must carry the probe's
       # success line: a probe that arrives empty or truncated can make
       # `node -` exit 0 with nothing to say, which the exit code alone would pass.
