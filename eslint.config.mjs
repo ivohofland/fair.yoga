@@ -102,13 +102,13 @@ const eslintConfig = defineConfig([
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
-  // Refuses a direct import of the Prisma package, `@prisma/client` and every
-  // subpath of it, everywhere but the module that re-exports it. What this
-  // rule does not see, and why: docs/technical-architecture.md, "Where Prisma
-  // comes from (#884, #886)".
+  // Refuses a direct import of the Prisma package (`@prisma/client` and every
+  // subpath of it) and of the generated output under `src/generated`,
+  // everywhere but the two funnels that re-export them. What this rule does not
+  // see, and why: docs/technical-architecture.md, "Where Prisma comes from".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
-    ignores: ['src/lib/prisma-client.ts'],
+    ignores: ['src/lib/prisma-client.ts', 'src/lib/prisma-enums.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
         'error',
@@ -117,6 +117,10 @@ const eslintConfig = defineConfig([
             {
               group: ['@prisma/client', '@prisma/client/*'],
               message: 'Import Prisma from @/lib/prisma-client (#886); it is the one module that imports the package.',
+            },
+            {
+              group: ['@/generated/*', '**/generated/prisma', '**/generated/prisma/*'],
+              message: 'Import Prisma from @/lib/prisma-client, or enums in client-reachable code from @/lib/prisma-enums (#888).',
             },
           ],
         },
@@ -263,6 +267,7 @@ const eslintConfig = defineConfig([
     'playwright-report/**',
     'test-results/**',
     'coverage/**',
+    'src/generated/**',
   ]),
 ]);
 

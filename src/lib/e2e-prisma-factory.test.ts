@@ -2,7 +2,7 @@
  * A client from `createGuardedPrismaClient` refuses a bulk write whose `where`
  * holds `undefined` (#783), with nothing but that wrapper guarding it.
  *
- * It unmocks `@prisma/client` first, so that the real `PrismaClient` is the
+ * It unmocks the generated client first, so that the real `PrismaClient` is the
  * one `createGuardedPrismaClient` extends; the plain-client case checks that
  * `createPrismaClient`, imported dynamically so it binds the unmocked module,
  * builds an unguarded one.
@@ -18,7 +18,7 @@ const GUARD_PREFIX = /^\[undefined-filter-guard\]/;
 let unassigned: string | undefined;
 
 beforeAll(() => {
-  vi.doUnmock('@prisma/client');
+  vi.doUnmock('../generated/prisma/client');
   vi.resetModules();
 });
 

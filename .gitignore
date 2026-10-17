@@ -59,3 +59,6 @@ next-env.d.ts
 .gemini/
 .agents
 /.deployed
+
+# generated Prisma client (pnpm exec prisma generate)
+/src/generated/

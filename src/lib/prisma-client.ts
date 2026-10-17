@@ -1,13 +1,13 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { PrismaClient, type Prisma } from '../generated/prisma/client';
 
 /**
- * Re-exports `@prisma/client`, except that `PrismaClient` is a type only here,
+ * Re-exports the generated client, except that `PrismaClient` is a type only here,
  * so `createPrismaClient` below is the one value that constructs a client. Why,
  * and where it is enforced: `docs/technical-architecture.md`, "Where Prisma
  * comes from".
  */
-export * from '@prisma/client';
-export type { PrismaClient } from '@prisma/client';
+export * from '../generated/prisma/client';
+export type { PrismaClient } from '../generated/prisma/client';
 
 export interface PrismaClientFactoryOptions {
   /** Connection URL. Omitted, Prisma reads `DATABASE_URL`. */
