@@ -32,15 +32,21 @@ const server = spawn(process.execPath, ['server.js'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
+// `stdoutText` is what the log parser reads; `output` adds stderr for the
+// failure dump.
 let output = '';
+let stdoutText = '';
+server.stdout.setEncoding('utf8');
+server.stderr.setEncoding('utf8');
 server.stdout.on('data', (chunk) => {
+  stdoutText += chunk;
   output += chunk;
 });
 server.stderr.on('data', (chunk) => {
   output += chunk;
 });
 server.on('error', (err) => finish(1, `could not start server.js: ${err}`));
-server.on('exit', (code, signal) => {
+server.on('close', (code, signal) => {
   finish(1, `server.js exited early (code ${code}, signal ${signal})`);
 });
 
@@ -54,7 +60,7 @@ function finish(code, message) {
     console.error(`prisma-engine-probe: ${message}`);
     console.error(output);
   }
-  server.removeAllListeners('exit');
+  server.removeAllListeners('close');
   server.kill();
   process.exit(code);
 }
@@ -63,11 +69,16 @@ function finish(code, message) {
 // timer is referenced on purpose: with the child's pipes closed and nothing
 // else holding the event loop, Node would drain it and exit 0 with no output;
 // the live timer turns that into this failure.
-setTimeout(() => finish(1, 'timed out waiting for the server'), 60_000);
+let phase = 'the health route to answer';
+let lastFetchError = null;
+setTimeout(() => {
+  const detail = lastFetchError === null ? '' : `; last fetch error: ${lastFetchError}`;
+  finish(1, `timed out waiting for ${phase}${detail}`);
+}, 60_000);
 
 // The route's log line is JSON from pino; an unparseable line is not ours.
 function probeFailureMessage() {
-  for (const line of output.split('\n')) {
+  for (const line of stdoutText.split('\n')) {
     if (!line.includes(PROBE_MSG)) continue;
     try {
       const entry = JSON.parse(line);
@@ -85,22 +96,26 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 (async () => {
   for (;;) {
     try {
-      await fetch(HEALTH_URL);
+      await fetch(HEALTH_URL, { signal: AbortSignal.timeout(5000) });
       break;
-    } catch {
+    } catch (err) {
+      lastFetchError = String(err);
       await sleep(250);
     }
   }
+  phase = `the log line "${PROBE_MSG}"`;
   let message = probeFailureMessage();
   while (message === null) {
     await sleep(100);
     message = probeFailureMessage();
   }
   if (message.includes(REACH_FAILURE)) {
+    // The success line is the fixed marker .github/workflows/ci.yml greps for,
+    // not an error code observed from the server.
     finish(0, 'engine loaded; connect failed with P1001 as expected');
   } else if (output.includes(ENGINE_MISSING)) {
     finish(1, 'the query engine did not load: the bundle has no engine for this platform');
   } else {
     finish(1, `the health probe failed with an unexpected message: ${message}`);
   }
-})();
+})().catch((err) => finish(1, `probe threw: ${err}`));
