@@ -1,6 +1,7 @@
 import type { ClassStatus, RegistrationStatus } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
-import { formatInstantInZone } from '@/lib/timezone';
+import { formatInstantInZone, startOfLocalDay } from '@/lib/timezone';
+import { formatDateShort } from '@/lib/format';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 
 /**
@@ -21,12 +22,11 @@ export function markedPaidLine(paidAt: Date | null, timeZone: string, paymentId:
 
 /**
  * The pay page's line for a standing "I've sent it": the day, in the
- * teacher's zone like `markedPaidLine`. Takes the day part of
- * `formatInstantInZone` ("Thu 17 Oct 14:15"), so the zone fallback is its own.
+ * teacher's zone like `markedPaidLine`, through `startOfLocalDay`'s zone
+ * fallback.
  */
 export function sentClaimLine(reportedAt: Date, timeZone: string): string {
-  const day = formatInstantInZone(reportedAt, timeZone).split(' ').slice(1, 3).join(' ');
-  return `You marked this as sent on ${day}.`;
+  return `You marked this as sent on ${formatDateShort(startOfLocalDay(reportedAt, timeZone))}.`;
 }
 
 /**
