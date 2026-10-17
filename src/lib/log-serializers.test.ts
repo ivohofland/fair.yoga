@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { serializeErr, type SerializedErr, type SerializedPrismaMeta } from './log-serializers';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
+import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 const PII = ['Alicepii', 'Surnamepii', 'pii.test@example.com'];
 const V = { clientVersion: '6.19.3' };
@@ -624,5 +625,36 @@ describe('serializeErr: anchors and guards', () => {
       code: 'Alicepii',
     });
     expect(serializeErr(e).code).toBe('P1001');
+  });
+});
+
+describe('serializeErr: the pg driver adapter\'s errors', () => {
+  it('withholds a DriverAdapterError by name and does not walk its plain-object cause', () => {
+    const err = driverAdapterError(pgCause('23514', 'Class 7e2b7875-c697-4dd0-bfdd-35a48d6fd186 is completed, which is terminal'));
+    const out = serializeErr(err);
+    expect(out).toMatchObject({ type: 'Error', name: 'DriverAdapterError', message: 'Driver adapter error (detail withheld from the log)' });
+    expect(out).not.toHaveProperty('cause');
+    expect(JSON.stringify(out)).not.toContain('7e2b7875');
+  });
+
+  it('still walks a real Error cause under a withheld error', () => {
+    const err = knownWithAdapterCause('P2010', pgCause('55P03', 'm'));
+    Object.defineProperty(err, 'cause', { value: new Error('inner'), enumerable: false });
+    expect(serializeErr(err).cause).toMatchObject({ message: 'inner' });
+  });
+
+  it.each(['P2010', 'ENETUNREACH', 'EHOSTUNREACH', 'EAI_AGAIN', 'ERR_MODULE_NOT_FOUND'])('keeps the code %s on a withheld error', (code) => {
+    const err = new Prisma.PrismaClientKnownRequestError('m', { code, clientVersion: '6.19.3' });
+    expect(serializeErr(err).code).toBe(code);
+  });
+
+  it.each(['enetunreach', 'E', `E${'A'.repeat(64)}`, '23514'])('drops the code %s on a withheld error', (code) => {
+    const err = new Prisma.PrismaClientKnownRequestError('m', { code, clientVersion: '6.19.3' });
+    expect(serializeErr(err)).not.toHaveProperty('code');
+  });
+
+  it('keeps meta.timeTaken as a number', () => {
+    const err = new Prisma.PrismaClientKnownRequestError('m', { code: 'P2028', clientVersion: '6.19.3', meta: { timeout: 100, timeTaken: 512 } });
+    expect(serializeErr(err).meta).toMatchObject({ timeout: 100, timeTaken: 512 });
   });
 });

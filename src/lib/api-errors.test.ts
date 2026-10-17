@@ -15,6 +15,7 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
+import { pgPoolTimeout } from '../../tests/adapter-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -792,7 +793,7 @@ describe('classifyApiError', () => {
   it.each<[string, string, TransientKind, 'warn' | 'error']>([
     ['P2028 (interactive transaction budget expired)', 'P2028', 'tx_budget', 'warn'],
     ['P2024 (connection pool timeout)', 'P2024', 'pool_exhausted', 'error'],
-    ['P2034 (write conflict or deadlock)', 'P2034', 'deadlock', 'error'],
+    ['P2034 (serialization failure)', 'P2034', 'serialization', 'warn'],
   ])('maps %s to a 503 at its kind\'s level', (_label, code, kind, level) => {
     const failure = classifyApiError(prismaError(code));
 
@@ -1071,10 +1072,19 @@ describe('transientDbFailure', () => {
     ['40001 model write', modelWrite('40001'), 'serialization', 'warn'],
     ['P2024', prismaError('P2024'), 'pool_exhausted', 'error'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
-    ['P2034', prismaError('P2034'), 'deadlock', 'error'],
+    ['P2034', prismaError('P2034'), 'serialization', 'warn'],
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
+  });
+
+  it('classifies pg-pool\'s wait timeout as pool_exhausted at error', () => {
+    expect(transientDbFailure(pgPoolTimeout())).toEqual({ kind: 'pool_exhausted', level: 'error' });
+    expect(classifyApiError(pgPoolTimeout())).toMatchObject({ status: 503, detail: { transientKind: 'pool_exhausted' } });
+  });
+
+  it('finds a pool timeout one cause deep', () => {
+    expect(transientDbFailure(new Error('wrapped', { cause: pgPoolTimeout() }))?.kind).toBe('pool_exhausted');
   });
 
   it('finds the kind through a cause chain', () => {
@@ -1126,7 +1136,7 @@ describe('isLockTimeout', () => {
     ],
     ['transaction budget expired (P2028)', prismaError('P2028')],
     ['connection pool timeout (P2024)', prismaError('P2024')],
-    ['write conflict / deadlock (P2034)', prismaError('P2034')],
+    ['serialization failure (P2034)', prismaError('P2034')],
     ['record not found (P2025)', prismaError('P2025')],
     ['generic Error', new Error('canceling statement due to lock timeout')],
   ])('does not match %s', (_label, err) => {
