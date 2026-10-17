@@ -27,6 +27,7 @@ import {
 } from '@/lib/payment-methods';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
+import { isClaimStanding } from '@/lib/payment-claim';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { isUpcomingRegistration } from '@/lib/booking-ledger';
@@ -374,6 +375,7 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
+            const claimed = payment ? isClaimStanding(payment) : false;
             const cancelled = cls.calendarEntry.cancelledAt !== null;
             const breakdown = resolveReportedPaymentBreakdown(
               {
@@ -410,15 +412,29 @@ export default async function StudentBookingsPage() {
                         <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
                           {formatMoney(payment.amount, cls.currency)}
                         </p>
-                        {/* Payment state is text, never a badge */}
-                        <p className={`type-caption ${paymentStateText(payment.status).className}`}>
-                          {paymentStateText(payment.status).label}
-                        </p>
+                        {/* Payment state is text, never a badge. A standing claim
+                            replaces it: the student has done their part. */}
+                        {claimed ? (
+                          <p className="type-caption text-brown">Marked as sent</p>
+                        ) : (
+                          <p className={`type-caption ${paymentStateText(payment.status).className}`}>
+                            {paymentStateText(payment.status).label}
+                          </p>
+                        )}
                       </div>
                     )
                   )}
                 </div>
-                {payment && outstanding && (
+                {payment && claimed && (
+                  <Link
+                    href={payPagePath(cls.id)}
+                    aria-label={`View payment — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
+                    className="type-label text-teal no-underline inline-block mt-2"
+                  >
+                    View payment &rarr;
+                  </Link>
+                )}
+                {payment && outstanding && !claimed && (
                   <OutstandingPayAction
                     guidance={payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency))}
                     classId={cls.id}

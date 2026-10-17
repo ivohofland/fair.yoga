@@ -165,6 +165,41 @@ describe('GET /bookings (page) — payment status gate', () => {
     expect(html).not.toContain(TEACHER_IBAN);
   });
 
+  // A student who marked the payment sent has done their part: the row says
+  // so instead of asking again, and still leads to the pay page, where Undo is.
+  it('shows a sent claim on an overdue payment instead of Overdue and Pay now', async () => {
+    await prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'overdue', notChargedAt: null, studentReportedAt: new Date() },
+    });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('Marked as sent');
+      expect(html).not.toContain('! Overdue');
+      expect(html).not.toContain('Pay now');
+      expect(html).toContain('View payment');
+      expect(html).toContain(`href="/bookings/${classId}/pay"`);
+    } finally {
+      await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', studentReportedAt: null } });
+    }
+  });
+
+  it('shows the sent claim, not pay directly, when the teacher has no method in the class’s currency', async () => {
+    await prisma.payment.update({ where: { id: paymentId }, data: { studentReportedAt: new Date() } });
+    await prisma.teacherBankAccount.deleteMany({ where: { teacherId } });
+    try {
+      const html = await (await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) })).text();
+      expect(html).toContain('Marked as sent');
+      expect(html).not.toContain('○ Unpaid');
+      expect(html).not.toContain('Pay Bookings directly');
+    } finally {
+      await prisma.payment.update({ where: { id: paymentId }, data: { studentReportedAt: null } });
+      await prisma.teacherBankAccount.create({
+        data: { teacherId, currency: 'EUR', holderName: 'Bookings Teacher', iban: TEACHER_IBAN },
+      });
+    }
+  });
+
   // The class is in euros; an account in another currency is no method for it.
   it('tells an unpaid student to pay directly when the teacher has no account in the class’s currency', async () => {
     await prisma.payment.update({ where: { id: paymentId }, data: { status: 'pending', notChargedAt: null } });

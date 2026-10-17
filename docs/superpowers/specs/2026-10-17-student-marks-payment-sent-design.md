@@ -183,6 +183,10 @@ retracting sent notifications is out of proportion to a claim.
   `studentReportedAt` and show the claim line. A claim made while payouts may
   have pointed at a changed account is exactly what the teacher checks before
   resuming.
+- **`/bookings`** (past classes): a standing claim replaces the row's status
+  label with "Marked as sent" in brown, and replaces Pay now (or the
+  pay-directly / hold-off line) with a "View payment →" link to the pay page,
+  where Undo is.
 - **Ordering**: claimed outstanding payments first on the settings outstanding
   list (the page's own query/split) and in the checklist (the overview page's
   `registeredAt asc` items); the existing order holds within each group.
@@ -205,7 +209,6 @@ the archive.
 
 ## Not in scope
 
-- `/bookings` keeps `paymentStateText`; the claim shows on the pay page only.
 - The archive dialog's list of payments it will waive does not mark claimed
   ones.
 - A teacher notification for a claim (decided against above).
