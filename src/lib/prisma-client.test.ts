@@ -70,7 +70,7 @@ describe('prisma funnel imports', () => {
     expect(enums.Currency).toBe(Currency);
   });
 
-  it('re-exports the package, so its runtime values come from this module', () => {
+  it('re-exports the generated client, so its runtime values come from this module', () => {
     expect(new Prisma.Decimal('1.50').toFixed(2)).toBe('1.50');
     expect(ClassStatus.open).toBe('open');
   });
