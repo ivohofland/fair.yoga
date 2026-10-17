@@ -40,15 +40,22 @@ function freshClone(): string {
 }
 
 /**
- * The Prisma CLI in `cwd`, with no database URL inherited from the worker. It
- * must report loading the config file: without it the CLI falls back to the
- * schema's own URL and the callers' other assertions would still pass.
+ * The Prisma CLI in `cwd`, with no database URL inherited from the worker
+ * unless `extraEnv` sets one. It must report loading the config file: without
+ * it the CLI falls back to the schema's own URL and loads no `.env`, so the
+ * `.env` case fails with `P1012` while the `generate` case would still pass.
  */
-function runPrisma(cwd: string, args: string[]): { status: number | null; output: string } {
+function runPrisma(
+  cwd: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+): { status: number | null; output: string } {
   const env = { ...process.env };
   delete env.DATABASE_URL;
   delete env.DATABASE_URL_TEST;
+  Object.assign(env, extraEnv);
   const result = spawnSync(PRISMA_BIN, args, { cwd, env, encoding: 'utf8', timeout: CLI_TIMEOUT_MS });
+  expect(result.error).toBeUndefined();
   const output = `${result.stdout}${result.stderr}`;
   expect(output).toContain('Loaded Prisma config from prisma.config.ts');
   return { status: result.status, output };
@@ -66,6 +73,28 @@ describe('prisma.config.ts', () => {
     expect(output).toContain('P1001');
     expect(output).toContain('203.0.113.1');
     expect(output).not.toContain('P1012');
+  }, CLI_TIMEOUT_MS);
+
+  it('prefers an explicit DATABASE_URL over .env', () => {
+    const dir = freshClone();
+    fs.writeFileSync(
+      path.join(dir, '.env'),
+      'DATABASE_URL="postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3"\n',
+    );
+    const { status, output } = runPrisma(dir, ['migrate', 'status'], {
+      DATABASE_URL: 'postgresql://u:p@203.0.113.2:5432/none?connect_timeout=3',
+    });
+    expect(status).not.toBe(0);
+    expect(output).toContain('P1001');
+    expect(output).toContain('203.0.113.2');
+    expect(output).not.toContain('203.0.113.1');
+  }, CLI_TIMEOUT_MS);
+
+  it('fails loudly with P1012 when a command needs a URL and none is set', () => {
+    const dir = freshClone();
+    const { status, output } = runPrisma(dir, ['migrate', 'status']);
+    expect(status).not.toBe(0);
+    expect(output).toContain('P1012');
   }, CLI_TIMEOUT_MS);
 
   it('lets generate run with no .env and no DATABASE_URL', () => {
