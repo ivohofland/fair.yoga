@@ -4,11 +4,14 @@
  * `docs/superpowers/specs/2026-10-03-err-serializer-allowlist-design.md`.
  *
  * `serializeErr` builds a plain, frozen object from named fields only, so a
- * property nobody listed here never reaches its output. A Prisma query error's
- * message is withheld outright: Prisma renders the call's arguments and
- * Postgres's `DETAIL` into it, and both carry row values. What survives of it
- * is the operation and the identifiers lifted below. An error that throws
- * while being read becomes `UNSERIALIZABLE`; it is never returned raw.
+ * property nobody listed here never reaches its output. The message of a
+ * Prisma query error (every `PrismaClient*Error` but the initialization one)
+ * and of the pg driver adapter's `DriverAdapterError` is withheld outright:
+ * Prisma renders the call's arguments and Postgres's `DETAIL` into the one,
+ * the other is Postgres's primary message, and both can carry row values.
+ * What survives of them is the operation and the identifiers lifted below. A
+ * withheld error's cause is walked only when it is an `Error`. An error that
+ * throws while being read becomes `UNSERIALIZABLE`; it is never returned raw.
  */
 import { Prisma } from '@/lib/prisma-client';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
@@ -28,6 +31,7 @@ export interface SerializedPrismaMeta {
   readonly model_b_name?: Identifiers;
   readonly connection_limit?: number;
   readonly timeout?: number;
+  readonly timeTaken?: number;
 }
 
 /** What a P2028's `meta.error` says, as a closed set; its text is never kept. */
@@ -72,6 +76,7 @@ const META_KEYS = {
   model_b_name: 'identifiers',
   connection_limit: 'number',
   timeout: 'number',
+  timeTaken: 'number',
 } as const satisfies Record<keyof SerializedPrismaMeta, 'identifiers' | 'number'>;
 
 type MetaKey = keyof typeof META_KEYS;
@@ -110,7 +115,9 @@ const WITHHELD = '(detail withheld from the log)';
 const PRISMA_ERROR_NAME = /^PrismaClient\w+Error$/;
 const IDENTIFIER = /^[\w.]+$/;
 const SQLSTATE = /^[0-9A-Z]{5}$/;
-const PRISMA_CODE = /^P\d{4}$/;
+// A Prisma code, or Node's errno / `ERR_*` shape: fixed identifiers, bounded
+// in length so an arbitrary string cannot pass for one.
+const WITHHELD_CODE = /^(?:P\d{4}|E[A-Z0-9_]{1,63})$/;
 const FRAME_LINE = /^\s+at /;
 // Anchored at the start: a value inside the message cannot be taken for it.
 const HEADER = /^\s*Invalid `([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\))` invocation/;
@@ -190,7 +197,7 @@ function typeOf(err: object): string {
   return typeof name === 'string' ? name : 'Error';
 }
 
-function prismaClass(err: object): string | null {
+function withheldClass(err: object): string | null {
   if (err instanceof Prisma.PrismaClientKnownRequestError) return 'PrismaClientKnownRequestError';
   if (err instanceof Prisma.PrismaClientUnknownRequestError) return 'PrismaClientUnknownRequestError';
   if (err instanceof Prisma.PrismaClientValidationError) return 'PrismaClientValidationError';
@@ -201,7 +208,9 @@ function prismaClass(err: object): string | null {
   const name = field(err, 'name');
   if (typeof name === 'string' && PRISMA_ERROR_NAME.test(name)) return name;
   const type = typeOf(err);
-  return PRISMA_ERROR_NAME.test(type) ? type : null;
+  if (PRISMA_ERROR_NAME.test(type)) return type;
+  // By name only: the adapter's class is never imported here.
+  return field(err, 'name') === 'DriverAdapterError' ? 'DriverAdapterError' : null;
 }
 
 function identifiers(value: unknown): Identifiers | undefined {
@@ -262,7 +271,11 @@ function txErrorKind(meta: unknown): TxErrorKind {
 
 function withheld(cls: string, err: object, type: string, original: string): Mutable<SerializedErr> {
   const header = HEADER.exec(original);
-  const message = header ? `Invalid \`${header[1]}\` invocation ${WITHHELD}` : `Prisma error ${WITHHELD}`;
+  const message = header
+    ? `Invalid \`${header[1]}\` invocation ${WITHHELD}`
+    : cls === 'DriverAdapterError'
+      ? `Driver adapter error ${WITHHELD}`
+      : `Prisma error ${WITHHELD}`;
 
   // Frames are what follows the stack's exact `${name}: ${message}` prefix,
   // kept only when that remainder is empty or passes `isFrameShape`. A prefix
@@ -325,7 +338,7 @@ function serialize(err: object, walk: Walk, depth: number): SerializedErr {
   const entriesBefore = walk.entries;
   walk.entries += 1;
   const type = typeOf(err);
-  const cls = prismaClass(err);
+  const cls = withheldClass(err);
   const withheldPath = cls !== null && cls !== 'PrismaClientInitializationError';
   const rawMessage = field(err, 'message');
   const original = typeof rawMessage === 'string' ? rawMessage : '';
@@ -341,12 +354,14 @@ function serialize(err: object, walk: Walk, depth: number): SerializedErr {
 
   if (Object.prototype.hasOwnProperty.call(err, 'name')) {
     const name = field(err, 'name');
-    // A withheld error's own name could be any text; only a Prisma class name is kept.
-    if (typeof name === 'string' && (!withheldPath || PRISMA_ERROR_NAME.test(name))) out.name = name;
+    // A withheld error's own name could be any text; only a withheld class name is kept.
+    if (typeof name === 'string' && (!withheldPath || PRISMA_ERROR_NAME.test(name) || name === 'DriverAdapterError')) {
+      out.name = name;
+    }
   }
   const code = cls === 'PrismaClientInitializationError' ? field(err, 'errorCode') : field(err, 'code');
   if (withheldPath) {
-    if (typeof code === 'string' && PRISMA_CODE.test(code)) out.code = code;
+    if (typeof code === 'string' && WITHHELD_CODE.test(code)) out.code = code;
     if (code === 'P2028') out.txError = txErrorKind(field(err, 'meta'));
   } else if (typeof code === 'string' || (typeof code === 'number' && Number.isFinite(code))) {
     out.code = code;
@@ -354,8 +369,10 @@ function serialize(err: object, walk: Walk, depth: number): SerializedErr {
 
   // A node met while still in progress is reachable from itself: omitted,
   // and flagged. One the depth or entry budget has no room for is omitted
-  // and flagged too.
-  const cause = field(err, 'cause');
+  // and flagged too. A withheld error's non-`Error` cause is skipped outright:
+  // the adapter's is a plain object carrying Postgres's message.
+  const rawCause = field(err, 'cause');
+  const cause = withheldPath && !(rawCause instanceof Error) ? undefined : rawCause;
   const errors = field(err, 'errors');
   const members: unknown[] = Array.isArray(errors) ? errors : [];
   walk.inProgress.add(err);

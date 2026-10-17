@@ -1,5 +1,6 @@
 import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
+import { isPgPoolTimeout } from './pg-error';
 import type { CodeWithStatus } from './api-error-codes';
 
 /**
@@ -188,18 +189,16 @@ function isTerminalStatusViolation(error: unknown): error is Error {
  * - `lock_timeout` (`55P03`) — a `SET LOCAL lock_timeout` expired. This
  *   project sets one at every `lockClassRow` call and at the two template
  *   claims, so it is the one a user is most likely to meet.
- * - `deadlock` (`40P01`, `P2034`) — Postgres broke an AB-BA cycle by killing
- *   one side, or Prisma's own wrapper for "write conflict or deadlock,
- *   please retry" surfaced the same event as a known code instead of inside
- *   a driver string. `docs/lock-order.md` ("The slot key is a wait edge, and
- *   the ascending-by-`id` rule cannot see it") owns which cycles are
- *   reachable and at what rate; this file owns only the kind.
- * - `serialization` (`40001`) — nothing here uses a serializable or
- *   repeatable-read transaction yet, so this cannot fire at present; it is
- *   listed because it belongs to the same family and adding it later would
- *   otherwise be a second edit at a second moment.
- * - `pool_exhausted` (`P2024`) — the connection pool handing out nothing in
- *   time.
+ * - `deadlock` (`40P01`) — Postgres broke an AB-BA cycle by killing one
+ *   side. `docs/lock-order.md` ("The slot key is a wait edge, and the
+ *   ascending-by-`id` rule cannot see it") owns which cycles are reachable
+ *   and at what rate; this file owns only the kind.
+ * - `serialization` (`40001`, `P2034`) — a serialization failure, on its raw
+ *   shape (`40001`) or its typed one (`P2034`). Which code paths can raise
+ *   one is `docs/lock-order.md`'s.
+ * - `pool_exhausted` (`P2024`, pg-pool's wait timeout) — the connection pool
+ *   handing out nothing in time. The pool timeout's shape:
+ *   `docs/technical-architecture.md`, "Database errors".
  * - `tx_budget` (`P2028`) — the interactive-transaction budget expiring,
  *   which `deleteStudentAccount`'s flat 20s `timeout` can hit under load.
  */
@@ -232,14 +231,9 @@ export interface TransientDbFailure {
  *   `updateClass` × `updateClass` slot-key cycle, kept live by decision
  *   rather than fixed. `docs/lock-order.md` ("The slot key is a wait edge,
  *   and the ascending-by-`id` rule cannot see it") owns which deadlock
- *   cycles exist and their status; this file owns only the level. `P2034`
- *   lands here, not in `serialization`, for the same reason `serialization`
- *   cannot fire: Prisma documents `P2034` as "write conflict or deadlock",
- *   and a write conflict needs a serializable or repeatable-read
- *   transaction, which this repo has none of.
- * - `serialization` is `warn` — moot while it cannot fire; the level is
- *   chosen for the day a serializable transaction exists to trigger it, and
- *   that dependency lives here so it is met before the level is trusted.
+ *   cycles exist and their status; this file owns only the level.
+ * - `serialization` is `warn` — a serialization failure is the database
+ *   asking for the retry this classification already advises, not a fault.
  * - `pool_exhausted` is **`error`** — an operational fault, a leak or a
  *   drained pool. No retry wins it until the pool recovers, and the next
  *   request meets the same pool.
@@ -274,7 +268,7 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
 const TRANSIENT_PRISMA_CODE_KIND: ReadonlyMap<string, TransientKind> = new Map([
   ['P2024', 'pool_exhausted'],
   ['P2028', 'tx_budget'],
-  ['P2034', 'deadlock'],
+  ['P2034', 'serialization'],
 ]);
 
 /**
@@ -303,6 +297,7 @@ function transientKindShallow(error: unknown): TransientKind | null {
       return kind;
     }
   }
+  if (isPgPoolTimeout(error)) return 'pool_exhausted';
   return null;
 }
 

@@ -1244,6 +1244,13 @@ system was busy … Please try again". Pinned at `src/lib/api-errors.test.ts`
 mutation-proven against the branch (commented out: that test and 6 others in
 the file flip to 500).
 
+No code path in `src/` can raise the `40001` in that group (typed: `P2034`):
+the one transaction there not at Read Committed is `getPlatformCounts`'s
+read-only Repeatable Read batch (`src/services/admin-metrics.ts`), and Postgres
+raises `40001` at Repeatable Read only when a write meets a concurrent update;
+none runs Serializable. Re-derive with
+`git grep -niE "isolationLevel|SERIALIZABLE|REPEATABLE READ" -- src ':!*.test.ts' ':!src/generated'`.
+
 What stays true regardless of which status code answers it: the cycle itself
 is not fixable by reordering, only classifiable once it happens. A transaction
 that moves a class vacates one slot key and claims another in the same
