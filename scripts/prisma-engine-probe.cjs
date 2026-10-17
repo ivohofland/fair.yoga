@@ -6,9 +6,9 @@
 // bundle, so the probe cannot require it: it boots the bundle's server.js and
 // asks the health route to reach a database. The address is RFC 5737
 // TEST-NET-3: nothing can answer it, so a client that loaded its engine fails
-// at the network. The route logs that failure as `health check: database
-// probe failed`, and the probe passes only when the logged message is Prisma's
-// can't-reach-database text.
+// at the network. The probe waits for a server log line whose `msg` is
+// `health check: database probe failed` and passes only when that line's
+// error message is Prisma's can't-reach-database text.
 //
 // It matches the message text, not a code; why is in docs/supply-chain.md,
 // "Prisma's engine in the images".
