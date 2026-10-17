@@ -234,7 +234,7 @@ The system calculates each student's price after class and displays it. The stud
 
 The teacher manually tracks payments in the system — a simple per-class checklist showing each student, the amount owed, and paid/unpaid status. Zero fees, no payment processor needed.
 
-A student who has paid can tell the teacher with "I've sent it" on the pay page, and take it back there. It is a claim, not a payment: the teacher still confirms receipt, and only that marks it paid. The teacher's checklist and outstanding list show the claim and list claimed payments first, with a "Not received" action beside it. "Not received" clears the claim and sends the student a quiet note that the payment has not arrived yet.
+A student who has paid can tell the teacher with "I've sent it" on the pay page, and take it back there. It is a claim, not a payment: the teacher still confirms receipt, and only that marks it paid. The teacher's checklist and outstanding list show the claim and list claimed payments first, with a "Not received" action. "Not received" clears the claim and sends the student a quiet note that the payment has not arrived yet.
 
 **Level 2: Integrated Payment (teacher connects Mollie or Stripe)**
 
