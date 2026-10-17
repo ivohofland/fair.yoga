@@ -48,6 +48,9 @@ RUN pnpm exec prisma generate && pnpm run build
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
+# The scripts below import the generated client, which no stage produces for
+# them but this one.
+RUN pnpm exec prisma generate
 # The CLI's config. Without it migrate still runs on the schema's own URL, so
 # CI checks the file loads (DEPLOYMENT.md §6).
 COPY prisma.config.ts ./
@@ -59,7 +62,8 @@ COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
 COPY scripts/check-reserved-slugs.ts ./scripts/check-reserved-slugs.ts
 COPY src/services/reserved-slug-holders.ts ./src/services/reserved-slug-holders.ts
 COPY src/lib/reserved-slugs.ts ./src/lib/reserved-slugs.ts
-# The module the scripts and services above import; it imports only @prisma/client.
+# The module the scripts and services above import; it imports only the client
+# generated above.
 COPY src/lib/prisma-client.ts ./src/lib/prisma-client.ts
 CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm exec tsx scripts/check-reserved-slugs.ts"]
 
