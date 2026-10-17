@@ -37,9 +37,6 @@
     "worktree:up": "tsx scripts/worktree-up.ts",
     "worktree:down": "tsx scripts/worktree-down.ts"
   },
-  "prisma": {
-    "seed": "pnpm exec tsx prisma/seed.ts"
-  },
   "dependencies": {
     "@oslojs/crypto": "^1.0.1",
     "@oslojs/encoding": "^1.1.0",
