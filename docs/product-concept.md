@@ -234,6 +234,8 @@ The system calculates each student's price after class and displays it. The stud
 
 The teacher manually tracks payments in the system — a simple per-class checklist showing each student, the amount owed, and paid/unpaid status. Zero fees, no payment processor needed.
 
+A student who has paid can tell the teacher with "I've sent it" on the pay page, and take it back there. It is a claim, not a payment: the teacher still confirms receipt, and only that marks it paid. The teacher's checklist and outstanding list show the claim and list claimed payments first, with a "Not received" action beside it. "Not received" clears the claim and sends the student a quiet note that the payment has not arrived yet.
+
 **Level 2: Integrated Payment (teacher connects Mollie or Stripe)**
 
 Teachers who want automated payment processing can connect their own Mollie or Stripe account. The platform sends payment requests through the teacher's account. Money goes directly from student to teacher — the platform never touches it.
@@ -248,7 +250,7 @@ The teacher owns the payment account and the relationship with the processor. Th
 
 **Open payments:** Students with unpaid classes are not blocked from booking. Instead, they see a friendly reminder during the booking flow ("You have 2 open payments"). No blocking in v1 — visibility is enough.
 
-**Payment reminders:** Level 1 teachers can send a payment reminder manually at any time, one tap per outstanding payment. The system also sends a single gentle reminder once a payment goes overdue, repeated at most once a week — a quiet nudge, never a barrage. A manual send resets that weekly clock, so frequent manual reminders replace the automatic one rather than stacking on top of it.
+**Payment reminders:** Level 1 teachers can send a payment reminder manually at any time, one tap per outstanding payment. The system also sends a single gentle reminder once a payment goes overdue, repeated at most once a week — a quiet nudge, never a barrage. A manual send resets that weekly clock, so frequent manual reminders replace the automatic one rather than stacking on top of it. A student who has marked a payment as sent is not chased: neither the automatic reminder nor the one that goes out when the teacher resumes paused payments is sent for it, until the claim is cleared. The teacher's "Not received" note counts as a reminder and resets the same clock.
 
 **Open questions:**
 - How to handle failed payments in Level 2? Retry policy? (parked — v1 Level 2 is payment links, not automated charging)
