@@ -66,6 +66,12 @@ describe('prisma funnel imports', () => {
     expect(specifiers.every((s) => s === '../generated/prisma/enums')).toBe(true);
   });
 
+  it('generates CommonJS: the ESM output writes a process-wide __dirname global', () => {
+    const client = readFileSync(path.join(__dirname, '..', 'generated', 'prisma', 'client.ts'), 'utf8');
+    expect(client.length).toBeGreaterThan(0);
+    expect(client).not.toContain("globalThis['__dirname']");
+  });
+
   it('both funnels hand back the same enum objects', () => {
     expect(enums.Currency).toBe(Currency);
   });

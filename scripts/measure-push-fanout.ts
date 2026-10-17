@@ -12,6 +12,8 @@
 // run from the main checkout (whose database is shared); it deletes only the
 // rows it created. `--conditions=react-server` makes `server-only`, which
 // `src/lib/log.ts` imports, resolve to its empty module outside Next.
+// The generated Prisma client reads DATABASE_URL from the environment only.
+import 'dotenv/config';
 import crypto from 'crypto';
 import type { PrismaClient } from '../src/lib/prisma-client';
 import { createPrismaClient } from '../src/lib/prisma-client';
