@@ -60,6 +60,7 @@ describe('OutstandingPaymentRow', () => {
     currency: 'EUR' as const,
     status: 'pending' as const,
     reminderSentAt: null,
+    studentReportedOn: null,
   };
 
   const fetchMock = vi.fn();
@@ -105,6 +106,7 @@ describe('OutstandingPaymentRow', () => {
     currency: 'EUR' as const,
     status: 'pending' as const,
     reminderSentAt: null,
+    studentReportedOn: null,
   };
 
   function renderRow(overrides: Partial<Parameters<typeof OutstandingPaymentRow>[0]> = {}) {
@@ -619,5 +621,97 @@ describe('OutstandingPaymentRow', () => {
     renderRow({ currency: 'CHF' });
     expect(screen.getByText('CHF 15.00')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('€');
+  });
+
+  describe('a payment the student says they sent (#898)', () => {
+    const reportedOn = new Date('2026-09-12T00:00:00.000Z');
+
+    it('shows the claim under the class line and drops the overdue suffix it carries', () => {
+      renderRow({ status: 'overdue', studentReportedOn: reportedOn });
+
+      expect(screen.getByText('! Says paid · 12 Sep')).toBeInTheDocument();
+      expect(screen.getByText('Overdue, says paid on 12 September')).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain('! overdue');
+    });
+
+    it('keeps the overdue suffix on a row without a claim', () => {
+      renderRow({ status: 'overdue' });
+      expect(document.body.textContent).toContain(' · ! overdue');
+      expect(screen.queryByText(/Says paid/)).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Not received/ })).toBeNull();
+    });
+
+    it('offers Not received, Send reminder and Not charged in that order, and keeps Mark paid', () => {
+      renderRow({ studentReportedOn: reportedOn });
+
+      const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+      expect(names).toEqual([
+        'Not received — Anna Smith, Vinyasa · 2 Sep · 18:00',
+        'Send reminder to Anna Smith for Vinyasa · 2 Sep · 18:00',
+        'Not charged — Anna Smith, Vinyasa · 2 Sep · 18:00',
+        'Mark paid — Anna Smith, Vinyasa · 2 Sep · 18:00',
+      ]);
+      expect(screen.getByRole('button', { name: /^Not received/ })).toHaveTextContent('Not received');
+    });
+
+    it('clears the claim on Not received, leaving the payment outstanding', async () => {
+      fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ studentReportedOn: reportedOn });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      await waitFor(() => expect(screen.queryByText(/Says paid/)).toBeNull());
+      expect(fetchMock).toHaveBeenCalledWith('/api/payments/pay-anna/not-received', { method: 'POST' });
+      expect(screen.queryByRole('button', { name: /^Not received/ })).toBeNull();
+      expect(screen.getByRole('button', { name: /^Mark paid/ })).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('keeps the claim and shows the refusal when Not received is refused', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { message: 'This payment is already paid.', code: 'PAYMENT_ALREADY_PAID' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ studentReportedOn: reportedOn });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('This payment is already paid.');
+      expect(screen.getByText('Says paid · 12 Sep')).toBeInTheDocument();
+    });
+
+    it('reports a network failure on Not received', async () => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ studentReportedOn: reportedOn });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Network error. Try again.');
+      expect(consoleError).toHaveBeenCalledWith(
+        '[payment-not-received] request failed',
+        expect.objectContaining({ paymentId: 'pay-anna' }),
+      );
+    });
+
+    // Reopening keeps the claim on the server, so Undo after Mark paid brings
+    // the row back with it.
+    it('hides the claim once marked paid and brings it back on Undo', async () => {
+      fetchMock
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ data: {} }) })
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { status: 'pending' } }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ studentReportedOn: reportedOn });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Mark paid/ }));
+      await waitFor(() => expect(screen.queryByText(/Says paid/)).toBeNull());
+
+      fireEvent.click(await screen.findByRole('button', { name: /^Undo marking Anna Smith as paid/ }));
+      expect(await screen.findByText('Says paid · 12 Sep')).toBeInTheDocument();
+    });
   });
 });

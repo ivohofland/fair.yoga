@@ -165,6 +165,18 @@ export function formatDateShort(date: Date): string {
 }
 
 /**
+ * The spelled-out form: `12 October`. No weekday, no year.
+ *
+ * For a screen reader's version of a `formatDateShort` date, where the
+ * abbreviated month would be read letter by letter or as a word. Same
+ * UTC-accessor reasoning as `formatDateShort`.
+ */
+export function formatDateLong(date: Date): string {
+  const d = new Date(date);
+  return `${d.getUTCDate()} ${FULL_MONTHS[d.getUTCMonth()]}`;
+}
+
+/**
  * Class context string for cross-class payment overviews: `"{classType} · {date} · {startTime}"`.
  *
  * Disambiguates rows for the same student on the same day. One string on

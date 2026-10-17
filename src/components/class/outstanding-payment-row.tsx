@@ -8,6 +8,7 @@ import { formatClassContext, formatMoney, paymentStateInlineText, paymentStateTe
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { isOutstanding } from '@/lib/payment-status';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
+import { PaymentClaimLine } from '@/components/class/payment-claim-line';
 
 interface OutstandingPaymentRowProps {
   paymentId: string;
@@ -20,6 +21,8 @@ interface OutstandingPaymentRowProps {
   currency: Currency;
   status: PaymentStatus;
   reminderSentAt: Date | null;
+  /** The day the student marked it sent (`claimDay`); shown while the claim stands. */
+  studentReportedOn: Date | null;
 }
 
 /**
@@ -43,9 +46,10 @@ export function OutstandingPaymentRow({
   currency,
   status,
   reminderSentAt,
+  studentReportedOn,
 }: OutstandingPaymentRowProps) {
   const router = useRouter();
-  const { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo } =
+  const { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo, notReceived, standingClaim } =
     usePaymentActions({ [paymentId]: status });
   const [remindedAt, setRemindedAt] = useState<Date | null>(reminderSentAt);
   const [reminderError, setReminderError] = useState('');
@@ -60,6 +64,7 @@ export function OutstandingPaymentRow({
   const isNotCharged = current === 'not_charged';
   const outstanding = isOutstanding(current);
   const busy = updating === paymentId;
+  const claimedOn = standingClaim({ paymentId, status: current, studentReportedOn });
 
   return (
     <div className="py-2 border-b border-border last:border-b-0">
@@ -70,15 +75,31 @@ export function OutstandingPaymentRow({
             <Link href={`/class/${classId}`} className="no-underline text-brown-light">
               {classContext}
             </Link>
-            {current === 'overdue' && (
+            {/* A claim line says overdue itself, so the suffix would repeat it. */}
+            {current === 'overdue' && claimedOn === null && (
               <span className={paymentStateInlineText('overdue').className}>
                 {paymentStateInlineText('overdue').label}
               </span>
             )}
           </p>
+          {claimedOn && <PaymentClaimLine overdue={current === 'overdue'} reportedOn={claimedOn} />}
           {remindedAt && <p className="type-caption">Reminded {timeAgo(remindedAt)}</p>}
           {outstanding && (
             <p className="type-caption mt-1 flex items-center gap-2">
+              {claimedOn && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => notReceived(paymentId)}
+                    disabled={busy}
+                    className="type-caption text-teal min-h-[44px] px-1"
+                    aria-label={`Not received — ${studentName}, ${classContext}`}
+                  >
+                    Not received
+                  </button>
+                  <span aria-hidden="true">·</span>
+                </>
+              )}
               <SendReminderButton
                 paymentId={paymentId}
                 studentName={studentName}

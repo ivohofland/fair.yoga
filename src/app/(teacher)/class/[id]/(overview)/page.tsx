@@ -30,6 +30,8 @@ import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
 import { latePublishState, latePublishRefreshInstants, latePublishInstants } from '@/lib/late-publish';
+import { claimedFirst } from '@/lib/payment-claim';
+import { claimDay } from '@/lib/payment-claim.server';
 
 export default async function ClassDetailPage({
   params,
@@ -133,16 +135,19 @@ export default async function ClassDetailPage({
       status: r.status,
     }));
 
-  const paymentItems: PaymentItem[] = cls.registrations
-    .filter((r) => r.status !== 'cancelled' && r.payment)
-    .map((r) => ({
-      paymentId: r.payment!.id,
-      studentId: r.studentId,
-      studentName: teacherVisibleName(r.student, session.teacherId),
-      amount: Number(r.payment!.amount),
-      status: r.payment!.status,
-      reminderSentAt: r.payment!.reminderSentAt,
-    }));
+  const tz = cls.calendarEntry.teacher.defaultTimezone;
+  const paymentItems: PaymentItem[] = claimedFirst(
+    cls.registrations.filter((r) => r.status !== 'cancelled' && r.payment),
+    (r) => r.payment!,
+  ).map((r) => ({
+    paymentId: r.payment!.id,
+    studentId: r.studentId,
+    studentName: teacherVisibleName(r.student, session.teacherId),
+    amount: Number(r.payment!.amount),
+    status: r.payment!.status,
+    reminderSentAt: r.payment!.reminderSentAt,
+    studentReportedOn: claimDay(r.payment!.studentReportedAt, tz),
+  }));
 
   // Actual tier prices for completed class pricing breakdown
   const tierPrices = activeRegistrations
@@ -154,7 +159,6 @@ export default async function ClassDetailPage({
 
   // Check-in, the finish button, its caption and the instants at which any of
   // them can change, all read from this render's `now`.
-  const tz = cls.calendarEntry.teacher.defaultTimezone;
   const start = classStartInstant(cls.calendarEntry, tz);
   const { live, showCheckin, canFinish, autoFinishing, autoAt, checkinAt, refreshInstants } = classPageClock({
     now: new Date(now),

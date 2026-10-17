@@ -10,6 +10,8 @@ import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
 import { NotChargedPaymentRow } from '@/components/class/not-charged-payment-row';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
 import { isOutstanding } from '@/lib/payment-status';
+import { claimedFirst } from '@/lib/payment-claim';
+import { claimDay } from '@/lib/payment-claim.server';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +40,7 @@ export default async function PaymentsOverviewPage() {
     },
   });
 
-  const outstanding = payments.filter((p) => isOutstanding(p.status));
+  const outstanding = claimedFirst(payments.filter((p) => isOutstanding(p.status)), (p) => p);
   const receivedAll = payments.filter((p) => p.status === 'paid');
   const received = receivedAll.slice(0, 30);
   const notCharged = payments.filter((p) => p.status === 'not_charged').slice(0, 30);
@@ -95,6 +97,7 @@ export default async function PaymentsOverviewPage() {
               currency={p.registration.class.currency}
               status={p.status}
               reminderSentAt={p.reminderSentAt}
+              studentReportedOn={claimDay(p.studentReportedAt, session.defaultTimezone)}
             />
           ))
         )}

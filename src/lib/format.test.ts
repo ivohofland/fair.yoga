@@ -4,6 +4,7 @@ import {
   formatDayHeader,
   formatDateWithYear,
   formatDateShort,
+  formatDateLong,
   formatClassContext,
   formatMonthLabel,
   paymentStateText,
@@ -148,6 +149,18 @@ describe('formatDateShort', () => {
    */
   it('reads the calendar date, not the host-local one', () => {
     expect(formatDateShort(new Date('2026-03-01T00:00:00.000Z'))).toBe('1 Mar');
+  });
+});
+
+describe('formatDateLong', () => {
+  it('renders day then full month', () => {
+    expect(formatDateLong(new Date('2026-10-12T00:00:00.000Z'))).toBe('12 October');
+  });
+
+  // Same UTC-accessor reading as `formatDateShort`; the suite's west-of-UTC
+  // `TZ` pin would render a local read as '30 September'.
+  it('reads the calendar date, not the host-local one', () => {
+    expect(formatDateLong(new Date('2026-10-01T00:00:00.000Z'))).toBe('1 October');
   });
 });
 

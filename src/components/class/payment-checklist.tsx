@@ -7,6 +7,7 @@ import { formatMoney, paymentStateText, timeAgo } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
+import { PaymentClaimLine } from '@/components/class/payment-claim-line';
 import { ListRow } from '@/components/ui/list-row';
 
 export interface PaymentItem {
@@ -16,6 +17,8 @@ export interface PaymentItem {
   amount: number;
   status: PaymentStatus;
   reminderSentAt: Date | null;
+  /** The day the student marked it sent (`claimDay`); shown while the claim stands. */
+  studentReportedOn: Date | null;
 }
 
 interface PaymentChecklistProps {
@@ -25,7 +28,7 @@ interface PaymentChecklistProps {
 }
 
 export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
-  const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
+  const { paymentState, justMarked, updating, error, markPaid, undo, notReceived, standingClaim } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
   );
   // Reminded stamps live here, not inside each button: the button unmounts
@@ -70,6 +73,7 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
           const isUpdating = updating === item.paymentId;
           const reminded = remindedAt[item.paymentId];
           const stateText = paymentStateText(status);
+          const claimedOn = standingClaim({ paymentId: item.paymentId, status, studentReportedOn: item.studentReportedOn });
 
           return (
             <ListRow
@@ -81,7 +85,27 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
                   {item.studentName}
                 </Link>
                 {/* Payment state is text, never a badge — unpaid stays calm brown */}
-                <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>
+                {claimedOn ? (
+                  <PaymentClaimLine overdue={status === 'overdue'} reportedOn={claimedOn} />
+                ) : (
+                  <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>
+                )}
+                {/*
+                  Under the claim rather than beside Send reminder: the right
+                  cluster has no room for a third control on a phone. It still
+                  comes first in reading and tab order.
+                */}
+                {claimedOn && (
+                  <button
+                    type="button"
+                    onClick={() => notReceived(item.paymentId)}
+                    disabled={isUpdating}
+                    className="type-caption text-teal min-h-[44px] px-1 self-start"
+                    aria-label={`Not received — ${item.studentName}`}
+                  >
+                    Not received
+                  </button>
+                )}
                 {reminded && <span className="type-caption">Reminded {timeAgo(reminded)}</span>}
               </div>
 

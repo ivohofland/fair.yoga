@@ -28,6 +28,7 @@ describe('PaymentChecklist', () => {
     amount: 18,
     status: 'paid',
     reminderSentAt: null,
+    studentReportedOn: null,
   };
 
   const appeared: PaymentItem = {
@@ -37,11 +38,12 @@ describe('PaymentChecklist', () => {
     amount: 18,
     status: 'overdue',
     reminderSentAt: null,
+    studentReportedOn: null,
   };
 
   const fetchMock = vi.fn();
 
-  /** Fills in the fields these tests don't care about (`studentId`, `reminderSentAt`). */
+  /** Fills in the fields these tests don't care about (`studentId`, `reminderSentAt`, `studentReportedOn`). */
   function renderChecklist(
     items: Array<Pick<PaymentItem, 'paymentId' | 'studentName' | 'status' | 'amount'> & Partial<PaymentItem>>,
   ) {
@@ -50,6 +52,7 @@ describe('PaymentChecklist', () => {
         items={items.map((item, i) => ({
           studentId: `stu-${i}`,
           reminderSentAt: null,
+          studentReportedOn: null,
           ...item,
         }))}
       />,
@@ -85,6 +88,7 @@ describe('PaymentChecklist', () => {
       amount: 18,
       status: 'pending',
       reminderSentAt: null,
+      studentReportedOn: null,
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
@@ -105,6 +109,7 @@ describe('PaymentChecklist', () => {
       amount: 18,
       status: 'pending',
       reminderSentAt: null,
+      studentReportedOn: null,
     };
     const paidItem: PaymentItem = {
       paymentId: 'pay-paid',
@@ -113,6 +118,7 @@ describe('PaymentChecklist', () => {
       amount: 18,
       status: 'paid',
       reminderSentAt: null,
+      studentReportedOn: null,
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem, paidItem]} />);
 
@@ -140,6 +146,7 @@ describe('PaymentChecklist', () => {
       amount: 18,
       status: 'pending',
       reminderSentAt: null,
+      studentReportedOn: null,
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
@@ -172,15 +179,74 @@ describe('PaymentChecklist', () => {
   it('shows the amounts in the class currency', () => {
     const { container } = render(
       <PaymentChecklist
+       
         currency="GBP"
         items={[
-          { paymentId: 'p1', studentId: 'stu-1', studentName: 'Anna Smith', status: 'pending', amount: 15, reminderSentAt: null },
-          { paymentId: 'p2', studentId: 'stu-2', studentName: 'Bo Jansen', status: 'paid', amount: 18, reminderSentAt: null },
+          { paymentId: 'p1', studentId: 'stu-1', studentName: 'Anna Smith', status: 'pending', amount: 15, reminderSentAt: null, studentReportedOn: null },
+          { paymentId: 'p2', studentId: 'stu-2', studentName: 'Bo Jansen', status: 'paid', amount: 18, reminderSentAt: null, studentReportedOn: null },
         ]}
       />,
     );
     expect(screen.getByText('£15.00')).toBeInTheDocument();
     expect(screen.getByText('£18.00')).toBeInTheDocument();
     expect(container.textContent).not.toContain('€');
+  });
+
+  describe('a payment the student says they sent (#898)', () => {
+    const reportedOn = new Date('2026-10-12T00:00:00.000Z');
+
+    it('shows the claim in place of the status label', () => {
+      renderChecklist([
+        { paymentId: 'p1', studentName: 'Anna Smith', status: 'overdue', amount: 15, studentReportedOn: reportedOn },
+      ]);
+      expect(screen.getByText('! Says paid · 12 Oct')).toBeInTheDocument();
+      expect(screen.queryByText('! Overdue')).toBeNull();
+    });
+
+    it('offers Not received before Send reminder, and keeps Mark paid', () => {
+      renderChecklist([
+        { paymentId: 'p1', studentName: 'Anna Smith', status: 'pending', amount: 15, studentReportedOn: reportedOn },
+      ]);
+      const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'));
+      expect(names).toEqual(['Not received — Anna Smith', 'Send reminder to Anna Smith', 'Mark paid — Anna Smith']);
+      expect(screen.getByRole('button', { name: /^Not received/ })).toHaveTextContent('Not received');
+    });
+
+    it('offers no Not received on a row without a claim', () => {
+      renderChecklist([{ paymentId: 'p1', studentName: 'Anna Smith', status: 'pending', amount: 15 }]);
+      expect(screen.queryByRole('button', { name: /^Not received/ })).toBeNull();
+      expect(screen.getByText('○ Unpaid')).toBeInTheDocument();
+    });
+
+    it('returns the row to its status label on Not received', async () => {
+      fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      renderChecklist([
+        { paymentId: 'p1', studentName: 'Anna Smith', status: 'pending', amount: 15, studentReportedOn: reportedOn },
+      ]);
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByText('○ Unpaid')).toBeInTheDocument();
+      expect(screen.queryByText(/Says paid/)).toBeNull();
+      expect(fetchMock).toHaveBeenCalledWith('/api/payments/p1/not-received', { method: 'POST' });
+    });
+
+    it('shows a refused Not received in the shared alert', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: { message: 'Payments are paused.', code: 'PAYMENTS_PAUSED' } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderChecklist([
+        { paymentId: 'p1', studentName: 'Anna Smith', status: 'pending', amount: 15, studentReportedOn: reportedOn },
+      ]);
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Payments are paused.');
+      expect(screen.getByText('Says paid · 12 Oct')).toBeInTheDocument();
+    });
   });
 });

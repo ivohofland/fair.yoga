@@ -12,6 +12,9 @@ import { CURRENCY_INFO } from '@/lib/currency';
 import type { BankAccountData } from '@/lib/payment-methods';
 import { startOfLocalDay } from '@/lib/timezone';
 import { readResumeReview, type ReviewPayment } from '@/services/payout-resume';
+import { isClaimStanding } from '@/lib/payment-claim';
+import { claimDay } from '@/lib/payment-claim.server';
+import { PaymentClaimLine } from '@/components/class/payment-claim-line';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +46,7 @@ function when(instant: Date, timeZone: string): string {
 function PaymentRow({ payment, timeZone }: { payment: ReviewPayment; timeZone: string }) {
   const state = paymentStateInlineText(payment.status);
   const settledAt = payment.paidAt ?? payment.notChargedAt;
+  const claimedOn = isClaimStanding(payment) ? claimDay(payment.studentReportedAt, timeZone) : null;
   return (
     <li className="py-3 border-b border-border last:border-b-0">
       <div className="flex items-baseline justify-between gap-3">
@@ -54,6 +58,9 @@ function PaymentRow({ payment, timeZone }: { payment: ReviewPayment; timeZone: s
         <span className={state.className}>{state.label}</span>
         {settledAt !== null && <> · {when(settledAt, timeZone)}</>}
       </p>
+      {claimedOn !== null && (
+        <PaymentClaimLine overdue={payment.status === 'overdue'} reportedOn={claimedOn} />
+      )}
     </li>
   );
 }

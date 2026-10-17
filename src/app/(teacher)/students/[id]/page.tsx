@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ArchiveStudentButton } from '@/components/students/archive-student-button';
 import { StudentPaymentList } from '@/components/students/student-payment-list';
+import { claimDay } from '@/lib/payment-claim.server';
 
 export default async function StudentDetailPage({
   params,
@@ -154,6 +155,7 @@ export default async function StudentDetailPage({
             amount: Number(reg.payment!.amount),
             currency: reg.class.currency,
             status: reg.payment!.status,
+            studentReportedOn: claimDay(reg.payment!.studentReportedAt, session.defaultTimezone),
           }))}
         />
       </section>
