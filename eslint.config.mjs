@@ -104,7 +104,7 @@ const eslintConfig = defineConfig([
   },
   // Refuses a direct import of the Prisma package (`@prisma/client` and every
   // subpath of it) and of the generated output under `src/generated`,
-  // everywhere but the two funnels that re-export them. What this rule does not
+  // everywhere but the two funnels, which re-export the generated output. What this rule does not
   // see, and why: docs/technical-architecture.md, "Where Prisma comes from".
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
@@ -116,7 +116,7 @@ const eslintConfig = defineConfig([
           patterns: [
             {
               group: ['@prisma/client', '@prisma/client/*'],
-              message: 'Import Prisma from @/lib/prisma-client (#886); it is the one module that imports the package.',
+              message: 'Import Prisma from @/lib/prisma-client (#886, #888); nothing imports the package directly.',
             },
             {
               group: ['@/generated/*', '**/generated/prisma', '**/generated/prisma/*'],
