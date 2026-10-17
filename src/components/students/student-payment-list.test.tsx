@@ -132,9 +132,20 @@ describe('StudentPaymentList', () => {
       ]);
       expect(screen.getByText('! Says paid · 12 Oct')).toBeInTheDocument();
       expect(screen.getByText('Overdue, says paid on 12 October')).toBeInTheDocument();
+      // The claim line is the row's only overdue marker.
+      expect(screen.queryByText(/! Overdue/)).toBeNull();
+      expect(document.body.textContent!.match(/overdue/gi)).toHaveLength(1);
       expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
         'Mark paid — Vinyasa, Tue 2 Sep',
       ]);
+    });
+
+    it('keeps the status text on an overdue row without a claim', () => {
+      renderList([
+        { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'overdue', amount: 12, currency: 'EUR', studentReportedOn: null },
+      ]);
+      expect(screen.getByText('Tue 2 Sep · ! Overdue')).toBeInTheDocument();
+      expect(screen.queryByText(/Says paid/)).toBeNull();
     });
 
     it('shows no claim on a paid row that keeps its report', () => {

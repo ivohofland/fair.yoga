@@ -55,7 +55,8 @@ function PaymentRow({ payment, timeZone }: { payment: ReviewPayment; timeZone: s
       </div>
       <p className="type-caption">
         {formatClassContext(payment.classType, payment.classDate, payment.startTime)}
-        <span className={state.className}>{state.label}</span>
+        {/* A claim line carries the state itself, so the suffix would repeat it. */}
+        {claimedOn === null && <span className={state.className}>{state.label}</span>}
         {settledAt !== null && <> · {when(settledAt, timeZone)}</>}
       </p>
       {claimedOn !== null && (
