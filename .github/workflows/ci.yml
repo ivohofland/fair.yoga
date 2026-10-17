@@ -483,10 +483,10 @@ jobs:
   # --from graph, so it silently goes unbuilt without its own step.
   # Nothing is pushed. The images are started only far enough to prove that
   # Prisma's engine loads in each, and in the migrate image that the deploy
-  # gate's imports resolve; each check aims at an address nothing
-  # can answer and passes only on the unreachable-database failure. Every container runs with
-  # --network none, for a reason docs/supply-chain.md keeps (Prisma's engine
-  # in the images). Query behaviour is the other jobs' work.
+  # gate's imports resolve; each check aims at an address nothing can answer
+  # and passes only on the unreachable-database failure. Every container runs
+  # with --network none, for a reason docs/supply-chain.md keeps (Prisma's
+  # engine in the images). Query behaviour is the other jobs' work.
   docker-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
