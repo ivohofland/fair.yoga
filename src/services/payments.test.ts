@@ -648,9 +648,8 @@ describe('Payment Service (DB)', () => {
   });
 
   /**
-   * `markPaymentNotCharged` and `reopenPayment`, both against payments of their
-   * own — the sequential fixture above leaves `paymentId` in whatever state its
-   * last test left it, which these don't depend on.
+   * Every test here builds its own payment, so none depends on the state the
+   * sequential fixture above left `paymentId` in.
    */
   describe('with a fresh payment per test', () => {
     const fixtureStudentIds: string[] = [];

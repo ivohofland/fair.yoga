@@ -98,7 +98,9 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
                 {claimedOn && (
                   <button
                     type="button"
-                    onClick={() => notReceived(item.paymentId)}
+                    onClick={() =>
+                      notReceived(item.paymentId, (stamp) => setRemindedAt((prev) => ({ ...prev, [item.paymentId]: stamp })))
+                    }
                     disabled={isUpdating}
                     className="type-caption text-teal min-h-[44px] px-1 self-start"
                     aria-label={`Not received — ${item.studentName}`}

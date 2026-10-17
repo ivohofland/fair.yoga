@@ -668,6 +668,38 @@ describe('OutstandingPaymentRow', () => {
       expect(screen.queryByRole('alert')).toBeNull();
     });
 
+    it('shows the reminder stamp Not received made, so no second message is invited', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { reminderSentAt: new Date().toISOString() } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ studentReportedOn: reportedOn, reminderSentAt: null });
+      expect(screen.queryByText(/^Reminded/)).toBeNull();
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByText('Reminded just now')).toBeInTheDocument();
+    });
+
+    it('keeps the claim hidden through Not charged and its Undo', async () => {
+      fetchMock.mockImplementation(async (url: string) =>
+        url.endsWith('/not-charged')
+          ? { ok: true, status: 200, json: async () => ({ data: {} }) }
+          : { ok: true, status: 200, json: async () => ({ data: { status: 'pending' } }) },
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      renderRow({ status: 'pending', studentReportedOn: reportedOn });
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not charged/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /^Undo marking/ }));
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Mark paid/ })).toBeInTheDocument());
+      expect(screen.queryByText(/Says paid/)).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Not received/ })).toBeNull();
+    });
+
     it('keeps the claim and shows the refusal when Not received is refused', async () => {
       fetchMock.mockResolvedValue({
         ok: false,

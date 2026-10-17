@@ -925,7 +925,7 @@ describe('the student payment claim: /sent and /not-received', () => {
   });
 
   it('not-received: clears the claim, then answers a repeat unchanged', async () => {
-    await reset({ studentReportedAt: new Date() });
+    await reset({ studentReportedAt: new Date(), reminderSentAt: null });
 
     const data = (await expectApplied(await notReceived(teacherToken, paymentId))) as Record<string, unknown>;
     expect(data.studentReportedAt).toBeNull();

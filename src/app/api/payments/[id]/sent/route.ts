@@ -4,8 +4,7 @@ import { requireStudent, isErrorResponse, withErrorHandler } from '@/lib/api-uti
 import { reportPaymentSent, withdrawPaymentReport } from '@/services/payments';
 import { respondPaymentOutcome } from '../shared';
 
-// Ownership is inside the services' WHERE: another student's payment answers
-// `NOT_FOUND`, so there is no separate ownership gate here.
+// Ownership is the services' to decide; see `reportPaymentSent`.
 
 export const POST = withErrorHandler(async (
   request: NextRequest,

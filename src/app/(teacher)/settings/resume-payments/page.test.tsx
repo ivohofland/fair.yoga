@@ -62,7 +62,9 @@ describe('the resume-payments page', () => {
     render(await ResumePaymentsPage());
 
     expect(screen.getByText(/Payments are running\. You resumed them on 20 Jul 2026, 14:05/)).toBeInTheDocument();
-    expect(document.body.textContent).toContain('were told then that they can pay');
+    expect(document.body.textContent).toContain(
+      'except those who marked theirs sent, were told then that they can pay',
+    );
     expect(screen.queryByRole('button', { name: 'Resume payments' })).toBeNull();
   });
 

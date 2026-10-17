@@ -118,7 +118,7 @@ export default async function ResumePaymentsPage() {
         <p className="type-body">
           {resumedAt === null
             ? 'Payments aren’t paused.'
-            : `Payments are running. You resumed them on ${when(resumedAt, timeZone)}, and students with an outstanding payment were told then that they can pay.`}{' '}
+            : `Payments are running. You resumed them on ${when(resumedAt, timeZone)}, and students with an outstanding payment, except those who marked theirs sent, were told then that they can pay.`}{' '}
           <Link href="/schedule" className={linkClass}>Back to your schedule</Link>
         </p>
       </div>
@@ -134,7 +134,7 @@ export default async function ResumePaymentsPage() {
 
       <p className="type-body mb-8">
         You paused payments on {when(review.pausedAt, timeZone)}. Check what changed and the details below, then
-        resume. Students with an outstanding payment will be told they can pay.
+        resume. Students with an outstanding payment will be told they can pay, except those who marked theirs sent.
       </p>
 
       <section className="mb-8">

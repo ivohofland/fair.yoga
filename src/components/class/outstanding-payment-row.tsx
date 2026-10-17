@@ -90,7 +90,7 @@ export function OutstandingPaymentRow({
                 <>
                   <button
                     type="button"
-                    onClick={() => notReceived(paymentId)}
+                    onClick={() => notReceived(paymentId, setRemindedAt)}
                     disabled={busy}
                     className="type-caption text-teal min-h-[44px] px-1"
                     aria-label={`Not received — ${studentName}, ${classContext}`}

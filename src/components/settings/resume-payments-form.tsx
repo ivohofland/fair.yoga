@@ -158,7 +158,7 @@ export function ResumePaymentsForm({
         <p className="type-subtitle">{state.kind === 'resumed' ? 'Payments are running again' : 'Payments are already running'}</p>
         <p className="type-body">
           {state.kind === 'resumed'
-            ? 'Students with an outstanding payment have been told they can pay.'
+            ? 'Students with an outstanding payment have been told they can pay, except those who marked theirs sent.'
             : 'They were resumed before this, perhaps from another tab or device.'}{' '}
           <Link href="/schedule" className={linkClass}>Back to your schedule</Link>
         </p>
