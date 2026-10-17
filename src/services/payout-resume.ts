@@ -90,6 +90,7 @@ export interface ReviewPayment {
   status: PaymentStatus;
   paidAt: Date | null;
   notChargedAt: Date | null;
+  studentReportedAt: Date | null;
 }
 
 export interface ReviewEvent {
@@ -134,6 +135,7 @@ function reviewPaymentSelect(teacherId: string) {
     status: true,
     paidAt: true,
     notChargedAt: true,
+    studentReportedAt: true,
     registration: {
       select: {
         student: { select: studentNameSelect(teacherId) },
@@ -163,6 +165,7 @@ function toReviewPayment(row: ReviewPaymentRow, teacherId: string): ReviewPaymen
     status: row.status,
     paidAt: row.paidAt,
     notChargedAt: row.notChargedAt,
+    studentReportedAt: row.studentReportedAt,
   };
 }
 
@@ -265,7 +268,7 @@ const RESUMED_TITLE = 'You can pay now';
  * (`docs/lock-order.md`, "The `Teacher` row is the first lock").
  *
  * Success clears the pause, stamps `paymentsResumedAt`, deletes the teacher's
- * pause links, and reminds each outstanding payment's student with the copy
+ * pause links, and reminds each outstanding payment's student, unless they marked it sent, with the copy
  * the teacher's methods now give, stamping `reminderSentAt`, the column the
  * reminder sweep dedupes on (`docs/data-model.md`, Payout-change alert).
  */
@@ -302,6 +305,8 @@ export async function resumePayments(
     const owed = await tx.payment.findMany({
       where: {
         status: { in: OUTSTANDING_STATUSES },
+        // A student who marked it sent is not told they can pay now.
+        studentReportedAt: null,
         registration: { student: { deletedAt: null }, class: { calendarEntry: { teacherId } } },
       },
       // The reminders below are inserted in this order, and each one's

@@ -111,7 +111,7 @@ async function classFor(teacherId: string, currency: Currency = 'EUR', date = ne
 
 async function payment(
   classId: string,
-  data: { status: PaymentStatus; createdAt: Date; paidAt?: Date; notChargedAt?: Date; reminderSentAt?: Date; firstName?: string },
+  data: { status: PaymentStatus; createdAt: Date; paidAt?: Date; notChargedAt?: Date; reminderSentAt?: Date; studentReportedAt?: Date; firstName?: string },
 ) {
   const student = await prisma.student.create({
     data: { firstName: data.firstName ?? 'Pay', lastName: 'Er', email: `resume-st-${uniqueSuffix()}@test.local`, incomeTier: 3 },
@@ -124,6 +124,7 @@ async function payment(
     data: {
       registrationId: reg.id, amount: 12.5, status: data.status, createdAt: data.createdAt,
       paidAt: data.paidAt ?? null, notChargedAt: data.notChargedAt ?? null, reminderSentAt: data.reminderSentAt ?? null,
+      studentReportedAt: data.studentReportedAt ?? null,
     },
   });
   return { paymentId: p.id, studentId: student.id };
@@ -163,6 +164,20 @@ describe('readResumeReview', () => {
     expect(review?.settled.map((p) => p.id)).not.toContain(paidAfterPause.paymentId);
     expect(review?.pausedAt).toEqual(t.pausedAt);
     expect(review?.windowStart).toEqual(t.windowStart);
+  });
+
+  it('carries the student\'s claim on an outstanding payment, claimed or not', async () => {
+    const t = await pausedTeacher();
+    const cls = await classFor(t.teacherId);
+    const claimedAt = daysBefore(t.pausedAt, 1);
+    const claimed = await payment(cls.id, { status: 'pending', createdAt: daysBefore(t.pausedAt, 2), studentReportedAt: claimedAt });
+    const unclaimed = await payment(cls.id, { status: 'pending', createdAt: daysBefore(t.pausedAt, 1) });
+
+    const review = await readResumeReview(prisma, t.teacherId, await session(t.accountId), NOW);
+
+    const byId = (id: string) => review?.outstanding.find((p) => p.id === id);
+    expect(byId(claimed.paymentId)?.studentReportedAt).toEqual(claimedAt);
+    expect(byId(unclaimed.paymentId)?.studentReportedAt).toBeNull();
   });
 
   it('shows every currency\'s account and the link in full, with the fingerprint of all of them', async () => {
@@ -387,6 +402,24 @@ describe('resumePayments', () => {
     expect(stampOf(overdue.paymentId)).toEqual(NOW);
     expect(stampOf(paid.paymentId)).toBeNull();
     expect(stampOf(otherOwed.paymentId)).toBeNull();
+  });
+
+  it('tells no student who marked their payment sent, and leaves that payment unstamped', async () => {
+    const t = await pausedTeacher();
+    const cls = await classFor(t.teacherId);
+    const open = await payment(cls.id, { status: 'pending', createdAt: daysBefore(NOW, 2) });
+    const claimed = await payment(cls.id, { status: 'overdue', createdAt: daysBefore(NOW, 20), studentReportedAt: daysBefore(NOW, 1) });
+
+    expect(await resumePayments(prisma, {
+      teacherId: t.teacherId, sessionId: await session(t.accountId), fingerprint: await currentFingerprint(t.teacherId), now: NOW,
+    })).toEqual({ status: 'resumed' });
+
+    const told = async (studentId: string) =>
+      prisma.notification.count({ where: { recipientType: 'student', recipientId: studentId } });
+    expect(await told(open.studentId)).toBe(1);
+    expect(await told(claimed.studentId)).toBe(0);
+    const stamp = await prisma.payment.findUniqueOrThrow({ where: { id: claimed.paymentId }, select: { reminderSentAt: true } });
+    expect(stamp.reminderSentAt).toBeNull();
   });
 
   it('tells no erased student, and leaves the payment of an erased student unstamped', async () => {
