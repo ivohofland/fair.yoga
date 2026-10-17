@@ -9,7 +9,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { formatDayHeader } from '@/lib/format';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
-import { createPrismaClient } from '@/lib/prisma-client';
+import { createPrismaClient, type PrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -314,6 +314,68 @@ describe('payment reminders (DB)', () => {
     expect(await sendPaymentReminders(scoped.db, now)).toBe(0);
     const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(row.reminderSentAt).toBeNull();
+  });
+
+  describe('a student who marked the payment sent', () => {
+    const claimedAt = new Date(now.getTime() - 2 * DAY);
+
+    it('is not reminded, stamped or notified, while an unclaimed payment in the same run is', async () => {
+      const claimed = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue');
+      const unclaimed = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue');
+      await prisma.payment.update({ where: { id: claimed.id }, data: { studentReportedAt: claimedAt } });
+      const scoped = scopeSweep(prisma, { Payment: { id: { in: [claimed.id, unclaimed.id] } } });
+
+      expect(await sendPaymentReminders(scoped.db, now)).toBe(1);
+      // The read itself leaves the claimed payment out, not only the stamp swap after it.
+      expect(scoped.rowsRead('Payment')).toBe(1);
+
+      const claimedRow = await prisma.payment.findUniqueOrThrow({ where: { id: claimed.id } });
+      const unclaimedRow = await prisma.payment.findUniqueOrThrow({ where: { id: unclaimed.id } });
+      expect(claimedRow.reminderSentAt).toBeNull();
+      expect(unclaimedRow.reminderSentAt?.getTime()).toBe(now.getTime());
+      const claimedReg = await prisma.registration.findUniqueOrThrow({ where: { id: claimed.registrationId }, select: { studentId: true } });
+      expect(await prisma.notification.count({ where: { recipientId: claimedReg.studentId, type: 'reminder' } })).toBe(0);
+    });
+
+    it('is not reminded when the claim lands between the read and the stamp', async () => {
+      const payment = await makePayment(new Date(now.getTime() - 10 * DAY), 'overdue');
+      // The claim lands right after the sweep's read returns the payment.
+      const racing = prisma.$extends({
+        query: {
+          payment: {
+            async findMany({ args, query }) {
+              const rows = await query(args);
+              await prisma.payment.updateMany({
+                where: { id: { in: rows.flatMap((r) => (r.id === undefined ? [] : [r.id])) } },
+                data: { studentReportedAt: claimedAt },
+              });
+              return rows;
+            },
+          },
+        },
+      }) as unknown as PrismaClient;
+      const scoped = scopeSweep(racing, { Payment: { id: { in: [payment.id] } } });
+
+      expect(await sendPaymentReminders(scoped.db, now)).toBe(0);
+
+      // Presence check: the read did return the payment before the claim landed.
+      expect(scoped.rowsRead('Payment')).toBe(1);
+      const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      expect(row.reminderSentAt).toBeNull();
+      const reg = await prisma.registration.findUniqueOrThrow({ where: { id: payment.registrationId }, select: { studentId: true } });
+      expect(await prisma.notification.count({ where: { recipientId: reg.studentId, type: 'reminder' } })).toBe(0);
+    });
+
+    it('still becomes overdue after seven days', async () => {
+      const payment = await makePayment(new Date(now.getTime() - 8 * DAY));
+      await prisma.payment.update({ where: { id: payment.id }, data: { studentReportedAt: claimedAt } });
+
+      await markOverduePayments(prisma, now);
+
+      const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      expect(row.status).toBe('overdue');
+      expect(row.studentReportedAt).toEqual(claimedAt);
+    });
   });
 
   describe('a paused teacher', () => {

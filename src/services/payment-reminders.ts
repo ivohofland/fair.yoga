@@ -62,6 +62,8 @@ function readDuePaymentPage(
   return db.payment.findMany({
     where: {
       status: 'overdue',
+      // A student who said they already paid is not chased.
+      studentReportedAt: null,
       OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
       // Erased accounts end the dunning: a deleted student reads nothing,
       // and a deleted teacher has no bank account or payment link left to pay into.
@@ -102,7 +104,7 @@ export type DuePayment = Awaited<ReturnType<typeof readDuePaymentPage>>[number];
 
 /**
  * The overdue payments `sendPaymentReminders` reminds: not reminded since
- * `remindCutoff`, with neither side of the payment erased and the teacher's
+ * `remindCutoff`, that the student has not marked sent, with neither side of the payment erased and the teacher's
  * payments not paused. Read
  * `SWEEP_PAGE_SIZE` at a time via `readInPages` (`@/lib/read-in-pages`); why
  * is in `docs/technical-architecture.md` ("Relation loads over platform-wide
@@ -139,6 +141,7 @@ export async function sendPaymentReminders(
         where: {
           id: payment.id,
           status: 'overdue',
+          studentReportedAt: null,
           OR: [{ reminderSentAt: null }, { reminderSentAt: { lt: remindCutoff } }],
         },
         data: { reminderSentAt: now },
