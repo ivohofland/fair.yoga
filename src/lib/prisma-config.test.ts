@@ -30,8 +30,8 @@ function freshClone(): string {
   fs.mkdirSync(path.join(dir, 'prisma'));
   const schema = fs.readFileSync(path.join(REPO_ROOT, 'prisma', 'schema.prisma'), 'utf8');
   const redirected = schema.replace(
-    'provider = "prisma-client-js"',
-    `provider = "prisma-client-js"\n  output   = "${path.join(dir, 'generated-client')}"`,
+    'output   = "../src/generated/prisma"',
+    `output   = "${path.join(dir, 'generated-client')}"`,
   );
   expect(redirected).not.toBe(schema);
   fs.writeFileSync(path.join(dir, 'prisma', 'schema.prisma'), redirected);

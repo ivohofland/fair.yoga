@@ -1,5 +1,5 @@
 /**
- * Replaces `@prisma/client`'s `PrismaClient` with one that classifies its
+ * Replaces the generated client's `PrismaClient` with one that classifies its
  * construction stack (`classifyCallSite`). It skips frames in this installer
  * and in `src/lib/prisma-client.ts`, so a client built through the factory is
  * classified by the factory's caller. A client whose call site is test code
@@ -33,8 +33,8 @@ function constructionStack(): string {
   }
 }
 
-vi.mock('@prisma/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@prisma/client')>();
+vi.mock('../../src/generated/prisma/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/generated/prisma/client')>();
   class GuardedPrismaClient extends actual.PrismaClient {
     constructor(...args: ConstructorParameters<typeof actual.PrismaClient>) {
       super(...args);

@@ -13,3 +13,4 @@ tsconfig.tsbuildinfo
 **/.env*
 !**/.env.example
 .deployed*
+src/generated

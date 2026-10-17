@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@/lib/prisma-client';
+import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@/lib/prisma-enums';
 import { isSafeRelativePath, REDIRECT_MAX_LENGTH, URL_STRIPPED_CHARS } from '@/lib/safe-path';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
