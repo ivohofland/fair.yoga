@@ -57,7 +57,7 @@ unchanged.
 ## Drive (Playwright)
 
 - `@playwright/test` is a dev dep; drive with a plain `chromium.launch()` script via `pnpm exec tsx`.
-- Scripts outside the repo (scratchpad) need `NODE_PATH=<repo>/node_modules` to resolve `@prisma/client` and `@playwright/test`. **Spell `@playwright/test`, not bare `playwright`** — under pnpm a top-level `node_modules` resolves only the packages `package.json` declares, and `playwright` is `@playwright/test`'s dependency, not this repo's. `require('playwright')` answers `MODULE_NOT_FOUND`; `chromium` comes off `@playwright/test`. General form and the measurement: `docs/supply-chain.md`.
+- Scripts outside the repo (scratchpad) need `NODE_PATH=<repo>/node_modules` to resolve `@playwright/test`. A script reaches the database by importing `<worktree>/src/lib/prisma-client` (absolute path) under `pnpm exec tsx`; `@prisma/client` itself no longer carries a client, so `require('@prisma/client')` has nothing to construct. **Spell `@playwright/test`, not bare `playwright`** — under pnpm a top-level `node_modules` resolves only the packages `package.json` declares, and `playwright` is `@playwright/test`'s dependency, not this repo's. `require('playwright')` answers `MODULE_NOT_FOUND`; `chromium` comes off `@playwright/test`. General form and the measurement: `docs/supply-chain.md`.
 - **Never wait for `networkidle`** — the app holds an SSE connection (LiveUpdates) open forever. Use `waitUntil: 'load'` + wait for a concrete locator.
 - `pnpm exec tsx -e "..."` is CJS: no top-level await; use `.then()` or an async `run()`.
 

@@ -842,6 +842,30 @@ engine (the schema engine under
 plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
 without `--network none`.
 
+The runner image carries no Prisma package: the generated client exists there
+only inside the Next bundle, with its engine traced to
+`/app/src/generated/prisma/`. Nothing outside the bundle can construct it, so
+`scripts/prisma-engine-probe.cjs` boots the real `/app/server.js` with
+`DATABASE_URL` at `203.0.113.1` (RFC 5737, unroutable) and waits for the
+health route's log line whose `msg` is `health check: database probe failed`.
+It passes only when that line's error message is Prisma's
+can't-reach-database text, which can only come from an engine that loaded and
+tried the connection. That proves the bundle finds its own engine, which a
+`require` of a package copy beside the bundle never did.
+
+The probe matches the message, not a code, because the logged
+`PrismaClientInitializationError` carries none: the serializer takes `code`
+from `err.errorCode`, and a lazy-connect `$queryRaw` failure leaves that
+unset. Measured identically on an image built from `origin/main` at 7ec3c799,
+so it is not the generator's doing. Revisiting the P-codes and the serializer
+belongs to #885.
+
+Re-derive the runner probe: build a scratch image `FROM` the runner with
+`RUN rm /app/src/generated/prisma/*.node` (as root, before the `USER` line
+takes effect) and run the CI probe step on it. It fails with
+`prisma-engine-probe: the query engine did not load: the bundle has no engine for this platform`,
+followed by the server's own `Prisma Client could not locate the Query Engine`.
+
 ### The database image
 
 `postgres:16-alpine` was found floating in **six** places, sweeping the
