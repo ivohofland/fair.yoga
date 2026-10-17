@@ -268,9 +268,10 @@ const RESUMED_TITLE = 'You can pay now';
  * (`docs/lock-order.md`, "The `Teacher` row is the first lock").
  *
  * Success clears the pause, stamps `paymentsResumedAt`, deletes the teacher's
- * pause links, and reminds each outstanding payment's student, unless they marked it sent, with the copy
- * the teacher's methods now give, stamping `reminderSentAt`, the column the
- * reminder sweep dedupes on (`docs/data-model.md`, Payout-change alert).
+ * pause links, and reminds the student of each outstanding payment they have
+ * not marked sent, with the copy the teacher's methods now give, stamping
+ * `reminderSentAt`, the column the reminder sweep dedupes on
+ * (`docs/data-model.md`, Payout-change alert).
  */
 export async function resumePayments(
   db: PrismaClient,
@@ -302,7 +303,7 @@ export async function resumePayments(
     await tx.payoutPauseToken.deleteMany({ where: { teacherId } });
 
     const resumed = await tx.teacher.findUniqueOrThrow({ where: { id: teacherId }, select: teacherPaymentSelect });
-    const owed = await tx.payment.findMany({
+    const unclaimedOwed = await tx.payment.findMany({
       where: {
         status: { in: OUTSTANDING_STATUSES },
         // A student who marked it sent is not told they can pay now.
@@ -333,8 +334,8 @@ export async function resumePayments(
         },
       },
     });
-    if (owed.length > 0) {
-      const notifications: CreateNotificationInput[] = owed.map((p) => {
+    if (unclaimedOwed.length > 0) {
+      const notifications: CreateNotificationInput[] = unclaimedOwed.map((p) => {
         const cls = p.registration.class;
         const guidance = payGuidanceFor(paymentMethodsForTeacher(resumed, cls.currency));
         return {
@@ -346,7 +347,7 @@ export async function resumePayments(
           relatedClassId: cls.id,
         };
       });
-      await tx.payment.updateMany({ where: { id: { in: owed.map((p) => p.id) } }, data: { reminderSentAt: now } });
+      await tx.payment.updateMany({ where: { id: { in: unclaimedOwed.map((p) => p.id) } }, data: { reminderSentAt: now } });
       await createBulkNotifications(tx, notifications);
     }
     return { status: 'resumed' };

@@ -607,7 +607,7 @@ Against each, the class its notifications carry:
 | `POST /api/announcements` | at most one — the class of a class-scoped send; an all-students or custom send names none (#196, #48) |
 | `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
-| `resumePayments` (`payout-resume.ts`) | **many** — one reminder per owed payment, each carrying its completed class as `relatedClassId`, in ascending class id (the owed-payment read's `orderBy`) |
+| `resumePayments` (`payout-resume.ts`) | **many** — one reminder per outstanding payment its student has not marked sent, each carrying its completed class as `relatedClassId`, in ascending class id (the payment read's `orderBy`) |
 
 > **Four `createBulkNotifications` sites take no `Class` row lock.**
 > `sendPaymentReminder` and `rejectPaymentReport` (`payments.ts`) and
@@ -1774,16 +1774,14 @@ which of them also locks `TeacherStudent`:
 
     grep -rnE "payment\.(create|update|updateMany|delete|deleteMany|upsert)\(" src | grep -v "\.test\."
 
-On 2026-10-17 (branch `feat/898-student-marks-sent`) it returned 13
+On 2026-10-17 it returned 13
 lines = 8 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
 `reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`,
 `reportPaymentSent`, `withdrawPaymentReport`, `rejectPaymentReport`) + 2 in
 `payment-reminders.ts` (`markOverduePayments`, `sendPaymentReminders`) + 1 in
 `class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
 (`archiveStudent`'s waive) + 1 in `payout-resume.ts` (`resumePayments`'s
-`reminderSentAt` stamp). The arithmetic: 8 + 2 + 1 + 1 + 1 = 13. `origin/main`
-returned 10 (`git grep -nE` with the same pattern, `-- src ':!*.test.*'`);
-#898 adds the three claim writers, 10 + 3 = 13. Two of the thirteen
+`reminderSentAt` stamp). The arithmetic: 8 + 2 + 1 + 1 + 1 = 13. Two of the thirteen
 also lock `TeacherStudent` — `reopenPayment` and `archiveStudent`, both
 link-first — and none touches `Invitation` or `TeacherBlock`. The three claim
 writers take no link lock and no `Class` row lock; each is a single-row
@@ -2089,7 +2087,7 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   the teacher's pause columns, the session and its credential, and the
   teacher's `TeacherBankAccount` rows and link for the fingerprint; a
   `Teacher` `UPDATE` of non-key columns (which raises nothing); a delete of the
-  teacher's `PayoutPauseToken` rows; a read of its outstanding `Payment` rows,
+  teacher's `PayoutPauseToken` rows; a read of its outstanding, unclaimed `Payment` rows,
   an `UPDATE` of their `reminderSentAt`, and `Notification` inserts, each of
   whose foreign-key check takes `FOR KEY SHARE` on its `Class`
   (`relatedClassId`) in ascending class id. The `Payment` `UPDATE` can wait on a holder of one of

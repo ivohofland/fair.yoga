@@ -4,8 +4,8 @@ import { isOutstanding } from '@/lib/payment-status';
 /**
  * Is the student's "I've sent it" still awaiting the teacher's confirmation?
  * Derived, never stored: the payment is still owed and its student has marked
- * it sent. A paid payment keeps `studentReportedAt` as the student's half of
- * the record, so the timestamp alone does not answer this.
+ * it sent. The timestamp alone does not answer this, because it outlives
+ * settlement (`docs/data-model.md`, Payment).
  *
  * The Prisma import is type-only, so a client component can import this.
  */
