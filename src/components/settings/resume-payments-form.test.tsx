@@ -45,6 +45,7 @@ describe('ResumePaymentsForm', () => {
     expect(init?.method).toBe('POST');
     expect(JSON.parse(String(init?.body))).toEqual({ fingerprint: FINGERPRINT });
     expect(screen.getByRole('status')).toHaveTextContent('Payments are running again');
+    expect(screen.getByRole('status')).toHaveTextContent('except those who marked theirs sent');
     expect(screen.queryByRole('button', { name: 'Resume payments' })).not.toBeInTheDocument();
   });
 

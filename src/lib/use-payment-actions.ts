@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import type { PaymentStatus } from '@/lib/prisma-client';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
-import { isOutstanding, readUndoStatus } from '@/lib/payment-status';
+import { readUndoStatus } from '@/lib/payment-status';
+import { isClaimStanding } from '@/lib/payment-claim';
 
 /** A payment as a row renders it: the status shown and the server's claim day. */
 interface ClaimedPayment {
@@ -11,6 +12,17 @@ interface ClaimedPayment {
   status: PaymentStatus;
   /** The day the student marked it sent (`claimDay`), or null. */
   studentReportedOn: Date | null;
+}
+
+/** The `reminderSentAt` of a `{ data: payment }` answer, or null when absent or unreadable. */
+function readReminderStamp(json: unknown): Date | null {
+  if (typeof json !== 'object' || json === null || !('data' in json)) return null;
+  const { data } = json;
+  if (typeof data !== 'object' || data === null || !('reminderSentAt' in data)) return null;
+  const { reminderSentAt } = data;
+  if (typeof reminderSentAt !== 'string') return null;
+  const date = new Date(reminderSentAt);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 /**
@@ -23,9 +35,9 @@ interface ClaimedPayment {
  * returns the payment to 'pending', or reports the unpaid status it had.
  *
  * Also the student's "I've sent it" claim: `standingClaim` answers it from the
- * row's own status, so a row marked paid here hides it and an Undo, which
- * reopens the payment with the claim kept, shows it again. "Not received"
- * clears it here once the server has.
+ * row's own status, so a row marked paid here hides it, and an Undo of that
+ * shows it again. "Not received" and "Not charged" each clear it locally once
+ * their request succeeds.
  */
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {
   const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
@@ -37,7 +49,7 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
 
   /** The claim's day while it stands for this row, else null. */
   function standingClaim({ paymentId, status, studentReportedOn }: ClaimedPayment): Date | null {
-    if (!isOutstanding(status) || clearedClaims.has(paymentId)) return null;
+    if (clearedClaims.has(paymentId) || !isClaimStanding({ status, studentReportedAt: studentReportedOn })) return null;
     return studentReportedOn;
   }
 
@@ -88,6 +100,7 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
 
       if (res.ok) {
         setPaymentState((prev) => ({ ...prev, [paymentId]: 'not_charged' }));
+        setClearedClaims((prev) => new Set(prev).add(paymentId));
         setJustMarked((prev) => new Set(prev).add(paymentId));
       } else {
         setError(await readErrorMessage(res, 'Could not mark as not charged. Try again.'));
@@ -97,7 +110,8 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
     }
   }
 
-  async function notReceived(paymentId: string) {
+  /** `onStamped` receives the reminder stamp the answer carries, when it has one. */
+  async function notReceived(paymentId: string, onStamped?: (stamp: Date) => void) {
     setUpdating(paymentId);
     setError('');
     try {
@@ -112,6 +126,13 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
 
       if (res.ok) {
         setClearedClaims((prev) => new Set(prev).add(paymentId));
+        try {
+          const json: unknown = await res.json();
+          const stamp = readReminderStamp(json);
+          if (stamp !== null) onStamped?.(stamp);
+        } catch {
+          // The claim is cleared whatever the body held; only the caption is lost.
+        }
       } else {
         setError(await readErrorMessage(res, 'Could not mark as not received. Try again.'));
       }

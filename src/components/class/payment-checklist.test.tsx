@@ -232,6 +232,22 @@ describe('PaymentChecklist', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/payments/p1/not-received', { method: 'POST' });
     });
 
+    it('shows the reminder stamp Not received made', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { reminderSentAt: new Date().toISOString() } }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      renderChecklist([
+        { paymentId: 'p1', studentName: 'Anna Smith', status: 'pending', amount: 15, studentReportedOn: reportedOn },
+      ]);
+
+      fireEvent.click(screen.getByRole('button', { name: /^Not received/ }));
+
+      expect(await screen.findByText('Reminded just now')).toBeInTheDocument();
+    });
+
     it('shows a refused Not received in the shared alert', async () => {
       fetchMock.mockResolvedValue({
         ok: false,
