@@ -713,7 +713,7 @@ model Class {
   /// window still holds the first notification, so that proxy would suppress
   /// the sweep's repair of a dropped second broadcast. The flag was cleared by
   /// the fill, so the null check does not.
-  spotBroadcastAt DateTime?
+  spotBroadcastAt     DateTime?
   /// When the auto-cancel decision for this class was made. Non-null means
   /// the sweep never judges this class again. Moving the start of an unbooked
   /// class re-decides it: the marker is set or cleared against the new check
@@ -1229,18 +1229,19 @@ model WaitlistEntry {
 // ============================================================================
 
 model Payment {
-  id             String        @id @default(uuid())
-  registrationId String        @unique
-  amount         Decimal       @db.Decimal(10, 2)
-  vatAmount      Decimal       @default(0) @db.Decimal(10, 2)
-  status         PaymentStatus @default(pending)
-  method         String?
-  processorRef   String?
-  reminderSentAt DateTime?
-  paidAt         DateTime?
-  notChargedAt   DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                String        @id @default(uuid())
+  registrationId    String        @unique
+  amount            Decimal       @db.Decimal(10, 2)
+  vatAmount         Decimal       @default(0) @db.Decimal(10, 2)
+  status            PaymentStatus @default(pending)
+  method            String?
+  processorRef      String?
+  reminderSentAt    DateTime?
+  paidAt            DateTime?
+  notChargedAt      DateTime?
+  studentReportedAt DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
 

@@ -2,7 +2,8 @@
  * Payment Service — Manages payment lifecycle after creation.
  *
  * Payments are created by completeClass (in class-lifecycle.ts).
- * This service handles status transitions, reminders, and queries.
+ * This service handles status transitions, reminders, the student's
+ * "I've sent it" claim, and queries.
  */
 
 import type { PrismaClient, Payment, RegistrationStatus } from '@/lib/prisma-client';
@@ -14,7 +15,7 @@ import {
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
-import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
+import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
@@ -27,10 +28,11 @@ import { log } from '@/lib/log';
 export type PaymentResult = { ok: true; payment: Payment } | { ok: false; error: string };
 
 /**
- * A refusal from one of the teacher's payment actions below. `code` is a
- * registered code (`src/lib/api-error-codes.ts`), which fixes the HTTP
- * status; `status` is that code's own, pinned by `CodedRefusal`; `message`
- * is what the teacher reads.
+ * A refusal from one of the payment actions below. `code` is a registered
+ * code (`src/lib/api-error-codes.ts`), which fixes the HTTP status; `status`
+ * is that code's own, pinned by `CodedRefusal`; `message` is what the person
+ * at that action's door reads — the teacher, or the student for the claim
+ * actions.
  */
 export type PaymentRefusal = Extract<
   CodedRefusal,
@@ -46,10 +48,11 @@ export type PaymentRefusal = Extract<
 >;
 
 /**
- * What a teacher's payment action did. `applied`: this call wrote the row.
+ * What a payment action did. `applied`: this call wrote the row.
  * `unchanged`: the row already held what the action asks for, and nothing was
  * written or sent. Either way `payment` is the row as stored. An `unchanged`
- * answer describes the row, so a caller checks ownership before calling.
+ * answer describes the row, so a teacher action's caller checks ownership
+ * before calling; the student actions scope to the student themselves.
  */
 export type PaymentOutcome =
   | { readonly kind: 'applied'; readonly payment: Payment }
@@ -300,7 +303,8 @@ export async function reopenPayment(
  * `unchanged`; a paid one is refused, because waiving it would be a refund.
  *
  * `reminderSentAt` is deliberately left alone. A reminder that was sent was
- * sent, and the row's history stays true.
+ * sent, and the row's history stays true. A standing claim
+ * (`studentReportedAt`) is cleared: waiving is the teacher acting on it.
  *
  * Conditional update for the same reason `markPaymentPaid` uses one: the status
  * guard lives in the WHERE clause so a double submission cannot both pass a
@@ -312,7 +316,7 @@ export async function markPaymentNotCharged(
 ): Promise<PaymentOutcome> {
   const result = await db.payment.updateMany({
     where: { id: paymentId, status: { in: ['pending', 'overdue'] } },
-    data: { status: 'not_charged', notChargedAt: new Date() },
+    data: { status: 'not_charged', notChargedAt: new Date(), studentReportedAt: null },
   });
 
   if (result.count === 0) {
@@ -396,15 +400,15 @@ export async function sendPaymentReminder(
   try {
     return await remindInTransaction(db, paymentId);
   } catch (e) {
-    if (e instanceof RemindRefused) return { kind: 'refused', refusal: e.refusal };
+    if (e instanceof RefusedInTransaction) return { kind: 'refused', refusal: e.refusal };
     throw e;
   }
 }
 
-/** Thrown inside the reminder's transaction so a refusal found after the stamp rolls it back. */
-class RemindRefused extends Error {
+/** Thrown inside a payment transaction so a refusal found after its write rolls the write back. */
+class RefusedInTransaction extends Error {
   constructor(readonly refusal: PaymentRefusal) {
-    super(`payment reminder refused: ${refusal.code}`);
+    super(`payment action refused: ${refusal.code}`);
   }
 }
 
@@ -479,7 +483,7 @@ function remindInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
     const guidance = payGuidanceFor(
       paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency),
     );
-    if (guidance === 'hold_off') throw new RemindRefused(PAYMENTS_PAUSED);
+    if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
 
     await createBulkNotifications(tx, [
       {
@@ -488,6 +492,208 @@ function remindInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
         type: 'reminder',
         title: 'Payment outstanding',
         body: studentPaymentReminderBody(registration.class.calendarEntry, Number(payment.amount), guidance, registration.class.currency),
+        relatedClassId: registration.class.id,
+      },
+    ]);
+
+    return { kind: 'applied', payment };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The student's "I've sent it" claim
+// ---------------------------------------------------------------------------
+
+/*
+ * The student doors' refusal copy. Same codes as the teacher's, so a code
+ * keeps one meaning; the message is the student's.
+ */
+const STUDENT_PAYMENT_ALREADY_PAID: PaymentRefusal = codedRefusal(
+  'PAYMENT_ALREADY_PAID',
+  'Your teacher has already marked this payment as received.',
+);
+const STUDENT_PAYMENT_WAIVED: PaymentRefusal = codedRefusal(
+  'PAYMENT_WAIVED',
+  "Your teacher isn't charging for this class.",
+);
+const STUDENT_PAYMENT_CHANGED: PaymentRefusal = codedRefusal(
+  'CONCURRENT_MODIFICATION',
+  'This payment just changed. Reload the page and try again.',
+);
+
+/**
+ * Classify a student claim write that missed, from the student's own re-read
+ * of the row. `claimHeld` is whether the stored claim already holds what the
+ * write asked for; when it does not, the row is outstanding in the state the
+ * swap would have accepted, so another write landed in between.
+ *
+ * A settled row answers its refusal before `unchanged`: a paid or waived
+ * payment makes the claim moot whatever its timestamp says.
+ */
+function classifyStudentClaimMiss(
+  payment: Payment | null,
+  claimHeld: (payment: Payment) => boolean,
+): PaymentOutcome {
+  if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+  switch (payment.status) {
+    case 'paid':
+      return { kind: 'refused', refusal: STUDENT_PAYMENT_ALREADY_PAID };
+    case 'not_charged':
+      return { kind: 'refused', refusal: STUDENT_PAYMENT_WAIVED };
+    case 'pending':
+    case 'overdue':
+      return claimHeld(payment)
+        ? { kind: 'unchanged', payment }
+        : { kind: 'refused', refusal: STUDENT_PAYMENT_CHANGED };
+    default: {
+      const unhandled: never = payment.status;
+      throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+    }
+  }
+}
+
+/**
+ * The student marks their own outstanding payment as sent. Only the teacher's
+ * confirmation makes it `paid`; the claim stands until the teacher acts on the
+ * payment.
+ *
+ * Ownership is in the WHERE and in the re-read, so another student's payment
+ * answers `NOT_FOUND` whatever its state. No pause check: a claim moves no
+ * money.
+ */
+export async function reportPaymentSent(
+  db: PrismaClient,
+  paymentId: string,
+  studentId: string,
+): Promise<PaymentOutcome> {
+  const owned = { id: paymentId, registration: { studentId } };
+  const result = await db.payment.updateMany({
+    where: { ...owned, status: { in: OUTSTANDING_STATUSES }, studentReportedAt: null },
+    data: { studentReportedAt: new Date() },
+  });
+
+  if (result.count === 0) {
+    const payment = await db.payment.findFirst({ where: owned });
+    return classifyStudentClaimMiss(payment, (p) => p.studentReportedAt !== null);
+  }
+
+  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  return { kind: 'applied', payment: updated };
+}
+
+/**
+ * The student takes back their own claim on an outstanding payment. Scoped
+ * to the student exactly as `reportPaymentSent` is.
+ */
+export async function withdrawPaymentReport(
+  db: PrismaClient,
+  paymentId: string,
+  studentId: string,
+): Promise<PaymentOutcome> {
+  const owned = { id: paymentId, registration: { studentId } };
+  const result = await db.payment.updateMany({
+    where: { ...owned, status: { in: OUTSTANDING_STATUSES }, studentReportedAt: { not: null } },
+    data: { studentReportedAt: null },
+  });
+
+  if (result.count === 0) {
+    const payment = await db.payment.findFirst({ where: owned });
+    return classifyStudentClaimMiss(payment, (p) => p.studentReportedAt === null);
+  }
+
+  const updated = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  return { kind: 'applied', payment: updated };
+}
+
+/**
+ * The teacher's "Not received": clears the student's standing claim and tells
+ * the student, in one transaction. The notice is a `reminder` and stamps
+ * `reminderSentAt` like one, so the automatic sweep does not send a second
+ * message for the same event. A paused teacher is refused after the write,
+ * rolling it back, as `sendPaymentReminder` is. An outstanding payment with no
+ * claim is `unchanged`: no standing claim is what the teacher asks for.
+ */
+export async function rejectPaymentReport(
+  db: PrismaClient,
+  paymentId: string,
+): Promise<PaymentOutcome> {
+  try {
+    return await rejectInTransaction(db, paymentId);
+  } catch (e) {
+    if (e instanceof RefusedInTransaction) return { kind: 'refused', refusal: e.refusal };
+    throw e;
+  }
+}
+
+function rejectInTransaction(db: PrismaClient, paymentId: string): Promise<PaymentOutcome> {
+  return db.$transaction(async (tx): Promise<PaymentOutcome> => {
+    const result = await tx.payment.updateMany({
+      where: { id: paymentId, status: { in: OUTSTANDING_STATUSES }, studentReportedAt: { not: null } },
+      data: { studentReportedAt: null, reminderSentAt: new Date() },
+    });
+
+    if (result.count === 0) {
+      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!payment) return { kind: 'refused', refusal: PAYMENT_GONE };
+      switch (payment.status) {
+        case 'paid':
+          return {
+            kind: 'refused',
+            refusal: codedRefusal('PAYMENT_ALREADY_PAID', 'This payment is already marked paid.'),
+          };
+        case 'not_charged':
+          return {
+            kind: 'refused',
+            refusal: codedRefusal('PAYMENT_WAIVED', 'This payment was marked not charged.'),
+          };
+        case 'pending':
+        case 'overdue':
+          return payment.studentReportedAt === null
+            ? { kind: 'unchanged', payment }
+            : { kind: 'refused', refusal: PAYMENT_CHANGED };
+        default: {
+          const unhandled: never = payment.status;
+          throw new Error(`Unhandled payment status: ${String(unhandled)}`);
+        }
+      }
+    }
+
+    const { registration, ...payment } = await tx.payment.findUniqueOrThrow({
+      where: { id: paymentId },
+      include: {
+        registration: {
+          select: {
+            studentId: true,
+            class: {
+              select: {
+                id: true,
+                currency: true,
+                calendarEntry: {
+                  select: {
+                    classType: true,
+                    date: true,
+                    startTime: true,
+                    teacher: { select: { ...teacherPaymentSelect, firstName: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { calendarEntry, currency } = registration.class;
+    const guidance = payGuidanceFor(paymentMethodsForTeacher(calendarEntry.teacher, currency));
+    if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
+
+    await createBulkNotifications(tx, [
+      {
+        recipientType: 'student',
+        recipientId: registration.studentId,
+        type: 'reminder',
+        title: 'Payment not seen yet',
+        body: studentPaymentNotSeenBody(calendarEntry.teacher.firstName, calendarEntry, Number(payment.amount), currency),
         relatedClassId: registration.class.id,
       },
     ]);

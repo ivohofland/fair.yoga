@@ -236,7 +236,12 @@ let studentAccountId: string;
       data: { classId: completedClassId, studentId, status: 'attended', tierAtBooking: 2, price: 11.5 },
     });
     await prisma.payment.create({
-      data: { registrationId: completedReg.id, amount: 11.5, status: 'pending' },
+      data: {
+        registrationId: completedReg.id,
+        amount: 11.5,
+        status: 'pending',
+        studentReportedAt: new Date('2026-06-02T10:00:00Z'),
+      },
     });
     await prisma.registration.create({
       data: { classId: openClassId, studentId, status: 'registered', tierAtBooking: 2 },
@@ -324,6 +329,7 @@ let studentAccountId: string;
     expect(data.bookings.length).toBeGreaterThanOrEqual(2);
     const paidBooking = data.bookings.find((b) => b.payment);
     expect(paidBooking?.payment?.status).toBe('pending');
+    expect(paidBooking?.payment?.studentReportedAt).toEqual(new Date('2026-06-02T10:00:00Z'));
     expect(data.privacySettings).toHaveLength(1);
     expect(data.privacySettings[0]).toMatchObject({
       shareFullName: true,
