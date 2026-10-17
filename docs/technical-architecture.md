@@ -1436,12 +1436,91 @@ The Prisma 7 upgrade (#889) changes the `createPrismaClient` factory in
 `src/lib/prisma-client.ts` and the schema's generator and datasource blocks,
 plus the probe.
 
-The generated client reads `DATABASE_URL` from the process environment only
-and does not load `.env`. Next, vitest (`vitest.config.ts`),
+**The engine and the pool (#885).** The generator declares
+`engineType = "client"`: queries are planned by Prisma's TypeScript client
+engine (its query compiler) and run through the `@prisma/adapter-pg` driver
+adapter, which owns a `pg.Pool`. `createPrismaClient` builds
+`new PrismaClient({ adapter: new PrismaPg(poolConfigFor(options)), errorFormat, log })`.
+It never passes `datasources` or `datasourceUrl`: Prisma refuses either beside
+an adapter at construction, with `PrismaClientInitializationError: Custom
+datasource configuration is not compatible with Prisma Driver Adapters`. The
+connection string goes to the adapter, so a different database or a startup
+parameter (`lowStackClient`'s `options=-c max_stack_depth=…`) travels in the
+`url` option.
+
+`PrismaClientFactoryOptions`, all optional:
+
+| Option | pg setting | Omitted |
+|---|---|---|
+| `url` | `connectionString` | `DATABASE_URL`, read when the client is built |
+| `poolMax` | `max` | `DEFAULT_POOL_MAX` |
+| `connectionTimeoutMs` | `connectionTimeoutMillis` | `DEFAULT_CONNECTION_TIMEOUT_MS`, 10 000 |
+| `errorFormat` | (Prisma's) | Prisma's default |
+| `log` | (Prisma's) | none |
+
+`poolConfigFor` is the pure half: it returns the pool config without opening
+anything, so the defaults are unit-tested on their own
+(`src/lib/prisma-client.test.ts`, `poolConfigFor`).
+
+- **`DEFAULT_POOL_MAX` is `os.availableParallelism() * 2 + 1`.** Prisma's own
+  pool used physical cores × 2 + 1, and Node exposes no physical-core count.
+  Where a CPU has no SMT, logical equals physical and the two agree; on SMT
+  hardware the stand-in gives a larger pool. Connections open lazily, but one
+  opened stays until the idle timeout below.
+- **Production: 9.** The host is a Hetzner CAX21, 4 Ampere Arm vCPUs, and
+  those have no SMT, so 4 × 2 + 1 = 9. This is derived from the host's
+  published spec, not measured on the host; `docker-compose.prod.yml` sets no
+  CPU limit (`grep -n -i cpu docker-compose.prod.yml` prints nothing).
+  Re-derive on the server:
+  `docker compose -f docker-compose.prod.yml exec app node -e "console.log(require('os').availableParallelism())"`
+  must print `4`.
+- **`connectionTimeoutMs` bounds two waits with one knob**: waiting for a
+  pooled connection, and establishing a new one (pg-pool hands its options to
+  each `Client`). The 10 s default is Prisma's former `pool_timeout`. An
+  unreachable host therefore takes up to 10 s to fail. A raw or model call, or
+  a batch `$transaction([…])`, that waits past it fails with pg-pool's
+  timeout, which `transientDbFailure` classifies `pool_exhausted`
+  (`src/lib/api-errors.ts`). An interactive transaction gives up first, at
+  Prisma's `maxWait` (2 s by default), as `P2028`, classified `tx_budget`.
+- **`idleTimeoutMillis` is 300 s, fixed.** It matches the idle lifetime of
+  Prisma's former pool, and keeps a `poolMax: 1` client on one backend between
+  statements, which the lock-order tests rely on when they identify their
+  backend once by `pg_backend_pid()`. pg's 10 s default would reopen
+  connections often and could change that backend mid-test.
+- **`allowExitOnIdle` is `true`, fixed.** pg-pool's idle sockets otherwise
+  hold the event loop for the whole idle timeout, so a `tsx` script, vitest
+  worker or Playwright process that ends without `$disconnect()` would linger
+  for up to five minutes. It only unrefs idle clients and closes nothing, so
+  a single-connection client keeps its backend. The production server is held
+  open by its HTTP listener anyway. Pinned by `prisma-client.test.ts`'s "a
+  client left connected does not hold a finished process open".
+- **`$connect()` connects nothing.** On the client engine it resolves without
+  opening a connection (against a refused port it resolves; the first query
+  is what fails). A test that called it to keep connection setup out of a
+  timing window runs a `SELECT 1` instead, as `handoff.test.ts` does.
+- **A raw query's JS `Date` is bound untyped.** The adapter sends it as a
+  zone-less string of its UTC wall-clock time (`2026-08-15 00:00:00` for
+  `2026-08-15T00:00:00Z`) with no type, so Postgres resolves it from its
+  context. Against a `date` it is that UTC date, so `e.date > ${today}` is
+  `date > date` in every session `TimeZone` (`archiveOrUnarchiveTemplate`'s
+  pre-lock relies on lock ⊇ delete, which this makes an equality). Read as a
+  `timestamptz` it is taken in the session `TimeZone`: the same instant only
+  while the session runs UTC, which production's and CI's `postgres:16-alpine`
+  do by default. With no context at all it fails `42P18` (`could not
+  determine data type of parameter`). Measured on 6.19.3 with
+  `SELECT ${date}::text` and `'2026-08-15'::date > ${date}` under
+  `SET LOCAL TimeZone` = UTC, `America/New_York` and `Asia/Tokyo`.
+- **A missing or empty URL throws at construction**:
+  `createPrismaClient: no url given and DATABASE_URL is not set`. pg would
+  read an empty `connectionString` as "libpq defaults" (localhost as the OS
+  user) rather than refuse. A `poolMax` that is not a positive integer throws
+  `RangeError`.
+
+Nothing in the client loads `.env`. Next, vitest (`vitest.config.ts`),
 Playwright (`playwright.config.ts`) and the Prisma CLI (`prisma.config.ts`)
 load it themselves, and a `tsx` entry point that constructs a client imports
-`dotenv/config` first; without it the client answers `P1012 Environment
-variable not found: DATABASE_URL`.
+`dotenv/config` first; without it `createPrismaClient` throws the missing-URL
+error above.
 
 ### How the CLI gets its config and URL (#887)
 
@@ -1724,7 +1803,7 @@ Reads committed `Notification` rows with `pushHandledAt: null`, sends to the rec
 
 **Tick bound.** Four workers each claim a notification just before sending it, in parallel across its devices, and stop claiming `PUSH_CLAIM_DEADLINE_MS` (10 s) into the tick, so a tick ends within one send timeout (`DEFAULT_TIMEOUT_MS`, 5 s) of that: about 15 s plus the DB calls a worker makes after its last deadline check (the 5 s margin below the 20 s stall line absorbs them), under the 20 s that `STALLED_AFTER_SKIPPED_TICKS` (2) × the 10 s interval allows. A timeout burst of any size therefore stays healthy on the steady 10 s grid (the push job's first tick is the interval's, at 10 s; see Each job's first run above); the rows it did not reach are unclaimed and wait for the next tick (or are retired as stale after 15 minutes). `scheduler.test.ts` ("keeps a push tick shorter than the scheduler's stall line") re-derives the inequality from the constants.
 
-**Post-send writes.** Sends hold no database connection while in flight; only the `pushSubscription` write after each verdict (`lastUsedAt` on a delivery, a delete on `gone` / `invalid`) takes one, so up to `PUSH_WORKERS` × `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` writes can queue on the pool at once when every device answers together. Measured on a full fan-out (every device answering at the same instant, once all have been sent to) against warm Prisma pools of 1, 3 and 5 connections on a local database (the default is the CPU count × 2 + 1, so 3 on one vCPU and 5 on two): the whole tick, its retire, read and claim statements included, took 30-100 ms past the sends at the median and 180 ms at worst over 20 ticks per row, and a single write took at most 76 ms at a pool of 3 or 5 and 153 ms at a pool of 1, so the fan-out uses under 4% of the 5 s margin even at a pool of 1. What can spend the margin is the pool being held by something else: with every connection occupied by another query for 2 s when the verdicts landed, each write waited about 2 s plus its idle-pool write time (the slowest was 2.08 s) at each pool size measured. The wait is the other holder's time and is bounded by Prisma's pool timeout (`pool_timeout`, 10 s by default), after which the write throws and is reported as that send's fault; so a pool starved that long can end a tick past the stall line, as it can any job whose claims and reads wait on the same pool. Coalescing a notification's writes into one statement would shorten the burst, not the wait, and was not done. Re-derive: `pnpm exec tsx --conditions=react-server --env-file=.env scripts/measure-push-fanout.ts` (a worktree's own database, with its dev server stopped: `pnpm run worktree:down`, since that server's scheduler would claim the script's rows).
+**Post-send writes.** Sends hold no database connection while in flight; only the `pushSubscription` write after each verdict (`lastUsedAt` on a delivery, a delete on `gone` / `invalid`) takes one, so up to `PUSH_WORKERS` × `MAX_PUSH_SUBSCRIPTIONS_PER_ACCOUNT` writes can queue on the pool at once when every device answers together. Measured on a full fan-out (every device answering at the same instant, once all have been sent to) against warm pools of 1, 3 and 5 connections on a local database (the script sets each with the factory's `poolMax`; the default pool size and production's are in "Where Prisma comes from"), measured on Prisma's library engine before #885: the whole tick, its retire, read and claim statements included, took 30-100 ms past the sends at the median and 180 ms at worst over 20 ticks per row, and a single write took at most 76 ms at a pool of 3 or 5 and 153 ms at a pool of 1, so the fan-out uses under 4% of the 5 s margin even at a pool of 1. What can spend the margin is the pool being held by something else: with every connection occupied by another query for 2 s when the verdicts landed, each write waited about 2 s plus its idle-pool write time (the slowest was 2.08 s) at each pool size measured. The wait is the other holder's time and is bounded by the pool's `connectionTimeoutMs` (10 s by default), after which the write throws and is reported as that send's fault; so a pool starved that long can end a tick past the stall line, as it can any job whose claims and reads wait on the same pool. Coalescing a notification's writes into one statement would shorten the burst, not the wait, and was not done. Re-derive: `pnpm exec tsx --conditions=react-server --env-file=.env scripts/measure-push-fanout.ts` (a worktree's own database, with its dev server stopped: `pnpm run worktree:down`, since that server's scheduler would claim the script's rows).
 
 **Degraded.** A tick that tried to send and delivered nothing (`sent === 0` with `failed > 0`, or any tick, claimed rows or not, while `VAPID_*` is set but unusable: the result's `misconfigured` carries the reason on every tick, so a bad deployment alarms without waiting for a notification) extends a streak; a delivery resets it; idle ticks and `gone` / `invalid` verdicts leave it alone. A tick whose dispatch throws (a send fault, `PushSendFault`, or a claim or read failure inside a worker) counts as a failed tick whatever else it delivered, and the fault, not the alarm, is what that tick throws. A delivery resets the streak even from a tick that also failed elsewhere: the alarm says push is delivering nothing, not that every send succeeded. A failed tick more than 15 minutes (`PUSH_ALARM_QUIET_MS`) after the previous one starts the count over at one. At 3 such ticks the job throws `PushDispatchDegradedError`, whose message names the last failing tick's `PushFailureCause` (`src/services/push-health.ts`; a quiet tick after it does not replace the cause), and `/api/health` reports it degraded, on every tick until its last failed tick is 15 minutes old (`PUSH_ALARM_QUIET_MS`), then clears. Bound, measured from the start of the first failed tick: about 20 s of continuous fast failures (the 3rd failed tick starts 2 × 10 s later), at most 55 s when every send times out (ticks start 20 s apart because a 15 s tick refuses the next one); under sparse traffic it is the 3rd failed tick, provided each followed the last within 15 minutes, since a failed send cannot be observed without a send; a misconfiguration needs none, so it alarms on the 3rd tick after boot (the push job's first tick is one interval in, so about 30 s). While it stands the job logs one `error` per 10 s tick. A restart resets the streak.
 

@@ -291,13 +291,11 @@ describe('entry_frozen_schedule_guard', () => {
     // its date", about a statement changing no date.
     const { entryId, seq } = await makeClass({ status: 'completed' });
 
-    // `${...}::date`, NOT a bound JS Date. Binding a Date sends a timestamptz,
-    // which Postgres narrows to `date` using the SESSION time zone — so the
-    // "unchanged" date silently becomes the previous day under any westward
-    // session, the guard's `IS NOT DISTINCT FROM` then fails to hold, and this
-    // case fails claiming the trigger is wrong when only the clock was. This
-    // suite runs under `TZ: America/New_York` (`vitest.config.ts`), which is
-    // exactly such a session. A plain date string has no zone to misread.
+    // `${...}::date` from a plain date string, not a bound JS Date: the
+    // string has no zone to misread, so the "unchanged" date cannot drift a
+    // day and fail the guard's `IS NOT DISTINCT FROM` on the clock's account.
+    // How a bound JS Date travels: `docs/technical-architecture.md`, "Where
+    // Prisma comes from".
     const unchanged = isoDay(FIXTURE_BASE, seq);
     await prisma.$executeRawUnsafe(
       `UPDATE "CalendarEntry" SET date = $1::date, "classType" = 'Unchanged date' WHERE id = $2`,

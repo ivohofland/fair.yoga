@@ -685,37 +685,16 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       // `e.date > ${today}`, not Prisma's `date: { gt: today }` used
       // everywhere else `scheduledWhere` is called — `FOR UPDATE OF c` has
       // no query-builder equivalent, so this statement is raw SQL end to
-      // end. The two forms are NOT the same comparison, and the difference
-      // is worth stating precisely rather than waving through, because the
-      // property this pre-lock needs is one-directional.
+      // end. `CalendarEntry.date` is `@db.Date`, and a raw query's JS `Date`
+      // reaches Postgres untyped, so it resolves to `date` here and both
+      // forms compare `date > date`, under every session `TimeZone`. How a
+      // raw `Date` is bound: `docs/technical-architecture.md`, "Where Prisma
+      // comes from".
       //
-      // `CalendarEntry.date` is `@db.Date`. Prisma's `date: { gt: today }`
-      // binds a `date` parameter, so Postgres compares `date > date`. A
-      // `$queryRaw` binds a JS `Date` as `timestamptz`, so this statement
-      // compares `date > timestamptz`, which promotes `e.date` to an instant
-      // at midnight IN THE SESSION `TimeZone`. Measured, all directions:
-      //
-      //   TimeZone=UTC               '2026-08-15'::date > '2026-08-15T00:00:00Z' → f
-      //   TimeZone=America/New_York  same comparison                             → t
-      //   TimeZone=Asia/Tokyo        same comparison                             → f
-      //                              (Prisma's `date > date` stays f in all)
-      //
-      // So under UTC and east of it the two forms select exactly the same rows,
-      // and west of UTC this raw form additionally matches TODAY-dated rows that
-      // the `deleteMany` below will never delete. That is a SUPERSET, never a
-      // subset — which is the only thing lock ⊇ delete (below) actually
-      // needs, and it holds under every session `TimeZone`, not just this
-      // deployment's. Do not restate it as "the same set" and do not use
-      // that as licence to narrow either side to match the other: equality
-      // is a UTC-only accident, containment is the guarantee.
-      //
-      // This deployment runs UTC — the `postgres:16-alpine` default, since
-      // neither `docker-compose.yml` nor `docker-compose.prod.yml` sets
-      // `TZ`. That is where the equality comes from; it is not pinned by
-      // configuration, which is the second reason not to depend on it.
-      // Off UTC the cost is a slightly wider pre-lock: today's scheduled
-      // classes are held for this transaction's duration too, contending
-      // with bookings on classes this archive cannot delete.
+      // The property this pre-lock needs is one-directional: lock ⊇ delete.
+      // That the two sets are equal is a consequence of the binding, not the
+      // guarantee; do not use it as licence to narrow either side to match
+      // the other.
       //
       // Why lock ⊇ delete holds here is not structural the way it is for
       // `withdrawWaitingEntriesForTeacher` (`waitlist.ts`), which reads its

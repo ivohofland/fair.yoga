@@ -225,7 +225,7 @@ beforeAll(async () => {
   // and the fallback is the empty string rather than a skip, so a query that
   // somehow returns nothing throws the refusal below instead of proceeding.
   const [row] =
-    await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
+    await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()::text AS current_database`;
   const dbName = row?.current_database ?? '';
   if (!isTestDatabaseName(dbName)) {
     throw new Error(

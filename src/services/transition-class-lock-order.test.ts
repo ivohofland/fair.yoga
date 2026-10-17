@@ -59,16 +59,14 @@ import { createPrismaClient } from '@/lib/prisma-client';
 const prisma = createPrismaClient();
 
 /**
- * A client with exactly one connection, so `pg_backend_pid()` read from it once
+ * A client with exactly one connection (`poolMax: 1`), so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on — the same device
  * `update-class-lock-order.test.ts` uses, and for the same reason:
  * `pg_stat_activity` is database-wide and this file alone puts three clients
  * on it.
  */
 function singleConnectionClient(): PrismaClient {
-  const url = new URL(process.env.DATABASE_URL ?? '');
-  url.searchParams.set('connection_limit', '1');
-  return createPrismaClient({ url: url.toString() });
+  return createPrismaClient({ poolMax: 1 });
 }
 
 describe('transitionClass against a cancel that already holds the class', () => {

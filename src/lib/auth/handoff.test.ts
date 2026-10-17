@@ -1124,9 +1124,7 @@ describe('the per-address comparison budget', () => {
     // Room for every claim's transaction at once. A smaller pool would queue
     // some claims in the client, where they never reach the lock. Opened
     // before the lock is taken, so connecting costs none of the time below.
-    const url = new URL(process.env.DATABASE_URL!);
-    url.searchParams.set('connection_limit', String(nonces.length + 5));
-    const wide = createPrismaClient({ url: url.toString() });
+    const wide = createPrismaClient({ poolMax: nonces.length + 5 });
     await Promise.all(nonces.map(() => wide.$queryRaw`SELECT 1`));
     const holder = createPrismaClient();
     let claims: Promise<Awaited<ReturnType<typeof claimWithCode>>>[] = [];

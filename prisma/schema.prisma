@@ -3,6 +3,7 @@ generator client {
   output       = "../src/generated/prisma"
   moduleFormat = "cjs"
   runtime      = "nodejs"
+  engineType   = "client"
 }
 
 datasource db {

@@ -2825,27 +2825,17 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
   });
 
   /**
-   * The pre-lock superset property in any session TimeZone (#289).
+   * The pre-lock covers the delete in any session TimeZone (#289).
    *
    * The pre-lock SQL in `archiveOrUnarchiveTemplate` compares
-   * `e.date > ${today}` where `${today}` is UTC midnight. Because `$queryRaw`
-   * binds a JS Date as `timestamptz`, Postgres compares `date > timestamptz`,
-   * promoting `e.date` to an instant at midnight IN THE SESSION TimeZone.
-   *
-   * The delete it brackets compares `CalendarEntry.date > today` via Prisma,
-   * which compares `date > date`.
-   *
-   * - West of UTC (e.g. America/New_York): today's date promoted to timestamptz
-   *   is 04:00 (EDT) or 05:00 (EST) UTC, strictly greater than UTC midnight today.
-   *   So the pre-lock matches BOTH today and tomorrow, while the delete removes
-   *   only tomorrow. Thus: lock set ⊃ delete set (today is locked but spared).
-   * - East of UTC (e.g. Asia/Tokyo): today's date promoted to timestamptz is
-   *   15:00 UTC yesterday, which is not > UTC midnight today. So the pre-lock
-   *   matches only tomorrow, exactly matching the delete. Lock set = delete set.
-   *
-   * In no session TimeZone does the pre-lock select fewer rows than the delete.
+   * `e.date > ${today}` where `${today}` is UTC midnight; the delete it
+   * brackets compares `CalendarEntry.date > today` through Prisma. A raw
+   * query's `Date` reaches Postgres untyped and resolves to `date`, so both
+   * compare `date > date` and select the same rows west and east of UTC:
+   * tomorrow is locked and deleted, today is neither. lock ⊇ delete holds as
+   * equality.
    */
-  it('the pre-lock is a superset of the delete in a non-UTC session TimeZone', async () => {
+  it('the pre-lock covers exactly the delete in a non-UTC session TimeZone', async () => {
     const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } });
     expect(teacher.defaultTimezone).toBe('UTC');
 
@@ -2876,11 +2866,8 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         },
       }) as unknown as PrismaClient;
 
-    // West of UTC: America/New_York (UTC-4/UTC-5)
-    // Under America/New_York, today's date promoted to timestamptz is > UTC midnight today.
-    // The pre-lock locks both today and tomorrow. The delete only removes tomorrow.
-    // lock set ⊃ delete set.
-    const tWest = await makeTemplate('Pre-lock superset west');
+    // West of UTC: America/New_York.
+    const tWest = await makeTemplate('Pre-lock west');
     const classTodayWest = await makeClass(tWest.scheduleRuleId, { date: todayDate });
     const classTomorrowWest = await makeClass(tWest.scheduleRuleId, { date: tomorrowDate });
 
@@ -2889,21 +2876,15 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       await archiveOrUnarchiveTemplate(hookedWest, tWest.id, teacherId, 'archived'),
     );
 
-    expect(lockSets[0]).toEqual(
-      expect.arrayContaining([classTodayWest.id, classTomorrowWest.id]),
-    );
-    expect(lockSets[0]).toHaveLength(2);
+    expect(lockSets[0]).toEqual([classTomorrowWest.id]);
     expect(await prisma.class.count({ where: { id: classTomorrowWest.id } })).toBe(0);
     expect(await prisma.class.count({ where: { id: classTodayWest.id } })).toBe(1);
     expect(resultWest.deleted).toBe(1);
 
     lockSets.length = 0;
 
-    // East of UTC: Asia/Tokyo (UTC+9)
-    // Under Asia/Tokyo, today's date promoted to timestamptz is < UTC midnight today.
-    // The pre-lock locks only tomorrow, exactly matching the delete.
-    // lock set = delete set.
-    const tEast = await makeTemplate('Pre-lock superset east');
+    // East of UTC: Asia/Tokyo.
+    const tEast = await makeTemplate('Pre-lock east');
     const classTodayEast = await makeClass(tEast.scheduleRuleId, { date: todayDate });
     const classTomorrowEast = await makeClass(tEast.scheduleRuleId, { date: tomorrowDate });
 
