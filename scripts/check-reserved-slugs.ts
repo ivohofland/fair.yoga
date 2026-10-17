@@ -4,7 +4,7 @@
  * fails the migrate step and so refuses the deploy (DEPLOYMENT.md §6).
  *   pnpm check:reserved-slugs
  */
-// The generated Prisma client reads DATABASE_URL from the environment only.
+// Loads .env; the generated Prisma client does not (docs/technical-architecture.md, "Where Prisma comes from").
 import 'dotenv/config';
 import { createPrismaClient } from '../src/lib/prisma-client';
 import { RESERVED_SLUGS } from '../src/lib/reserved-slugs';
