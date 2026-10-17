@@ -1392,6 +1392,11 @@ only available at runtime. It is expected, comes from the re-export, and is
 harmless: the build exits 0 and the server serves (measured on Next 16 with
 `pnpm run build`, which shows the warning).
 
+The point is that one file changes when the Prisma 7 generator's `output` path
+(#888) or driver-adapter change (#889) lands, plus the probe.
+
+### How the CLI gets its config and URL (#887)
+
 The Prisma CLI gets its configuration from `prisma.config.ts` at the repo root
 (`schema`, `migrations.path`, `migrations.seed`), and its URL from
 `DATABASE_URL`. The file loads `.env` through `dotenv/config`, which is a
@@ -1399,14 +1404,11 @@ silent no-op when there is none and never overrides a variable already set, so
 an explicit `DATABASE_URL` (CI, `src/lib/db-provision.ts`, compose) wins over
 `.env`. With the variable set, the file passes it as the datasource URL; with
 it unset, it adds no datasource and the schema's `env("DATABASE_URL")`
-applies, so `prisma generate` (the `postinstall`, which runs before any `.env`
-exists) still works and a command that needs a URL fails with `P1012`. The
+applies, so `prisma generate` (the `postinstall`, which can run before any `.env` exists: a fresh
+clone's install, the image's `deps` stage) still works and a command that needs a URL fails with `P1012`. The
 `env()` helper from `prisma/config` is not used because it throws while the
 config loads, and every command loads it, `generate` included.
 `src/lib/prisma-config.test.ts` drives the real CLI for both cases.
-
-The point is that one file changes when the Prisma 7 generator's `output` path
-(#888) or driver-adapter change (#889) lands, plus the probe.
 
 ### PostgreSQL Configuration
 
