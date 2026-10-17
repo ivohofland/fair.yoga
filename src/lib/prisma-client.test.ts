@@ -72,6 +72,11 @@ describe('prisma funnel imports', () => {
     expect(client).not.toContain("globalThis['__dirname']");
   });
 
+  it('declares the cjs module format in the schema the output is generated from', () => {
+    const schema = readFileSync(path.join(__dirname, '..', '..', 'prisma', 'schema.prisma'), 'utf8');
+    expect(schema).toMatch(/moduleFormat\s*=\s*"cjs"/);
+  });
+
   it('both funnels hand back the same enum objects', () => {
     expect(enums.Currency).toBe(Currency);
   });
