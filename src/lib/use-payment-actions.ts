@@ -3,7 +3,15 @@
 import { useState } from 'react';
 import type { PaymentStatus } from '@/lib/prisma-client';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
-import { readUndoStatus } from '@/lib/payment-status';
+import { isOutstanding, readUndoStatus } from '@/lib/payment-status';
+
+/** A payment as a row renders it: the status shown and the server's claim day. */
+interface ClaimedPayment {
+  paymentId: string;
+  status: PaymentStatus;
+  /** The day the student marked it sent (`claimDay`), or null. */
+  studentReportedOn: Date | null;
+}
 
 /**
  * Mark-paid and mark-not-charged, both with transient undo. "Mark paid" is
@@ -13,12 +21,25 @@ import { readUndoStatus } from '@/lib/payment-status';
  * already settled that way (justMarked) — the answer a retried tap gets — so
  * a record settled before the page loaded can't be unmarked casually. Undo
  * returns the payment to 'pending', or reports the unpaid status it had.
+ *
+ * Also the student's "I've sent it" claim: `standingClaim` answers it from the
+ * row's own status, so a row marked paid here hides it and an Undo, which
+ * reopens the payment with the claim kept, shows it again. "Not received"
+ * clears it here once the server has.
  */
 export function usePaymentActions(initial: Record<string, PaymentStatus>) {
   const [paymentState, setPaymentState] = useState<Record<string, PaymentStatus>>(initial);
   const [justMarked, setJustMarked] = useState<Set<string>>(new Set());
   const [updating, setUpdating] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // Payments whose claim a "Not received" on this page cleared.
+  const [clearedClaims, setClearedClaims] = useState<ReadonlySet<string>>(new Set());
+
+  /** The claim's day while it stands for this row, else null. */
+  function standingClaim({ paymentId, status, studentReportedOn }: ClaimedPayment): Date | null {
+    if (!isOutstanding(status) || clearedClaims.has(paymentId)) return null;
+    return studentReportedOn;
+  }
 
   async function markPaid(paymentId: string) {
     setUpdating(paymentId);
@@ -70,6 +91,29 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
         setJustMarked((prev) => new Set(prev).add(paymentId));
       } else {
         setError(await readErrorMessage(res, 'Could not mark as not charged. Try again.'));
+      }
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  async function notReceived(paymentId: string) {
+    setUpdating(paymentId);
+    setError('');
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/payments/${paymentId}/not-received`, { method: 'POST' });
+      } catch (err) {
+        logRequestFailure('payment-not-received', { paymentId }, err);
+        setError('Network error. Try again.');
+        return;
+      }
+
+      if (res.ok) {
+        setClearedClaims((prev) => new Set(prev).add(paymentId));
+      } else {
+        setError(await readErrorMessage(res, 'Could not mark as not received. Try again.'));
       }
     } finally {
       setUpdating(null);
@@ -143,5 +187,15 @@ export function usePaymentActions(initial: Record<string, PaymentStatus>) {
     }
   }
 
-  return { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo };
+  return {
+    paymentState,
+    justMarked,
+    updating,
+    error,
+    markPaid,
+    markNotCharged,
+    undo,
+    notReceived,
+    standingClaim,
+  };
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import type { ResumeReview } from '@/services/payout-resume';
+import type { ResumeReview, ReviewPayment } from '@/services/payout-resume';
 import { RECENT_AUTH_WINDOW_MS } from '@/lib/auth/recent-auth';
 
 const { requireTeacherSession, readResumeReview, count, teacherFindUnique } = vi.hoisted(() => ({
@@ -160,5 +160,25 @@ describe('the resume-payments change list', () => {
     render(await ResumePaymentsPage());
     expect(screen.getByText('BSB')).toBeInTheDocument();
     expect(screen.queryByText('Bank code')).toBeNull();
+  });
+
+  // #898. A claim made while payouts may have pointed elsewhere is what the
+  // teacher checks before resuming.
+  it('shows the student’s claim on an outstanding payment, in the teacher’s zone', async () => {
+    requireTeacherSession.mockResolvedValue({ ...SESSION, defaultTimezone: 'Europe/Amsterdam' });
+    const payment: ReviewPayment = {
+      id: 'p1', studentName: 'Ana de Vries', classType: 'Vinyasa',
+      classDate: new Date('2026-07-15T00:00:00Z'), startTime: new Date('1970-01-01T09:30:00Z'),
+      amount: 18, currency: 'EUR', status: 'pending', paidAt: null, notChargedAt: null,
+      studentReportedAt: new Date('2026-07-18T22:30:00Z'),
+    };
+    readResumeReview.mockResolvedValue(review({
+      outstanding: [payment, { ...payment, id: 'p2', studentName: 'Bo Jansen', studentReportedAt: null }],
+    }));
+
+    render(await ResumePaymentsPage());
+
+    expect(screen.getAllByText('Says paid · 19 Jul')).toHaveLength(1);
+    expect(screen.getByText('Says paid on 19 July')).toBeInTheDocument();
   });
 });

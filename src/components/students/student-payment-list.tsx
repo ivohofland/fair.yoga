@@ -5,6 +5,7 @@ import { ListRow } from '@/components/ui/list-row';
 import { formatMoney, paymentStateText } from '@/lib/format';
 import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
+import { PaymentClaimLine } from '@/components/class/payment-claim-line';
 
 interface StudentPaymentItem {
   paymentId: string;
@@ -13,6 +14,8 @@ interface StudentPaymentItem {
   amount: number;
   currency: Currency;
   status: PaymentStatus;
+  /** The day the student marked it sent (`claimDay`); shown while the claim stands. */
+  studentReportedOn: Date | null;
 }
 
 interface StudentPaymentListProps {
@@ -20,7 +23,7 @@ interface StudentPaymentListProps {
 }
 
 export function StudentPaymentList({ items }: StudentPaymentListProps) {
-  const { paymentState, justMarked, updating, error, markPaid, undo } = usePaymentActions(
+  const { paymentState, justMarked, updating, error, markPaid, undo, standingClaim } = usePaymentActions(
     Object.fromEntries(items.map((item) => [item.paymentId, item.status])),
   );
 
@@ -45,6 +48,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
           const isPaid = status === 'paid';
           const outstanding = isOutstanding(status);
           const isUpdating = updating === item.paymentId;
+          const claimedOn = standingClaim({ paymentId: item.paymentId, status, studentReportedOn: item.studentReportedOn });
 
           return (
             <ListRow key={item.paymentId} className="flex justify-between items-center gap-3">
@@ -54,6 +58,7 @@ export function StudentPaymentList({ items }: StudentPaymentListProps) {
                 <p className={`type-caption ${paymentStateText(status).className}`}>
                   {item.classDate} &middot; {paymentStateText(status).label}
                 </p>
+                {claimedOn && <PaymentClaimLine overdue={status === 'overdue'} reportedOn={claimedOn} />}
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>{formatMoney(item.amount, item.currency)}</p>

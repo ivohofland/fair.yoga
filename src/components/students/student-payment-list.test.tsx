@@ -32,6 +32,7 @@ describe('StudentPaymentList', () => {
     amount: 18,
     currency: 'EUR',
     status: 'paid',
+    studentReportedOn: null,
   };
 
   const appeared: StudentPaymentItem = {
@@ -41,6 +42,7 @@ describe('StudentPaymentList', () => {
     amount: 18,
     currency: 'EUR',
     status: 'overdue',
+    studentReportedOn: null,
   };
 
   it("renders a row that appeared after mount with its own status, not a fabricated 'pending'", () => {
@@ -53,15 +55,15 @@ describe('StudentPaymentList', () => {
   });
 
   it('offers no mark-paid control on a not-charged payment', () => {
-    renderList([{ paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR' }]);
+    renderList([{ paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR', studentReportedOn: null }]);
     expect(screen.queryByRole('button', { name: /Mark paid/i })).not.toBeInTheDocument();
   });
 
   it('colors the amount brown only when still owed', () => {
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR' },
-      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 15, currency: 'EUR' },
-      { paymentId: 'p3', classType: 'Hatha', classDate: 'Fri 5 Sep', status: 'paid', amount: 18, currency: 'EUR' },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'not_charged', amount: 12, currency: 'EUR', studentReportedOn: null },
+      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 15, currency: 'EUR', studentReportedOn: null },
+      { paymentId: 'p3', classType: 'Hatha', classDate: 'Fri 5 Sep', status: 'paid', amount: 18, currency: 'EUR', studentReportedOn: null },
     ]);
     expect(screen.getByText('€12.00')).not.toHaveClass('text-brown');
     expect(screen.getByText('€15.00')).toHaveClass('text-brown');
@@ -71,9 +73,10 @@ describe('StudentPaymentList', () => {
   it('shows each row in its own currency', () => {
     const { container } = render(
       <StudentPaymentList
+       
         items={[
-          { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'SEK' },
-          { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'paid', amount: 15, currency: 'GBP' },
+          { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'SEK', studentReportedOn: null },
+          { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'paid', amount: 15, currency: 'GBP', studentReportedOn: null },
         ]}
       />,
     );
@@ -84,8 +87,8 @@ describe('StudentPaymentList', () => {
 
   it('gives each mark-paid button a distinct accessible name', () => {
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR' },
-      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 10, currency: 'EUR' },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR', studentReportedOn: null },
+      { paymentId: 'p2', classType: 'Yin', classDate: 'Thu 4 Sep', status: 'pending', amount: 10, currency: 'EUR', studentReportedOn: null },
     ]);
     expect(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark paid — Yin, Thu 4 Sep' })).toBeInTheDocument();
@@ -110,7 +113,7 @@ describe('StudentPaymentList', () => {
       }),
     );
     renderList([
-      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR' },
+      { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'pending', amount: 12, currency: 'EUR', studentReportedOn: null },
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Mark paid — Vinyasa, Tue 2 Sep' }));
@@ -118,5 +121,27 @@ describe('StudentPaymentList', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This payment was marked not charged. Mark it unpaid first.',
     );
+  });
+
+  describe('a payment the student says they sent (#898)', () => {
+    const reportedOn = new Date('2026-10-12T00:00:00.000Z');
+
+    it('shows the claim on an outstanding row, with its actions unchanged', () => {
+      renderList([
+        { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'overdue', amount: 12, currency: 'EUR', studentReportedOn: reportedOn },
+      ]);
+      expect(screen.getByText('! Says paid · 12 Oct')).toBeInTheDocument();
+      expect(screen.getByText('Overdue, says paid on 12 October')).toBeInTheDocument();
+      expect(screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+        'Mark paid — Vinyasa, Tue 2 Sep',
+      ]);
+    });
+
+    it('shows no claim on a paid row that keeps its report', () => {
+      renderList([
+        { paymentId: 'p1', classType: 'Vinyasa', classDate: 'Tue 2 Sep', status: 'paid', amount: 12, currency: 'EUR', studentReportedOn: reportedOn },
+      ]);
+      expect(screen.queryByText(/Says paid/)).toBeNull();
+    });
   });
 });
