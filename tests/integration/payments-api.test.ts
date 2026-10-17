@@ -829,7 +829,15 @@ describe('the student payment claim: /sent and /not-received', () => {
   const reset = (data: Record<string, unknown>) =>
     prisma.payment.update({
       where: { id: paymentId },
-      data: { status: 'pending', method: null, paidAt: null, notChargedAt: null, studentReportedAt: null, ...data },
+      data: {
+        status: 'pending',
+        method: null,
+        paidAt: null,
+        notChargedAt: null,
+        studentReportedAt: null,
+        processorRef: null,
+        ...data,
+      },
     });
 
   beforeAll(async () => {
@@ -878,22 +886,28 @@ describe('the student payment claim: /sent and /not-received', () => {
     expect(row.studentReportedAt).toBeNull();
   });
 
+  /** What the student doors answer with, sorted: none of the teacher's bookkeeping, `processorRef` above all. */
+  const STUDENT_VIEW_KEYS = ['id', 'notChargedAt', 'paidAt', 'status', 'studentReportedAt'];
+
   it('marks sent, answers a repeat unchanged, withdraws, answers a repeat withdrawal unchanged', async () => {
-    await reset({});
+    await reset({ processorRef: 'tr_student_must_not_see' });
 
     const first = (await expectApplied(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
     expect(first.studentReportedAt).not.toBeNull();
-    expect(Object.keys(first).sort()).toEqual(PAYMENT_ROW_KEYS);
+    expect(Object.keys(first).sort()).toEqual(STUDENT_VIEW_KEYS);
+    expect(first).not.toHaveProperty('processorRef');
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.studentReportedAt).not.toBeNull();
 
     const again = (await expectUnchanged(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
     expect(again.studentReportedAt).toBe(stamped.studentReportedAt!.toISOString());
+    expect(Object.keys(again).sort()).toEqual(STUDENT_VIEW_KEYS);
     const afterAgain = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(afterAgain.updatedAt).toEqual(stamped.updatedAt);
 
     const undone = (await expectApplied(await sent(studentToken, paymentId, 'DELETE'))) as Record<string, unknown>;
     expect(undone.studentReportedAt).toBeNull();
+    expect(Object.keys(undone).sort()).toEqual(STUDENT_VIEW_KEYS);
 
     await expectUnchanged(await sent(studentToken, paymentId, 'DELETE'));
     const cleared = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });

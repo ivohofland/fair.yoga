@@ -1034,7 +1034,11 @@ describe('Payment Service (DB)', () => {
         });
         const { payment, studentId } = await makeClaimedPayment('overdue');
 
-        expect(refusalCode(await rejectPaymentReport(prisma, payment.id))).toBe('PAYMENTS_PAUSED');
+        const outcome = await rejectPaymentReport(prisma, payment.id);
+        expect(refusalCode(outcome)).toBe('PAYMENTS_PAUSED');
+        expect(outcome.kind === 'refused' && outcome.refusal.message).toBe(
+          "Payments are paused, so your students are holding off. Resume payments before telling a student their payment hasn't arrived.",
+        );
 
         const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
         expect(row.studentReportedAt).toEqual(REPORTED_AT);
@@ -1074,6 +1078,14 @@ describe('Payment Service (DB)', () => {
         const row = paymentOf(await reopenPayment(prisma, payment.id), 'applied');
         expect(row.status).toBe('pending');
         expect(row.studentReportedAt).toEqual(REPORTED_AT);
+      });
+
+      it('sendPaymentReminder still reminds a claimed payment and keeps the claim', async () => {
+        const { payment, studentId } = await makeClaimedPayment('overdue');
+        const row = paymentOf(await sendPaymentReminder(prisma, payment.id), 'applied');
+        expect(row.reminderSentAt).not.toBeNull();
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+        expect(await remindersFor(studentId)).toHaveLength(1);
       });
     });
 
