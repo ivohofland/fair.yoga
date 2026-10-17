@@ -108,6 +108,7 @@ const eslintConfig = defineConfig([
   // generated output.
   // What this rule does not see, and why: docs/technical-architecture.md,
   // "Where Prisma comes from".
+  // `prisma-enums.ts` is exempt here too, and its own funnel pin refuses any other import.
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts', 'src/lib/prisma-enums.ts'],
@@ -123,6 +124,10 @@ const eslintConfig = defineConfig([
             {
               group: ['@/generated/*', '**/generated/prisma', '**/generated/prisma/*'],
               message: 'Import Prisma from @/lib/prisma-client, or enums in client-reachable code from @/lib/prisma-enums (#888).',
+            },
+            {
+              group: ['pg', 'pg/*', '@prisma/adapter-pg'],
+              message: 'Only src/lib/prisma-client.ts builds a database pool; get a client from createPrismaClient (#885).',
             },
           ],
         },
