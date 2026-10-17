@@ -484,7 +484,7 @@ jobs:
   # Nothing is pushed. The images are started only far enough to prove that
   # Prisma's engine loads in each, and in the migrate image that the deploy
   # gate's imports resolve; each check aims at an address nothing
-  # can answer and passes only on P1001. Every container runs with
+  # can answer and passes only on the unreachable-database failure. Every container runs with
   # --network none, for a reason docs/supply-chain.md keeps (Prisma's engine
   # in the images). Query behaviour is the other jobs' work.
   docker-build:

@@ -48,8 +48,8 @@ RUN pnpm exec prisma generate && pnpm run build
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
-# The scripts below import the generated client, which no stage produces for
-# them but this one.
+# The scripts below import the generated client; generating it here keeps this
+# stage from depending on whether deps' postinstall ran, as the build stage does.
 RUN pnpm exec prisma generate
 # The CLI's config. Without it migrate still runs on the schema's own URL, so
 # CI checks the file loads (DEPLOYMENT.md §6).

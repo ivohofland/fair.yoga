@@ -10,9 +10,8 @@
 // probe failed`, and the probe passes only when the logged message is Prisma's
 // can't-reach-database text.
 //
-// It matches the message, not a code: the route logs the error's message and
-// not its code, and a client whose engine is missing fails with a different
-// message, so the text alone tells the two apart.
+// It matches the message text, not a code; why is in docs/supply-chain.md,
+// "Prisma's engine in the images".
 const { spawn } = require('node:child_process');
 
 const UNREACHABLE = 'postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3';
