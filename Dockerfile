@@ -48,7 +48,8 @@ RUN pnpm exec prisma generate && pnpm run build
 FROM deps AS migrate
 WORKDIR /app
 COPY prisma ./prisma
-# The CLI's config; it loads env and names the schema and migrations.
+# The CLI's config. Without it migrate still runs on the schema's own URL, so
+# CI checks the file loads (DEPLOYMENT.md §6).
 COPY prisma.config.ts ./
 # Not a migration: the operator's admin-grant CLI, run from this stage
 # (DEPLOYMENT.md §8).

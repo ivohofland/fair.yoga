@@ -1,5 +1,5 @@
-// `dotenv/config` is what loads `.env`: with a config file present the CLI no
-// longer does. The datasource is set only when a URL exists: `generate` needs
+// `dotenv/config` loads `.env`: the CLI skips its own `.env` loading when a
+// config file exists. The datasource is set only when a URL exists: `generate` needs
 // none and must run without one, and `env()` would throw there.
 import 'dotenv/config';
 import { defineConfig } from 'prisma/config';
