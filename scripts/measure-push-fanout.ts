@@ -27,20 +27,12 @@ const REPEATS = 20;
 /** Held connection time in the contended scenario: another job's query occupying the pool. */
 const CONTENTION_MS = 2_000;
 
-function url(poolSize: number): string {
-  const base = process.env.DATABASE_URL;
-  if (!base) throw new Error('DATABASE_URL is not set; run with --env-file=.env');
-  const parsed = new URL(base);
-  parsed.searchParams.set('connection_limit', String(poolSize));
-  return parsed.toString();
-}
-
 function percentile(sorted: number[], p: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] ?? 0;
 }
 
 const tag = `fanout-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-const setup = createPrismaClient({ url: url(5) });
+const setup = createPrismaClient({ poolMax: 5 });
 
 /** Pushes each id as its row is created, so a throw midway leaves the caller everything to clean up. */
 async function seed(accountIds: string[], teacherIds: string[]): Promise<void> {
@@ -96,7 +88,7 @@ async function oneTick(
   ids: string[],
   contend: boolean,
 ): Promise<Run> {
-  const client = createPrismaClient({ url: url(poolSize) });
+  const client = createPrismaClient({ poolMax: poolSize });
   const writes: number[] = [];
   const timed = client.$extends({
     query: {

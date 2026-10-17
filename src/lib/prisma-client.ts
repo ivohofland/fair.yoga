@@ -1,4 +1,5 @@
 import { availableParallelism } from 'node:os';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Prisma } from '../generated/prisma/client';
 
 /**
@@ -14,7 +15,7 @@ export type { PrismaClient } from '../generated/prisma/client';
 export const DEFAULT_POOL_MAX = availableParallelism() * 2 + 1;
 /** pg's `connectionTimeoutMillis` when `connectionTimeoutMs` is omitted. */
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
-/** Keeps an idle connection, and a single-connection client's backend, for as long as Prisma's own pool did. */
+/** Long enough that an idle connection, and so a single-connection client's backend, survives between statements. */
 const IDLE_TIMEOUT_MS = 300_000;
 
 export interface PrismaClientFactoryOptions {
@@ -61,15 +62,20 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
 
 /**
  * Every TypeScript module builds its `PrismaClient` here. This never caches;
- * each call returns a new client with its own pool.
+ * each call returns a new client with its own pool. The client runs on
+ * Prisma's client engine through `PrismaPg`, which owns the connections: the
+ * factory, not Prisma, reads `DATABASE_URL`, through `poolConfigFor`. Pool
+ * policy: `docs/technical-architecture.md`, "Where Prisma comes from".
  *
  * Under vitest the guard installer skips this module's stack frame, so the
  * caller decides whether the client carries the undefined-filter guard:
  * `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  */
 export function createPrismaClient(options: PrismaClientFactoryOptions = {}): PrismaClient {
-  const { url, ...rest } = options;
-  const clientOptions: Prisma.PrismaClientOptions =
-    url === undefined ? rest : { ...rest, datasources: { db: { url } } };
-  return new PrismaClient(clientOptions);
+  const adapter = new PrismaPg(poolConfigFor(options));
+  return new PrismaClient({
+    adapter,
+    ...(options.errorFormat === undefined ? {} : { errorFormat: options.errorFormat }),
+    ...(options.log === undefined ? {} : { log: options.log }),
+  });
 }

@@ -44,7 +44,7 @@ function scoped(base: PrismaClient = prisma) {
 beforeAll(async () => {
   // The sweep is database-wide; refuse to run it against anything but a test
   // database, the same guard `notification-retention.test.ts` carries.
-  const [row] = await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
+  const [row] = await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()::text AS current_database`;
   const dbName = row?.current_database ?? '';
   if (!isTestDatabaseName(dbName)) {
     throw new Error(

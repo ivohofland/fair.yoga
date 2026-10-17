@@ -36,21 +36,14 @@ const a = createPrismaClient();
 const probe = createPrismaClient();
 
 /**
- * A client with exactly one connection, so `pg_backend_pid()` read from it once
+ * A client with exactly one connection (`poolMax: 1`), so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on. That is what lets the
  * handshake below watch for THIS archive waiting on a lock rather than for any
  * backend anywhere — `pg_stat_activity` is database-wide, and this file alone
  * puts three clients on it.
  */
 function singleConnectionClient(): PrismaClient {
-  const configured = process.env.DATABASE_URL;
-  // Named, rather than parsed as `''`: `new URL('')` throws `Invalid URL` at
-  // module scope, which reports a missing environment variable as a syntax
-  // problem and names nothing the reader can act on.
-  if (!configured) throw new Error('DATABASE_URL is not set; this file needs the test database');
-  const url = new URL(configured);
-  url.searchParams.set('connection_limit', '1');
-  return createPrismaClient({ url: url.toString() });
+  return createPrismaClient({ poolMax: 1 });
 }
 const archiveDb = singleConnectionClient();
 

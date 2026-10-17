@@ -68,16 +68,14 @@ import { createPrismaClient } from '@/lib/prisma-client';
 const prisma = createPrismaClient();
 
 /**
- * A client with exactly one connection, so `pg_backend_pid()` read from it once
+ * A client with exactly one connection (`poolMax: 1`), so `pg_backend_pid()` read from it once
  * identifies the backend every later statement runs on. That is what lets the
  * handshake below watch for THIS reschedule waiting on a lock rather than for
  * any backend anywhere — `pg_stat_activity` is database-wide, and this file
  * alone puts three clients on it.
  */
 function singleConnectionClient(): PrismaClient {
-  const url = new URL(process.env.DATABASE_URL ?? '');
-  url.searchParams.set('connection_limit', '1');
-  return createPrismaClient({ url: url.toString() });
+  return createPrismaClient({ poolMax: 1 });
 }
 
 describe('updateClass against a completion that already holds the class', () => {

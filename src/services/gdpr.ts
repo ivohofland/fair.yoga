@@ -1001,22 +1001,17 @@ export async function deleteStudentAccount(
     // Bounded enough that a pathological N cannot hold one of this app's
     // Postgres connections for more than 20s, against the 105s an uncapped
     // 50-class case would have taken (50 * 2s of lock waits on top of the 5s
-    // base), on a deployment that is a single 2GB, 1-vCPU VPS (`CLAUDE.md`:
-    // "VPS budget"; `docs/technical-architecture.md` draws the box as "VPS
-    // (2GB RAM, 1 vCPU)", and the core count is cited because the pool
-    // arithmetic below is computed from it). One cost of that number,
-    // recorded as a cost rather than argued away: 20s is twice Prisma's
-    // default `pool_timeout` of 10s, and `src/lib/db.ts` builds the app client
-    // with `createPrismaClient()` and passes no `connection_limit`, so the
-    // pool is Prisma's default, `physical_cores * 2 + 1`, which is three
-    // connections at that one vCPU. One erasure occupying one
-    // of them for the full budget means a concurrent request that cannot get
-    // a connection gives up at 10s with `P2024` while the erasure is still
-    // running: the pool gives up before the transaction does. Survivable
-    // rather than fine — `api-errors.ts` classifies `P2024` transient and
-    // answers it with retry advice — and reachable at the old ceiling too,
-    // since `waitingCount >= 8` already bought the same 20s. New here is only
-    // that every erasure gets it, and that anyone has written it down.
+    // base). One cost of that number, recorded as a cost rather than argued
+    // away: one erasure can occupy one pooled connection for the whole
+    // budget, and a concurrent request that cannot get a connection gives up
+    // at the pool's bound while the erasure is still running: the pool can
+    // give up before the transaction does. Survivable rather than fine —
+    // `api-errors.ts` classifies that wait as the transient `pool_exhausted`
+    // and answers it with retry advice — and reachable at the old ceiling
+    // too, since `waitingCount >= 8` already bought the same 20s. New here is
+    // only that every erasure gets it, and that anyone has written it down.
+    // The pool's size and its bound: `docs/technical-architecture.md`, "Where
+    // Prisma comes from".
     //
     // WHAT THIS DOES NOT BOUND, and the distinction is why the number above is
     // not a guarantee. Prisma's interactive-transaction timeout refuses to

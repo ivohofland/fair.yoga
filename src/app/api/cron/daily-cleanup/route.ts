@@ -58,8 +58,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   const authError = requireCronAuth(request);
   if (authError) return authError;
 
-  // Sequential, not `Promise.all`: these share one connection pool of three
-  // (one vCPU), and none is urgent.
+  // Sequential, not `Promise.all`: these share one connection pool, and none
+  // is urgent.
   //
   // ISOLATED FROM EACH OTHER: a thrown sweep must not skip the ones after it.
   //

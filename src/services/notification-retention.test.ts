@@ -65,7 +65,7 @@ beforeAll(async () => {
   // Refuse to run an unscoped DELETE sweep against a non-test database — the
   // same guard `waitlist-retention.test.ts` carries, for the same reason.
   const [row] =
-    await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()`;
+    await prisma.$queryRaw<Array<{ current_database: string }>>`SELECT current_database()::text AS current_database`;
   const dbName = row?.current_database ?? '';
   if (!isTestDatabaseName(dbName)) {
     throw new Error(

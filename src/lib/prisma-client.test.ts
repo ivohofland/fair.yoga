@@ -1,6 +1,6 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
@@ -20,14 +20,58 @@ describe('createPrismaClient', () => {
     expect(a).not.toBe(b);
   });
 
-  it('connects to the url it is given', async () => {
+  it('reports a refused port as the adapter\'s DatabaseNotReachable', async () => {
     const client = createPrismaClient({ url: UNREACHABLE });
     try {
-      await expect(client.$queryRaw`SELECT 1`).rejects.toThrow(/127\.0\.0\.1:1/);
+      const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      const meta = (err as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError?: { cause?: { kind?: unknown } } };
+      expect(meta.driverAdapterError?.cause?.kind).toBe('DatabaseNotReachable');
     } finally {
       await client.$disconnect();
     }
   });
+
+  it('poolMax reaches pg: one connection serialises two sleeps on one backend', async () => {
+    const client = createPrismaClient({ poolMax: 1 });
+    try {
+      const t0 = Date.now();
+      const rows = await Promise.all([
+        client.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid, pg_sleep(0.3)::text`,
+        client.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid, pg_sleep(0.3)::text`,
+      ]);
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(600);
+      expect(new Set(rows.map((r) => r[0]?.pid)).size).toBe(1);
+    } finally {
+      await client.$disconnect();
+    }
+  });
+
+  it('connectionTimeoutMs bounds a connect to a silent host', async () => {
+    const client = createPrismaClient({ url: 'postgresql://u:p@203.0.113.1:5432/none', connectionTimeoutMs: 500 });
+    try {
+      const t0 = Date.now();
+      const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('Connection terminated due to connection timeout');
+    } finally {
+      await client.$disconnect();
+    }
+  });
+
+  // Review Focus 3: a process that skips $disconnect() still exits promptly.
+  it('a client left connected does not hold a finished process open', async () => {
+    const script = "const { createPrismaClient } = require('./src/lib/prisma-client'); const c = createPrismaClient(); c.$queryRaw`SELECT 1`.then(() => console.log('done'));";
+    const t0 = Date.now();
+    const outcome = await new Promise<number | null | 'killed'>((resolve) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '-e', script], { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'inherit'] });
+      const timer = setTimeout(() => { child.kill('SIGKILL'); resolve('killed'); }, 10_000);
+      child.on('close', (code) => { clearTimeout(timer); resolve(code); });
+    });
+    expect(outcome).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(5000);
+  }, 15_000);
 
   it('passes errorFormat through, so a model-query error drops its source excerpt', async () => {
     const messageOf = async (errorFormat?: 'minimal'): Promise<string> => {
@@ -79,6 +123,20 @@ describe('prisma funnel imports', () => {
   it('declares the cjs module format in the schema the output is generated from', () => {
     const schema = readFileSync(path.join(__dirname, '..', '..', 'prisma', 'schema.prisma'), 'utf8');
     expect(schema).toMatch(/moduleFormat\s*=\s*"cjs"/);
+  });
+
+  it('declares engineType = "client" in the schema', () => {
+    const schema = readFileSync(path.join(__dirname, '..', '..', 'prisma', 'schema.prisma'), 'utf8');
+    expect(schema).toMatch(/engineType\s*=\s*"client"/);
+  });
+
+  it('generates no native engine library', () => {
+    const dir = path.join(__dirname, '..', 'generated', 'prisma');
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? walk(path.join(d, e.name)) : [e.name]));
+    const files = walk(dir);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((f) => f.endsWith('.node'))).toEqual([]);
   });
 
   it('both funnels hand back the same enum objects', () => {

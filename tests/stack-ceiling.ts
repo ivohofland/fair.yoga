@@ -17,16 +17,18 @@ export const CEILING_STACK = '200kB';
 export const CEILING_ROWS = 1000;
 
 /**
- * A client pinned to ONE connection with `max_stack_depth` lowered on it.
- * `connection_limit=1` is what makes a session `SET` reach every later query;
- * the read-back refuses a client whose SET landed somewhere else.
+ * A client whose every connection parses under `CEILING_STACK`. The URL's
+ * `options` startup parameter carries `max_stack_depth`, so Postgres applies
+ * it to each connection the pool opens; the read-back refuses a client the
+ * option did not reach. `max_stack_depth` needs the same superuser privilege
+ * a session `SET` of it needs.
  */
 export async function lowStackClient(): Promise<PrismaClient> {
   const base = process.env.DATABASE_URL;
   if (!base) throw new Error('lowStackClient: DATABASE_URL is not set');
-  const url = `${base}${base.includes('?') ? '&' : '?'}connection_limit=1`;
-  const client = createPrismaClient({ url });
-  await client.$executeRawUnsafe(`SET max_stack_depth = '${CEILING_STACK}'`);
+  const url = new URL(base);
+  url.searchParams.set('options', `-c max_stack_depth=${CEILING_STACK}`);
+  const client = createPrismaClient({ url: url.toString() });
   const [row] = await client.$queryRawUnsafe<{ max_stack_depth: string }[]>('SHOW max_stack_depth');
   if (row?.max_stack_depth !== CEILING_STACK) {
     await client.$disconnect();
