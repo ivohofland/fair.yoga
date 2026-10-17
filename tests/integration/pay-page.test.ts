@@ -371,6 +371,12 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).not.toContain('I&#x27;ve sent it');
   });
 
+  it('heads a standing claim with Marked as sent, not the unpaid state', async () => {
+    const html = await (await payPage(classIds.claimed, studentToken)).text();
+    expect(html).toContain('Marked as sent');
+    expect(html).not.toContain('○ Unpaid');
+  });
+
   it('offers the control to a teacher with no methods, beneath the pay-directly line', async () => {
     const html = await (await payPage(classIds.noBank, studentToken)).text();
     expect(html).toContain('I&#x27;ve sent it');

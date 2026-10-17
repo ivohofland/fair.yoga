@@ -12,7 +12,7 @@ import { readVapidConfig } from '@/lib/push/config';
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { ClassPriceLine } from '@/components/booking/price-range';
-import { formatRoomLocation, paymentStateText, formatDayHeader, formatMoney } from '@/lib/format';
+import { formatRoomLocation, formatDayHeader, formatMoney } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { canClaimSpot, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
@@ -27,7 +27,7 @@ import {
 } from '@/lib/payment-methods';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
-import { isClaimStanding } from '@/lib/payment-claim';
+import { isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { isUpcomingRegistration } from '@/lib/booking-ledger';
@@ -375,7 +375,10 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
-            const claimed = payment ? isClaimStanding(payment) : false;
+            const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
+            // While paused the pay page shows only the hold-off copy, so a
+            // claim links there only when it can show the claim and its Undo.
+            const claimLinked = payment ? isClaimStanding(payment) && guidance !== 'hold_off' : false;
             const cancelled = cls.calendarEntry.cancelledAt !== null;
             const breakdown = resolveReportedPaymentBreakdown(
               {
@@ -412,20 +415,15 @@ export default async function StudentBookingsPage() {
                         <p className={`type-number ${outstanding ? 'text-brown' : ''}`}>
                           {formatMoney(payment.amount, cls.currency)}
                         </p>
-                        {/* Payment state is text, never a badge. A standing claim
-                            replaces it: the student has done their part. */}
-                        {claimed ? (
-                          <p className="type-caption text-brown">Marked as sent</p>
-                        ) : (
-                          <p className={`type-caption ${paymentStateText(payment.status).className}`}>
-                            {paymentStateText(payment.status).label}
-                          </p>
-                        )}
+                        {/* Payment state is text, never a badge */}
+                        <p className={`type-caption ${studentPaymentStateText(payment).className}`}>
+                          {studentPaymentStateText(payment).label}
+                        </p>
                       </div>
                     )
                   )}
                 </div>
-                {payment && claimed && (
+                {payment && claimLinked && (
                   <Link
                     href={payPagePath(cls.id)}
                     aria-label={`View payment — ${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)}`}
@@ -434,9 +432,9 @@ export default async function StudentBookingsPage() {
                     View payment &rarr;
                   </Link>
                 )}
-                {payment && outstanding && !claimed && (
+                {payment && outstanding && !claimLinked && (
                   <OutstandingPayAction
-                    guidance={payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency))}
+                    guidance={guidance}
                     classId={cls.id}
                     classType={cls.calendarEntry.classType}
                     date={cls.calendarEntry.date}

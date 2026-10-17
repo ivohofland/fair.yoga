@@ -11,7 +11,8 @@ import { PaymentQr } from '@/components/student/payment-qr';
 import { MarkSentControl } from '@/components/student/mark-sent-control';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
-import { formatDayHeader, formatMoney, paymentStateText } from '@/lib/format';
+import { formatDayHeader, formatMoney } from '@/lib/format';
+import { studentPaymentStateText } from '@/lib/payment-claim';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
@@ -130,7 +131,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const amount = Number(payment.amount);
   const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
   const methods = paymentMethodsForTeacher(teacher, cls.currency);
-  const state = paymentStateText(payment.status);
+  const state = studentPaymentStateText(payment);
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
   const breakdown = resolveReportedPaymentBreakdown(
