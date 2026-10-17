@@ -515,11 +515,15 @@ jobs:
       # the engine loading from the engine failing. The output is captured
       # with an explicit `|| true` and asserted on instead; a docker failure
       # (no image, no daemon) prints no P1001 and so still fails the step.
+      # The same output must carry the CLI's line for loading prisma.config.ts:
+      # without that file the CLI falls back to the schema's own url and
+      # still reaches P1001, so P1001 alone cannot show the file is there.
       - name: Prisma schema engine loads in the migration image
         run: |
           OUT="$(docker run --rm --network none -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
           echo "$OUT"
           grep -q 'P1001' <<< "$OUT" || { echo "::error::migrate status did not report P1001 - the schema engine did not load"; exit 1; }
+          grep -q 'Loaded Prisma config from prisma.config.ts' <<< "$OUT" || { echo "::error::migrate status did not load prisma.config.ts - the migration image is missing it"; exit 1; }
 
       # The deploy gate (#855) runs from this image after the migrations; a
       # file it imports but the stage does not COPY would refuse every deploy.
