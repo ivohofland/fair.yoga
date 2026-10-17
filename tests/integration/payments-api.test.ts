@@ -563,6 +563,7 @@ const PAYMENT_ROW_KEYS = [
   'registrationId',
   'reminderSentAt',
   'status',
+  'studentReportedAt',
   'updatedAt',
   'vatAmount',
 ];
@@ -806,5 +807,138 @@ describe('POST /api/payments/[id]/not-charged', () => {
     expect(after.status).toBe('paid');
     expect(after.notChargedAt).toBeNull();
     expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+});
+
+describe('the student payment claim: /sent and /not-received', () => {
+  let studentToken: string;
+  let otherStudentToken: string;
+  let otherStudentId: string;
+  let otherStudentAccountId: string;
+
+  const sent = (token: string | null, id: string, method: 'POST' | 'DELETE') =>
+    fetch(`${BASE_URL}/api/payments/${id}/sent`, {
+      method,
+      headers: { ...(token ? cookie(token) : {}) },
+    });
+  const notReceived = (token: string | null, id: string) =>
+    fetch(`${BASE_URL}/api/payments/${id}/not-received`, {
+      method: 'POST',
+      headers: { ...(token ? cookie(token) : {}) },
+    });
+  const reset = (data: Record<string, unknown>) =>
+    prisma.payment.update({
+      where: { id: paymentId },
+      data: { status: 'pending', method: null, paidAt: null, notChargedAt: null, studentReportedAt: null, ...data },
+    });
+
+  beforeAll(async () => {
+    studentToken = await seedSession(prisma, studentAccountId);
+    const email = `pay-other-student-${suffix}@test.local`;
+    const other = await prisma.student.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Student',
+        email,
+        incomeTier: 3,
+        claimedAt: new Date(),
+        account: { create: { email } },
+      },
+    });
+    otherStudentId = other.id;
+    otherStudentAccountId = other.accountId!;
+    otherStudentToken = await seedSession(prisma, otherStudentAccountId);
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({
+      where: { accountId: { in: [studentAccountId, otherStudentAccountId] } },
+    });
+    await prisma.student.delete({ where: { id: otherStudentId } });
+    await prisma.account.deleteMany({ where: { id: otherStudentAccountId } });
+  });
+
+  it('rejects a signed-out caller', async () => {
+    await reset({});
+    expect((await sent(null, paymentId, 'POST')).status).toBe(401);
+    expect((await sent(null, paymentId, 'DELETE')).status).toBe(401);
+  });
+
+  it('403s a teacher session on /sent', async () => {
+    await reset({});
+    expect((await sent(teacherToken, paymentId, 'POST')).status).toBe(403);
+    expect((await sent(teacherToken, paymentId, 'DELETE')).status).toBe(403);
+  });
+
+  it("404s another student's payment, writing nothing", async () => {
+    await reset({});
+    await expectRefusal(await sent(otherStudentToken, paymentId, 'POST'), 'NOT_FOUND');
+    await expectRefusal(await sent(otherStudentToken, paymentId, 'DELETE'), 'NOT_FOUND');
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(row.studentReportedAt).toBeNull();
+  });
+
+  it('marks sent, answers a repeat unchanged, withdraws, answers a repeat withdrawal unchanged', async () => {
+    await reset({});
+
+    const first = (await expectApplied(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
+    expect(first.studentReportedAt).not.toBeNull();
+    expect(Object.keys(first).sort()).toEqual(PAYMENT_ROW_KEYS);
+    const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(stamped.studentReportedAt).not.toBeNull();
+
+    const again = (await expectUnchanged(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
+    expect(again.studentReportedAt).toBe(stamped.studentReportedAt!.toISOString());
+    const afterAgain = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(afterAgain.updatedAt).toEqual(stamped.updatedAt);
+
+    const undone = (await expectApplied(await sent(studentToken, paymentId, 'DELETE'))) as Record<string, unknown>;
+    expect(undone.studentReportedAt).toBeNull();
+
+    await expectUnchanged(await sent(studentToken, paymentId, 'DELETE'));
+    const cleared = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(cleared.studentReportedAt).toBeNull();
+  });
+
+  it('refuses a paid payment with PAYMENT_ALREADY_PAID', async () => {
+    await reset({ status: 'paid', method: 'cash', paidAt: new Date() });
+    await expectRefusal(await sent(studentToken, paymentId, 'POST'), 'PAYMENT_ALREADY_PAID');
+    await expectRefusal(await sent(studentToken, paymentId, 'DELETE'), 'PAYMENT_ALREADY_PAID');
+  });
+
+  it('refuses a waived payment with PAYMENT_WAIVED', async () => {
+    await reset({ status: 'not_charged', notChargedAt: new Date() });
+    await expectRefusal(await sent(studentToken, paymentId, 'POST'), 'PAYMENT_WAIVED');
+    await expectRefusal(await sent(studentToken, paymentId, 'DELETE'), 'PAYMENT_WAIVED');
+  });
+
+  it('not-received: rejects a signed-out caller and 404s an unknown payment', async () => {
+    expect((await notReceived(null, paymentId)).status).toBe(401);
+    await expectRefusal(await notReceived(teacherToken, UNKNOWN_PAYMENT_ID), 'NOT_FOUND');
+  });
+
+  it("not-received: 403s another teacher's payment and leaves the claim", async () => {
+    await reset({ studentReportedAt: new Date() });
+    await expectForbidden(await notReceived(otherTeacherToken, paymentId));
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(row.studentReportedAt).not.toBeNull();
+  });
+
+  it('not-received: clears the claim, then answers a repeat unchanged', async () => {
+    await reset({ studentReportedAt: new Date() });
+
+    const data = (await expectApplied(await notReceived(teacherToken, paymentId))) as Record<string, unknown>;
+    expect(data.studentReportedAt).toBeNull();
+    expect(Object.keys(data).sort()).toEqual(PAYMENT_ROW_KEYS);
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(row.studentReportedAt).toBeNull();
+    expect(row.reminderSentAt).not.toBeNull();
+
+    await expectUnchanged(await notReceived(teacherToken, paymentId));
+  });
+
+  it('not-received: refuses a paid payment with PAYMENT_ALREADY_PAID', async () => {
+    await reset({ status: 'paid', method: 'cash', paidAt: new Date() });
+    await expectRefusal(await notReceived(teacherToken, paymentId), 'PAYMENT_ALREADY_PAID');
   });
 });
