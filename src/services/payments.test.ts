@@ -6,6 +6,9 @@ import {
   reopenPayment,
   markPaymentNotCharged,
   sendPaymentReminder,
+  reportPaymentSent,
+  withdrawPaymentReport,
+  rejectPaymentReport,
   getOutstandingPayments,
   getPaymentsForClass,
   countOutstandingPaymentsForStudent,
@@ -649,13 +652,17 @@ describe('Payment Service (DB)', () => {
    * own — the sequential fixture above leaves `paymentId` in whatever state its
    * last test left it, which these don't depend on.
    */
-  describe('markPaymentNotCharged / reopenPayment', () => {
+  describe('with a fresh payment per test', () => {
     const fixtureStudentIds: string[] = [];
     let fixtureTag = 0;
 
-    /** A fresh student, a registration for them under `classId`, and a payment on it. */
+    /**
+     * A fresh student, a registration for them under `classId`, and a payment
+     * on it — claimed by the student when `studentReportedAt` is given.
+     */
     async function createPaymentFixture(
       status: PaymentStatus,
+      studentReportedAt: Date | null = null,
     ): Promise<{ payment: Payment; studentId: string }> {
       const tag = fixtureTag++;
       const student = await prisma.student.create({
@@ -678,6 +685,7 @@ describe('Payment Service (DB)', () => {
           status,
           ...(status === 'paid' ? { method: 'cash', paidAt: new Date() } : {}),
           ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
+          studentReportedAt,
         },
       });
       return { payment, studentId: student.id };
@@ -685,6 +693,28 @@ describe('Payment Service (DB)', () => {
 
     async function makePayment(status: PaymentStatus): Promise<Payment> {
       return (await createPaymentFixture(status)).payment;
+    }
+
+    const REPORTED_AT = new Date('2026-06-02T10:00:00Z');
+
+    /** A payment its own student has marked as sent. */
+    function makeClaimedPayment(status: PaymentStatus): Promise<{ payment: Payment; studentId: string }> {
+      return createPaymentFixture(status, REPORTED_AT);
+    }
+
+    /** The student's `reminder` notifications, read fresh. */
+    function remindersFor(studentId: string) {
+      return prisma.notification.findMany({
+        where: { recipientType: 'student', recipientId: studentId, type: 'reminder' },
+      });
+    }
+
+    /** The message a refused outcome carries; throws, naming the outcome, otherwise. */
+    function refusalMessage(outcome: PaymentOutcome): string {
+      if (outcome.kind !== 'refused') {
+        throw new Error(`expected a refusal, got ${JSON.stringify(outcome)}`);
+      }
+      return outcome.refusal.message;
     }
 
     /**
@@ -827,6 +857,227 @@ describe('Payment Service (DB)', () => {
       });
     });
 
+    describe('reportPaymentSent', () => {
+      it.each(['pending', 'overdue'] as const)('stamps an outstanding (%s) payment as reported by its student', async (status) => {
+        const { payment, studentId } = await createPaymentFixture(status);
+        const row = paymentOf(await reportPaymentSent(prisma, payment.id, studentId), 'applied');
+        expect(row.status).toBe(status);
+        expect(row.studentReportedAt).not.toBeNull();
+      });
+
+      it('answers a payment already reported unchanged, writing nothing', async () => {
+        const { payment, studentId } = await makeClaimedPayment('overdue');
+        const row = paymentOf(await reportPaymentSent(prisma, payment.id, studentId), 'unchanged');
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+        expect(row.updatedAt).toEqual(payment.updatedAt);
+      });
+
+      it.each([
+        ['unclaimed', null],
+        ['claimed', REPORTED_AT],
+      ] as const)('refuses a paid, %s payment with PAYMENT_ALREADY_PAID', async (_label, reportedAt) => {
+        const { payment, studentId } = await createPaymentFixture('paid', reportedAt);
+        const outcome = await reportPaymentSent(prisma, payment.id, studentId);
+        expect(refusalCode(outcome)).toBe('PAYMENT_ALREADY_PAID');
+        expect(refusalMessage(outcome)).toBe('Your teacher has already marked this payment as received.');
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.studentReportedAt).toEqual(reportedAt);
+      });
+
+      it('refuses a not-charged payment with PAYMENT_WAIVED, writing nothing', async () => {
+        const { payment, studentId } = await createPaymentFixture('not_charged');
+        const outcome = await reportPaymentSent(prisma, payment.id, studentId);
+        expect(refusalCode(outcome)).toBe('PAYMENT_WAIVED');
+        expect(refusalMessage(outcome)).toBe("Your teacher isn't charging for this class.");
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.studentReportedAt).toBeNull();
+      });
+
+      it.each(['pending', 'overdue', 'paid', 'not_charged'] as const)(
+        "answers NOT_FOUND for another student's %s payment, writing nothing",
+        async (status) => {
+          const { payment } = await createPaymentFixture(status);
+          // `studentId` (the outer fixture) is a different student.
+          const outcome = await reportPaymentSent(prisma, payment.id, studentId);
+          expect(refusalCode(outcome)).toBe('NOT_FOUND');
+          expect(refusalMessage(outcome)).toBe('This payment no longer exists.');
+          const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+          expect(row.studentReportedAt).toBeNull();
+          expect(row.updatedAt).toEqual(payment.updatedAt);
+        },
+      );
+
+      it("answers NOT_FOUND for another student's already-reported payment", async () => {
+        const { payment } = await makeClaimedPayment('pending');
+        expect(refusalCode(await reportPaymentSent(prisma, payment.id, studentId))).toBe('NOT_FOUND');
+      });
+
+      it('a claim withdrawn between the swap and the re-read → CONCURRENT_MODIFICATION', async () => {
+        const { payment, studentId } = await makeClaimedPayment('pending');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({ where: { id: payment.id }, data: { studentReportedAt: null } }),
+        );
+
+        const outcome = await reportPaymentSent(racing.db, payment.id, studentId);
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(outcome)).toBe('CONCURRENT_MODIFICATION');
+        expect(refusalMessage(outcome)).toBe('This payment just changed. Reload the page and try again.');
+      });
+    });
+
+    describe('withdrawPaymentReport', () => {
+      it.each(['pending', 'overdue'] as const)("clears an outstanding (%s) payment's claim", async (status) => {
+        const { payment, studentId } = await makeClaimedPayment(status);
+        const row = paymentOf(await withdrawPaymentReport(prisma, payment.id, studentId), 'applied');
+        expect(row.status).toBe(status);
+        expect(row.studentReportedAt).toBeNull();
+      });
+
+      it('answers an unclaimed outstanding payment unchanged, writing nothing', async () => {
+        const { payment, studentId } = await createPaymentFixture('pending');
+        const row = paymentOf(await withdrawPaymentReport(prisma, payment.id, studentId), 'unchanged');
+        expect(row.studentReportedAt).toBeNull();
+        expect(row.updatedAt).toEqual(payment.updatedAt);
+      });
+
+      it('refuses a paid payment with PAYMENT_ALREADY_PAID, keeping the claim', async () => {
+        const { payment, studentId } = await makeClaimedPayment('paid');
+        const outcome = await withdrawPaymentReport(prisma, payment.id, studentId);
+        expect(refusalCode(outcome)).toBe('PAYMENT_ALREADY_PAID');
+        expect(refusalMessage(outcome)).toBe('Your teacher has already marked this payment as received.');
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+      });
+
+      it('refuses a not-charged payment with PAYMENT_WAIVED', async () => {
+        const { payment, studentId } = await createPaymentFixture('not_charged');
+        const outcome = await withdrawPaymentReport(prisma, payment.id, studentId);
+        expect(refusalCode(outcome)).toBe('PAYMENT_WAIVED');
+        expect(refusalMessage(outcome)).toBe("Your teacher isn't charging for this class.");
+      });
+
+      it.each(['pending', 'overdue', 'paid', 'not_charged'] as const)(
+        "answers NOT_FOUND for another student's claimed %s payment, writing nothing",
+        async (status) => {
+          const { payment } = await makeClaimedPayment(status);
+          const outcome = await withdrawPaymentReport(prisma, payment.id, studentId);
+          expect(refusalCode(outcome)).toBe('NOT_FOUND');
+          const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+          expect(row.studentReportedAt).toEqual(REPORTED_AT);
+          expect(row.updatedAt).toEqual(payment.updatedAt);
+        },
+      );
+
+      it('a claim made between the swap and the re-read → CONCURRENT_MODIFICATION', async () => {
+        const { payment, studentId } = await createPaymentFixture('pending');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({ where: { id: payment.id }, data: { studentReportedAt: new Date() } }),
+        );
+
+        const outcome = await withdrawPaymentReport(racing.db, payment.id, studentId);
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(outcome)).toBe('CONCURRENT_MODIFICATION');
+        expect(refusalMessage(outcome)).toBe('This payment just changed. Reload the page and try again.');
+      });
+    });
+
+    describe('rejectPaymentReport', () => {
+      it.each(['pending', 'overdue'] as const)(
+        "clears an outstanding (%s) payment's claim, stamps reminderSentAt and sends one reminder",
+        async (status) => {
+          const { payment, studentId } = await makeClaimedPayment(status);
+
+          const row = paymentOf(await rejectPaymentReport(prisma, payment.id), 'applied');
+
+          expect(row.status).toBe(status);
+          expect(row.studentReportedAt).toBeNull();
+          expect(row.reminderSentAt).not.toBeNull();
+          const reminders = await remindersFor(studentId);
+          expect(reminders).toHaveLength(1);
+          expect(reminders[0]).toMatchObject({
+            title: 'Payment not seen yet',
+            body:
+              `Payment hasn't seen your payment of €12.50 for Hatha class on ${formatDayHeader(new Date('2026-06-01'))} at 09:00 arrive yet. ` +
+              "If you've sent it, it may still be on its way.",
+            relatedClassId: classId,
+          });
+        },
+      );
+
+      it('answers an unclaimed outstanding payment unchanged, stamping and sending nothing', async () => {
+        const { payment, studentId } = await createPaymentFixture('overdue');
+        const row = paymentOf(await rejectPaymentReport(prisma, payment.id), 'unchanged');
+        expect(row.reminderSentAt).toBeNull();
+        expect(row.updatedAt).toEqual(payment.updatedAt);
+        expect(await remindersFor(studentId)).toHaveLength(0);
+      });
+
+      it('refuses a paid payment with PAYMENT_ALREADY_PAID, keeping the claim', async () => {
+        const { payment, studentId } = await makeClaimedPayment('paid');
+        expect(refusalCode(await rejectPaymentReport(prisma, payment.id))).toBe('PAYMENT_ALREADY_PAID');
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+        expect(await remindersFor(studentId)).toHaveLength(0);
+      });
+
+      it('refuses a not-charged payment with PAYMENT_WAIVED', async () => {
+        const { payment, studentId } = await createPaymentFixture('not_charged');
+        expect(refusalCode(await rejectPaymentReport(prisma, payment.id))).toBe('PAYMENT_WAIVED');
+        expect(await remindersFor(studentId)).toHaveLength(0);
+      });
+
+      it('refuses while payments are paused, writing nothing', async () => {
+        await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: new Date() } });
+        onTestFinished(async () => {
+          await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null } });
+        });
+        const { payment, studentId } = await makeClaimedPayment('overdue');
+
+        expect(refusalCode(await rejectPaymentReport(prisma, payment.id))).toBe('PAYMENTS_PAUSED');
+
+        const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+        expect(row.reminderSentAt).toBeNull();
+        expect(await remindersFor(studentId)).toHaveLength(0);
+      });
+
+      it('a claim made between the swap and the re-read → CONCURRENT_MODIFICATION', async () => {
+        const { payment, studentId } = await createPaymentFixture('pending');
+        const racing = interposeAfterPaymentWrite(() =>
+          prisma.payment.update({ where: { id: payment.id }, data: { studentReportedAt: new Date() } }),
+        );
+
+        const outcome = await rejectPaymentReport(racing.db, payment.id);
+
+        expect(racing.fired()).toBe(true);
+        expect(refusalCode(outcome)).toBe('CONCURRENT_MODIFICATION');
+        expect(await remindersFor(studentId)).toHaveLength(0);
+      });
+    });
+
+    describe('what the teacher transitions do to a claim', () => {
+      it('markPaymentNotCharged clears it', async () => {
+        const { payment } = await makeClaimedPayment('overdue');
+        const row = paymentOf(await markPaymentNotCharged(prisma, payment.id), 'applied');
+        expect(row.studentReportedAt).toBeNull();
+      });
+
+      it('markPaymentPaid keeps it', async () => {
+        const { payment } = await makeClaimedPayment('pending');
+        const row = paymentOf(await markPaymentPaid(prisma, payment.id, 'bank_transfer'), 'applied');
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+      });
+
+      it('reopenPayment keeps it', async () => {
+        const { payment } = await makeClaimedPayment('paid');
+        const row = paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        expect(row.status).toBe('pending');
+        expect(row.studentReportedAt).toEqual(REPORTED_AT);
+      });
+    });
+
     /**
      * A compare-and-swap that misses, then a re-read that finds a state the
      * swap would have accepted: another action landed between the two
@@ -890,6 +1141,9 @@ describe('Payment Service (DB)', () => {
       ['markPaymentNotCharged', () => markPaymentNotCharged(prisma, UNKNOWN_PAYMENT_ID)],
       ['reopenPayment', () => reopenPayment(prisma, UNKNOWN_PAYMENT_ID)],
       ['sendPaymentReminder', () => sendPaymentReminder(prisma, UNKNOWN_PAYMENT_ID)],
+      ['reportPaymentSent', () => reportPaymentSent(prisma, UNKNOWN_PAYMENT_ID, UNKNOWN_PAYMENT_ID)],
+      ['withdrawPaymentReport', () => withdrawPaymentReport(prisma, UNKNOWN_PAYMENT_ID, UNKNOWN_PAYMENT_ID)],
+      ['rejectPaymentReport', () => rejectPaymentReport(prisma, UNKNOWN_PAYMENT_ID)],
     ] as const)('%s answers NOT_FOUND', async (_name, act) => {
       expect(refusalCode(await act())).toBe('NOT_FOUND');
     });

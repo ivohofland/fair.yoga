@@ -15,6 +15,7 @@ const payment: Payment = {
   reminderSentAt: null,
   paidAt: new Date('2026-09-01T10:00:00.000Z'),
   notChargedAt: null,
+  studentReportedAt: null,
   createdAt: new Date('2026-09-01T09:00:00.000Z'),
   updatedAt: new Date('2026-09-01T10:00:00.000Z'),
 };

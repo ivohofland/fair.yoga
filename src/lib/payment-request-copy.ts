@@ -84,3 +84,16 @@ export function studentPaymentReminderBody(
 ): string {
   return `${formatMoney(amount, currency)} for ${classPhrase(cls)} is still open.${PLAIN_TAIL[guidance]}`;
 }
+
+/**
+ * The body of the `reminder` a teacher's "Not received" sends: the payment the
+ * student marked as sent has not arrived on the teacher's side.
+ */
+export function studentPaymentNotSeenBody(
+  teacherFirstName: string,
+  cls: PaymentRequestClass,
+  amount: number,
+  currency: Currency,
+): string {
+  return `${teacherFirstName} hasn't seen your payment of ${formatMoney(amount, currency)} for ${classPhrase(cls)} arrive yet. If you've sent it, it may still be on its way.`;
+}

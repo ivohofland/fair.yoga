@@ -266,6 +266,16 @@ describe('archiveStudent (DB)', () => {
     ]);
   });
 
+  it('clears a standing claim on the payments it waives', async () => {
+    const studentId = await newStudent();
+    const claimed = await completedClassWithPayment(studentId, 'pending');
+    await prisma.payment.update({ where: { id: claimed }, data: { studentReportedAt: new Date() } });
+
+    expect(await archive(studentId, [claimed])).toEqual({ kind: 'archived', waivedCount: 1 });
+    const row = await prisma.payment.findUniqueOrThrow({ where: { id: claimed } });
+    expect([row.status, row.studentReportedAt]).toEqual(['not_charged', null]);
+  });
+
   it('refuses a waive naming only part of the open set, writing nothing', async () => {
     const studentId = await newStudent();
     const a = await completedClassWithPayment(studentId, 'pending');

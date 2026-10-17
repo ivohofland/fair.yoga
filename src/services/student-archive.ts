@@ -116,7 +116,7 @@ export async function archiveStudent(
         // gate", What the archive does not lock).
         const { count } = await tx.payment.updateMany({
           where: { id: { in: openIds }, status: { in: OUTSTANDING_STATUSES } },
-          data: { status: 'not_charged', notChargedAt: new Date() },
+          data: { status: 'not_charged', notChargedAt: new Date(), studentReportedAt: null },
         });
         if (count !== open.length) throw new OutstandingChangedError();
       }
