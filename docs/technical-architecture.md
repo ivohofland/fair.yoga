@@ -1467,6 +1467,106 @@ seeding (measured: `cd src && pnpm exec prisma db seed --schema
 ../prisma/schema.prisma` exits 0 and seeds nothing). pnpm scripts and CI run
 from the root.
 
+### Database errors
+
+`src/lib/pg-error.ts` is the one module that knows where the pg driver adapter
+(`@prisma/adapter-pg`) puts Postgres's fields. Every matcher reads a database
+refusal through it; none reads Prisma's or the engine's framing, and the
+SQLSTATE always comes from a structured field.
+
+**`pgErrorOf(err)`** answers a `PgError` (`sqlState`, `message`, optional
+`constraint`) or `null`. It is shallow: it reads `err` itself and never
+follows `Error.cause`; a caller that walks a chain calls it once per link. It
+finds the adapter's cause object on exactly one of two paths:
+
+1. `err` is an `Error` whose `name` is `'DriverAdapterError'` (identified by
+   name, never by import) and whose `cause` is an object → `err.cause`.
+2. `err` is a `Prisma.PrismaClientKnownRequestError` whose
+   `meta.driverAdapterError` is an object named `'DriverAdapterError'` with an
+   object `cause` → that `cause`.
+
+From the cause it requires `originalCode` to be a string matching
+`/^[0-9A-Z]{5}$/` and `originalMessage` to be a string; otherwise `null`. The
+adapter sets both from pg's `DatabaseError` (`code`, `message`) before any
+per-code mapping, so they exist for every Postgres-originated error whatever
+`kind` it gets. The kinds that carry no Postgres error (`SocketTimeout`,
+`DatabaseNotReachable`, `UnsupportedNativeDataType`, `TlsConnectionError`)
+have no SQLSTATE and answer `null`. There is no `detail` field: it carries row
+values (`Failing row contains (…)`, `Key (…)=(…)`) and nothing reads it.
+
+The shapes it reads, measured on the client engine plus the pg adapter
+(C+A), Prisma 6.19.3, on 2026-10-17. Source: the adapter's `convertDriverError`
+and `mapDriverError` in
+`node_modules/.pnpm/@prisma+adapter-pg@6.19.3/node_modules/@prisma/adapter-pg/dist/index.js`.
+
+| What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
+|---|---|---|---|---|
+| Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`, `40P01`, `54001`, `57014`…) | `DriverAdapterError` (not a Prisma class), `message` = Postgres primary message | `err.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
+| Same SQLSTATE on a raw call | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
+| `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint.fields` (truncated on expression keys); **no `message`** |
+| `23503` (typed `P2003`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `ForeignKeyConstraintViolation` | `originalCode`, `originalMessage`, `constraint.index`; no `message` |
+| `40001` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode: '40001'`, `originalMessage`; **no `code`** |
+| `P2025` | Known | none | — | `meta {modelName, operation}` |
+| `P2028` budget expired | Known | none | — | `meta {modelName, operation, timeout, timeTaken}` |
+| `P2028` `maxWait` exceeded | Known | none | — | `meta {}` |
+| Pool wait exceeded `connectionTimeoutMillis` (`$queryRaw`, `$executeRaw`, a model call, a batch `$transaction([…])`, each behind a raw or an interactive-transaction holder) | plain `Error('timeout exceeded when trying to connect')`, own key `clientVersion` only | none | — | — |
+| Bind-parameter count over 65,535 | `DriverAdapterError` | `err.cause` | `postgres` | `originalCode: '08P01'` |
+| Connect exceeded `connectionTimeoutMillis` | plain `Error('Connection terminated due to connection timeout')` | none | — | — |
+| `ENETUNREACH` / `EHOSTUNREACH` (raw, model) | Known, `code: 'ENETUNREACH'` | none | — | — |
+| Same, inside an interactive transaction | the raw pg `Error`, `code: 'ENETUNREACH'` | — | — | — |
+| `ECONNREFUSED` | raw: `P2010`; model / tx: `P1001` | `meta.driverAdapterError.cause` | `DatabaseNotReachable` | `host`, `port`; no `originalCode` |
+
+So a `40001` is recognised by `originalCode` on both its typed and its raw
+shape (`code` is absent on both), and the primary message is `originalMessage`,
+which every kind carries, not `cause.message`, which only `postgres` does.
+
+**`constraint`** comes from `CONSTRAINT_SOURCE`, keyed by SQLSTATE and typed
+`satisfies Record<'23503' | '23505' | '23514' | '23P01', …>`, so a SQLSTATE
+cannot be added without saying where its name comes from:
+
+| SQLSTATE | Source | Read |
+|---|---|---|
+| `23503` | structured | `cause.constraint.index` (a string). Absent → no `constraint`; the adapter writes `{fields: [column]}` instead only when pg sets `column`, which Postgres does not for a foreign-key violation |
+| `23505` | Postgres's primary message | `/^duplicate key value violates unique constraint "([^"]+)"$/` on `originalMessage` |
+| `23514` | Postgres's primary message | `/ violates check constraint "([^"]+)"$/` on `originalMessage`. A terminality trigger's own text never matches, so a trigger raise has no `constraint` |
+| `23P01` | Postgres's primary message | `/^conflicting key value violates exclusion constraint "([^"]+)"$/` on `originalMessage` |
+
+The `23505`, `23514` and `23P01` names have no structured carrier: the adapter
+drops pg's `DatabaseError.constraint` for every code but `23503`
+(`mapDriverError`). The primary message is Postgres's own text, and the
+clauses are anchored, so free text that merely quotes a clause (a template
+name, a trigger's message) names no constraint.
+
+**Locale and Postgres major.** Those three clauses are Postgres's English
+primary messages. A server with a non-English `lc_messages` localises them,
+and every name match misses: the 409s they back become 500s. The production
+image and CI's run the default (English) locale, and the real-DB tests run
+against that image, so a locale change in test infrastructure reddens them. A
+Postgres major-version bump has the same exposure: if the next major rewords
+one of the three messages, every name match on it misses in production. The
+real-DB tests catch that only if CI runs the image production runs. The
+service-image check (`src/lib/service-image-check.ts`; `docs/supply-chain.md`,
+"The database image") enforces that pins of one tag agree on one digest, but it
+groups by tag and a major bump changes the tag. **So a Postgres major bump
+moves production and CI together, in one PR.**
+
+**`isPgPoolTimeout(err)`** is true when `err` is an `Error` whose `message` is
+exactly `PG_POOL_TIMEOUT_MESSAGE` (`'timeout exceeded when trying to
+connect'`), with no own `code` and no Postgres error on it. That literal is
+pg-pool's, matched here only; re-derive it with
+`grep -n "timeout exceeded when trying to connect" node_modules/.pnpm/pg-pool@*/node_modules/pg-pool/index.js`.
+`src/lib/pg-error.test.ts` reads the same file, so a pg-pool rewording reddens
+a test.
+
+**`adapterKindOf(err)`** reads `cause.kind` from the same two paths, for the
+log facet only, and answers a member of `ADAPTER_KINDS` or `undefined`. That
+set is the runtime's `MappedError` kinds minus the other databases' (`mysql`,
+`sqlite`, `mssql`). `MappedError` is not exported, so the compiler cannot
+tether it; `src/lib/pg-error.test.ts` does, by reading the same block.
+Re-derive it with
+`sed -n '/^declare type MappedError = {/,/^};/p' node_modules/@prisma/client/runtime/client.d.ts | grep -oE "kind: '[A-Za-z]+'"`
+and drop `mysql`, `sqlite` and `mssql`. A kind outside the set is not logged.
+
 ### PostgreSQL Configuration
 
 Single PostgreSQL instance alongside the Next.js application. For a donation-funded app serving independent yoga teachers, this handles significant load before needing to scale.
