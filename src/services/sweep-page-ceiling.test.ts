@@ -1,14 +1,18 @@
 /**
  * Calibrates the ceiling harness — a lowered `max_stack_depth` must split a
- * `SWEEP_PAGE_SIZE` parent set from a `CEILING_ROWS` one, on the raw SQL path
- * and on Prisma's relation-load path, and must not leak past its own client —
- * then runs one ceiling test per paged read: each seeds a `CEILING_ROWS`
- * parent set and asserts the read completes on the lowered stack. The design
- * is `docs/superpowers/specs/2026-09-24-relation-load-paging-design.md`.
+ * `SWEEP_PAGE_SIZE` set of app-authored row-value tuples from a
+ * `CEILING_ROWS` one and must not leak past its own client, and a relation
+ * load must bind parameters in proportion to its parent set — then runs one
+ * test per paged read: each seeds a `CEILING_ROWS` parent set and asserts no
+ * statement the read sends binds more than a page's parameters. Last, the
+ * bind-parameter limit those bounds stand in for is shown to be real. Why
+ * sweeps page: `docs/technical-architecture.md`, "Relation loads over
+ * platform-wide sets".
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import crypto from 'crypto';
 import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import { pgErrorOf } from '@/lib/pg-error';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
 import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
@@ -20,11 +24,14 @@ import { processClassReminders } from './class-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   analyzeSeed,
+  BIND_LIMIT_PARENTS,
   CEILING_ROWS,
   CEILING_STACK,
   expectLowered,
   isStackDepthError,
   lowStackClient,
+  peakBoundParams,
+  resetBoundParams,
   seedClasses,
   seedTeachers,
   SLOTS_PER_DAY,
@@ -33,6 +40,9 @@ import {
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
+
+/** What one page of a three-column composite relation load binds: three keys per parent, plus one. */
+const PAGE_PARAM_BOUND = 3 * SWEEP_PAGE_SIZE + 1;
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -126,15 +136,15 @@ describe('ceiling harness', () => {
     }
   });
 
-  it('rejects an unpaged CEILING_ROWS relation load and resolves a SWEEP_PAGE_SIZE one', async () => {
+  it("a paged relation load binds a page's parameters; an unpaged one binds the whole set's", async () => {
     const load = (ids: string[]) =>
       low.class.findMany({ where: { id: { in: ids } }, include: { calendarEntry: true } });
-    const err: unknown = await load(classIds).then(
-      () => 'resolved',
-      (e: unknown) => e,
-    );
-    expect(isStackDepthError(err)).toBe(true);
+    resetBoundParams(low);
     await expect(load(classIds.slice(0, SWEEP_PAGE_SIZE))).resolves.toHaveLength(SWEEP_PAGE_SIZE);
+    expect(peakBoundParams(low)).toBe(PAGE_PARAM_BOUND);
+    resetBoundParams(low);
+    await expect(load(classIds)).resolves.toHaveLength(CEILING_ROWS);
+    expect(peakBoundParams(low)).toBe(3 * CEILING_ROWS + 1);
   });
 });
 
@@ -163,13 +173,16 @@ describe('autoCancelClasses', () => {
     await low?.$disconnect();
   });
 
-  it('reads CEILING_ROWS in-window open classes under the lowered stack', async () => {
+  it("reads CEILING_ROWS in-window open classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const recorded = recordClassReads(low);
     const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
+    resetBoundParams(low);
     await expect(autoCancelClasses(scoped.db, now)).resolves.toBe(0);
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
@@ -211,13 +224,16 @@ describe('autoTransitionToInProgress', () => {
     await low?.$disconnect();
   });
 
-  it('reads CEILING_ROWS open classes under the lowered stack', async () => {
+  it("reads CEILING_ROWS open classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const recorded = recordClassReads(low);
     const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
+    resetBoundParams(low);
     await expect(autoTransitionToInProgress(scoped.db, now)).resolves.toBe(0);
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
@@ -248,13 +264,16 @@ describe('autoCompleteClasses', () => {
     await low?.$disconnect();
   });
 
-  it('reads CEILING_ROWS in-progress classes under the lowered stack', async () => {
+  it("reads CEILING_ROWS in-progress classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const recorded = recordClassReads(low);
     const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
+    resetBoundParams(low);
     await expect(autoCompleteClasses(scoped.db, now)).resolves.toBe(0);
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
@@ -319,7 +338,7 @@ describe('reconcileWaitlists', () => {
     await low?.$disconnect();
   });
 
-  it('reads CEILING_ROWS queued classes under the lowered stack', async () => {
+  it("reads CEILING_ROWS queued classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const byTeacher = { calendarEntry: { teacherId: { in: teachers.teacherIds } } };
     const recorded = recordClassReads(low);
@@ -328,9 +347,12 @@ describe('reconcileWaitlists', () => {
       WaitlistEntry: { class: byTeacher },
       Registration: { class: byTeacher },
     });
+    resetBoundParams(low);
     const summary = await reconcileWaitlists(scoped.db, {
       streaks: createReconciliationStreaks(),
     });
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     expect(summary.candidates).toBe(CEILING_ROWS);
     expect(summary.reconciledClassIds).toEqual([]);
     expect(summary.failedClassIds).toEqual([]);
@@ -433,8 +455,11 @@ describe('readGenerationCandidates', () => {
     await low?.$disconnect();
   });
 
-  it('reads every seeded template under the lowered stack', async () => {
+  it("reads every seeded template binding at most a page's parameters per statement", async () => {
+    resetBoundParams(low);
     const result = await readGenerationCandidates(low);
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     const ids = new Set(result.map((r) => r.id));
     expect(ids.size).toBe(result.length);
     for (const id of templateIds) {
@@ -481,8 +506,12 @@ describe('readStudioGenerationCandidates', () => {
     await low?.$disconnect();
   });
 
-  it('reads every seeded template under the lowered stack', async () => {
+  it("reads every seeded template binding at most a page's parameters per statement", async () => {
+    resetBoundParams(low);
     const result = await readStudioGenerationCandidates(low);
+    // A studio template reaches its rule over two key columns, not three.
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(2 * SWEEP_PAGE_SIZE + 1);
     const ids = new Set(result.map((r) => r.id));
     expect(ids.size).toBe(result.length);
     for (const id of templateIds) {
@@ -563,8 +592,11 @@ describe('getUnreadForEmailFallback', () => {
     await low?.$disconnect();
   });
 
-  it('reads every seeded notification under the lowered stack, oldest first', async () => {
+  it("reads every seeded notification binding at most a page's parameters per statement, oldest first", async () => {
+    resetBoundParams(low);
     const result = await getUnreadForEmailFallback(low);
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     const ids = new Set(result.map((n) => n.id));
     expect(notificationIds).toHaveLength(CEILING_ROWS);
     for (const id of notificationIds) {
@@ -667,7 +699,7 @@ describe('readDuePayments', () => {
     await low?.$disconnect();
   });
 
-  it('reads every seeded overdue payment under the lowered stack', async () => {
+  it("reads every seeded overdue payment binding at most a page's parameters per statement", async () => {
     const pages: (string | undefined)[][] = [];
     const recording = low.$extends({
       query: {
@@ -681,7 +713,10 @@ describe('readDuePayments', () => {
         },
       },
     }) as unknown as PrismaClient;
+    resetBoundParams(low);
     const result = await readDuePayments(recording, new Date(Date.now() - REMIND_EVERY_DAYS * DAY_MS));
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     const ids = new Set(result.map((p) => p.id));
     expect(ids.size).toBe(result.length);
     expect(paymentIds).toHaveLength(CEILING_ROWS);
@@ -721,19 +756,72 @@ describe('processClassReminders', () => {
     await low?.$disconnect();
   });
 
-  it('reads CEILING_ROWS in-window open classes under the lowered stack', async () => {
+  it("reads CEILING_ROWS in-window open classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const recorded = recordClassReads(low);
     const scoped = scopeSweep(recorded.client, {
       Class: { calendarEntry: { teacherId: { in: teachers.teacherIds } } },
     });
+    resetBoundParams(low);
     await expect(processClassReminders(scoped.db, now)).resolves.toEqual({
       studentReminders: 0,
       teacherReminders: 0,
       emailFailures: 0,
     });
+    expect(peakBoundParams(low)).toBeGreaterThan(0);
+    expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
     expect(scoped.rowsRead('Class')).toBeGreaterThanOrEqual(CEILING_ROWS);
     expectReadExactlyOnce(recorded.ids, classIds);
     await expectLowered(scoped.db);
   }, 60_000);
+});
+
+/**
+ * `count` regular classes for `teachers`' first teacher, one per day from
+ * 2100-01-01 at 09:00, so none overlaps, written by one `generate_series`
+ * statement. Returns the class ids.
+ */
+async function seedClassesBySql(
+  db: PrismaClient,
+  teachers: SeededTeachers,
+  count: number,
+): Promise<string[]> {
+  const teacherId = teachers.teacherIds[0];
+  const teacherRoomId = teachers.teacherRoomIds[0];
+  if (!teacherId || !teacherRoomId) throw new Error('seedClassesBySql: no teacher seeded');
+  await db.$executeRaw`
+    WITH e AS (
+      INSERT INTO "CalendarEntry" (id, "teacherId", kind, "classType", date, "startTime", "durationMinutes", "updatedAt")
+      SELECT gen_random_uuid(), ${teacherId}, 'regular', 'Ceiling', DATE '2100-01-01' + g, TIME '09:00', 60, now()
+      FROM generate_series(0, ${count - 1}::int) g
+      RETURNING id)
+    INSERT INTO "Class" (id, "calendarEntryId", kind, "teacherRoomId", currency, "roomCost", "minRate", "targetRate", "minStudents", "maxStudents", status, "updatedAt")
+    SELECT gen_random_uuid(), e.id, 'regular', ${teacherRoomId}, 'EUR', 0, 0, 0, 0, 10, 'open', now() FROM e`;
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    SELECT c.id FROM "Class" c JOIN "CalendarEntry" e ON e.id = c."calendarEntryId"
+    WHERE e."teacherId" = ${teacherId}`;
+  return rows.map((r) => r.id);
+}
+
+describe('bind-parameter limit', () => {
+  let teachers: SeededTeachers | undefined;
+
+  afterAll(async () => {
+    await teachers?.cleanup();
+  });
+
+  it('an unpaged composite load over BIND_LIMIT_PARENTS + 1 parents fails 08P01; BIND_LIMIT_PARENTS resolves', async () => {
+    teachers = await seedTeachers(prisma, 1, 'ceiling-bind-limit');
+    const ids = await seedClassesBySql(prisma, teachers, BIND_LIMIT_PARENTS + 1);
+    expect(ids).toHaveLength(BIND_LIMIT_PARENTS + 1);
+    await analyzeSeed(prisma);
+    const load = (n: number) =>
+      prisma.class.findMany({ where: { id: { in: ids.slice(0, n) } }, include: { calendarEntry: true } });
+    await expect(load(BIND_LIMIT_PARENTS)).resolves.toHaveLength(BIND_LIMIT_PARENTS);
+    const err: unknown = await load(BIND_LIMIT_PARENTS + 1).then(
+      () => 'resolved',
+      (e: unknown) => e,
+    );
+    expect(pgErrorOf(err)?.sqlState).toBe('08P01');
+  }, 120_000);
 });
