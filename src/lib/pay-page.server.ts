@@ -20,6 +20,16 @@ export function markedPaidLine(paidAt: Date | null, timeZone: string, paymentId:
 }
 
 /**
+ * The pay page's line for a standing "I've sent it": the day, in the
+ * teacher's zone like `markedPaidLine`. Takes the day part of
+ * `formatInstantInZone` ("Thu 17 Oct 14:15"), so the zone fallback is its own.
+ */
+export function sentClaimLine(reportedAt: Date, timeZone: string): string {
+  const day = formatInstantInZone(reportedAt, timeZone).split(' ').slice(1, 3).join(' ');
+  return `You marked this as sent on ${day}.`;
+}
+
+/**
  * Records a registration the pay page found without a payment, when it should
  * have one: completion creates a payment for every charged registration, so a
  * charged one on a completed class without a payment is recorded as

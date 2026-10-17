@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
 import { formatInstantInZone } from '@/lib/timezone';
-import { markedPaidLine, reportMissingPayment } from './pay-page.server';
+import { markedPaidLine, reportMissingPayment, sentClaimLine } from './pay-page.server';
 
 describe('markedPaidLine', () => {
   afterEach(() => {
@@ -22,6 +22,14 @@ describe('markedPaidLine', () => {
       expect.objectContaining({ code: 'PAYMENT_PAID_WITHOUT_TIMESTAMP', paymentId: 'pay-1' }),
       'paid payment has no paidAt; the pay page names no date',
     );
+  });
+});
+
+describe('sentClaimLine', () => {
+  it('names the day in the given zone, not the time', () => {
+    const at = new Date('2026-10-17T23:30:00.000Z');
+    expect(sentClaimLine(at, 'UTC')).toBe('You marked this as sent on 17 Oct.');
+    expect(sentClaimLine(at, 'Europe/Amsterdam')).toBe('You marked this as sent on 18 Oct.');
   });
 });
 

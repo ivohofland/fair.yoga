@@ -50,6 +50,8 @@ describe('GET /bookings/[classId]/pay', () => {
     linkOnly: '',
     linkAndBank: '',
     paused: '',
+    claimed: '',
+    claimedPaid: '',
   };
   const overdueClass = { classType: `Pay Overdue ${suffix}`, date: new Date('2026-06-01T00:00:00.000Z') };
 
@@ -127,6 +129,7 @@ describe('GET /bookings/[classId]/pay', () => {
       status: 'pending' | 'overdue' | 'paid' | 'not_charged';
       /** Overrides the default `paidAt` of a `paid` fixture. */
       paidAt?: Date | null;
+      studentReportedAt?: Date;
     } | null,
   ): Promise<string> {
     const cls = await createClassFixture(prisma, {
@@ -170,6 +173,7 @@ describe('GET /bookings/[classId]/pay', () => {
                 ? new Date('2026-06-05T10:00:00.000Z')
                 : null,
           notChargedAt: payment.status === 'not_charged' ? new Date() : null,
+          ...(payment.studentReportedAt ? { studentReportedAt: payment.studentReportedAt } : {}),
         },
       });
     }
@@ -239,6 +243,9 @@ describe('GET /bookings/[classId]/pay', () => {
     classIds.linkOnly = await completedClass(linkOnlyTeacher, { classType: `Pay LinkOnly ${suffix}`, date: new Date('2026-06-13T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
     classIds.linkAndBank = await completedClass(linkAndBankTeacher, { classType: `Pay LinkBank ${suffix}`, date: new Date('2026-06-14T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
     classIds.paused = await completedClass(pausedTeacher, { classType: `Pay Paused ${suffix}`, date: new Date('2026-06-15T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending' });
+
+    classIds.claimed = await completedClass(bankTeacher, { classType: `Pay Claimed ${suffix}`, date: new Date('2026-06-16T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'pending', studentReportedAt: new Date('2026-06-17T23:30:00.000Z') });
+    classIds.claimedPaid = await completedClass(bankTeacher, { classType: `Pay ClaimedPaid ${suffix}`, date: new Date('2026-06-17T00:00:00.000Z') }, student.id, 'attended', { amount: 12.5, status: 'paid', studentReportedAt: new Date('2026-06-17T23:30:00.000Z') });
 
     // Warm the route: `next dev` compiles a page lazily on its first request.
     await payPage(classIds.overdue, studentToken).catch(() => {});
@@ -349,6 +356,41 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).not.toContain(IBAN);
     expect(html).not.toContain(LINK);
     expect(html).not.toContain('Pay Paypaused directly');
+  });
+
+  it("offers an outstanding payment the \"I've sent it\" button", async () => {
+    const html = await (await payPage(classIds.overdue, studentToken)).text();
+    expect(html).toContain('I&#x27;ve sent it');
+    expect(html).not.toContain('You marked this as sent');
+  });
+
+  it('shows a standing claim as a line with Undo, dated in the teacher zone', async () => {
+    const html = await (await payPage(classIds.claimed, studentToken)).text();
+    expect(html).toContain('You marked this as sent on 17 Jun.');
+    expect(html).toContain('Undo');
+    expect(html).not.toContain('I&#x27;ve sent it');
+  });
+
+  it('offers the control to a teacher with no methods, beneath the pay-directly line', async () => {
+    const html = await (await payPage(classIds.noBank, studentToken)).text();
+    expect(html).toContain('I&#x27;ve sent it');
+  });
+
+  it('offers no control on a paid payment, even one the student had marked sent', async () => {
+    const html = await (await payPage(classIds.claimedPaid, studentToken)).text();
+    expect(html).not.toContain('I&#x27;ve sent it');
+    expect(html).not.toContain('You marked this as sent');
+    expect(html).not.toContain('Undo');
+  });
+
+  it('offers no control on a not-charged payment', async () => {
+    const html = await (await payPage(classIds.notCharged, studentToken)).text();
+    expect(html).not.toContain('I&#x27;ve sent it');
+  });
+
+  it('offers no control while payments are paused', async () => {
+    const html = await (await payPage(classIds.paused, studentToken)).text();
+    expect(html).not.toContain('I&#x27;ve sent it');
   });
 
   it('lists the payment link after the bank transfer and the QR code', async () => {
