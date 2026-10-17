@@ -1,7 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
-import { createPrismaClient, Prisma, ClassStatus, Currency } from './prisma-client';
+import { createPrismaClient, poolConfigFor, DEFAULT_POOL_MAX, Prisma, ClassStatus, Currency } from './prisma-client';
 import * as enums from './prisma-enums';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
@@ -54,10 +57,11 @@ function specifiersOf(file: string): string[] {
 }
 
 describe('prisma funnel imports', () => {
-  it('prisma-client.ts imports only the generated client', () => {
+  it('prisma-client.ts imports only the generated client, `@prisma/adapter-pg` and `node:os`', () => {
     const specifiers = specifiersOf('prisma-client.ts');
     expect(specifiers.length).toBeGreaterThan(0);
-    expect(specifiers.every((s) => s === '../generated/prisma/client')).toBe(true);
+    const ALLOWED = new Set(['../generated/prisma/client', '@prisma/adapter-pg', 'node:os']);
+    expect(specifiers.every((s) => ALLOWED.has(s))).toBe(true);
   });
 
   it('prisma-enums.ts imports only the generated enums, which import nothing', () => {
@@ -84,5 +88,57 @@ describe('prisma funnel imports', () => {
   it('re-exports the generated client, so its runtime values come from this module', () => {
     expect(new Prisma.Decimal('1.50').toFixed(2)).toBe('1.50');
     expect(ClassStatus.open).toBe('open');
+  });
+});
+
+describe('poolConfigFor', () => {
+  it('fills every default from DATABASE_URL and the fixed policy', () => {
+    expect(poolConfigFor({})).toEqual({
+      connectionString: process.env.DATABASE_URL,
+      max: availableParallelism() * 2 + 1,
+      connectionTimeoutMillis: 10000,
+      idleTimeoutMillis: 300000,
+      allowExitOnIdle: true,
+    });
+    expect(DEFAULT_POOL_MAX).toBe(availableParallelism() * 2 + 1);
+  });
+  it('passes url, poolMax and connectionTimeoutMs through', () => {
+    expect(poolConfigFor({ url: 'postgresql://a@b/c', poolMax: 1, connectionTimeoutMs: 200 }))
+      .toMatchObject({ connectionString: 'postgresql://a@b/c', max: 1, connectionTimeoutMillis: 200 });
+  });
+  it('throws for an empty url, like a missing one', () => {
+    expect(() => poolConfigFor({ url: '' })).toThrow('createPrismaClient: no url given and DATABASE_URL is not set');
+  });
+  it('throws for a missing url when DATABASE_URL is unset', () => {
+    const saved = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    try {
+      expect(() => poolConfigFor({})).toThrow('createPrismaClient: no url given and DATABASE_URL is not set');
+    } finally {
+      if (saved === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = saved;
+    }
+  });
+  it.each([0, -1, 1.5, Number.NaN])('refuses poolMax %s with a RangeError', (poolMax) => {
+    expect(() => poolConfigFor({ poolMax })).toThrow(RangeError);
+  });
+});
+
+describe('adapter version tether', () => {
+  it('pins @prisma/adapter-pg to the generated client\'s version', () => {
+    const req = createRequire(path.join(process.cwd(), 'package.json'));
+    let dir = path.dirname(req.resolve('@prisma/adapter-pg'));
+    let version: unknown;
+    for (;;) {
+      const candidate = path.join(dir, 'package.json');
+      if (existsSync(candidate)) {
+        const pkg = JSON.parse(readFileSync(candidate, 'utf8')) as { name?: string; version?: unknown };
+        if (pkg.name === '@prisma/adapter-pg') { version = pkg.version; break; }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) throw new Error('no package.json for @prisma/adapter-pg above its main entry');
+      dir = parent;
+    }
+    expect(version).toBe(Prisma.prismaVersion.client);
   });
 });
