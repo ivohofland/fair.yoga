@@ -60,7 +60,7 @@ describe('PaymentDetails', () => {
     stubClipboard(async () => {});
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('IBAN copied');
+    expect(await screen.findByText('IBAN copied')).toHaveAttribute('role', 'status');
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).toHaveTextContent('Copied');
     expect(screen.getByRole('button', { name: 'Copy name' })).toHaveTextContent('Copy');
   });
@@ -71,8 +71,9 @@ describe('PaymentDetails', () => {
     });
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Couldn’t copy the IBAN — press and hold it to select',
+    expect(await screen.findByText('Couldn’t copy the IBAN — press and hold it to select')).toHaveAttribute(
+      'role',
+      'status',
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
   });
@@ -83,8 +84,9 @@ describe('PaymentDetails', () => {
     onTestFinished(() => warn.mockRestore());
     renderDetails();
     fireEvent.click(screen.getByRole('button', { name: 'Copy IBAN' }));
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Couldn’t copy the IBAN — press and hold it to select',
+    expect(await screen.findByText('Couldn’t copy the IBAN — press and hold it to select')).toHaveAttribute(
+      'role',
+      'status',
     );
     expect(screen.getByRole('button', { name: 'Copy IBAN' })).not.toHaveTextContent('Copied');
     expect(warn).toHaveBeenCalledWith('[payment-details] no clipboard API; the copy was not attempted');
