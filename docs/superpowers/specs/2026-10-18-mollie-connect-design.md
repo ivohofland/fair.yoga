@@ -376,10 +376,11 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
 | `pending`/`authorized` | any | attempt status only |
 | `canceled`/`expired`/`failed` | any | attempt status only |
-| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund made in Mollie's own dashboard has no row and is not created here. |
+| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund fair.yoga cannot apply yet is left unwritten and the sync answers 503, so Mollie retries: a newly `refunded` row with outcome `reopened` met by a sync that did not start with the link lock (the row changed between the fetch and the lock), or a Mollie refund id with no row while one of this attempt's fair.yoga refunds still lacks its Mollie id (the refund request is between Mollie's answer and storing it). A refund id with no row and no fair.yoga refund awaiting an id was made in Mollie's own dashboard; it is ignored and not created here. |
 
-Every branch answers 200. Only a failure to reach Mollie or the database
-answers 503, so Mollie retries (10 times over 26 h).
+Every branch answers 200, except that a failure to reach Mollie or the
+database, or a refund fair.yoga cannot apply yet, answers 503, so Mollie
+retries (10 times over 26 h).
 
 ## 6 · Refunds
 
@@ -541,7 +542,8 @@ chargeback, so an attempt keeps `chargedBackAt` once stamped); a retry policy
     repeat; reopen of a Mollie-settled payment refused, and allowed after a
     chargeback; refund with each outcome and as a duplicate, each applied
     only once the refund is `refunded`; a failed refund leaving `paid`; a
-    completion's CAS miss; a charged-back attempt refused; double-click
+    completion's CAS miss; a refund that cannot apply yet answering 503, and
+    a dashboard refund ignored; a charged-back attempt refused; double-click
     refund; `invalid_grant` disconnects and
     notifies; pause refuses the attempt.
   - *Routes*, unit-tier `route.test.ts` with services mocked.
