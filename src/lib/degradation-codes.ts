@@ -78,6 +78,18 @@ export const DEGRADATION_CODES = {
       'Mollie could not be reached or answered unexpectedly. The pay page showed the teacher’s other payment rows without Mollie’s, or a webhook was answered 503 for Mollie to retry.',
     contextKeys: ['connectionId', 'operation', 'status'],
   },
+  PROCESSOR_DISCONNECTED: {
+    level: 'warn',
+    description:
+      'Mollie refused a teacher’s refresh token. The connection was disconnected, the teacher told, and students see their other payment options.',
+    contextKeys: ['connectionId'],
+  },
+  PROCESSOR_TOKEN_UNREADABLE: {
+    level: 'error',
+    description:
+      'A stored Mollie token could not be opened with the configured key. The pay page showed the teacher’s other payment rows without Mollie’s.',
+    contextKeys: ['connectionId'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }
