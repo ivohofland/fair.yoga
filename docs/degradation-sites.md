@@ -641,3 +641,32 @@ registration was not charged at completion, so set its status back to what
 the teacher recorded and leave it unpaid. Compare the class's `totalStudents`
 with its charged registrations: a mismatch means the snapshot no longer
 matches the room.
+
+### `MOLLIE_UNAVAILABLE`
+
+**What happened.** A call to Mollie failed or came back in a shape the client
+does not accept (`MollieUnavailable`, `src/lib/mollie/client.ts`). The student
+pay page showed the teacher's other payment rows without the Mollie ones, or a
+Mollie webhook was answered 503 so Mollie retries it. `operation` is the client
+method that failed and `status` the HTTP status, when there was one.
+
+**Where the bad value lives.** Not in our data. The cause is Mollie being down
+or rate-limiting, a revoked or expired grant for `connectionId`, or Mollie
+changing a response shape the client validates.
+
+**Confirm.**
+
+```sql
+SELECT id, "teacherId", status, "updatedAt"
+  FROM "ProcessorConnection" WHERE id = '<connectionId>';
+```
+
+Then check Mollie's status page, and whether the samples cluster on one
+`connectionId` (that teacher's grant) or spread across connections (Mollie).
+
+**Correct.** A spread across connections needs nothing: the pay page recovers
+on the next request, because an unavailable answer is not cached, and Mollie
+retries webhooks. A single connection that keeps failing with 401 or 403 has a
+revoked grant; the teacher reconnects Mollie in settings. A repeating
+`status` of 422 or an unexpected shape means Mollie changed its API: fix the
+client, since the pay page will keep hiding Mollie until it does.
