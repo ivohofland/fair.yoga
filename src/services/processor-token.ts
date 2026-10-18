@@ -2,6 +2,7 @@ import type { PrismaClient } from '@/lib/prisma-client';
 import { MollieUnavailable, type TokenAnswer, type TokenGrant } from '@/lib/mollie/client';
 import { openToken, sealToken, TokenCipherError } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
+import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { createNotification } from './notifications';
 import { forgetOfferedMethods } from './processor-methods-cache';
 import type { MollieDeps } from './mollie-deps';
@@ -97,7 +98,10 @@ async function refreshOnce(
   }
 
   if (answer.kind === 'invalid_grant') {
-    const disconnected = await db.$transaction(async (tx) => {
+    const outcome = await db.$transaction(async (tx): Promise<'disconnected' | 'teacher_gone' | 'superseded'> => {
+      // The teacher first, as every connection writer takes it
+      // (docs/lock-order.md). An erased teacher gets nothing written.
+      if ((await lockTeacherForNoKeyUpdate(tx, teacherId)) === null) return 'teacher_gone';
       // The row is locked before `disconnectedAt` is read, so a disconnect
       // that commits while this waits is seen; the refresh token it still
       // holds is the one Mollie refused, or a newer grant has won.
@@ -106,7 +110,7 @@ async function refreshOnce(
           FROM "ProcessorConnection"
          WHERE id = ${connectionId} AND "revokedAt" IS NULL AND "refreshToken" = ${sealedRefresh}
            FOR UPDATE`;
-      if (first === undefined) return false;
+      if (first === undefined) return 'superseded';
       await tx.$executeRaw`
         UPDATE "ProcessorConnection"
            SET "accessToken" = NULL, "refreshToken" = NULL, "accessTokenExpiresAt" = NULL,
@@ -122,9 +126,10 @@ async function refreshOnce(
           body: 'fair.yoga can no longer reach your Mollie account, so students see your other payment options. Reconnect in Settings → Profile.',
         });
       }
-      return true;
+      return 'disconnected';
     });
-    if (disconnected) {
+    if (outcome === 'teacher_gone') return { kind: 'disconnected' };
+    if (outcome === 'disconnected') {
       logDegraded('PROCESSOR_DISCONNECTED', { connectionId }, 'Mollie refused the refresh token; the connection was disconnected');
       forgetOfferedMethods(connectionId);
       return { kind: 'disconnected' };
