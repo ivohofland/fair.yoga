@@ -341,7 +341,7 @@ jobs:
         run: |
           if [ ! -f server.log ]; then echo "no server.log — app never started"; exit 0; fi
           echo "::group::contention and error lines"
-          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|pool_exhausted|P2028|P2034' server.log || echo "(none)"
+          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|pool_exhausted|timeout exceeded when trying to connect|P2028|P2034' server.log || echo "(none)"
           echo "::endgroup::"
           echo "::group::server.log (last 500 lines)"
           tail -n 500 server.log
@@ -449,7 +449,7 @@ jobs:
         run: |
           if [ ! -f server.log ]; then echo "no server.log — app never started"; exit 0; fi
           echo "::group::contention and error lines"
-          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|pool_exhausted|P2028|P2034' server.log || echo "(none)"
+          grep -aE 'contention|lock_not_available|deadlock|55P03|40P01|40001|pool_exhausted|timeout exceeded when trying to connect|P2028|P2034' server.log || echo "(none)"
           echo "::endgroup::"
           echo "::group::server.log (last 500 lines)"
           tail -n 500 server.log

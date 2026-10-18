@@ -35,8 +35,13 @@ const SQLSTATE = /^[0-9A-Z]{5}$/;
 
 type ConstraintReader = (cause: object, message: string) => string | undefined;
 
+/** The readers `fromMessage` built: the SQLSTATEs whose name depends on Postgres's message wording. */
+const MESSAGE_READERS = new WeakSet<ConstraintReader>();
+
 function fromMessage(clause: RegExp): ConstraintReader {
-  return (_cause, message) => clause.exec(message)?.[1];
+  const reader: ConstraintReader = (_cause, message) => clause.exec(message)?.[1];
+  MESSAGE_READERS.add(reader);
+  return reader;
 }
 
 function field(source: object, key: string): unknown {
@@ -63,6 +68,15 @@ function hasConstraintSource(sqlState: string): sqlState is keyof typeof CONSTRA
   return Object.prototype.hasOwnProperty.call(CONSTRAINT_SOURCE, sqlState);
 }
 
+/**
+ * True when `sqlState`'s constraint name is read from Postgres's primary
+ * message rather than a structured field, so a missing name can mean a
+ * localised or reworded message: `docs/technical-architecture.md`, "Database errors".
+ */
+export function namesConstraintInMessage(sqlState: string): boolean {
+  return hasConstraintSource(sqlState) && MESSAGE_READERS.has(CONSTRAINT_SOURCE[sqlState]);
+}
+
 /** The adapter's cause object, from exactly one of the two places it is put; never walks `Error.cause`. */
 function adapterCauseOf(err: unknown): object | null {
   if (err instanceof Error && err.name === 'DriverAdapterError') {
@@ -85,7 +99,15 @@ function adapterCauseOf(err: unknown): object | null {
  */
 export function pgErrorOf(err: unknown): PgError | null {
   const cause = adapterCauseOf(err);
-  if (cause === null) return null;
+  return cause === null ? null : pgErrorOfCause(cause);
+}
+
+/**
+ * The Postgres error in the adapter's cause object itself, for a caller that
+ * holds the bare cause (the log serializer). The matchers use `pgErrorOf`,
+ * which takes no bare cause.
+ */
+export function pgErrorOfCause(cause: object): PgError | null {
   const sqlState = field(cause, 'originalCode');
   const message = field(cause, 'originalMessage');
   if (typeof sqlState !== 'string' || !SQLSTATE.test(sqlState) || typeof message !== 'string') return null;
@@ -112,6 +134,11 @@ export function isPgPoolTimeout(err: unknown): boolean {
  */
 export function adapterKindOf(err: unknown): AdapterKind | undefined {
   const cause = adapterCauseOf(err);
-  const kind = cause === null ? undefined : field(cause, 'kind');
+  return cause === null ? undefined : adapterKindOfCause(cause);
+}
+
+/** `adapterKindOf` for the bare cause object, as `pgErrorOfCause` is to `pgErrorOf`. */
+export function adapterKindOfCause(cause: object): AdapterKind | undefined {
+  const kind = field(cause, 'kind');
   return typeof kind === 'string' && ADAPTER_KIND_SET.has(kind) ? (kind as AdapterKind) : undefined;
 }

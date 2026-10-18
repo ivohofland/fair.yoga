@@ -10,14 +10,22 @@
  * cause object met on its own is withheld outright: Prisma renders the call's
  * arguments into the one, the others are Postgres's primary message, and all
  * can carry row values. What survives of them is the operation and the facets
- * lifted below, read through `pgErrorOf` / `adapterKindOf` (where those look:
+ * lifted below, read through `pgErrorOf` / `adapterKindOf`, or their
+ * `…OfCause` twins for a bare cause object (where those look:
  * `docs/technical-architecture.md`, "Database errors"). A withheld error's
  * cause is walked only when it is an `Error`. An error that throws while
  * being read becomes `UNSERIALIZABLE`; it is never returned raw.
  */
 import { Prisma } from '@/lib/prisma-client';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
-import { adapterKindOf, pgErrorOf, type AdapterKind } from './pg-error';
+import {
+  adapterKindOf,
+  adapterKindOfCause,
+  namesConstraintInMessage,
+  pgErrorOf,
+  pgErrorOfCause,
+  type AdapterKind,
+} from './pg-error';
 
 type Identifiers = string | readonly string[];
 
@@ -49,6 +57,8 @@ export interface SerializedErr {
   readonly meta?: SerializedPrismaMeta;
   readonly sqlState?: string;
   readonly constraint?: string;
+  /** `sqlState` names its constraint in Postgres's message, and no name was parsed from it. */
+  readonly constraintUnparsed?: true;
   readonly adapterKind?: AdapterKind;
   readonly txError?: TxErrorKind;
   readonly trigger?: TerminalTrigger;
@@ -255,7 +265,8 @@ function withheld(cls: string, err: object, type: string, original: string): Mut
 
   const out: Mutable<SerializedErr> = { type, message };
   if (typeof stack === 'string') out.stack = `${type}: ${message}${frames}`;
-  const pg = pgErrorOf(err);
+  const bareCause = cls === 'DriverAdapterCause';
+  const pg = bareCause ? pgErrorOfCause(err) : pgErrorOf(err);
   if (pg !== null) {
     out.sqlState = pg.sqlState;
     if (pg.constraint !== undefined && CONSTRAINT_NAME.test(pg.constraint)) out.constraint = pg.constraint;
@@ -270,8 +281,11 @@ function withheld(cls: string, err: object, type: string, original: string): Mut
         if (ids.length > 0) out.rowIds = Object.freeze(ids);
       }
     }
+    if (pg.constraint === undefined && out.trigger === undefined && namesConstraintInMessage(pg.sqlState)) {
+      out.constraintUnparsed = true;
+    }
   } else {
-    const kind = adapterKindOf(err);
+    const kind = bareCause ? adapterKindOfCause(err) : adapterKindOf(err);
     if (kind !== undefined) out.adapterKind = kind;
   }
   const meta = allowedMeta(field(err, 'meta'));
@@ -289,8 +303,9 @@ interface Walk {
 function serialize(err: object, walk: Walk, depth: number): SerializedErr {
   const entriesBefore = walk.entries;
   walk.entries += 1;
-  const type = typeOf(err);
   const cls = withheldClass(err);
+  // The adapter's plain cause has no class of its own; its type says what it is.
+  const type = cls === 'DriverAdapterCause' ? cls : typeOf(err);
   const withheldPath = cls !== null && cls !== 'PrismaClientInitializationError';
   const rawMessage = field(err, 'message');
   const original = typeof rawMessage === 'string' ? rawMessage : '';
