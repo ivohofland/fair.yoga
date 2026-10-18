@@ -370,6 +370,11 @@ export const paymentLinkSchema = z.object({
   paymentLink: singleLineCharacters(z.string().trim(), PAYMENT_LINK_MAX * 2).max(PAYMENT_LINK_MAX * 2),
 }).strict();
 
+/** The Mollie profile a teacher picks: an id as Mollie writes it. */
+export const processorProfileSchema = z.object({
+  profileId: z.string().regex(/^pfl_[A-Za-z0-9]+$/).max(64),
+}).strict();
+
 /**
  * `POST /api/account/onboarding`'s wire shape. `z.enum(OnboardingStep)`
  * derives the accepted values from the Prisma enum itself — a hand-copied

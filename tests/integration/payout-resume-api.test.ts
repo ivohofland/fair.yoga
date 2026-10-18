@@ -1,7 +1,7 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { generateMagicLinkToken, hashNonce } from '@/lib/auth';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
-import { bankAccountDataSelect } from '@/lib/payment-methods';
+import { readPayoutDetails } from '@/services/payout-resume';
 import { mintPayoutPauseToken } from '@/services/payout-pause-token';
 import { BASE_URL, uniqueSuffix, freshIp, cookie, seedSession, hashToken } from '../helpers';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
@@ -51,11 +51,7 @@ async function pausedTeacher(tag: string, cutoff: Date | null = null, paused = t
 }
 
 async function fingerprintOf(teacherId: string): Promise<string> {
-  const t = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { paymentLink: true, bankAccounts: { select: bankAccountDataSelect } },
-  });
-  return payoutFingerprint(t);
+  return payoutFingerprint(await readPayoutDetails(prisma, teacherId));
 }
 
 const resume = (teacherId: string, token: string, fingerprint: string) =>
