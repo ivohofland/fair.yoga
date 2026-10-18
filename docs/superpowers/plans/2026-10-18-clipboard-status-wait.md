@@ -38,4 +38,17 @@ Prove it bites:
 3. With the **new** assertions under the same delay: 16/16 pass.
 4. Remove the mutation; 16/16 pass.
 
-No component change; no other file touched.
+## Task 2 — the same race in `attendance-list.test.tsx` (found in branch review)
+
+The plan's grep keys on `'status'` and a chained `toHaveTextContent`, so it cannot see
+"surfaces the server's reason for a refusal…" in `src/components/class/attendance-list.test.tsx`:
+`const alert = await screen.findByRole('alert'); expect(alert.textContent).toContain(…)`.
+`AttendanceList` mounts its `sr-only` `role="alert"` unconditionally, empty until the
+refusal lands, so this is the same race under a different role and spelling.
+
+Wait for the text with `waitFor(() => expect(getByRole('alert')).toHaveTextContent(…))`,
+then read the element. Proof, delaying that case's fetch mock 50 ms: old assertion fails
+with `expected '' to contain 'Once the class has started'`; new one passes; 28/28 without
+the delay.
+
+No component change in either task.

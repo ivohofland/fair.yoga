@@ -261,8 +261,8 @@ describe('AttendanceList', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /mark them present/i }));
 
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Once the class has started');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Once the class has started'));
+    const alert = screen.getByRole('alert');
     expect(alert.textContent).not.toContain('try again');
     // Without this the teacher is stuck: the page's class status is a render-time
     // snapshot, so a refusal it no longer reflects would repeat forever.
