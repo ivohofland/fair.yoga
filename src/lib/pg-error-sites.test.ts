@@ -7,9 +7,10 @@
  * Each case produces one named unique collision at an `isUniqueConflictOn`
  * call site and asserts the site's answer, so a name dropped from that call
  * line turns its case into a 500. The ticket-path cases need no race: nothing
- * reads ahead of their insert.
+ * reads ahead of their insert. The unrecognised-constraint case is fabricated,
+ * since no schema key can produce a name the site does not list.
  */
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import crypto from 'crypto';
 import { createPrismaClient } from '@/lib/prisma-client';
@@ -21,6 +22,8 @@ import { POST as postTeacherRoom } from '@/app/api/teacher-rooms/route';
 import { cookie, seedSession } from '../../tests/helpers';
 import { expectRefusal, expectUnchanged } from '../../tests/api-assertions';
 import { raceBehindHolder } from '../../tests/holder-race';
+import { knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
+import { log } from '@/lib/log';
 
 const prisma = createPrismaClient();
 const run = `pgsites-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -238,5 +241,23 @@ describe('isUniqueConflictOn call sites, produced against the real database', ()
       await expectRefusal(res, 'ACCOUNT_EXISTS');
       expect(await prisma.account.count({ where: { email } })).toBe(0);
     });
+  });
+
+  it('inviteContact: an unrecognised unique constraint is thrown with the database error as its cause', async () => {
+    const fx = await teacherAccount('inv-unknown');
+    const unknown = knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Invitation_other_key"'));
+    const create = vi.spyOn(prisma.invitation, 'create').mockRejectedValueOnce(unknown);
+    const logged = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    try {
+      const thrown = await inviteContact(prisma, { teacherId: fx.teacherId, email: emailOf(`${fx.tag}-invitee`), firstName: 'A', lastName: 'B' })
+        .then(() => undefined, (err: unknown) => err);
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe('invitation create: unrecognised unique constraint');
+      expect((thrown as Error).cause).toBe(unknown);
+      expect(logged).toHaveBeenCalledTimes(1);
+    } finally {
+      create.mockRestore();
+      logged.mockRestore();
+    }
   });
 });

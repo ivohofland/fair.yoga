@@ -448,6 +448,29 @@ describe('serializeErr: what a withheld error still says', () => {
     expect(out.adapterKind).toBeUndefined();
   });
 
+  // A name read from Postgres's primary message is missing when the message is
+  // localised (a non-English lc_messages) or reworded by a new major.
+  it.each([
+    ['a typed 23505', () => typed('23505', 'doppelter Schlüsselwert verletzt Unique-Constraint »X_key«'), '23505'],
+    ['a Known P2002', () => knownWithAdapterCause('P2002', pgCause('23505', 'la valeur d\'une clé dupliquée rompt la contrainte unique « X_key »')), '23505'],
+    ['a typed 23P01', () => typed('23P01', 'widersprüchlicher Schlüsselwert verletzt Exclusion-Constraint »X_excl«'), '23P01'],
+    ['a typed 23514 that names neither a constraint nor a known trigger', () => typed('23514', 'neue Zeile verletzt Check-Constraint »X_check«'), '23514'],
+  ] as const)('flags a constraint it could not parse from %s', (_label, make, sqlState) => {
+    const out = serializeErr(make());
+    expect(out.sqlState).toBe(sqlState);
+    expect(out.constraint).toBeUndefined();
+    expect(out.constraintUnparsed).toBe(true);
+  });
+
+  it.each([
+    ['a parsed 23505', () => typed('23505', 'duplicate key value violates unique constraint "X_key"')],
+    ['a terminal trigger 23514', () => typed('23514', `Class 1 is completed; ${TERMINAL_TRIGGER_TAILS.status} open`)],
+    ['a 23503 with no structured index', () => knownWithAdapterCause('P2003', pgCause('23503', 'Fremdschlüssel verletzt'))],
+    ['a 55P03, which names no constraint', () => typed('55P03', 'canceling statement due to lock timeout')],
+  ] as const)('does not flag %s', (_label, make) => {
+    expect(serializeErr(make())).not.toHaveProperty('constraintUnparsed');
+  });
+
   it('a constraint name outside [A-Za-z0-9_] is not logged', () => {
     const out = serializeErr(typed('23514', 'new row for relation "t" violates check constraint "Alice pii-x"'));
     expect(out.sqlState).toBe('23514');
@@ -632,7 +655,25 @@ describe('serializeErr: the pg driver adapter\'s errors', () => {
       expectNoPii(out);
       expect(out).toMatchObject({ message: 'Driver adapter error (detail withheld from the log)' });
       expect(JSON.stringify(out)).not.toContain(id);
-      expect(JSON.stringify(out)).not.toContain('Student_email_key');
+      expect(JSON.stringify(out)).not.toContain('duplicate key value');
+    });
+
+    it('lifts its facets from itself, typed as the adapter cause', () => {
+      expect(serializeErr(unique())).toMatchObject({ type: 'DriverAdapterCause', sqlState: '23505', constraint: 'Student_email_key' });
+      expect(serializeErr(unique())).not.toHaveProperty('adapterKind');
+      expect(serializeErr(postgres())).toMatchObject({ type: 'DriverAdapterCause', sqlState: '23514' });
+    });
+
+    it('names its kind when it carries no SQLSTATE', () => {
+      const out = serializeErr({ kind: 'TransactionWriteConflict', originalMessage: `Class ${id} Alicepii` });
+      expectNoPii(out);
+      expect(out).toMatchObject({ type: 'DriverAdapterCause', adapterKind: 'TransactionWriteConflict' });
+      expect(out).not.toHaveProperty('sqlState');
+    });
+
+    it('lifts its facets as the cause of an error that is not withheld', () => {
+      const out = serializeErr(new Error('booking failed', { cause: unique() }));
+      expect(out.cause).toMatchObject({ type: 'DriverAdapterCause', sqlState: '23505', constraint: 'Student_email_key' });
     });
 
     it('withholds it as the cause of an error that is not withheld', () => {

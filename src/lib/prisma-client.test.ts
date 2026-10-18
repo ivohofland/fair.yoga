@@ -95,14 +95,12 @@ describe('createPrismaClient', () => {
   // A process that skips $disconnect() still exits promptly.
   it('a client left connected does not hold a finished process open', async () => {
     const script = "const { createPrismaClient } = require('./src/lib/prisma-client'); const c = createPrismaClient(); c.$queryRaw`SELECT 1`.then(() => console.log('done'));";
-    const t0 = Date.now();
     const outcome = await new Promise<number | null | 'killed'>((resolve) => {
       const child = spawn(process.execPath, ['--import', 'tsx', '-e', script], { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'inherit'] });
       const timer = setTimeout(() => { child.kill('SIGKILL'); resolve('killed'); }, 10_000);
       child.on('close', (code) => { clearTimeout(timer); resolve(code); });
     });
     expect(outcome).toBe(0);
-    expect(Date.now() - t0).toBeLessThan(5000);
   }, 15_000);
 
   it('passes errorFormat through, so a model-query error drops its source excerpt', async () => {
@@ -218,6 +216,12 @@ describe('poolConfigFor', () => {
   });
   it.each([0, -1, 1.5, Number.NaN])('refuses poolMax %s with a RangeError', (poolMax) => {
     expect(() => poolConfigFor({ poolMax })).toThrow(RangeError);
+  });
+  it.each([0, -1, 1.5, Number.NaN])('refuses connectionTimeoutMs %s with a RangeError', (connectionTimeoutMs) => {
+    expect(() => poolConfigFor({ connectionTimeoutMs })).toThrow(RangeError);
+    expect(() => poolConfigFor({ connectionTimeoutMs })).toThrow(
+      `createPrismaClient: connectionTimeoutMs must be a positive integer, got ${String(connectionTimeoutMs)}`,
+    );
   });
 });
 

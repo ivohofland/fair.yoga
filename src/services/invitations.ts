@@ -420,7 +420,7 @@ export async function inviteContact(
           { err, constraint: pgErrorOf(err)?.constraint },
           'invitation create hit a unique constraint that is not the (teacher, email) key',
         );
-        throw new Error('invitation create: unrecognised unique constraint');
+        throw new Error('invitation create: unrecognised unique constraint', { cause: err });
       }
       throw err;
     }

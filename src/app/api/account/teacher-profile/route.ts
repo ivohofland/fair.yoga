@@ -189,7 +189,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         { err, constraint: pgErrorOf(err)?.constraint },
         'teacher profile create hit a unique constraint its authorization path cannot reach',
       );
-      throw new Error('teacher profile create: unrecognised unique constraint');
+      throw new Error('teacher profile create: unrecognised unique constraint', { cause: err });
     }
     throw err;
   }

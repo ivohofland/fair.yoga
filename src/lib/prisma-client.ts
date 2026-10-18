@@ -23,7 +23,7 @@ export interface PrismaClientFactoryOptions {
   url?: string;
   /** pg's `max`. Omitted, `DEFAULT_POOL_MAX`. */
   poolMax?: number;
-  /** pg's `connectionTimeoutMillis`: bounds both a pool wait and a new connection. */
+  /** pg's `connectionTimeoutMillis`: bounds both a pool wait and a new connection. A positive integer; pg reads 0 as "wait forever", which `maxWait` cannot mirror. */
   connectionTimeoutMs?: number;
   errorFormat?: Prisma.PrismaClientOptions['errorFormat'];
   /** Passed through to `PrismaClient`. */
@@ -51,10 +51,16 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
   if (!Number.isInteger(max) || max < 1) {
     throw new RangeError(`createPrismaClient: poolMax must be a positive integer, got ${String(max)}`);
   }
+  const connectionTimeoutMillis = options.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS;
+  if (!Number.isInteger(connectionTimeoutMillis) || connectionTimeoutMillis < 1) {
+    throw new RangeError(
+      `createPrismaClient: connectionTimeoutMs must be a positive integer, got ${String(connectionTimeoutMillis)}`,
+    );
+  }
   return {
     connectionString,
     max,
-    connectionTimeoutMillis: options.connectionTimeoutMs ?? DEFAULT_CONNECTION_TIMEOUT_MS,
+    connectionTimeoutMillis,
     idleTimeoutMillis: IDLE_TIMEOUT_MS,
     allowExitOnIdle: true,
   };

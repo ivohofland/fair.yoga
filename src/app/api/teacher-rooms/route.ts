@@ -136,7 +136,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         { err, constraint: pgErrorOf(err)?.constraint },
         'teacher-room create hit a unique constraint that is not the link key',
       );
-      throw new Error('teacher-room create: unrecognised unique constraint');
+      throw new Error('teacher-room create: unrecognised unique constraint', { cause: err });
     }
     throw err;
   }
