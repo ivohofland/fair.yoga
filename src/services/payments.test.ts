@@ -73,6 +73,21 @@ function interposeAfterPaymentWrite(between: () => Promise<unknown>): {
   return { db, fired: () => !armed };
 }
 
+/** How long `blockedBy` polls before it answers false. */
+const BLOCK_DEADLINE_MS = 3_000;
+
+/** True once some backend is blocked by `holderPid`; false at the deadline. */
+async function blockedBy(holderPid: number): Promise<boolean> {
+  const deadline = Date.now() + BLOCK_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    const rows = await prisma.$queryRaw<{ pid: number }[]>`
+      SELECT pid FROM pg_stat_activity WHERE ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+    if (rows.length > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 describe('Payment Service (DB)', () => {
   let teacherId: string;
   let roomId: string;
@@ -868,16 +883,19 @@ describe('Payment Service (DB)', () => {
           expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(true);
         });
 
-        it('applies after a chargeback, and a second attempt can then settle it', async () => {
+        it('applies after a chargeback released the settling attempt', async () => {
           const payment = await makePayment('paid');
           await attemptOn(payment.id, { settledPayment: false, chargedBackAt: new Date() });
-
           paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        });
 
-          const second = await attemptOn(payment.id, { settledPayment: false });
-          paymentOf(await markPaymentPaid(prisma, payment.id, 'mollie'), 'applied');
-          await prisma.processorPayment.update({ where: { id: second.id }, data: { settledPayment: true } });
-          expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).method).toBe('mollie');
+        it('is refused for a refund naming another attempt while one still settles it', async () => {
+          const { payment, attempt } = await settledByMollie();
+          const duplicate = await attemptOn(payment.id, { settledPayment: false });
+          const outcome = await prisma.$transaction((tx) => reopenInTransaction(tx, payment.id, { refundAttemptId: duplicate.id }));
+          expect(refusalCode(outcome)).toBe('PAYMENT_SETTLED_BY_PROCESSOR');
+          expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe('paid');
+          expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(true);
         });
 
         it('applies for the refund that names its attempt, releasing that attempt', async () => {
@@ -1193,24 +1211,40 @@ describe('Payment Service (DB)', () => {
 
       // The reopen holds the payment's row lock from before its compare-and-
       // swap, so a settle cannot land between the swap and the re-read: it
-      // waits, and the reopen answers what the row held when it looked.
-      it('reopenPayment: a settle racing the swap waits for the reopen, which answers unchanged', async () => {
+      // waits on the reopen's backend, and the reopen answers what the row
+      // held when it looked.
+      it('reopenInTransaction: a settle racing the swap waits on the reopen, which answers unchanged', { timeout: 20_000 }, async () => {
         const payment = await makePayment('pending');
-        let settling: Promise<unknown> | null = null;
-        const racing = interposeAfterPaymentWrite(async () => {
-          // `.then` starts the query; a Prisma query left un-awaited never runs.
-          settling = prisma.payment
-            .update({ where: { id: payment.id }, data: { status: 'paid', method: 'manual', paidAt: new Date() } })
-            .then((row) => row);
-          // Long enough for the update to reach the row lock it waits on.
-          await new Promise((resolve) => setTimeout(resolve, 200));
-        });
+        let settling: Promise<unknown> = Promise.resolve();
+        let waited = false;
 
-        const result = await reopenPayment(racing.db, payment.id);
+        const outcome = await prisma.$transaction(async (tx) => {
+          const hooked = new Proxy(tx, {
+            get(target, prop, receiver) {
+              if (prop !== 'payment') return Reflect.get(target, prop, receiver) as unknown;
+              return new Proxy(target.payment, {
+                get(delegate, method, r) {
+                  if (method !== 'updateMany') return Reflect.get(delegate, method, r) as unknown;
+                  return async (args: Parameters<typeof delegate.updateMany>[0]) => {
+                    const swapped = await delegate.updateMany(args);
+                    const [holder] = await target.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+                    // `.then` starts the query; a Prisma query left un-awaited never runs.
+                    settling = prisma.payment
+                      .update({ where: { id: payment.id }, data: { status: 'paid', method: 'manual', paidAt: new Date() } })
+                      .then((row) => row);
+                    waited = await blockedBy(holder!.pid);
+                    return swapped;
+                  };
+                },
+              });
+            },
+          });
+          return reopenInTransaction(hooked, payment.id);
+        }, { timeout: 15_000 });
         await settling;
 
-        expect(racing.fired()).toBe(true);
-        expect(paymentOf(result, 'unchanged').status).toBe('pending');
+        expect(waited, "the settle never waited on the reopen's payment lock").toBe(true);
+        expect(paymentOf(outcome, 'unchanged').status).toBe('pending');
         expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe('paid');
       });
     });

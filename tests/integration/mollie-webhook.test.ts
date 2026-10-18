@@ -165,6 +165,24 @@ describe('Mollie, without Mollie', () => {
     });
   });
 
+  it('GET /api/payments/[id]/processor-return without a session redirects to sign in, returning to the pay page', async () => {
+    const attempt = await prisma.processorPayment.create({
+      data: {
+        paymentId: pendingPaymentId, connectionId: null, processorPaymentId: `tr_hookr${compact}`, profileId: 'pfl_hook',
+        testmode: true, method: 'ideal', status: 'open', amount: 10, currency: 'EUR',
+      },
+    });
+    try {
+      const res = await fetch(`${BASE_URL}/api/payments/${pendingPaymentId}/processor-return?attempt=${attempt.id}`, { redirect: 'manual' });
+      expect(res.status).toBe(303);
+      const location = new URL(res.headers.get('location')!);
+      expect(location.pathname).toBe('/login');
+      expect(location.searchParams.get('redirect')).toBe(`/bookings/${pendingClassId}/pay?attempt=${attempt.id}`);
+    } finally {
+      await prisma.processorPayment.delete({ where: { id: attempt.id } });
+    }
+  });
+
   it('POST /api/payments/[id]/unpaid refuses a payment Mollie settled: PAYMENT_SETTLED_BY_PROCESSOR', async () => {
     const res = await fetch(`${BASE_URL}/api/payments/${settledPaymentId}/unpaid`, {
       method: 'POST',

@@ -316,8 +316,8 @@ export type RefundSyncDecision =
   | { kind: 'unchanged' }
   | { kind: 'status'; status: ProcessorRefundStatus; complete: boolean; notifyFailed: boolean };
 
-/** Refund statuses a row never leaves: its outcome has been applied, or the teacher told it failed. */
-const FINAL_REFUND: ReadonlySet<ProcessorRefundStatus> = new Set<ProcessorRefundStatus>(['refunded', 'failed']);
+/** Refund statuses a row never leaves: its outcome has been applied, the teacher was told it failed, or Mollie canceled it. */
+const FINAL_REFUND: ReadonlySet<ProcessorRefundStatus> = new Set<ProcessorRefundStatus>(['refunded', 'failed', 'canceled']);
 
 /** A row newly `refunded` completes; one newly `failed` tells the teacher; a row in `FINAL_REFUND` stays put. */
 export function decideRefundSync(input: { storedStatus: ProcessorRefundStatus; mollieStatus: ProcessorRefundStatus }): RefundSyncDecision {
@@ -336,7 +336,8 @@ export type CompletionResult = 'applied' | 'missed' | 'no_outcome';
 /**
  * Applies a completed refund's outcome, in the caller's transaction, and
  * tells the student their money is on its way back. `waived` moves the
- * payment `paid → not_charged` (Decision 9) by a compare-and-swap on `paid`;
+ * payment `paid → not_charged` (Decision 9) by a compare-and-swap on `paid`,
+ * clearing the paid fields as a waived row carries none;
  * `reopened` asks again through `reopenInTransaction`, which swaps on its own
  * settled states. Either releases the attempt when it applies; a miss applies
  * nothing and is logged. A null outcome (a duplicate's refund) changes no
@@ -395,7 +396,7 @@ async function applyRefundOutcome(
     case 'waived': {
       const { count } = await tx.payment.updateMany({
         where: { id: paymentId, status: 'paid' },
-        data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null },
+        data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null, method: null, paidAt: null },
       });
       if (count === 0) return 'missed';
       await tx.processorPayment.updateMany({ where: { id: attemptId, paymentId }, data: { settledPayment: false } });
@@ -435,8 +436,8 @@ const SYNC_ATTEMPT_SELECT = {
 /**
  * Fetches one attempt from Mollie and applies what Mollie says, as spec §5
  * describes: the attempt's status, a settle, a double payment, a chargeback,
- * and every refund on it fair.yoga made. Shared by the webhook and the
- * student's return. Mollie's answer is the only thing believed, and it is
+ * and every refund on it fair.yoga made. `processorPaymentId` is Mollie's id
+ * for the attempt. Mollie's answer is the only thing believed, and it is
  * fetched with the token of the attempt's own connection, in the mode the
  * attempt was made in.
  *
@@ -536,6 +537,8 @@ export async function syncAttempt(
     let result = decision.result;
     const amount = formatMoney(current.amount, current.currency);
     const method = view.method ?? current.method;
+    const chargedBackAmount =
+      view.amountChargedBack === null ? amount : formatMoney(new Prisma.Decimal(view.amountChargedBack.value), current.currency);
 
     if (result !== 'unchanged') {
       await tx.processorPayment.update({
@@ -555,7 +558,7 @@ export async function syncAttempt(
         type: 'payment_charged_back',
         title: 'Payment disputed',
         body:
-          `${registration.student.firstName} disputed ${amount} with their bank and it was taken back.` +
+          `${registration.student.firstName} disputed ${chargedBackAmount} with their bank and it was taken back.` +
           (current.settledPayment ? ' You can mark the payment unpaid to ask again.' : ''),
         relatedClassId: registration.classId,
       });

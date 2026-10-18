@@ -50,8 +50,9 @@ export type PaymentRefusal = Extract<
 >;
 
 /**
- * What `Payment.method` holds once paid: the teacher's own mark, or Mollie's
- * webhook. The specific Mollie method is on the attempt (`ProcessorPayment`).
+ * What `Payment.method` holds once paid: `manual` when the teacher marked it,
+ * `mollie` when a Mollie attempt settled it. The specific Mollie method is on
+ * the attempt (`ProcessorPayment`).
  */
 export type PaidMethod = 'manual' | 'mollie';
 
@@ -137,16 +138,15 @@ export type TeacherPaymentRow = Payment & {
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a payment as paid by `method`: 'manual' for the teacher's own mark,
- * 'mollie' for a webhook's. Sets status to 'paid', records the method, and
- * timestamps paidAt.
+ * Mark a payment as paid by `method` (`PaidMethod`). Sets status to 'paid',
+ * records the method, and timestamps paidAt.
  *
  * Applies from 'pending' or 'overdue'. A payment already paid with the same
  * method is `unchanged`; with another method it is refused, because answering
  * "done" would discard the method this call carries.
  *
- * Takes a transaction client too, so a webhook settles inside the
- * transaction that holds the payment's row lock.
+ * `db` may be a transaction client; the write then joins that transaction
+ * and any row lock it holds.
  *
  * `studentReportedAt` is kept as the student's half of the record.
  */
@@ -258,16 +258,16 @@ export async function reopenPayment(
 
 /**
  * `reopenPayment`'s transaction body, in the caller's transaction. With
- * `refundAttemptId` it is a completed refund's "ask again": the
- * `PAYMENT_SETTLED_BY_PROCESSOR` refusal is skipped and, when the reopen
- * applies, that attempt stops settling the payment.
+ * `refundAttemptId` it is a completed refund's "ask again": that attempt is
+ * left out of the `PAYMENT_SETTLED_BY_PROCESSOR` check and, when the reopen
+ * applies, stops settling the payment.
  *
  * Reopening makes the payment outstanding again, so it un-archives the
  * student's link with this teacher too (`docs/data-model.md`, TeacherStudent)
  * — an outstanding payment is not "nothing live". It locks the link's row and
- * then the payment's, in the order `docs/lock-order.md` fixes, so a caller
- * that already holds the payment's row lock must have taken the link's
- * before it. A missing link (student never on the roster, or unlinked since)
+ * then the payment's, in the order `docs/lock-order.md` fixes ("The `Payment`
+ * row is a Mollie sync's gate"), so a caller that already holds the payment's
+ * row lock must have taken the link's before it. A missing link (student never on the roster, or unlinked since)
  * writes nothing, and an applied reopen on one is logged; an `unchanged`
  * reopen leaves the link exactly as it was, since nothing about the payment
  * newly became live.
@@ -319,10 +319,14 @@ async function reopenWithin(
   // transaction.
   await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${paymentId} FOR UPDATE`;
 
-  if (
-    opts.refundAttemptId === undefined &&
-    (await tx.processorPayment.count({ where: { paymentId, settledPayment: true } })) > 0
-  ) {
+  const settlingOtherwise = await tx.processorPayment.count({
+    where: {
+      paymentId,
+      settledPayment: true,
+      ...(opts.refundAttemptId === undefined ? {} : { id: { not: opts.refundAttemptId } }),
+    },
+  });
+  if (settlingOtherwise > 0) {
     return { outcome: { kind: 'refused', refusal: SETTLED_BY_PROCESSOR }, unlinked: null };
   }
 

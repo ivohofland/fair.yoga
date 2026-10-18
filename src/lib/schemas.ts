@@ -766,7 +766,7 @@ export const claimWaitlistSchema = z.object({
 // PAYMENTS
 // ============================================================================
 
-/** A teacher marks a payment paid by hand only; `'mollie'` is written by the webhook. */
+/** `POST /api/payments/[id]/paid`: the teacher's own mark, so the only method it records is `'manual'`. */
 export const markPaidSchema = z.object({
   method: z.literal('manual'),
 });
