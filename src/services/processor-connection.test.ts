@@ -260,6 +260,15 @@ describe('completeConnect', () => {
     expect((await connectionOf(t.teacherId)).profileId).toBe(P1.id);
   });
 
+  it('offers no blocked profile, in either mode', async () => {
+    const blocked: MollieProfile = { ...P2, status: 'blocked' };
+    const live = await freshTeacher();
+    expect((await connect(live, ORG_A, [P1, blocked])).kind).toBe('connected');
+    expect((await connectionOf(live.teacherId)).profileId).toBe(P1.id);
+    const test = await freshTeacher();
+    expect((await connect(test, ORG_A, [P1, blocked], testDeps)).kind).toBe('connected');
+  });
+
   it('in test mode offers test profiles too, so the same list asks for a choice', async () => {
     const t = await freshTeacher();
     expect((await connect(t, ORG_A, [P_TEST, P1], testDeps)).kind).toBe('choose_profile');
@@ -390,6 +399,73 @@ describe('completeConnect', () => {
     const outcome = await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'code_x', sessionId: t.sessionId, now });
     expect(outcome).toEqual({ kind: 'unavailable' });
     expect(await prisma.processorConnection.count({ where: { teacherId: t.teacherId } })).toBe(0);
+  });
+
+  it.each([
+    ['the organization read fails', () => fake.organization.mockRejectedValue(new MollieUnavailable('down', 503))],
+    ['the profiles read fails', () => fake.profiles.mockRejectedValue(new MollieUnavailable('down', null))],
+  ] as const)('revokes the grant it just exchanged when %s, since nothing stores it', async (_name, arrange) => {
+    const t = await freshTeacher();
+    mollieAnswers(ORG_A, [P1], { ...FULL_GRANT, refreshToken: 'refresh_dropped' });
+    arrange();
+    fake.revoke.mockResolvedValue(undefined);
+    const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
+    expect(await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'c', sessionId: t.sessionId, now })).toEqual({ kind: 'unavailable' });
+    await vi.waitFor(() => expect(fake.revoke).toHaveBeenCalledWith('refresh_dropped'));
+  });
+
+  it('revokes the grant it just exchanged when the teacher was erased meanwhile', async () => {
+    const t = await freshTeacher();
+    mollieAnswers(ORG_A, [P1], { ...FULL_GRANT, refreshToken: 'refresh_orphan' });
+    fake.revoke.mockResolvedValue(undefined);
+    const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
+    fake.organization.mockImplementation(async () => {
+      await prisma.teacher.update({ where: { id: t.teacherId }, data: { deletedAt: now } });
+      return ORG_A;
+    });
+    const outcome = await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'c', sessionId: t.sessionId, now });
+    expect(outcome).toMatchObject({ kind: 'refused', refusal: { code: 'OAUTH_STATE_INVALID' } });
+    expect(await prisma.processorConnection.count({ where: { teacherId: t.teacherId } })).toBe(0);
+    await vi.waitFor(() => expect(fake.revoke).toHaveBeenCalledWith('refresh_orphan'));
+  });
+
+  it('revokes the grant a reconnect replaced, and never the one it stored', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    fake.revoke.mockResolvedValue(undefined);
+    mollieAnswers(ORG_B, [P2], { ...FULL_GRANT, refreshToken: 'refresh_2' });
+    const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
+    await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'c', sessionId: t.sessionId, now });
+    await vi.waitFor(() => expect(fake.revoke).toHaveBeenCalledWith('refresh_1'));
+    expect(fake.revoke).not.toHaveBeenCalledWith('refresh_2');
+    expect(openToken((await connectionOf(t.teacherId)).refreshToken!, key)).toBe('refresh_2');
+  });
+
+  it('revokes nothing when the replaced row was already revoked, or on a first connect', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    await disconnect(prisma, { teacherId: t.teacherId, now });
+    await prisma.processorConnection.update({
+      where: { teacherId: t.teacherId },
+      data: { accessToken: null, refreshToken: null, accessTokenExpiresAt: null, revokedAt: now },
+    });
+    await connect(t, ORG_A, [P1]);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fake.revoke).not.toHaveBeenCalled();
+  });
+
+  it('logs a failed revoke of a dropped grant and retries nothing', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    fake.revoke.mockRejectedValue(new MollieUnavailable('down', null));
+    mollieAnswers(ORG_B, [P2], { ...FULL_GRANT, refreshToken: 'refresh_2' });
+    const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
+    await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'c', sessionId: t.sessionId, now });
+    await vi.waitFor(() => {
+      const call = vi.mocked(logDegraded).mock.calls.find(([code]) => code === 'MOLLIE_UNAVAILABLE');
+      expect(call?.[1]).toEqual({ connectionId: expect.any(String), operation: 'revoke' });
+    });
+    expect(fake.revoke).toHaveBeenCalledTimes(1);
   });
 
   it('forgets the connection’s cached methods once the rewrite has committed', async () => {

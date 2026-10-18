@@ -646,9 +646,20 @@ matches the room.
 
 **What happened.** A call to Mollie failed or came back in a shape the client
 does not accept (`MollieUnavailable`, `src/lib/mollie/client.ts`). The student
-pay page showed the teacher's other payment rows without the Mollie ones, or a
-Mollie webhook was answered 503 so Mollie retries it. `operation` is the client
-method that failed and `status` the HTTP status, when there was one.
+pay page showed the teacher's other payment rows without the Mollie ones, a
+Mollie webhook was answered 503 so Mollie retries it, or a grant could not be
+revoked (`operation` `revoke`). `operation` is the client method that failed
+and `status` the HTTP status, when there was one.
+
+A failed `revoke` comes from one of two places in
+`src/services/processor-connection.ts`. `revokeDueConnection` leaves its
+disconnected row unrevoked, `revokedAt` still null, so a later revoke of that
+row can try again. A grant the OAuth callback dropped is a grant no row holds:
+one it exchanged and then did not store (Mollie failed reading the
+organization or profiles, or the teacher was erased meanwhile; no
+`connectionId`), or the one a reconnect replaced (`connectionId` is the row
+that now holds the new grant). Nothing retries those; the authorization stays
+live at Mollie until the merchant removes it or a forced consent replaces it.
 
 **Where the bad value lives.** Not in our data. The cause is Mollie being down
 or rate-limiting, a revoked or expired grant for `connectionId`, or Mollie
@@ -670,7 +681,10 @@ on the next request, because an unavailable answer is not cached, and Mollie
 retries webhooks. A single connection that keeps failing with 401 or 403 has a
 revoked grant (`revokedAt` or `disconnectedAt` set); the teacher reconnects
 Mollie in settings. A repeating `status` of 422 or an unexpected shape means Mollie changed its API: fix the
-client, since the pay page will keep hiding Mollie until it does.
+client, since the pay page will keep hiding Mollie until it does. A failed
+`revoke` of a grant the callback dropped needs nothing from us when Mollie
+was merely down; if it keeps happening, the teacher can revoke fair.yoga's
+access from their Mollie dashboard.
 
 ### `PROCESSOR_DISCONNECTED`
 

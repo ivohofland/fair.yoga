@@ -115,57 +115,117 @@ export async function completeConnect(
   if (consumed.count !== 1) return refused;
 
   let grant: TokenGrant;
-  let org: { id: string; name: string };
-  let profiles: MollieProfile[];
   try {
     const answer = await deps.client.exchangeCode(input.code, mollieRedirectUri(deps.config.appUrl));
     if (answer.kind === 'invalid_grant') return refused;
     grant = answer.grant;
-    org = await deps.client.organization(grant.accessToken);
-    profiles = usableProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
   } catch (err) {
     if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
     throw err;
   }
 
-  const result = await db.$transaction(async (tx): Promise<{ outcome: CompleteConnectOutcome; connectionId: string | null }> => {
-    if (!(await lockTeacherForNoKeyUpdate(tx, state.teacherId))) return { outcome: refused, connectionId: null };
-    const previous = await tx.processorConnection.findUnique({
-      where: { teacherId: state.teacherId },
-      select: { organizationId: true, profileId: true, disconnectedAt: true },
+  // From here the grant is live at Mollie: every exit that does not store it revokes it.
+  let stored = false;
+  try {
+    let org: { id: string; name: string };
+    let profiles: MollieProfile[];
+    try {
+      org = await deps.client.organization(grant.accessToken);
+      profiles = usableProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
+    } catch (err) {
+      if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
+      throw err;
+    }
+
+    const result = await db.$transaction(async (tx): Promise<ConnectWrite> => {
+      if (!(await lockTeacherForNoKeyUpdate(tx, state.teacherId))) return { outcome: refused, connectionId: null, replacedRefresh: null };
+      const previous = await tx.processorConnection.findUnique({
+        where: { teacherId: state.teacherId },
+        select: { id: true, organizationId: true, profileId: true, disconnectedAt: true, refreshToken: true, revokedAt: true },
+      });
+      const previousLive = livePayoutIdentity(previous);
+      const replacedRefresh = previous === null ? null : unrevokedRefresh(previous, deps);
+      const profile = initialProfile(profiles, org.id, previousLive);
+      const data = {
+        processor: 'mollie' as const,
+        organizationId: org.id,
+        profileId: profile?.id ?? null,
+        scopes: grant.scopes,
+        testmode: deps.config.testmode,
+        ...sealGrant(grant, deps.config.tokenKey, now),
+        connectedAt: now,
+        disconnectedAt: null,
+        revokeAfter: null,
+        revokedAt: null,
+      };
+      const row = await tx.processorConnection.upsert({
+        where: { teacherId: state.teacherId },
+        create: { teacherId: state.teacherId, ...data },
+        update: data,
+        select: { id: true },
+      });
+      if (profile === null) {
+        return { outcome: { kind: 'choose_profile', teacherId: state.teacherId }, connectionId: row.id, replacedRefresh };
+      }
+      const next: LiveIdentity = { organizationId: org.id, profileId: profile.id };
+      const eventId = sameIdentity(previousLive, next) ? null : await writeIdentityEvent(tx, state.teacherId, previousLive, next, profiles);
+      return { outcome: { kind: 'connected', teacherId: state.teacherId, eventId }, connectionId: row.id, replacedRefresh };
     });
-    const previousLive = livePayoutIdentity(previous);
-    const profile = initialProfile(profiles, org.id, previousLive);
-    const data = {
-      processor: 'mollie' as const,
-      organizationId: org.id,
-      profileId: profile?.id ?? null,
-      scopes: grant.scopes,
-      testmode: deps.config.testmode,
-      ...sealGrant(grant, deps.config.tokenKey, now),
-      connectedAt: now,
-      disconnectedAt: null,
-      revokeAfter: null,
-      revokedAt: null,
-    };
-    const row = await tx.processorConnection.upsert({
-      where: { teacherId: state.teacherId },
-      create: { teacherId: state.teacherId, ...data },
-      update: data,
-      select: { id: true },
-    });
-    if (profile === null) return { outcome: { kind: 'choose_profile', teacherId: state.teacherId }, connectionId: row.id };
-    const next: LiveIdentity = { organizationId: org.id, profileId: profile.id };
-    const eventId = sameIdentity(previousLive, next) ? null : await writeIdentityEvent(tx, state.teacherId, previousLive, next, profiles);
-    return { outcome: { kind: 'connected', teacherId: state.teacherId, eventId }, connectionId: row.id };
-  });
-  if (result.connectionId !== null) forgetOfferedMethods(result.connectionId);
-  return result.outcome;
+    if (result.connectionId === null) return result.outcome;
+    stored = true;
+    forgetOfferedMethods(result.connectionId);
+    if (result.replacedRefresh !== null && result.replacedRefresh !== grant.refreshToken) {
+      revokeDroppedGrant(deps, result.replacedRefresh, result.connectionId);
+    }
+    return result.outcome;
+  } finally {
+    if (!stored) revokeDroppedGrant(deps, grant.refreshToken, null);
+  }
 }
 
-/** Live mode offers live profiles only; test mode offers every profile. */
+/** What the callback's transaction wrote: the outcome, the row (null when nothing was written) and the replaced grant's refresh token. */
+type ConnectWrite = { outcome: CompleteConnectOutcome; connectionId: string | null; replacedRefresh: string | null };
+
+/**
+ * The plaintext refresh token of a row whose grant has not been revoked, or
+ * null when it is revoked or its token cannot be opened (logged).
+ */
+function unrevokedRefresh(row: { id: string; refreshToken: Uint8Array | null; revokedAt: Date | null }, deps: MollieDeps): string | null {
+  if (row.revokedAt !== null || row.refreshToken === null) return null;
+  try {
+    return openToken(row.refreshToken, deps.config.tokenKey);
+  } catch (err) {
+    if (!(err instanceof TokenCipherError)) throw err;
+    logDegraded('PROCESSOR_TOKEN_UNREADABLE', { connectionId: row.id }, 'replaced processor token could not be opened, so it was not revoked', err);
+    return null;
+  }
+}
+
+/**
+ * Revokes at Mollie a grant no row holds any more, without waiting. A failure
+ * is logged and not retried: nothing is left to retry from.
+ */
+function revokeDroppedGrant(deps: MollieDeps, refreshToken: string, connectionId: string | null): FireAndForget {
+  void (async () => {
+    try {
+      await deps.client.revoke(refreshToken);
+    } catch (err) {
+      if (!(err instanceof MollieUnavailable)) throw err;
+      logDegraded(
+        'MOLLIE_UNAVAILABLE',
+        { ...(connectionId === null ? {} : { connectionId }), operation: 'revoke', ...(err.status === null ? {} : { status: err.status }) },
+        'Mollie could not revoke a grant fair.yoga no longer holds; it stays authorized at Mollie',
+        err,
+      );
+    }
+  })().catch((err: unknown) => {
+    log.error({ err, connectionId }, 'revoking a dropped Mollie grant failed');
+  });
+}
+
+/** Profiles that can take payments here: never a blocked one, and in live mode only live ones. */
 function usableProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
-  return profiles.filter((p) => testmode || p.mode === 'live');
+  return profiles.filter((p) => p.status !== 'blocked' && (testmode || p.mode === 'live'));
 }
 
 function sameIdentity(a: LiveIdentity | null, b: LiveIdentity): boolean {
