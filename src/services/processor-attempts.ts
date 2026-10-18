@@ -64,8 +64,8 @@ function expiryOf(view: MolliePaymentView, method: AllowedMollieMethod, now: Dat
 /**
  * Starts the student's Mollie payment for one of their own payments, or
  * reuses an open attempt for the same method, made under the connection's
- * current profile and mode, that has more than a minute left. Every Mollie call runs before its transaction opens. The attempt
- * row is written after `createPayment` answers, in that transaction, which
+ * current profile and mode, that has more than a minute left. Every Mollie
+ * call runs before its transaction opens. The attempt row is written after `createPayment` answers, in that transaction, which
  * takes the teacher's lock first and re-checks the payment, the pause and the
  * connection under it; so when `createPayment`'s answer is lost no row is
  * written and the student is given no checkout URL. A connection that stopped
