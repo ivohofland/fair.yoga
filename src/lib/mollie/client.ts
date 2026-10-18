@@ -48,6 +48,8 @@ export type CreatePaymentInput = {
   metadata: { paymentId: string; attemptId: string };
   testmode: boolean;
 };
+/** `invalid_token`: Mollie answered 400, so it holds no grant for this token any more. */
+export type RevokeAnswer = 'revoked' | 'invalid_token';
 export type RefundAnswer =
   | { kind: 'created'; refund: MollieRefundView }
   | { kind: 'refused'; detail: string; field: string | null };
@@ -56,7 +58,7 @@ export interface MollieClient {
   authorizeUrl(input: { redirectUri: string; state: string; scopes: readonly string[]; forcePrompt: boolean }): string;
   exchangeCode(code: string, redirectUri: string): Promise<TokenAnswer>;
   refresh(refreshToken: string): Promise<TokenAnswer>;
-  revoke(refreshToken: string): Promise<void>;
+  revoke(refreshToken: string): Promise<RevokeAnswer>;
   organization(accessToken: string): Promise<{ id: string; name: string }>;
   profiles(accessToken: string): Promise<MollieProfile[]>;
   listMethods(accessToken: string, q: { profileId: string; amount: MollieAmount; testmode: boolean }): Promise<MethodsAnswer>;
@@ -214,7 +216,9 @@ export function createMollieClient(
 
     async revoke(refreshToken) {
       const res = await token(new URLSearchParams({ token_type_hint: 'refresh_token', token: refreshToken }), 'DELETE');
-      if (!res.ok) throw unavailable(res);
+      if (res.ok) return 'revoked';
+      if (res.status === 400) return 'invalid_token';
+      throw unavailable(res);
     },
 
     async organization(accessToken) {

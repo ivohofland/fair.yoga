@@ -990,7 +990,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | testmode | boolean | Whether the grant is a test-mode one |
 | connected_at | datetime | |
 | disconnected_at | datetime, nullable | Set by a teacher's disconnect, or by a refresh answered `invalid_grant` (only while the row still holds the refresh token that was refused) |
-| revoke_after | datetime, nullable | When the tokens of a disconnected row may be revoked at Mollie: after its open attempts' expiry windows, because their webhooks still need the token |
+| revoke_after | datetime, nullable | When the tokens of a disconnected row may next be revoked at Mollie: set by the disconnect to the latest expiry among its unexpired open attempts (or then), and moved a day on each time the revoke finds an attempt still `open`, `pending` or `authorized` or a refund still live, since their webhooks need the token; from 30 days after the disconnect the grant is revoked regardless (`revokeDueConnection`) |
 | revoked_at | datetime, nullable | Set when the tokens were revoked and nulled. `revoked_at` and `revoke_after` are set only on a disconnected row (a `CHECK`) |
 
 **Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect), with the masked organization id and the profile's name as before and after.

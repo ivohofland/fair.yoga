@@ -149,9 +149,17 @@ describe('authorizeUrl', () => {
 describe('revoke and a 401', () => {
   it('revokes the refresh token', async () => {
     const { fetchImpl, mollie } = client([new Response(null, { status: 204 })]);
-    await mollie.revoke('refresh_1');
+    expect(await mollie.revoke('refresh_1')).toBe('revoked');
     expect(String(fetchImpl.mock.calls[0]![1]?.body)).toContain('token_type_hint=refresh_token');
     expect(fetchImpl.mock.calls[0]![1]?.method).toBe('DELETE');
+  });
+  it('answers invalid_token for a revoke Mollie answers 400', async () => {
+    const { mollie } = client([json(400, { error: 'invalid_grant' })]);
+    expect(await mollie.revoke('refresh_gone')).toBe('invalid_token');
+  });
+  it.each([401, 403, 503])('throws MollieUnavailable carrying the status for a revoke answered %i', async (status) => {
+    const { mollie } = client([json(status, { error: 'invalid_client' })]);
+    await expect(mollie.revoke('refresh_1')).rejects.toMatchObject({ name: 'MollieUnavailable', status });
   });
   it('a 401 on a v2 call throws MollieUnavailable carrying the status', async () => {
     const { mollie } = client([json(401, { status: 401 })]);

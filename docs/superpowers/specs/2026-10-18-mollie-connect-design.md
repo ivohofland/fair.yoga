@@ -301,11 +301,29 @@ re-reads and uses the winner's token.
   `disconnectedAt` (the pay page offers no Mollie rows from then on), write
   `processor_disconnected` and alert, and set `revokeAfter` to the latest
   `expiresAt` among the connection's attempts still `open`, `pending` or
-  `authorized`, or now when there are none. Open attempts finish: their
-  webhooks still need a token. The daily auth cleanup revokes every row past
+  `authorized` that have not expired, or now when there are none. Open
+  attempts finish: their webhooks still need a token. A separate sweep in the
+  daily-cleanup job, `revokeDueConnections`, revokes every row past
   `revokeAfter` (`DELETE /oauth2/tokens`), nulls its tokens and stamps
-  `revokedAt`; one with no open attempts is revoked fire-and-forget right after
-  the disconnect commits, and the sweep is its retry.
+  `revokedAt`, one row at a time through `revokeDueConnection`; one with
+  nothing left at Mollie is revoked fire-and-forget right after the
+  disconnect commits, and the sweep is its retry. **The revoke is decided at
+  revoke time:** while the connection has an attempt still `open`, `pending`
+  or `authorized` (whatever its `expiresAt`: a pending payment can outlast its
+  checkout's expiry) or a refund still `queued`, `pending` or `processing`
+  (which may have been requested after the disconnect), the revoke is
+  deferred — `revokeAfter` moves a day on, the sweep counts the row
+  `skipped`, and asks again. The final write is guarded like the rest: it
+  lands only while the row holds the refresh token that was revoked, is still
+  disconnected and, under the cap, still has nothing live. Thirty days after
+  `disconnectedAt` the grant is revoked regardless, logged at warn with what
+  was still live; a teacher who disconnected asked fair.yoga to drop access,
+  and Decision 17 covers a payment stranded past the cap. Mollie answering a
+  revoke 400 means it holds no grant for the token: the row is revoked, with a
+  warning. A 401 or 403 is fair.yoga's own client credentials failing: the row
+  stays due and it is logged at error. Any other failure leaves the row due
+  until the cap, past which its tokens are forgotten. Chargeback windows (120
+  to 540 days) do not keep the grant.
 - **The pause (#786)** covers the connection: `payoutFingerprint` gains the
   live connection's `organizationId` and `profileId` (a row that is not live
   contributes null), so a reconnect or a profile switch during a pause
