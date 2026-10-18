@@ -12,7 +12,8 @@ const compact = suffix.replace(/-/g, '');
 /**
  * The Mollie paths that make no outbound call, against the live app: the
  * webhook for an id no attempt has, the attempt route for a teacher with no
- * connection, and "Mark unpaid" on a payment Mollie settled.
+ * connection, "Mark unpaid" on a payment Mollie settled, and the refund route
+ * before it would call Mollie.
  */
 describe('Mollie, without Mollie', () => {
   let teacherId = '';
@@ -25,6 +26,7 @@ describe('Mollie, without Mollie', () => {
   let pendingPaymentId = '';
   let pendingClassId = '';
   let settledPaymentId = '';
+  let settledAttemptId = '';
 
   beforeAll(async () => {
     const teacherEmail = `mollie-webhook-teacher-${suffix}@test.local`;
@@ -68,12 +70,12 @@ describe('Mollie, without Mollie', () => {
     }
     ({ paymentId: pendingPaymentId, classId: pendingClassId } = await paymentOn(1, 'pending'));
     ({ paymentId: settledPaymentId } = await paymentOn(2, 'paid'));
-    await prisma.processorPayment.create({
+    settledAttemptId = (await prisma.processorPayment.create({
       data: {
         paymentId: settledPaymentId, connectionId: null, processorPaymentId: `tr_hook${compact}`, profileId: 'pfl_hook', testmode: true,
         method: 'ideal', status: 'paid', amount: 10, currency: 'EUR', paidAt: new Date(), settledPayment: true,
       },
-    });
+    })).id;
 
     // Warm the routes, so a first-compile delay is not read as the answer.
     await fetch(`${BASE_URL}/api/webhooks/mollie`, { method: 'POST' });
@@ -113,6 +115,30 @@ describe('Mollie, without Mollie', () => {
     });
     await expectRefusal(res, 'PROCESSOR_NOT_CONNECTED');
     expect(await prisma.processorPayment.count({ where: { paymentId: pendingPaymentId } })).toBe(0);
+  });
+
+  describe('POST /api/payments/[id]/refund', () => {
+    function refund(token: string, body: unknown) {
+      return fetch(`${BASE_URL}/api/payments/${settledPaymentId}/refund`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(token) },
+        body: JSON.stringify(body),
+      });
+    }
+
+    it('refuses an attempt whose Mollie connection is gone: PROCESSOR_NOT_CONNECTED, recording no refund', async () => {
+      await expectRefusal(await refund(teacherToken, { attemptId: settledAttemptId, choice: 'waive' }), 'PROCESSOR_NOT_CONNECTED');
+      expect(await prisma.processorRefund.count({ where: { attemptId: settledAttemptId } })).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: settledPaymentId } })).status).toBe('paid');
+    });
+
+    it('refuses a student’s session with 403', async () => {
+      expect((await refund(studentToken, { attemptId: settledAttemptId, choice: 'waive' })).status).toBe(403);
+    });
+
+    it('answers 400 for a body without a choice', async () => {
+      expect((await refund(teacherToken, { attemptId: settledAttemptId })).status).toBe(400);
+    });
   });
 
   describe('GET /bookings/[classId]/pay?attempt=', () => {

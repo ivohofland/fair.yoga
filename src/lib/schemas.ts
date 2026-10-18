@@ -771,6 +771,15 @@ export const markPaidSchema = z.object({
   method: z.literal('manual'),
 });
 
+/**
+ * `POST /api/payments/[id]/refund`: the attempt to refund in full, and what
+ * becomes of the payment it settled. `choice` is null for an attempt that
+ * did not settle the payment; the service decides which applies.
+ */
+export const refundSchema = z
+  .object({ attemptId: z.string().uuid(), choice: z.enum(['waive', 'ask_again']).nullable() })
+  .strict();
+
 // ============================================================================
 // NOTIFICATIONS & ANNOUNCEMENTS
 // ============================================================================

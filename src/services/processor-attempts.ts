@@ -17,7 +17,7 @@ import { MollieUnavailable, type MolliePaymentView } from '@/lib/mollie/client';
 import { PAYMENTS_PAUSED_COPY, paymentReference } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 import { livePayoutIdentity, takesMolliePayments } from '@/lib/processor-liveness';
-import { isAllowedMollieMethod, MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
+import { isAllowedMollieMethod, mollieMethodLabel, MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
 import type { MollieDeps } from './mollie-deps';
 import { listOfferedMethods } from './processor-methods-offer';
 import { getAccessToken } from './processor-token';
@@ -579,7 +579,7 @@ export async function syncAttempt(
         recipientId: teacherId,
         type: 'payment_paid_twice',
         title: 'Paid twice',
-        body: `${registration.student.firstName} also paid ${amount} by ${methodLabel(method)}. You can refund it from the payment.`,
+        body: `${registration.student.firstName} also paid ${amount} by ${mollieMethodLabel(method)}. You can refund it from the payment.`,
         relatedClassId: registration.classId,
       });
     }
@@ -639,9 +639,4 @@ function completes(decision: RefundSyncDecision): boolean {
 function paidAtOf(view: MolliePaymentView, now: Date): Date {
   const stated = view.paidAt === null ? Number.NaN : Date.parse(view.paidAt);
   return Number.isNaN(stated) ? now : new Date(stated);
-}
-
-/** A Mollie method id as the teacher reads it: its allowlist label, or "Mollie" for one off the list. */
-function methodLabel(method: string): string {
-  return isAllowedMollieMethod(method) ? MOLLIE_METHODS[method].label : 'Mollie';
 }

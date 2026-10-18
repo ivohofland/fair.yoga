@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MOLLIE_METHODS, isAllowedMollieMethod, orderOffered, exclusionReason, LONGEST_METHOD_EXPIRY_MINUTES } from './processor-methods';
+import { MOLLIE_METHODS, isAllowedMollieMethod, mollieMethodLabel, orderOffered, exclusionReason, LONGEST_METHOD_EXPIRY_MINUTES } from './processor-methods';
 
 describe('the allowlist', () => {
   it('holds no pay-later method', () => {
@@ -55,4 +55,14 @@ describe('exclusionReason', () => {
 
 it('the longest expiry is an hour', () => {
   expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(60);
+});
+
+describe('mollieMethodLabel', () => {
+  it('reads an allowlisted id as its label', () => {
+    expect(mollieMethodLabel('ideal')).toBe('iDEAL');
+  });
+
+  it('reads an id off the list as Mollie', () => {
+    expect(mollieMethodLabel('klarna')).toBe('Mollie');
+  });
 });

@@ -12,6 +12,7 @@ import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility'
 import { isOutstanding } from '@/lib/payment-status';
 import { inProgressFirst } from '@/lib/payment-claim';
 import { claimDay } from '@/lib/payment-claim.server';
+import { TEACHER_ATTEMPT_SELECT, toAttemptView } from '@/lib/processor-attempt-view';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,7 +26,7 @@ export default async function PaymentsOverviewPage() {
     where: { registration: { class: { calendarEntry: { teacherId: session.teacherId } } } },
     orderBy: { createdAt: 'desc' },
     include: {
-      processorAttempts: { select: { status: true } },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
       registration: {
         select: {
           student: { select: studentNameSelect(session.teacherId) },
@@ -121,6 +122,7 @@ export default async function PaymentsOverviewPage() {
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
               currency={p.registration.class.currency}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))
         )}
@@ -141,6 +143,7 @@ export default async function PaymentsOverviewPage() {
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
               currency={p.registration.class.currency}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))}
         </section>

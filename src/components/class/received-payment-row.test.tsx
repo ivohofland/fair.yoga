@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { routerRefresh } from '../../../tests/setup/components';
+import type { AttemptView } from '@/lib/processor-attempt-view';
 import { ReceivedPaymentRow } from './received-payment-row';
 
 /**
@@ -26,6 +28,7 @@ describe('ReceivedPaymentRow', () => {
     classDate: new Date('2026-06-12T00:00:00.000Z'),
     startTime: new Date('1970-01-01T09:30:00.000Z'),
     amount: 14,
+    processorAttempts: [] as AttemptView[],
   };
 
   it('shows the teacher’s day, not UTC’s, west of the meridian', () => {
@@ -76,5 +79,74 @@ describe('ReceivedPaymentRow', () => {
     expect(
       screen.getByRole('button', { name: 'Mark unpaid — Ana D., Vinyasa · 12 Jun · 09:30' }),
     ).toBeInTheDocument();
+  });
+
+  describe('a payment Mollie took (Decision 17)', () => {
+    function attempt(over: Partial<AttemptView> = {}): AttemptView {
+      return {
+        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: true, chargedBackAt: null, amount: 14, currency: 'EUR', refunds: [],
+        ...over,
+      };
+    }
+
+    function renderWith(processorAttempts: AttemptView[]) {
+      render(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="UTC" processorAttempts={processorAttempts} />);
+    }
+
+    it('settled by Mollie offers Refund in place of Mark unpaid', () => {
+      renderWith([attempt()]);
+      expect(screen.getByRole('button', { name: /^Refund iDEAL €14\.00 — Ana D\./ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Mark unpaid/ })).not.toBeInTheDocument();
+    });
+
+    it('whose settling attempt was charged back offers Mark unpaid and no Refund', () => {
+      renderWith([attempt({ settledPayment: false, chargedBackAt: new Date('2026-06-14T10:00:00Z') })]);
+      expect(screen.getByRole('button', { name: /Mark unpaid/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
+    });
+
+    it('paid by hand is unchanged: Mark unpaid and no Refund', () => {
+      renderWith([]);
+      expect(screen.getByRole('button', { name: /Mark unpaid/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
+    });
+
+    it('with a refund on its way says so, offering neither', () => {
+      renderWith([attempt({ refunds: [{ status: 'processing' }] })]);
+      expect(screen.getByText('Refund pending')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Mark unpaid/ })).not.toBeInTheDocument();
+    });
+
+    it('whose refund failed says so and offers Refund again', () => {
+      renderWith([attempt({ refunds: [{ status: 'failed' }] })]);
+      expect(screen.getByText('Refund failed')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Refund iDEAL/ })).toBeInTheDocument();
+    });
+
+    it('paid by hand and again through Mollie offers the duplicate’s Refund beside Mark unpaid', () => {
+      renderWith([attempt({ settledPayment: false, method: 'creditcard' })]);
+      expect(screen.getByRole('button', { name: /Mark unpaid/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Refund Card €14\.00/ })).toBeInTheDocument();
+    });
+
+    describe('refunded from the row', () => {
+      afterEach(() => vi.unstubAllGlobals());
+
+      it('shows Refund pending once Mollie accepts the refund, and refreshes', async () => {
+        const fetchMock = vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ data: { refundStatus: 'queued', outcomeApplied: false, payment: { id: 'pay-1' } } }), { status: 200 }),
+        );
+        vi.stubGlobal('fetch', fetchMock);
+        renderWith([attempt()]);
+
+        fireEvent.click(screen.getByRole('button', { name: /^Refund iDEAL/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Refund and waive' }));
+
+        expect(await screen.findByText('Refund pending')).toBeInTheDocument();
+        await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
   });
 });

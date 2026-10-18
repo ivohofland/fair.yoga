@@ -1,9 +1,9 @@
 {
   "class-detail-open": {
-    "sourceSha256": "febab66822823c51c854b7262c961285364da353c380d83fea1614993f4bc787",
+    "sourceSha256": "24e91a87304a593d75dad77698b180a53397f2bf8dd0f93642c2276b9fcc54bb",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
     "verifiedAt": "2026-10-18",
-    "note": "Mollie attempts join the in-progress order; open class renders unchanged"
+    "note": "Mollie attempts carry refund state into the payment list; open class renders unchanged"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",

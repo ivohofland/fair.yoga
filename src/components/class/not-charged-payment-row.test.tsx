@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type { AttemptView } from '@/lib/processor-attempt-view';
 import { NotChargedPaymentRow } from './not-charged-payment-row';
 
 /**
@@ -16,6 +17,7 @@ describe('NotChargedPaymentRow', () => {
     notChargedAt: new Date('2026-09-02T12:00:00Z'),
     timeZone: 'Europe/Amsterdam',
     amount: 15,
+    processorAttempts: [] as AttemptView[],
   };
 
   it('shows the state, the amount and the reversal', () => {
@@ -44,5 +46,16 @@ describe('NotChargedPaymentRow', () => {
     render(<NotChargedPaymentRow currency="EUR" {...baseProps} notChargedAt={null} />);
 
     expect(screen.getByText('Vinyasa · 2 Sep · 18:00')).toBeInTheDocument();
+  });
+
+  it('shows a waived refund as refunded', () => {
+    const refunded: AttemptView = {
+      id: 'att-1', method: 'ideal', status: 'paid', settledPayment: false, chargedBackAt: null, amount: 15, currency: 'EUR',
+      refunds: [{ status: 'refunded' }],
+    };
+    render(<NotChargedPaymentRow currency="EUR" {...baseProps} processorAttempts={[refunded]} />);
+
+    expect(screen.getByText('Refunded')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
   });
 });

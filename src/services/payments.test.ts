@@ -919,7 +919,7 @@ describe('Payment Service (DB)', () => {
     });
 
     describe('getOutstandingPayments order', () => {
-      it('puts a payment whose Mollie payment is processing with the claimed ones, and ships no attempts', async () => {
+      it('puts a payment whose Mollie payment is processing with the claimed ones, and ships its attempts', async () => {
         const plain = await makePayment('pending');
         const moving = await makePayment('pending');
         await prisma.processorPayment.create({
@@ -935,7 +935,27 @@ describe('Payment Service (DB)', () => {
 
         expect(rows.map((r) => r.id).slice(0, 2).sort()).toEqual([moving.id, claimed.id].sort());
         expect(rows[2]!.id).toBe(plain.id);
-        expect(rows.every((r) => !('processorAttempts' in r))).toBe(true);
+        expect(rows.find((r) => r.id === plain.id)!.processorAttempts).toEqual([]);
+        expect(rows.find((r) => r.id === moving.id)!.processorAttempts).toEqual([
+          expect.objectContaining({ method: 'ideal', status: 'pending', settledPayment: false, chargedBackAt: null, currency: 'EUR', refunds: [] }),
+        ]);
+      });
+
+      it('getPaymentsForClass ships each payment’s attempts with their refunds', async () => {
+        const payment = await makePayment('paid');
+        const attempt = await prisma.processorPayment.create({
+          data: {
+            paymentId: payment.id, connectionId: null, processorPaymentId: `tr_class${uniqueSuffix}`, profileId: 'pfl_order',
+            testmode: true, method: 'ideal', status: 'paid', amount: 12.5, currency: 'EUR', settledPayment: true,
+          },
+        });
+        await prisma.processorRefund.create({ data: { attemptId: attempt.id, amount: 12.5, status: 'queued', outcome: 'waived' } });
+
+        const rows = await getPaymentsForClass(prisma, classId, teacherId);
+
+        expect(rows.find((r) => r.id === payment.id)!.processorAttempts).toEqual([
+          expect.objectContaining({ id: attempt.id, status: 'paid', settledPayment: true, refunds: [{ status: 'queued' }] }),
+        ]);
       });
     });
 

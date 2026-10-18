@@ -40,7 +40,8 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   'spot_available',
   'spot_taken',
   'payment_request',
-  // A refund the student did not ask for, which changes what they owe.
+  // The student's own money, sent back by their teacher: a service message
+  // about their payment, as `payment_request` is.
   'payment_refunded',
 ]);
 
