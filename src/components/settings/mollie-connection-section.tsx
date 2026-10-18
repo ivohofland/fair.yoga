@@ -30,6 +30,16 @@ const RETURN_COPY = {
 
 const NETWORK_ERROR = 'Network error. Please try again.';
 
+/** Whether `value` is a string holding an absolute https URL. */
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The Mollie block on the profile settings: connect, choose the profile whose
  * balance payments go to, see what students are offered, and disconnect. A
@@ -168,9 +178,14 @@ function ConnectButton({ teacherId, label }: { teacherId: string; label: string 
         setBusy(false);
         return;
       }
-      const json = (await res.json()) as { data: { authorizeUrl: string } };
+      const authorizeUrl = ((await res.json()) as { data?: { authorizeUrl?: unknown } }).data?.authorizeUrl;
+      if (!isHttpsUrl(authorizeUrl)) {
+        setError(RETURN_COPY.unavailable.text);
+        setBusy(false);
+        return;
+      }
       // Left busy: the page is about to be replaced by Mollie's.
-      window.location.assign(json.data.authorizeUrl);
+      window.location.assign(authorizeUrl);
     } catch (err) {
       logRequestFailure('mollie-connection-section', { teacherId }, err);
       setError(NETWORK_ERROR);
