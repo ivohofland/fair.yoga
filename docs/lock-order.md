@@ -2601,8 +2601,9 @@ read sees the row and starts with the link. So this transaction holds
 cannot cycle with it.
 
 **`reopenInTransaction` locks the `Payment` row too**, after the link and
-before it counts the payment's settling attempts. Without that lock a webhook
-settling the payment could commit between the count and the compare-and-swap,
+before it reads the payment's settling attempts (and their connections'
+`revokedAt`, a plain read). Without that lock a webhook
+settling the payment could commit between that read and the compare-and-swap,
 and the swap, re-evaluated on the now-`paid` row, would reopen a payment
 Mollie settled — what Decision 17 forbids. Pinned by `payments.test.ts`'s
 "reopenInTransaction: a settle racing the swap waits on the reopen, which
@@ -2688,12 +2689,14 @@ payment's row first. The writers, re-derived on 2026-10-18 with
 
     git grep -nE 'processor(Payment|Refund)\.(update|updateMany|upsert|delete|deleteMany)\(' -- src ':!*.test.ts'
 
-returned 8 lines = 5 in `processor-attempts.ts` (`completeRefund`'s waive
+returned 9 lines = 6 in `processor-attempts.ts` (`completeRefund`'s waive
 releasing the attempt, and `syncAttempt`'s attempt write, its settle's
-`settledPayment` write, its adoption's Mollie-id write and its refund-status
-write) + 2 in `processor-refunds.ts` (`refundAttempt`'s withdrawal and its
-refund-row write) + 1 in `payments.ts` (`reopenInTransaction` releasing a
-refunded attempt). The arithmetic: 5 + 2 + 1 = 8.
+`settledPayment` write, its adoption's Mollie-id write, its refund-status
+write and `releaseAfterDashboardRefunds`' release, which runs in the sync's
+transaction after its refund loop) + 2 in `processor-refunds.ts`
+(`refundAttempt`'s withdrawal and its refund-row write) + 1 in `payments.ts`
+(`reopenInTransaction` releasing a refunded attempt). The arithmetic:
+6 + 2 + 1 = 9.
 Only one statement in `src/` deletes a `ProcessorConnection` or `Payment` row:
 the teacher erasure's `processorConnection.delete` (`gdpr.ts`), whose `SET NULL`
 on `connectionId` writes the attempt rows without the `Payment` lock. Its

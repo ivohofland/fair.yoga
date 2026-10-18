@@ -19,6 +19,7 @@ import { inProgressFirst } from '@/lib/payment-claim';
 import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { TEACHER_ATTEMPT_SELECT, type TeacherAttempt } from '@/lib/processor-attempt-view';
+import { ATTEMPT_GRANT_SELECT, canRefundThroughGrant } from '@/lib/processor-liveness';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -243,9 +244,12 @@ export async function markPaymentOverdue(
  * mean "this is no longer owed", and undoing either means "it is owed again".
  *
  * A payment a Mollie attempt settled (`settledPayment`) is refused
- * `PAYMENT_SETTLED_BY_PROCESSOR`: the money is in the teacher's balance, so
- * a refund is how it leaves `paid` (`reopenInTransaction`). A chargeback
- * clears `settledPayment`, which is what lets this reopen apply again.
+ * `PAYMENT_SETTLED_BY_PROCESSOR` while fair.yoga can still refund through
+ * that attempt (`canRefundThroughGrant`): the money is in the teacher's
+ * balance, so a refund is how it leaves `paid` (`reopenInTransaction`). Once
+ * the attempt's grant is revoked, or its connection gone, this reopen applies
+ * again. A chargeback, or a full refund made in Mollie's dashboard, clears
+ * `settledPayment`, which lets it apply too.
  *
  * Reopening also un-archives the student's link with this teacher; that and
  * the lock order are `reopenInTransaction`'s.
@@ -325,14 +329,15 @@ async function reopenWithin(
   // transaction.
   await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${paymentId} FOR UPDATE`;
 
-  const settlingOtherwise = await tx.processorPayment.count({
+  const settlingOtherwise = await tx.processorPayment.findMany({
     where: {
       paymentId,
       settledPayment: true,
       ...(opts.refundAttemptId === undefined ? {} : { id: { not: opts.refundAttemptId } }),
     },
+    select: ATTEMPT_GRANT_SELECT,
   });
-  if (settlingOtherwise > 0) {
+  if (settlingOtherwise.some(canRefundThroughGrant)) {
     return { outcome: { kind: 'refused', refusal: SETTLED_BY_PROCESSOR }, unlinked: null };
   }
 

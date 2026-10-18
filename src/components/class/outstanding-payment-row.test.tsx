@@ -752,7 +752,7 @@ describe('OutstandingPaymentRow', () => {
   it('shows a refunded Mollie payment of a payment owed again as refunded', () => {
     renderRow({
       processorAttempts: [{
-        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: false, chargedBackAt: null, amount: 15, currency: 'EUR',
+        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: false, chargedBackAt: null, grantHeld: true, amount: 15, currency: 'EUR',
         refunds: [{ status: 'refunded' }],
       }],
     });

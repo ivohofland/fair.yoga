@@ -862,19 +862,71 @@ describe('Payment Service (DB)', () => {
 
       describe('of a payment Mollie settled (Decision 17)', () => {
         let attemptTag = 0;
-        function attemptOn(paymentId: string, over: { settledPayment: boolean; chargedBackAt?: Date | null }) {
+        let connectionId = '';
+        beforeAll(async () => {
+          const sealed = new Uint8Array([1, 2, 3]);
+          const row = await prisma.processorConnection.create({
+            data: {
+              teacherId, processor: 'mollie', organizationId: 'org_reopen', profileId: 'pfl_reopen', scopes: [], testmode: true,
+              accessToken: sealed, refreshToken: sealed, accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+            },
+          });
+          connectionId = row.id;
+        });
+        afterAll(async () => {
+          await prisma.processorPayment.deleteMany({ where: { connectionId } });
+          await prisma.processorConnection.deleteMany({ where: { id: connectionId } });
+        });
+
+        function attemptOn(
+          paymentId: string,
+          over: { settledPayment: boolean; chargedBackAt?: Date | null; connectionId?: string | null },
+        ) {
           return prisma.processorPayment.create({
             data: {
-              paymentId, connectionId: null, processorPaymentId: `tr_reopen${uniqueSuffix}${attemptTag++}`, profileId: 'pfl_reopen',
+              paymentId, connectionId, processorPaymentId: `tr_reopen${uniqueSuffix}${attemptTag++}`, profileId: 'pfl_reopen',
               testmode: true, method: 'ideal', status: 'paid', amount: 12.5, currency: 'EUR', paidAt: new Date(), ...over,
             },
           });
         }
-        async function settledByMollie() {
+        async function settledByMollie(over: { connectionId?: string | null } = {}) {
           const payment = await makePayment('paid');
           await prisma.payment.update({ where: { id: payment.id }, data: { method: 'mollie' } });
-          return { payment, attempt: await attemptOn(payment.id, { settledPayment: true }) };
+          return { payment, attempt: await attemptOn(payment.id, { settledPayment: true, ...over }) };
         }
+
+        it('applies once the settling attempt has no connection (its teacher erased the link)', async () => {
+          const { payment } = await settledByMollie({ connectionId: null });
+          expect(paymentOf(await reopenPayment(prisma, payment.id), 'applied')).toMatchObject({ status: 'pending', method: null, paidAt: null });
+        });
+
+        it('applies once the settling attempt\'s grant is revoked', async () => {
+          const { payment } = await settledByMollie();
+          const live = await prisma.processorConnection.findUniqueOrThrow({ where: { id: connectionId } });
+          await prisma.processorConnection.update({
+            where: { id: connectionId },
+            data: { accessToken: null, refreshToken: null, accessTokenExpiresAt: null, disconnectedAt: new Date(), revokedAt: new Date() },
+          });
+          onTestFinished(async () => {
+            await prisma.processorConnection.update({
+              where: { id: connectionId },
+              data: {
+                accessToken: live.accessToken, refreshToken: live.refreshToken, accessTokenExpiresAt: live.accessTokenExpiresAt,
+                disconnectedAt: null, revokedAt: null,
+              },
+            });
+          });
+          paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+        });
+
+        it('is still refused while a disconnected grant is not yet revoked', async () => {
+          const { payment } = await settledByMollie();
+          await prisma.processorConnection.update({ where: { id: connectionId }, data: { disconnectedAt: new Date(), revokeAfter: new Date() } });
+          onTestFinished(async () => {
+            await prisma.processorConnection.update({ where: { id: connectionId }, data: { disconnectedAt: null, revokeAfter: null } });
+          });
+          expect(refusalCode(await reopenPayment(prisma, payment.id))).toBe('PAYMENT_SETTLED_BY_PROCESSOR');
+        });
 
         it('is refused PAYMENT_SETTLED_BY_PROCESSOR, leaving it paid and its attempt settling', async () => {
           const { payment, attempt } = await settledByMollie();
