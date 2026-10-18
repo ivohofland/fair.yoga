@@ -28,7 +28,8 @@ export function diagnoseMollieConfig(env: MollieEnvSource = process.env): Mollie
   if (!clientId || !clientSecret || !rawKey) return { ok: false, reason: 'partial' };
   const tokenKey = Buffer.from(rawKey, 'base64');
   if (tokenKey.length !== 32) return { ok: false, reason: 'token-key-length' };
-  const appUrl = env.NEXT_PUBLIC_APP_URL;
+  // Trailing slashes dropped, so `${appUrl}/path` has one slash.
+  const appUrl = env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, '');
   if (!appUrl || !isHttpUrl(appUrl)) return { ok: false, reason: 'app-url' };
   return { ok: true, config: { clientId, clientSecret, tokenKey, testmode: env.MOLLIE_TESTMODE === '1', appUrl } };
 }

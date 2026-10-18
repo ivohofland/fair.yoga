@@ -707,6 +707,17 @@ describe('syncAttempt', () => {
       expect(await notes('payment_charged_back', classId)).toHaveLength(1);
     });
 
+    it('names the attempt’s amount, and logs, when Mollie reports the chargeback in another currency', async () => {
+      const warn = vi.spyOn(log, 'warn');
+      onTestFinished(() => warn.mockRestore());
+      const { paymentId, attempt } = await settledAttempt();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '4.00', currency: 'USD' } }));
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
+      const [sent] = await notes('payment_charged_back', await classOf(paymentId));
+      expect(sent!.body).toBe('Stu disputed €10.00 with their bank and it was taken back. You can mark the payment unpaid to ask again.');
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, chargedBackCurrency: 'USD' }), expect.any(String));
+    });
+
     it('on a duplicate attempt tells the teacher without offering to ask again', async () => {
       const { paymentId, attempt } = await attemptOn('paid', { status: 'paid' }, 'manual');
       fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '10.00', currency: 'EUR' } }));

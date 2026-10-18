@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { STUDENT_BOOKINGS_PATH, STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, payPagePath, studentNotificationHref, teacherNotificationHref } from './notification-links';
+import { STUDENT_BOOKINGS_PATH, STUDENT_INVITATION_PATH, TEACHER_INVITATION_PATH, TEACHER_MOLLIE_PATH, payPagePath, studentNotificationHref, teacherNotificationHref } from './notification-links';
 
 /**
  * #166 whole-branch review I5. A `teacher_invitation` notification carries no
@@ -101,6 +101,11 @@ describe('teacherNotificationHref (#172)', () => {
   it('sends a class notification to its class', () => {
     expect(teacherNotificationHref({ type: 'booking_confirmed', relatedClassId: 'class-1' }))
       .toBe('/class/class-1');
+  });
+
+  it('sends a lost Mollie connection to the settings where it is reconnected', () => {
+    expect(teacherNotificationHref({ type: 'processor_disconnected', relatedClassId: null })).toBe(TEACHER_MOLLIE_PATH);
+    expect(TEACHER_MOLLIE_PATH).toBe('/settings/profile');
   });
 
   it('yields null for a notification with neither', () => {
