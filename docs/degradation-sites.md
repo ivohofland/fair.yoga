@@ -67,22 +67,32 @@ Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
-| `log.warn(` lines | 81 |
-| `log.error(` lines | 73 |
-| surface (`log.warn(` or `log.error(`) | **81 + 73 = 154** |
+| `log.warn(` lines | 113 |
+| `log.error(` lines | 95 |
+| surface (`log.warn(` or `log.error(`) | **113 + 95 = 208** |
 | split `.warn(` / `.error(` continuation lines | 0 |
 | `log[…](` lines | 17 |
-| `logDegraded(` call lines | 14 |
+| `logDegraded(` call lines | 34 |
 
-One of the 154 is not a call: `src/lib/log.ts:5` is a usage example inside
-that file's docblock. One of the 17 is not a site: `src/lib/degradation.ts:78`
-is the line `logDegraded` itself emits. So 153 static calls and 16
-computed-level calls were classified, beside the 14 `logDegraded` calls.
+One of the 208 is not a call: `src/lib/log.ts` carries a usage example inside
+its docblock. One of the 17 is not a site: `src/lib/degradation.ts`
+(`logDegraded`) is the line `logDegraded` itself emits. That leaves 207 static
+calls and 16 computed-level calls. Every one of the 34 `logDegraded` calls has
+a row under *Degradations* below, and so does every computed-level call. The
+surface table has 160 rows: the docblock line and 159 calls — 157 the earlier
+audit classified, each remapped to where its call now sits, and two
+unreachable `never` branches added since. That is 159 of the 207 static calls; the other
+207 − 159 = 48 were added after that audit — the Mollie work (#896) among
+them — and have no row yet, which is what the next audit owes. Per file, the
+calls without a row are the first command's lines a file has beyond its rows
+here.
 
-Line numbers below are as of that update and drift with every edit; the
-commands are the source of truth. A new `log.warn(` or `log.error(` raises the
-first count and appears in the first command's output without a row here —
-that row is what the next audit owes.
+Each row names its file and the function its call sits in, not a line number,
+so an edit elsewhere in the file does not move it; a function with several
+calls has one row for each, in source order. The commands are the source of
+truth. A new `log.warn(` or `log.error(` raises the first count and appears in
+the first command's output without a row here — that row is what the next
+audit owes.
 
 **Out of scope:** `console.warn(` / `console.error(` lines (count:
 `grep -rnE "console\.(warn|error)\(" src --include='*.ts' --include='*.tsx' | grep -vc '\.test\.'`).
@@ -157,209 +167,231 @@ The sites where the verdict took judgment, and why each landed where it did.
 
 Every `logDegraded` call. The level is the code's, from the registry.
 
-| site (file:line) | level | verdict | code or reason |
+| site (file, function) | level | verdict | code or reason |
 |---|---|---|---|
-| `src/lib/email-templates.ts:159` | warn | degradation | `PAYMENT_NOTIFICATION_WITHOUT_CLASS` |
-| `src/lib/entry-conflict.ts:282` | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
-| `src/lib/finish-window.ts:61` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/pay-page.server.ts:14` | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
-| `src/lib/pay-page.server.ts:36` | warn | degradation | `CHARGED_REGISTRATION_WITHOUT_PAYMENT` |
-| `src/lib/payment-breakdown.server.ts:21` | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
-| `src/lib/rule-slot-holder.ts:137` | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
-| `src/lib/tiers.server.ts:43` | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
-| `src/lib/timezone.ts:85` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:197` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/lib/timezone.ts:253` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:260` | warn | degradation | `CLASS_START_UNREADABLE` |
-| `src/lib/timezone.ts:267` | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
-| `src/services/email-fallback.ts:241` | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
+| `src/lib/email-templates.ts` (`studentAction`) | warn | degradation | `PAYMENT_NOTIFICATION_WITHOUT_CLASS` |
+| `src/lib/entry-conflict.ts` (`probeConflictingEntry`) | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
+| `src/lib/finish-window.ts` (`formatClockInZone`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/pay-page.server.ts` (`markedPaidLine`) | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
+| `src/lib/pay-page.server.ts` (`reportMissingPayment`) | warn | degradation | `CHARGED_REGISTRATION_WITHOUT_PAYMENT` |
+| `src/lib/payment-breakdown.server.ts` (`resolveReportedPaymentBreakdown`) | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
+| `src/lib/rule-slot-holder.ts` (`ruleSlotHolder`) | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
+| `src/lib/tiers.server.ts` (`readIncomeTier`) | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
+| `src/lib/timezone.ts` (`startOfLocalDay`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts` (`formatInstantInZone`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/lib/timezone.ts` (`classStartInstant`) | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts` (`classStartInstant`) | warn | degradation | `CLASS_START_UNREADABLE` |
+| `src/lib/timezone.ts` (`classStartInstant`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
+| `src/services/email-fallback.ts` (`processEmailFallback`) | error | degradation | `TEACHER_NOTIFICATION_TYPE_UNKNOWN` |
+| `src/services/gdpr.ts` (`deleteTeacherAccount`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` (the erased teacher's grant, after commit) |
+| `src/services/processor-attempts.ts` (`createAttempt`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createPayment` failed) |
+| `src/services/processor-attempts.ts` (`createAttempt`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createPayment` gave no checkout URL) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`teacher_erased`) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`connection_revoked`) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`getPayment`) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`mollie_unknown`) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`status_unknown`) |
+| `src/services/processor-connection.ts` (`unrevokedRefresh`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` (the grant a reconnect replaced) |
+| `src/services/processor-connection.ts` (`revokeDroppedGrant`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`revoke`) |
+| `src/services/processor-connection.ts` (`mollieUnavailable`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`exchangeCode`, `organization`, `profiles`), for `completeConnect`, `chooseProfile` and `readConnectionView` |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`revoke`) |
+| `src/services/processor-methods-offer.ts` (`listOfferedMethods`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`listMethods`) |
+| `src/services/processor-refunds.ts` (`requestRefund`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createRefund` failed) |
+| `src/services/processor-refunds.ts` (`requestRefund`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createRefund` unconfirmed: the refund may exist) |
+| `src/services/processor-token.ts` (`getAccessToken`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` |
+| `src/services/processor-token.ts` (`refreshOnce`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`refresh`) |
+| `src/services/processor-token.ts` (`refreshOnce`) | warn | degradation | `PROCESSOR_DISCONNECTED` |
+| `src/services/processor-token.ts` (`settledLookup`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` |
 
 ### The `log.warn(` / `log.error(` surface
 
-| site (file:line) | level | verdict | code or reason |
+| site (file, function) | level | verdict | code or reason |
 |---|---|---|---|
-| `src/app/(public)/[slug]/page.tsx:101` | warn | routine | documented race (hard delete vs session); the page falls back to its signed-out view |
-| `src/app/(student)/bookings/[classId]/pay/page.tsx:48` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
-| `src/app/(student)/bookings/[classId]/pay/page.tsx:209` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
-| `src/app/(student)/bookings/page.tsx:167` | warn | routine | documented race (hard delete vs session); redirects |
-| `src/app/api/account/route.ts:141` | error | routine | failure, surfaced as an error (answered busy) |
-| `src/app/api/account/student-profile/route.ts:172` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/account/student-profile/route.ts:184` | warn | routine | documented race; the loser is refused or retried (409) |
-| `src/app/api/account/student-profile/route.ts:201` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/account/teacher-profile/route.ts:150` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/account/teacher-profile/route.ts:172` | warn | routine | documented race; the loser is refused or retried (409) |
-| `src/app/api/account/teacher-profile/route.ts:188` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/auth/magic-link/verify/route.ts:92` | error | routine | failure, surfaced as an error (400); reachable by an erasure racing the link |
-| `src/app/api/auth/passkey/authenticate/verify/route.ts:36` | warn | routine | refusal (4xx); nothing substituted |
-| `src/app/api/auth/student-signup/route.ts:25` | warn | routine | rate-limit throttle |
-| `src/app/api/auth/student-signup/route.ts:34` | warn | routine | rate-limit throttle |
-| `src/app/api/auth/student-signup/route.ts:69` | error | routine | failure (an exception or outage), not impossible data |
-| `src/app/api/auth/teacher-signup/route.ts:54` | error | routine | failure (an exception or outage), not impossible data |
-| `src/app/api/class-templates/[id]/route.ts:190` | warn | routine | refusal (4xx); nothing substituted (room not found) |
-| `src/app/api/class-templates/[id]/route.ts:241` | warn | routine | failure, surfaced as an error (rethrown) |
-| `src/app/api/class-templates/[id]/route.ts:255` | warn | routine | documented race; the loser is refused or retried (room deleted) |
-| `src/app/api/class-templates/[id]/route.ts:267` | warn | routine | documented race; the loser is refused or retried (room archived) |
-| `src/app/api/class-templates/[id]/route.ts:278` | warn | routine | documented race; the loser is refused or retried (room reopened) |
-| `src/app/api/class-templates/[id]/route.ts:470` | warn | routine | documented race; the loser is refused or retried (room archived) |
-| `src/app/api/class-templates/route.ts:137` | warn | routine | failure, surfaced as an error (rethrown) |
-| `src/app/api/class-templates/route.ts:144` | warn | routine | documented race; the loser is refused or retried (room deleted) |
-| `src/app/api/class-templates/route.ts:151` | warn | routine | documented race; the loser is refused or retried (room archived) |
-| `src/app/api/class-templates/route.ts:157` | warn | routine | documented race; the loser is refused or retried (room reopened) |
-| `src/app/api/class-templates/route.ts:167` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/classes/[id]/route.ts:157` | error | routine | documented race; the loser is refused or retried (entry frozen mid-edit, 409) |
-| `src/app/api/classes/[id]/route.ts:198` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/classes/route.ts:189` | warn | routine | documented race; the loser is refused or retried (room deleted) |
-| `src/app/api/classes/route.ts:208` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/health/route.ts:32` | warn | routine | refusal; nothing substituted (an `Authorization` header that is not the cron secret gets the public summary) |
-| `src/app/api/health/route.ts:56` | error | routine | failure, surfaced as an error (503) |
-| `src/app/api/health/route.ts:73` | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
-| `src/app/api/invitations/[id]/resend/route.ts:68` | warn | routine | rate-limit throttle |
-| `src/app/api/invitations/[id]/route.ts:97` | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
-| `src/app/api/registrations/[id]/route.ts:500` | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |
-| `src/app/api/registrations/[id]/route.ts:505` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
-| `src/app/api/registrations/[id]/route.ts:581` | warn | routine | failure (an exception or outage), not impossible data |
-| `src/app/api/registrations/[id]/route.ts:603` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
-| `src/app/api/registrations/route.ts:147` | warn | routine | rate-limit throttle |
-| `src/app/api/rooms/[id]/route.ts:108` | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
-| `src/app/api/students/[id]/privacy/route.ts:63` | warn | routine | refusal (4xx); nothing substituted |
-| `src/app/api/students/[id]/privacy/route.ts:110` | warn | routine | refusal (4xx); nothing substituted |
-| `src/app/api/students/route.ts:88` | warn | routine | rate-limit throttle |
-| `src/app/api/studio-class-templates/route.ts:72` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/studio-classes/[id]/route.ts:287` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/studio-classes/[id]/route.ts:392` | warn | routine | documented race; the loser is refused or retried (row vanished, 404) |
-| `src/app/api/studio-classes/route.ts:125` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/app/api/teacher-rooms/[id]/route.ts:200` | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
-| `src/app/api/teacher-rooms/route.ts:133` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/app/api/teachers/[id]/photo/route.ts:39` | warn | routine | bad upload (400); input, not stored data |
-| `src/lib/api-utils.ts:175` | warn | routine | refusal (4xx); nothing substituted (415, body not sent as JSON) |
-| `src/lib/api-utils.ts:256` | warn | routine | refusal (4xx); nothing substituted (403 `CROSS_ORIGIN`); a misconfigured proxy shows here, a configuration fault like `rate-limit.ts`'s unresolved IP |
-| `src/lib/auth/handoff.ts:222` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:247` | warn | routine | rate-limit throttle (every address budget exhausted; the claim is refused) |
-| `src/lib/auth/handoff.ts:278` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/handoff.ts:288` | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
-| `src/lib/auth/link-delivery.ts:70` | error | routine | failure (an exception or outage), not impossible data; nothing awaits it, so the response cannot depend on it |
-| `src/lib/auth/passkey.ts:80` | warn | routine | rate-limit throttle (challenge store at capacity) |
-| `src/lib/auth/passkey.ts:256` | warn | routine | refusal (4xx); nothing substituted |
-| `src/lib/auth/profile-authorization.ts:110` | warn | routine | refusal (4xx); nothing substituted (foreign ticket ignored) |
-| `src/lib/auth/profile-authorization.ts:127` | warn | routine | documented race; the loser is refused or retried (ticket spent by a double submit or TTL) |
-| `src/lib/auth/signup-ticket.ts:79` | warn | routine | refusal (4xx); nothing substituted (wrong-family ticket discarded) |
-| `src/lib/auth/signup-ticket.ts:183` | error | routine | failure, surfaced as an error; see close calls |
-| `src/lib/auth/signup-ticket.ts:194` | error | routine | failure, surfaced as an error (unreachable `never` branch) |
-| `src/lib/degradation.ts:51` | error | routine | failure (an exception or outage), not impossible data (recording the event failed) |
-| `src/lib/entry-conflict.ts:301` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
-| `src/lib/finish-window.ts:48` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/log.ts:5` | error | — | not a call: a usage example in the docblock |
-| `src/lib/rate-limit.ts:123` | warn | routine | rate-limit throttle (bucket evicted under memory pressure) |
-| `src/lib/rate-limit.ts:256` | warn | routine | configuration fault, not data; see close calls |
-| `src/lib/rule-slot-holder.ts:144` | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
-| `src/lib/scheduler.ts:79` | error | routine | operational state, reported through job health |
-| `src/lib/scheduler.ts:132` | warn | routine | configuration (`CRON_SCHEDULER=off`), logged at boot |
-| `src/lib/scheduler.ts:141` | error | routine | configuration (`OPERATOR_EMAIL` unset), logged at boot |
-| `src/lib/scheduler.ts:146` | warn | routine | configuration (`EMAIL_DRY_RUN=1` in production), logged at boot |
-| `src/lib/scheduler.ts:248` | error | routine | operational state, reported through job health |
-| `src/lib/scheduler.ts:262` | error | routine | operational state, reported through job health |
-| `src/lib/timezone.ts:66` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:172` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/lib/timezone.ts:349` | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
-| `src/services/class-generator.ts:259` | warn | routine | lock contention (`isLockTimeout`) |
-| `src/services/class-generator.ts:265` | error | routine | operational state, reported through job health |
-| `src/services/class-lifecycle.ts:583` | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
-| `src/services/class-lifecycle.ts:783` | error | routine | echo of `CLASS_START_UNREADABLE`; completion is refused |
-| `src/services/class-reminders.ts:109` | error | routine | failure (an exception or outage), not impossible data (send refused) |
-| `src/services/class-reminders.ts:113` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/class-reminders.ts:131` | error | routine | operational state, reported through job health |
-| `src/services/class-reminders.ts:158` | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/services/class-transitions.ts:209` | warn | routine | documented race; the loser is refused or retried (rescheduled after the snapshot) |
-| `src/services/class-transitions.ts:232` | error | routine | lock invariant broken, not data; see close calls |
-| `src/services/class-transitions.ts:245` | error | routine | operational state, reported through job health |
-| `src/services/class-transitions.ts:583` | error | routine | operational state, reported through job health |
-| `src/services/class-transitions.ts:677` | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
-| `src/services/class-transitions.ts:679` | error | routine | operational state, reported through job health (completion refused) |
-| `src/services/class-transitions.ts:683` | error | routine | operational state, reported through job health |
-| `src/services/degradation-digest.ts:62` | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
-| `src/services/degradation-digest.ts:112` | error | routine | failure (an exception or outage), not impossible data; the job throws |
-| `src/services/email-fallback.ts:100` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:119` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:154` | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
-| `src/services/email-fallback.ts:161` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/email-fallback.ts:323` | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
-| `src/services/email-fallback.ts:350` | error | routine | failure (an exception or outage), not impossible data (send refused) |
-| `src/services/email-fallback.ts:357` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/entry-generation.ts:453` | warn | routine | documented race; the loser is refused or retried (EvalPlanQual re-check) |
-| `src/services/entry-generation.ts:589` | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
-| `src/services/entry-generation.ts:925` | warn | routine | skipped dates; the teacher is told why |
-| `src/services/entry-generation.ts:1151` | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
-| `src/services/entry-generation.ts:1206` | warn | routine | a defect in that function, not a stored value; see close calls |
-| `src/services/gdpr.ts:1027` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
-| `src/services/gdpr.ts:1658` | warn | routine | documented race; the loser is refused or retried (erasure CAS) |
-| `src/services/gdpr.ts:1681` | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
-| `src/services/generation-contention.ts:82` | error | routine | lock contention (`isLockTimeout`) (streak escalation) |
-| `src/services/invitations.ts:418` | error | routine | failure, surfaced as an error (throws, 500) |
-| `src/services/invitations.ts:527` | warn | routine | documented race; the loser is refused or retried (no row matched the dispatch) |
-| `src/services/invitations.ts:939` | error | routine | failure (an exception or outage), not impossible data (delivery failed) |
-| `src/services/invitations.ts:990` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/invitations.ts:1021` | error | routine | failure (an exception or outage), not impossible data |
-| `src/services/notification-retention.ts:105` | warn | routine | lock contention (`isLockTimeout`) |
-| `src/services/notification-retention.ts:107` | error | routine | operational state, reported through job health |
-| `src/services/notification-retention.ts:120` | error | routine | operational state, reported through job health |
-| `src/services/notification-retention.ts:122` | warn | routine | operational state, reported through job health (per-run cap) |
-| `src/services/notifications.ts:83` | error | routine | failure (an exception or outage), not impossible data (event bus) |
-| `src/services/push-dispatch.ts:70` | warn | routine | configuration (`VAPID_*` unset), logged once per process |
-| `src/services/push-dispatch.ts:72` | error | routine | configuration (`VAPID_*` misconfigured), logged once per process |
-| `src/services/push-dispatch.ts:169` | warn | routine | failure (an exception or outage), not impossible data (push service refused the send; not retried) |
-| `src/services/push-dispatch.ts:223` | error | routine | failure (an exception or outage), not impossible data (a worker crashed; the first crash is rethrown) |
-| `src/services/push-dispatch.ts:259` | error | routine | failure (an exception or outage), not impossible data (a send task threw) |
-| `src/services/room-archive.ts:277` | warn | routine | documented race; the loser is refused or retried (room back in use, 409) |
-| `src/services/rule-lifecycle.ts:518` | error | routine | failure, surfaced as an error (404); see close calls |
-| `src/services/rule-lifecycle.ts:623` | error | routine | failure, surfaced as an error (404); see close calls |
-| `src/services/rule-lifecycle.ts:661` | warn | routine | documented race; the loser is refused or retried (CAS miss, busy) |
-| `src/services/rule-lifecycle.ts:894` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/services/rule-lifecycle.ts:904` | error | routine | failure, surfaced as an error (rethrown) |
-| `src/services/rule-lifecycle.ts:1173` | error | routine | failure, surfaced as an error (404); see close calls |
-| `src/services/rule-lifecycle.ts:1228` | error | routine | failure, surfaced as an error (404); see close calls |
-| `src/services/rule-lifecycle.ts:1272` | warn | routine | documented race; the loser is refused or retried (CAS miss, busy) |
-| `src/services/rule-lifecycle.ts:1401` | warn | routine | a resume whose window is empty; the teacher is told |
-| `src/services/rule-lifecycle.ts:1449` | warn | routine | documented race; the loser is refused or retried (slot exclusion, rethrown as 409) |
-| `src/services/rule-lifecycle.ts:1460` | error | routine | failure, surfaced as an error (rethrown) |
-| `src/services/rule-lifecycle.ts:1743` | warn | routine | documented race; the loser is refused or retried (row vanished, 404) |
-| `src/services/rule-lifecycle.ts:1763` | warn | routine | refusal (4xx); nothing substituted (slot taken) |
-| `src/services/rule-lifecycle.ts:1783` | warn | routine | failure, surfaced as an error (rethrown) |
-| `src/services/rule-lifecycle.ts:1790` | warn | routine | documented race; the loser is refused or retried (room vanished) |
-| `src/services/studio-class-generator.ts:232` | warn | routine | lock contention (`isLockTimeout`) |
-| `src/services/studio-class-generator.ts:238` | error | routine | operational state, reported through job health |
-| `src/services/teacher-photo.ts:39` | warn | routine | bad upload (400); input, not stored data |
-| `src/services/teacher-photo.ts:63` | warn | routine | bad upload (400); input, not stored data |
-| `src/services/timezone-audit.ts:106` | error | routine | a detector, not a substitution; see close calls |
-| `src/services/waitlist-reconciliation.ts:760` | error | routine | operational state, reported through job health (tick escalation) |
-| `src/services/waitlist-reconciliation.ts:776` | warn | routine | lock contention (`isLockTimeout`) (transient, retried next tick) |
-| `src/services/waitlist-retention.ts:429` | warn | routine | operational state, reported through job health (per-run cap) |
-| `src/services/waitlist-retention.ts:526` | error | routine | operational state, reported through job health |
-| `src/services/waitlist-retention.ts:534` | error | routine | operational state, reported through job health |
-| `src/services/waitlist-retention.ts:539` | warn | routine | operational state, reported through job health |
+| `src/app/(public)/[slug]/page.tsx` (`TeacherBookingPage`) | warn | routine | documented race (hard delete vs session); the page falls back to its signed-out view |
+| `src/app/(student)/bookings/[classId]/pay/page.tsx` (`MethodPanel`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/(student)/bookings/[classId]/pay/page.tsx` (`attemptBanner`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/(student)/bookings/[classId]/pay/page.tsx` (`PayBody`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/(student)/bookings/page.tsx` (`StudentBookingsPage`) | warn | routine | documented race (hard delete vs session); redirects |
+| `src/app/(student)/bookings/page.tsx` (`OutstandingPayAction`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/app/api/account/route.ts` (`DELETE`) | error | routine | failure, surfaced as an error (answered busy) |
+| `src/app/api/account/student-profile/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/app/api/account/student-profile/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (409) |
+| `src/app/api/account/student-profile/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/app/api/account/teacher-profile/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/app/api/account/teacher-profile/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (409) |
+| `src/app/api/account/teacher-profile/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/app/api/auth/magic-link/verify/route.ts` (`POST`) | error | routine | failure, surfaced as an error (400); reachable by an erasure racing the link |
+| `src/app/api/auth/passkey/authenticate/verify/route.ts` (`POST`) | warn | routine | refusal (4xx); nothing substituted |
+| `src/app/api/auth/student-signup/route.ts` (`POST`) | warn | routine | rate-limit throttle |
+| `src/app/api/auth/student-signup/route.ts` (`POST`) | warn | routine | rate-limit throttle |
+| `src/app/api/auth/student-signup/route.ts` (`POST`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/app/api/auth/teacher-signup/route.ts` (`POST`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/app/api/class-templates/[id]/route.ts` (`PUT`) | warn | routine | refusal (4xx); nothing substituted (room not found) |
+| `src/app/api/class-templates/[id]/route.ts` (`PUT`) | warn | routine | failure, surfaced as an error (rethrown) |
+| `src/app/api/class-templates/[id]/route.ts` (`PUT`) | warn | routine | documented race; the loser is refused or retried (room deleted) |
+| `src/app/api/class-templates/[id]/route.ts` (`PUT`) | warn | routine | documented race; the loser is refused or retried (room archived) |
+| `src/app/api/class-templates/[id]/route.ts` (`PUT`) | warn | routine | documented race; the loser is refused or retried (room reopened) |
+| `src/app/api/class-templates/[id]/route.ts` (`PATCH`) | warn | routine | documented race; the loser is refused or retried (room archived) |
+| `src/app/api/class-templates/route.ts` (`POST`) | warn | routine | failure, surfaced as an error (rethrown) |
+| `src/app/api/class-templates/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (room deleted) |
+| `src/app/api/class-templates/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (room archived) |
+| `src/app/api/class-templates/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (room reopened) |
+| `src/app/api/class-templates/route.ts` (`POST`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/classes/[id]/route.ts` (`PUT`) | error | routine | documented race; the loser is refused or retried (entry frozen mid-edit, 409) |
+| `src/app/api/classes/[id]/route.ts` (`PUT`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/classes/route.ts` (`POST`) | warn | routine | documented race; the loser is refused or retried (room deleted) |
+| `src/app/api/classes/route.ts` (`POST`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/health/route.ts` (`GET`) | warn | routine | refusal; nothing substituted (an `Authorization` header that is not the cron secret gets the public summary) |
+| `src/app/api/health/route.ts` (`GET`) | error | routine | failure, surfaced as an error (503) |
+| `src/app/api/health/route.ts` (`GET`) | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
+| `src/app/api/invitations/[id]/resend/route.ts` (`POST`) | warn | routine | rate-limit throttle |
+| `src/app/api/invitations/[id]/route.ts` (`casMatchedNothing`) | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
+| `src/app/api/registrations/[id]/route.ts` (`notifyCancellation`) | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |
+| `src/app/api/registrations/[id]/route.ts` (`notifyCancellation`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
+| `src/app/api/registrations/[id]/route.ts` (`promoteAfterCancel`) | warn | routine | failure (an exception or outage), not impossible data |
+| `src/app/api/registrations/[id]/route.ts` (`promoteAfterCancel`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
+| `src/app/api/registrations/route.ts` (`targetOf`) | warn | routine | rate-limit throttle |
+| `src/app/api/rooms/[id]/route.ts` (`DELETE`) | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
+| `src/app/api/students/[id]/privacy/route.ts` (`GET`) | warn | routine | refusal (4xx); nothing substituted |
+| `src/app/api/students/[id]/privacy/route.ts` (`PUT`) | warn | routine | refusal (4xx); nothing substituted |
+| `src/app/api/students/route.ts` (`POST`) | warn | routine | rate-limit throttle |
+| `src/app/api/studio-class-templates/route.ts` (`POST`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/studio-classes/[id]/route.ts` (`PUT`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/studio-classes/[id]/route.ts` (`DELETE`) | warn | routine | documented race; the loser is refused or retried (row vanished, 404) |
+| `src/app/api/studio-classes/route.ts` (`POST`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/app/api/teacher-rooms/[id]/route.ts` (`DELETE`) | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
+| `src/app/api/teacher-rooms/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/app/api/teachers/[id]/photo/route.ts` (`POST`) | warn | routine | bad upload (400); input, not stored data |
+| `src/lib/api-utils.ts` (`parseBody`) | warn | routine | refusal (4xx); nothing substituted (415, body not sent as JSON) |
+| `src/lib/api-utils.ts` (`withErrorHandler`) | warn | routine | refusal (4xx); nothing substituted (403 `CROSS_ORIGIN`); a misconfigured proxy shows here, a configuration fault like `rate-limit.ts`'s unresolved IP |
+| `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | rate-limit throttle (every address budget exhausted; the claim is refused) |
+| `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
+| `src/lib/auth/link-delivery.ts` (`deliverSignInLinkIfRegistered`) | error | routine | failure (an exception or outage), not impossible data; nothing awaits it, so the response cannot depend on it |
+| `src/lib/auth/passkey.ts` (`flushPendingEvictionLog`) | warn | routine | rate-limit throttle (challenge store at capacity) |
+| `src/lib/auth/passkey.ts` (`warnRefused`) | warn | routine | refusal (4xx); nothing substituted |
+| `src/lib/auth/profile-authorization.ts` (`ticketAuthorization`) | warn | routine | refusal (4xx); nothing substituted (foreign ticket ignored) |
+| `src/lib/auth/profile-authorization.ts` (`ticketAuthorization`) | warn | routine | documented race; the loser is refused or retried (ticket spent by a double submit or TTL) |
+| `src/lib/auth/signup-ticket.ts` (`consumeSignupTicket`) | warn | routine | refusal (4xx); nothing substituted (wrong-family ticket discarded) |
+| `src/lib/auth/signup-ticket.ts` (`signupTicketFor`) | error | routine | failure, surfaced as an error; see close calls |
+| `src/lib/auth/signup-ticket.ts` (`signupTicketFor`) | error | routine | failure, surfaced as an error (unreachable `never` branch) |
+| `src/lib/degradation.ts` (`onWriteError`) | error | routine | failure (an exception or outage), not impossible data (recording the event failed) |
+| `src/lib/entry-conflict.ts` (`probeConflictingEntry`) | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
+| `src/lib/finish-window.ts` (`formatClockInZone`) | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/log.ts` (docblock) | error | — | not a call: a usage example in the docblock |
+| `src/lib/rate-limit.ts` (`flushPendingEvictionLog`) | warn | routine | rate-limit throttle (bucket evicted under memory pressure) |
+| `src/lib/rate-limit.ts` (`warnUnresolvedClientIp`) | warn | routine | configuration fault, not data; see close calls |
+| `src/lib/rule-slot-holder.ts` (`ruleSlotHolder`) | warn | routine | failure (an exception or outage), not impossible data (probe query failed); the 409 stands, less specific |
+| `src/lib/scheduler.ts` (`isolatedSweeps`) | error | routine | operational state, reported through job health |
+| `src/lib/scheduler.ts` (`startScheduler`) | warn | routine | configuration (`CRON_SCHEDULER=off`), logged at boot |
+| `src/lib/scheduler.ts` (`startScheduler`) | error | routine | configuration (`OPERATOR_EMAIL` unset), logged at boot |
+| `src/lib/scheduler.ts` (`startScheduler`) | warn | routine | configuration (`EMAIL_DRY_RUN=1` in production), logged at boot |
+| `src/lib/scheduler.ts` (`makeTick`) | error | routine | operational state, reported through job health |
+| `src/lib/scheduler.ts` (`makeTick`) | error | routine | operational state, reported through job health |
+| `src/lib/timezone.ts` (`startOfLocalDay`) | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/timezone.ts` (`formatInstantInZone`) | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/lib/timezone.ts` (`startsInPast`) | warn | routine | refusal (4xx); nothing substituted (`startsInPast` fails closed, 409) |
+| `src/services/class-generator.ts` (`generateClassInstances`) | warn | routine | lock contention (`isLockTimeout`) |
+| `src/services/class-generator.ts` (`generateClassInstances`) | error | routine | operational state, reported through job health |
+| `src/services/class-lifecycle.ts` (`transitionClass`) | warn | routine | documented race; the loser is refused or retried (room archived mid-request) |
+| `src/services/class-lifecycle.ts` (`completeClass`) | error | routine | echo of `CLASS_START_UNREADABLE`; completion is refused |
+| `src/services/class-reminders.ts` (`emailReminder`) | error | routine | failure (an exception or outage), not impossible data (send refused) |
+| `src/services/class-reminders.ts` (`emailReminder`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/class-reminders.ts` (`processClassReminders`) | error | routine | operational state, reported through job health |
+| `src/services/class-reminders.ts` (`remindForClass`) | error | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/services/class-transitions.ts` (`autoTransitionToInProgress`) | warn | routine | documented race; the loser is refused or retried (rescheduled after the snapshot) |
+| `src/services/class-transitions.ts` (`autoTransitionToInProgress`) | error | routine | lock invariant broken, not data; see close calls |
+| `src/services/class-transitions.ts` (`autoTransitionToInProgress`) | error | routine | operational state, reported through job health |
+| `src/services/class-transitions.ts` (`autoCancelClasses`) | error | routine | operational state, reported through job health |
+| `src/services/class-transitions.ts` (`autoCompleteClasses`) | warn | routine | documented race; the loser is refused or retried (rescheduled or cancelled after the snapshot) |
+| `src/services/class-transitions.ts` (`autoCompleteClasses`) | error | routine | operational state, reported through job health (completion refused) |
+| `src/services/class-transitions.ts` (`autoCompleteClasses`) | error | routine | operational state, reported through job health |
+| `src/services/degradation-digest.ts` (`notifyOperatorOfDegradations`) | error | routine | configuration (`OPERATOR_EMAIL` unset); the job throws |
+| `src/services/degradation-digest.ts` (`notifyOperatorOfDegradations`) | error | routine | failure (an exception or outage), not impossible data; the job throws |
+| `src/services/email-fallback.ts` (`markOne`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts` (`claimOne`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts` (`releaseOne`) | error | routine | documented race; the loser is refused or retried (claim no longer ours) |
+| `src/services/email-fallback.ts` (`releaseOne`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/email-fallback.ts` (`processEmailFallback`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
+| `src/services/email-fallback.ts` (`processEmailFallback`) | error | routine | failure (an exception or outage), not impossible data (send refused) |
+| `src/services/email-fallback.ts` (`processEmailFallback`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/entry-generation.ts` (`claimRuleForGeneration`) | warn | routine | documented race; the loser is refused or retried (EvalPlanQual re-check) |
+| `src/services/entry-generation.ts` (`generateEntriesForRule`) | warn | routine | echo of `CLASS_START_UNREADABLE`; see close calls |
+| `src/services/entry-generation.ts` (`logSkippedEntries`) | warn | routine | skipped dates; the teacher is told why |
+| `src/services/entry-generation.ts` (`probeFirstEffectiveWeek`) | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
+| `src/services/entry-generation.ts` (`probeFirstEffectiveWeek`) | warn | routine | a defect in that function, not a stored value; see close calls |
+| `src/services/gdpr.ts` (`deleteStudentAccount`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
+| `src/services/gdpr.ts` (`deleteTeacherAccount`) | warn | routine | documented race; the loser is refused or retried (erasure CAS) |
+| `src/services/gdpr.ts` (`deleteTeacherAccount`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
+| `src/services/generation-contention.ts` (`recordSweepContention`) | error | routine | lock contention (`isLockTimeout`) (streak escalation) |
+| `src/services/invitations.ts` (`inviteContact`) | error | routine | failure, surfaced as an error (throws, 500) |
+| `src/services/invitations.ts` (`logUndeliveredTeacherInbox`) | warn | routine | documented race; the loser is refused or retried (no row matched the dispatch) |
+| `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data (delivery failed) |
+| `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | lock contention (`isLockTimeout`) |
+| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
+| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
+| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | operational state, reported through job health (per-run cap) |
+| `src/services/notifications.ts` (`emitToBus`) | error | routine | failure (an exception or outage), not impossible data (event bus) |
+| `src/services/push-dispatch.ts` (`reportUnconfigured`) | warn | routine | configuration (`VAPID_*` unset), logged once per process |
+| `src/services/push-dispatch.ts` (`reportUnconfigured`) | error | routine | configuration (`VAPID_*` misconfigured), logged once per process |
+| `src/services/push-dispatch.ts` (`sendTo`) | warn | routine | failure (an exception or outage), not impossible data (push service refused the send; not retried) |
+| `src/services/push-dispatch.ts` (`runPushDispatch`) | error | routine | failure (an exception or outage), not impossible data (a worker crashed; the first crash is rethrown) |
+| `src/services/push-dispatch.ts` (`logTaskFailures`) | error | routine | failure (an exception or outage), not impossible data (a send task threw) |
+| `src/services/room-archive.ts` (`setTeacherRoomArchived`) | warn | routine | documented race; the loser is refused or retried (room back in use, 409) |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | error | routine | failure, surfaced as an error (404); see close calls |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | error | routine | failure, surfaced as an error (404); see close calls |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | warn | routine | documented race; the loser is refused or retried (CAS miss, busy) |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | error | routine | failure, surfaced as an error (rethrown) |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | error | routine | failure, surfaced as an error (404); see close calls |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | error | routine | failure, surfaced as an error (404); see close calls |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | warn | routine | documented race; the loser is refused or retried (CAS miss, busy) |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | warn | routine | a resume whose window is empty; the teacher is told |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | warn | routine | documented race; the loser is refused or retried (slot exclusion, rethrown as 409) |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | error | routine | failure, surfaced as an error (rethrown) |
+| `src/services/rule-lifecycle.ts` (`updateRule`) | warn | routine | documented race; the loser is refused or retried (row vanished, 404) |
+| `src/services/rule-lifecycle.ts` (`updateRule`) | warn | routine | refusal (4xx); nothing substituted (slot taken) |
+| `src/services/rule-lifecycle.ts` (`updateRule`) | warn | routine | failure, surfaced as an error (rethrown) |
+| `src/services/rule-lifecycle.ts` (`updateRule`) | warn | routine | documented race; the loser is refused or retried (room vanished) |
+| `src/services/studio-class-generator.ts` (`generateStudioClassInstances`) | warn | routine | lock contention (`isLockTimeout`) |
+| `src/services/studio-class-generator.ts` (`generateStudioClassInstances`) | error | routine | operational state, reported through job health |
+| `src/services/teacher-photo.ts` (`processTeacherPhoto`) | warn | routine | bad upload (400); input, not stored data |
+| `src/services/teacher-photo.ts` (`processTeacherPhoto`) | warn | routine | bad upload (400); input, not stored data |
+| `src/services/timezone-audit.ts` (`auditTeacherTimezones`) | error | routine | a detector, not a substitution; see close calls |
+| `src/services/waitlist-reconciliation.ts` (`report`) | error | routine | operational state, reported through job health (tick escalation) |
+| `src/services/waitlist-reconciliation.ts` (`report`) | warn | routine | lock contention (`isLockTimeout`) (transient, retried next tick) |
+| `src/services/waitlist-retention.ts` (`reapClosedWaitlistEntries`) | warn | routine | operational state, reported through job health (per-run cap) |
+| `src/services/waitlist-retention.ts` (`report`) | error | routine | operational state, reported through job health |
+| `src/services/waitlist-retention.ts` (`report`) | error | routine | operational state, reported through job health |
+| `src/services/waitlist-retention.ts` (`report`) | warn | routine | operational state, reported through job health |
 
 ### Computed-level calls (`log[…](`)
 
 Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/api-errors.ts`), which is why the first pattern misses them.
 
-| site (file:line) | level | verdict | code or reason |
+| site (file, function) | level | verdict | code or reason |
 |---|---|---|---|
-| `src/app/api/account/route.ts:148` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/app/api/account/route.ts:198` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/account/route.ts` (`DELETE`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/account/route.ts` (`DELETE`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/cron/daily-cleanup/route.ts` (`settle`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/app/api/registrations/[id]/route.ts:587` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/lib/api-utils.ts:271` | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
-| `src/lib/degradation.ts:78` | dynamic | — | not a site: the line `logDegraded` itself emits |
-| `src/services/class-template-lifecycle.ts:1109` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/gdpr.ts:1012` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/gdpr.ts:1168` | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
-| `src/services/rule-lifecycle.ts:865` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/rule-lifecycle.ts:1438` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/rule-lifecycle.ts:1735` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/studio-class-template-lifecycle.ts:758` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/waitlist-reconciliation.ts:675` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/services/waitlist-retention.ts:477` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/registrations/[id]/route.ts` (`promoteAfterCancel`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/registrations/route.ts` (`POST`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/waitlist/route.ts` (`POST`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/lib/api-utils.ts` (`withErrorHandler`) | dynamic | routine | `withErrorHandler`; every uncaught route error, surfaced as an error |
+| `src/lib/degradation.ts` (`logDegraded`) | dynamic | — | not a site: the line `logDegraded` itself emits |
+| `src/services/class-template-lifecycle.ts` (`createClassTemplate`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/gdpr.ts` (`deleteStudentAccount`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/gdpr.ts` (`deleteTeacherAccount`) | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
+| `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/rule-lifecycle.ts` (`updateRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/studio-class-template-lifecycle.ts` (`createStudioClassTemplate`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/waitlist-reconciliation.ts` (`reconcileOne`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/services/waitlist-retention.ts` (`reapClosedWaitlistEntries`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 
 ## When a code arrives in the digest
 
@@ -647,9 +679,22 @@ matches the room.
 **What happened.** A call to Mollie failed or came back in a shape the client
 does not accept (`MollieUnavailable`, `src/lib/mollie/client.ts`). The student
 pay page showed the teacher's other payment rows without the Mollie ones, a
-Mollie webhook was answered 503 so Mollie retries it, or a grant could not be
-revoked (`operation` `revoke`). `operation` is the client method that failed
+student's payment could not be started (`createPayment`), a Mollie webhook was
+answered 503 so Mollie retries it (`getPayment`), a grant could not be revoked
+(`revoke`), a teacher connecting or choosing a profile was told Mollie could
+not be reached (`exchangeCode`, `organization`, `profiles`; no `connectionId`
+before a connection exists), the settings section showed Mollie as
+unreachable (`organization`, `profiles`, once per render), or a refund
+request failed (`createRefund`). `operation` is the client method that failed
 and `status` the HTTP status, when there was one.
+
+A `createRefund` sample without a `status` whose message says Mollie *did not
+confirm* the refund is the worst of these: `createRefund` and the follow-up
+`getPayment` both failed, so the refund may exist at Mollie. Its intent row
+(a `ProcessorRefund` with no `processorRefundId`) is kept; a webhook adopts
+the refund if Mollie made it, and the attempt's next refund request reconciles
+it once it is two minutes old. The teacher was told not to refund in Mollie
+meanwhile.
 
 A failed `revoke` comes from one of two places in
 `src/services/processor-connection.ts`. `revokeDueConnection` leaves its
