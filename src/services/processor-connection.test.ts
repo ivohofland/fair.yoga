@@ -159,7 +159,7 @@ async function seedAttempt(teacherId: string, connectionId: string, status: 'ope
   const payment = await prisma.payment.create({ data: { registrationId: registration.id, amount: 10, status: 'pending' } });
   await prisma.processorPayment.create({
     data: {
-      paymentId: payment.id, connectionId, processorPaymentId: `tr_${s}`.replace(/-/g, ''), method: 'ideal', status,
+      paymentId: payment.id, connectionId, processorPaymentId: `tr_${s}`.replace(/-/g, ''), profileId: P1.id, testmode: false, method: 'ideal', status,
       amount: new Prisma.Decimal('10.00'), currency: 'EUR', expiresAt,
     },
   });

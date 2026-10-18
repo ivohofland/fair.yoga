@@ -106,10 +106,15 @@ function molliePayment(over: Partial<MolliePaymentView> = {}): MolliePaymentView
   };
 }
 
-async function seedAttempt(paymentId: string, method: string, expiresAt: Date, status: 'open' | 'paid' = 'open') {
+async function seedAttempt(
+  paymentId: string,
+  method: string,
+  expiresAt: Date,
+  made: { profileId: string; testmode: boolean } = { profileId: 'pfl_attempt', testmode: true },
+) {
   return prisma.processorPayment.create({
     data: {
-      paymentId, connectionId, processorPaymentId: `tr_${uniqueSuffix().replace(/-/g, '')}`, method, status,
+      paymentId, connectionId, processorPaymentId: `tr_${uniqueSuffix().replace(/-/g, '')}`, method, status: 'open', ...made,
       amount: new Prisma.Decimal('10.00'), currency: 'EUR', checkoutUrl: 'https://www.mollie.com/checkout/seeded', expiresAt,
     },
   });
@@ -186,7 +191,7 @@ describe('createAttempt', () => {
     });
     const row = await prisma.processorPayment.findUniqueOrThrow({ where: { id: outcome.attemptId } });
     expect(row).toMatchObject({
-      paymentId, connectionId, method: 'ideal', status: 'open', currency: 'EUR',
+      paymentId, connectionId, method: 'ideal', status: 'open', currency: 'EUR', profileId: 'pfl_attempt', testmode: true,
       checkoutUrl: 'https://www.mollie.com/checkout/select-method/abc',
     });
     expect(row.amount.toFixed(2)).toBe('10.00');
@@ -216,6 +221,30 @@ describe('createAttempt', () => {
 
     if (outcome.kind !== 'checkout') throw new Error(`expected checkout, got ${JSON.stringify(outcome)}`);
     expect([otherMethod.id, expiring.id]).not.toContain(outcome.attemptId);
+    expect(fake.createPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse an attempt made under another profile', async () => {
+    const { paymentId } = await freshPayment();
+    const now = new Date();
+    const old = await seedAttempt(paymentId, 'ideal', new Date(now.getTime() + 10 * MINUTE), { profileId: 'pfl_previous', testmode: true });
+
+    const outcome = await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal', now });
+
+    if (outcome.kind !== 'checkout') throw new Error(`expected checkout, got ${JSON.stringify(outcome)}`);
+    expect(outcome.attemptId).not.toBe(old.id);
+    expect(fake.createPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse an attempt made in the other mode', async () => {
+    const { paymentId } = await freshPayment();
+    const now = new Date();
+    const old = await seedAttempt(paymentId, 'ideal', new Date(now.getTime() + 10 * MINUTE), { profileId: 'pfl_attempt', testmode: false });
+
+    const outcome = await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal', now });
+
+    if (outcome.kind !== 'checkout') throw new Error(`expected checkout, got ${JSON.stringify(outcome)}`);
+    expect(outcome.attemptId).not.toBe(old.id);
     expect(fake.createPayment).toHaveBeenCalledTimes(1);
   });
 

@@ -113,7 +113,7 @@ describe('ProcessorConnection constraints', () => {
 
 describe('ProcessorPayment settling index', () => {
   it('allows at most one settling attempt per payment', async () => {
-    const base = { paymentId, connectionId, method: 'ideal', status: 'paid' as const, amount: new Prisma.Decimal('10.00'), currency: 'EUR' as const };
+    const base = { paymentId, connectionId, profileId: 'pfl_seed', testmode: true, method: 'ideal', status: 'paid' as const, amount: new Prisma.Decimal('10.00'), currency: 'EUR' as const };
     await prisma.processorPayment.create({ data: { ...base, processorPaymentId: `tr_a${suffix}`, settledPayment: true } });
     await expect(
       prisma.processorPayment.create({ data: { ...base, processorPaymentId: `tr_b${suffix}`, settledPayment: true } }),
@@ -205,6 +205,8 @@ model ProcessorPayment {
   paymentId          String
   connectionId       String?
   processorPaymentId String                 @unique
+  profileId          String
+  testmode           Boolean
   method             String
   status             ProcessorPaymentStatus
   amount             Decimal                @db.Decimal(10, 2)
@@ -1579,8 +1581,8 @@ export function processorWebhookUrl(appUrl: string): string | null; // null when
 
 `processor-attempts.test.ts` (`createAttempt`):
 1. Creates a Mollie payment with the **class's** currency and the payment's amount after the teacher switched `Teacher.currency` (Review Focus 2): seed a EUR class, then update the teacher to `GBP`; assert `fake.createPayment` received `amount: { value: '10.00', currency: 'EUR' }`, `method: 'ideal'`, `profileId`, `metadata.paymentId`, a `redirectUrl` from `processorReturnUrl`, and the stored attempt row has `status: 'open'`, `currency: 'EUR'`, `expiresAt`, `checkoutUrl`.
-2. Reuses an `open` attempt for the same method whose `expiresAt` is more than a minute ahead: no Mollie call, same `attemptId`.
-3. Does not reuse an attempt for another method, or one expiring within a minute.
+2. Reuses an `open` attempt for the same method, made under the connection's current `profileId` and `testmode`, whose `expiresAt` is more than a minute ahead: no Mollie call, same `attemptId`.
+3. Does not reuse an attempt for another method, one expiring within a minute, one made under another profile, or one made in the other mode.
 4. Refuses: another student's payment → `NOT_FOUND`; `paid`/`not_charged` → `PAYMENT_SETTLED`; paused → `PAYMENTS_PAUSED`; no live connection → `PROCESSOR_NOT_CONNECTED` (also when `deps` is null — check the connection first so the answer does not depend on config); `klarna` and `ideal`-not-in-overlap → `PROCESSOR_METHOD_UNAVAILABLE`.
 5. `createPayment` throwing `MollieUnavailable` → `unavailable`, no row.
 6. `processorWebhookUrl('http://localhost:3000')` is null; `processorWebhookUrl('https://fair.yoga')` is `https://fair.yoga/api/webhooks/mollie`.
@@ -1592,7 +1594,7 @@ export function processorWebhookUrl(appUrl: string): string | null; // null when
 - [ ] **Step 3: Implement.**
 - `payment-methods.ts`: add the member; `PAYMENT_METHOD_COPY.processor = { label: 'Pay online', hint: 'Opens your teacher’s payment provider' }`; `paymentMethodLabel(m)` = `m.kind === 'processor' ? MOLLIE_METHODS[m.method].label : PAYMENT_METHOD_COPY[m.kind].label`. `paymentMethodsFor` is unchanged — it never returns `processor`. For each other switch `tsc` names (email copy, reminders), the `processor` case is unreachable from their source; handle it the way that switch handles the closest existing kind (`payment_link`), never with a silent default.
 - `pay-page-methods.ts`: as the interface says; live = `disconnectedAt === null && profileId !== null`.
-- `createAttempt`: load the payment with `registration.studentId`, `class.currency`, the entry's `classType` and `date`, and the teacher's `paymentsPausedAt` and connection, in one read. Check order: ownership → status → paused → connection → `deps` (null → `unavailable`) → `isAllowedMollieMethod` → reuse → overlap (`listOfferedMethods`, `unavailable` → `unavailable`) → token → `createPayment` with `id = randomUUID()` chosen first so the redirect URL can carry it → insert the attempt with that id. Description: the pay page's reference, `${entry.classType} ${formatDayHeader(entry.date)}` — move that expression into a shared `paymentReference(entry)` in `src/lib/payment-methods.ts` and use it in both places.
+- `createAttempt`: load the payment with `registration.studentId`, `class.currency`, the entry's `classType` and `date`, and the teacher's `paymentsPausedAt` and connection, in one read. Check order: ownership → status → paused → connection → `deps` (null → `unavailable`) → `isAllowedMollieMethod` → reuse → overlap (`listOfferedMethods`, `unavailable` → `unavailable`) → token → `createPayment` with `id = randomUUID()` chosen first so the redirect URL can carry it → insert the attempt with that id, its `profileId` and `testmode` taken from the connection. Description: the pay page's reference, `${entry.classType} ${formatDayHeader(entry.date)}` — move that expression into a shared `paymentReference(entry)` in `src/lib/payment-methods.ts` and use it in both places.
 - Route `POST /api/payments/[id]/processor-attempt` `{ method }` (`processorAttemptSchema`: `z.object({ method: z.string().min(1).max(32) }).strict()`): `requireStudent`; `checkout` → `respondOk({ checkoutUrl })`; `refused` → `respondRefusal`; `unavailable` → 503 `PROCESSOR_UNAVAILABLE`.
 - `ProcessorPayButton` (client): a full-width button labelled `Pay with ${label}`; on click POST, then `window.location.assign(checkoutUrl)`; a refusal shows its message inline; while pending the button is disabled with "Opening ${label}…". Follow how `MarkSentControl` posts and shows errors.
 - Pay page: load the teacher with `payPageTeacherSelect`, call `payPageMethods(prisma, mollieDeps(), teacher, cls.currency, payment.amount)`; `MethodPanel` `case 'processor': return <ProcessorPayButton paymentId={payment.id} method={method.method} label={MOLLIE_METHODS[method.method].label} />;`; chooser labels via `paymentMethodLabel`; React keys `${m.kind}:${m.kind === 'processor' ? m.method : ''}`.
