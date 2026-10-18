@@ -24,12 +24,13 @@ interface SheetProps {
 export function Sheet({ title, onClose, dismissible = true, children }: SheetProps) {
   const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
-  // Set while this component closes the dialog itself on unmount, so that close is not reported.
+  // Set while this mount closes the dialog itself on cleanup, so that close is not reported; each mount clears it.
   const unmounting = useRef(false);
 
   useEffect(() => {
     const node = dialog.current;
     if (node === null) return;
+    unmounting.current = false;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!node.open) node.showModal();
     const overflow = document.body.style.overflow;
