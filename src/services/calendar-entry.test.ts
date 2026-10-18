@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
@@ -90,6 +91,14 @@ const EXCL = 'CalendarEntry_teacher_slot_excl';
 /** Asserts the DATABASE refused, and that it was THIS constraint that did. */
 async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
   await expect(fn()).rejects.toSatisfy((e: unknown) => isExclusionConflictOn(e, EXCL));
+}
+
+/** Asserts a `23505` from the unique key named `constraint`. */
+async function expectUniqueRefusal(write: Promise<unknown>, constraint: string): Promise<void> {
+  await expect(write).rejects.toSatisfy((e: unknown) => {
+    const pg = pgErrorOf(e);
+    return pg?.sqlState === '23505' && pg.constraint === constraint;
+  });
 }
 
 /**
@@ -269,13 +278,7 @@ describe('CalendarEntry_scheduleRuleId_date_key', () => {
     // A different start time, so the slot exclusion cannot be what refuses —
     // the cancelled entry released that slot. Only the (rule, date) key is
     // left to raise, which is what makes this case about the key.
-    //
-    // Asserted on the SQLSTATE and the key COLUMNS, not the index name:
-    // Prisma surfaces only PostgreSQL's DETAIL line for a raw 23505, and that
-    // line carries no constraint name. The columns are what say which unique
-    // key answered.
-    await expect(onRule(teacherId, rule.id, '14:00', false))
-      .rejects.toThrow(/Code: `23505`[\s\S]*Key \("scheduleRuleId", date\)/);
+    await expectUniqueRefusal(onRule(teacherId, rule.id, '14:00', false), 'CalendarEntry_scheduleRuleId_date_key');
   });
 
   // THE SHAPE OF THE KEY, not only that it fires. Both inserts above share a
@@ -311,13 +314,8 @@ describe('disjoint occupancy — one entry, one child', () => {
    * from `CalendarEntry_duration_positive` next door, so a fixture that started
    * tripping a different constraint of the same class would keep passing while
    * testing something else. The exclusion cases above already name theirs via
-   * `isExclusionConflictOn`; this brings the rest into line.
-   *
-   * The two `@unique` keys are the exception and the reason is PostgreSQL's,
-   * not a preference: Prisma surfaces only the DETAIL line for a raw `23505`
-   * and that line carries no constraint name. The SQLSTATE and the key COLUMNS
-   * are what identify it, the same way `CalendarEntry_scheduleRuleId_date_key`
-   * is pinned above.
+   * `isExclusionConflictOn`, and the `@unique` keys through `pgErrorOf`; this
+   * brings the rest into line.
    */
   it('refuses a studio child on a regular entry (composite FK)', async () => {
     const { entryId } = await regularEntryWithClass();
@@ -369,26 +367,26 @@ describe('disjoint occupancy — one entry, one child', () => {
       where: { classes: { some: { calendarEntryId: entryId } } },
       select: { id: true },
     });
-    await expect(prisma.$executeRawUnsafe(
+    await expectUniqueRefusal(prisma.$executeRawUnsafe(
       `INSERT INTO "Class" (id,"calendarEntryId",kind,currency,"teacherRoomId","roomCost","minRate","targetRate","minStudents","maxStudents",status,"createdAt","updatedAt")
        VALUES (gen_random_uuid()::text,$1,'regular','EUR',$2,35,15,25,4,12,'draft',now(),now())`,
       entryId, teacherRoom.id,
-    )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
+    ), 'Class_calendarEntryId_key');
   });
 
   it('refuses a second StudioClass on one entry', async () => {
     const { entryId } = await studioEntryWithClass();
-    await expect(prisma.$executeRawUnsafe(
+    await expectUniqueRefusal(prisma.$executeRawUnsafe(
       `INSERT INTO "StudioClass" (id,"calendarEntryId",kind,currency,location,"hourlyRate","createdAt","updatedAt")
        VALUES (gen_random_uuid()::text,$1,'studio','EUR','Second',50,now(),now())`, entryId,
-    )).rejects.toThrow(/Code: `23505`[\s\S]*Key \("calendarEntryId"\)/);
+    ), 'StudioClass_calendarEntryId_key');
   });
 });
 
 /**
  * The refusal wording every case below matches on.
  *
- * Not `/frozen/i`. `isTerminalStatusViolation` (`src/lib/api-errors.ts`)
+ * Not `/frozen/i`. `terminalViolationOf` (`src/lib/api-errors.ts`)
  * requires the literal clause `which is terminal` alongside SQLSTATE `23514`
  * before `classifyApiError` will answer 409 rather than 500, so the clause is
  * part of these guards' contract rather than prose — and matching on it is

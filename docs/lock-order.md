@@ -1231,7 +1231,7 @@ exposure reopens for whichever pairing of template-driven writers is live.
 **A slot-key deadlock reaches the client as a 503, not a 500.**
 `classifyApiError` groups `40P01` with `55P03`/`40001`/the matching Prisma
 codes under "lost a contention race, not a bad request" (`isTransientDbError`,
-#174, checked after `isTerminalStatusViolation`'s `23514` but before
+#174, checked after `terminalViolationOf`'s `23514` but before
 `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
 trusted (#196): two real `updateClass` writes racing over
 `Class_teacher_slot_unique` with no synchronisation, throwaway database, hit

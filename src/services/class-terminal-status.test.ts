@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@/lib/prisma-client';
+import { pgErrorOf } from '@/lib/pg-error';
 import type { ClassStatus } from '@/lib/prisma-client';
 import { classifyApiError } from '@/lib/api-errors';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
@@ -207,27 +207,22 @@ describe('class_terminal_status_guard', () => {
       caught = err;
     }
 
-    // Observed directly (see api-errors.ts's isTerminalStatusViolation
-    // docblock for the full transcript): the trigger's `RAISE EXCEPTION`
-    // reaches Prisma as PrismaClientUnknownRequestError, not
-    // PrismaClientKnownRequestError — there is no P-code for "a trigger
-    // fired", so it carries no `.code`/`.meta`, only a message with the raw
-    // driver text embedded, including `code: "23514"` and this trigger's own
-    // wording. Asserting the class, not just a loose substring, is what would
-    // have caught a regression to the wrong error shape.
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-    expect(String(caught)).toMatch(/is completed/);
+    // The trigger's `RAISE EXCEPTION` reaches the caller as the adapter's
+    // error, carrying the SQLSTATE and the trigger's own wording in structured
+    // fields (`docs/technical-architecture.md`, "Database errors"). Asserting
+    // the structured SQLSTATE, not a loose substring, is what would catch a
+    // regression to the wrong error shape.
+    expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+    expect(pgErrorOf(caught)?.message).toMatch(/is completed, which is terminal; cannot change status to open$/);
 
     // End-to-end pin, not just a unit test against a frozen fixture:
-    // api-errors.test.ts feeds classifyApiError a hand-built string literal
-    // shaped like this error, which proves the *matcher* is right about the
-    // shape it was told to expect but not that the shape is still real. This
-    // line closes that gap by running the real classifier against the real
-    // error this test just caught — a Prisma upgrade that reshapes the
-    // ConnectorError/PostgresError debug formatting the matcher depends on
-    // fails here even if the frozen fixture in api-errors.test.ts stays green.
+    // api-errors.test.ts feeds classifyApiError a fabricated error shaped
+    // like this one, which proves the *matcher* is right about the shape it
+    // was told to expect but not that the shape is still real. This line
+    // closes that gap by running the real classifier against the real error
+    // this test just caught — a Prisma or adapter upgrade that moves the
+    // fields the matcher reads fails here even if the fabricated fixture in
+    // api-errors.test.ts stays green.
     expect(classifyApiError(caught).status).toBe(409);
 
     const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
@@ -327,8 +322,8 @@ describe('class_terminal_status_guard', () => {
    * So this iterates the derived set rather than restating it. The test above
    * that asserts `classifyApiError(...).status === 409` stays as it is: it
    * asserts the trigger's error SHAPE end to end, including the HTTP status a
-   * caller sees. This one adds the per-status sweep, and asserts the Prisma
-   * error class, `23514` and `/which is terminal/` for each member as well as
+   * caller sees. This one adds the per-status sweep, and asserts the
+   * SQLSTATE `23514` and `/which is terminal/` for each member as well as
    * the status surviving.
    */
   it.each(TERMINAL_CLASS_STATUSES)(
@@ -343,9 +338,8 @@ describe('class_terminal_status_guard', () => {
         caught = err;
       }
 
-      expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-      expect(String(caught)).toMatch(/23514/);
-      expect(String(caught)).toMatch(/which is terminal/);
+      expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+      expect(pgErrorOf(caught)?.message).toMatch(/which is terminal/);
 
       const after = await prisma.class.findUniqueOrThrow({ where: { id: classId } });
       expect(after.status).toBe(status);

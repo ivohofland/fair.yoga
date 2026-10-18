@@ -47,6 +47,7 @@ import { getNextOccurrences } from './entry-generation';
 import { generateStudioInstancesForTemplate } from './studio-class-generator';
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -219,7 +220,7 @@ describe('generation inside a real $transaction (DB)', () => {
     // Nothing escaped — and `25P02` is named explicitly, because a poisoned
     // transaction is the failure this file exists to keep out and it would
     // also satisfy a bare `toBeNull`.
-    expect(caught === undefined || !String(caught).includes('25P02')).toBe(true);
+    expect(pgErrorOf(caught)?.sqlState).not.toBe('25P02');
     expect(caught).toBeUndefined();
 
     // Blinded, the pre-check offers all four dates; the constraint declines

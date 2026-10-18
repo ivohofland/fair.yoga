@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Prisma } from '@/lib/prisma-client';
+import { pgErrorOf } from './pg-error';
 import { classifyApiError } from './api-errors';
 import { hhmmToTime } from './time-of-day';
 import { createPrismaClient } from '@/lib/prisma-client';
@@ -108,10 +108,8 @@ describe('entry_rule_kind_mismatch_guard', () => {
       caught = err;
     }
 
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-    expect(String(caught)).toMatch(/cannot attach to mismatched rule kind/);
+    expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+    expect(pgErrorOf(caught)?.message).toMatch(/which is terminal; cannot attach to mismatched rule kind$/);
 
     const classification = classifyApiError(caught);
     expect(classification.status).toBe(409);
@@ -136,10 +134,8 @@ describe('entry_rule_kind_mismatch_guard', () => {
       caught = err;
     }
 
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-    expect(String(caught)).toMatch(/cannot attach to mismatched rule kind/);
+    expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+    expect(pgErrorOf(caught)?.message).toMatch(/which is terminal; cannot attach to mismatched rule kind$/);
 
     const classification = classifyApiError(caught);
     expect(classification.status).toBe(409);
@@ -169,10 +165,8 @@ describe('entry_rule_kind_mismatch_guard', () => {
       caught = err;
     }
 
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-    expect(String(caught)).toMatch(/cannot attach to mismatched rule kind/);
+    expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+    expect(pgErrorOf(caught)?.message).toMatch(/which is terminal; cannot attach to mismatched rule kind$/);
   });
 
   it('allows entries with scheduleRuleId: null to insert and update freely', async () => {
@@ -213,10 +207,8 @@ describe('schedule_rule_kind_immutability_guard', () => {
       caught = err;
     }
 
-    expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-    expect(String(caught)).toMatch(/23514/);
-    expect(String(caught)).toMatch(/which is terminal/);
-    expect(String(caught)).toMatch(/cannot change its kind/);
+    expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+    expect(pgErrorOf(caught)?.message).toMatch(/which is terminal; cannot change its kind$/);
 
     const classification = classifyApiError(caught);
     expect(classification.status).toBe(409);

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Prisma, ClassStatus } from '@/lib/prisma-client';
 import { classifyApiError } from '@/lib/api-errors';
+import { pgErrorOf } from '@/lib/pg-error';
 import { TERMINAL_CLASS_STATUSES } from './class-lifecycle';
 import { enforcedTerminalStatuses } from '../../tests/migration-sql';
 import { hhmmToTime } from '@/lib/time-of-day';
@@ -23,7 +24,7 @@ import { createPrismaClient } from '@/lib/prisma-client';
  * the marker the sync trigger writes — asserted through raw SQL against bare
  * entries. This one comes at the same guard from the `Class` side: the
  * rejection set is DERIVED from `TERMINAL_CLASS_STATUSES` rather than listed,
- * it observes both Prisma error shapes, and it runs the real
+ * it observes both error shapes (typed and raw), and it runs the real
  * `classifyApiError` over the real thrown error so the 409 a caller sees is
  * pinned to something the database actually raised.
  *
@@ -214,22 +215,18 @@ describe('entry_frozen_schedule_guard', () => {
       }
 
       // A `$executeRaw` failure is a PrismaClientKnownRequestError (P2010)
-      // carrying the SQLSTATE in ``Code: `23514` `` framing — NOT the
-      // PrismaClientUnknownRequestError the typed path below produces.
-      // `src/lib/api-errors.ts` documents both shapes for `55P03` and the
-      // split is the same here: the engine has a P-code for "raw query
-      // failed" and none for "a trigger fired".
+      // carrying the adapter's cause — NOT the DriverAdapterError the typed
+      // path below produces. Where each shape carries the SQLSTATE:
+      // `docs/technical-architecture.md`, "Database errors".
       expect(caughtRaw).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
-      expect(String(caughtRaw)).toMatch(/23514/);
-      expect(String(caughtRaw)).toMatch(/which is terminal/);
-      expect(String(caughtRaw)).toMatch(new RegExp(`is ${status}`));
+      expect(pgErrorOf(caughtRaw)?.sqlState).toBe('23514');
+      expect(pgErrorOf(caughtRaw)?.message).toMatch(new RegExp(`is ${status}, which is terminal; cannot change its date`));
 
       // The typed path, which is the one production actually takes:
       // `updateClass` is the only writer in `src/` that moves an existing
-      // entry's `date`, and it is also the only shape
-      // `isTerminalStatusViolation` matches, so the 409 claim has to be
-      // pinned against this write rather than the raw one above — asserting it
-      // on the raw error would assert something no caller can observe.
+      // entry's `date`, so the 409 claim has to be pinned against this write
+      // rather than the raw one above — asserting it on the raw error would
+      // assert something no caller can observe.
       let caught: unknown;
       try {
         await prisma.calendarEntry.update({
@@ -240,10 +237,8 @@ describe('entry_frozen_schedule_guard', () => {
         caught = err;
       }
 
-      expect(caught).toBeInstanceOf(Prisma.PrismaClientUnknownRequestError);
-      expect(String(caught)).toMatch(/23514/);
-      expect(String(caught)).toMatch(/which is terminal/);
-      expect(String(caught)).toMatch(new RegExp(`is ${status}`));
+      expect(pgErrorOf(caught)?.sqlState).toBe('23514');
+      expect(pgErrorOf(caught)?.message).toMatch(new RegExp(`is ${status}, which is terminal; cannot change its date`));
 
       // The route's own mapping, not a second copy of it: whatever
       // classifyApiError does with this shape is what a caller would see. The

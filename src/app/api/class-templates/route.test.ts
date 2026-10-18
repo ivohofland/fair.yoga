@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@/lib/prisma-client';
+import type { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { expectRefusal } from '../../../../tests/api-assertions';
+import { knownWithAdapterCause, pgCause } from '../../../../tests/adapter-errors';
 
 /**
  * `POST /api/class-templates`: the room ownership pre-check, and what the
@@ -53,12 +54,17 @@ function create(): Promise<Response> {
   );
 }
 
+/** A template create refused by the room mirror's foreign key, as the adapter reports it. */
 function roomForeignKeyViolation(): Prisma.PrismaClientKnownRequestError {
-  return new Prisma.PrismaClientKnownRequestError('FK error', {
-    code: 'P2003',
-    clientVersion: '6.19.3',
-    meta: { constraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey' },
-  });
+  return knownWithAdapterCause(
+    'P2003',
+    pgCause(
+      '23503',
+      'insert or update on table "ClassTemplate" violates foreign key constraint "ClassTemplate_teacherRoomId_roomArchived_fkey"',
+      { constraint: { index: 'ClassTemplate_teacherRoomId_roomArchived_fkey' } },
+    ),
+    { modelName: 'ClassTemplate' },
+  );
 }
 
 /**

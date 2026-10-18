@@ -1,6 +1,6 @@
 import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
-import { isPgPoolTimeout } from './pg-error';
+import { isPgPoolTimeout, pgErrorOf, type PgError } from './pg-error';
 import type { CodeWithStatus } from './api-error-codes';
 
 /**
@@ -105,46 +105,11 @@ export type ApiFailure =
  * `DELIBERATE_500_RAISERS` names it as meant to classify 500. Mechanical, not
  * remembered.
  *
- * The name is narrower than what this matches — a frozen-schedule violation
- * classifies here too. Kept rather than renamed, but said out loud, because a
- * reader who greps `isTerminalStatusViolation`, finds nothing about dates, and
- * concludes a date violation goes unhandled would be wrong.
- *
- * Measured directly rather than assumed (`src/services/class-terminal-
- * status.test.ts`, which also pins `classifyApiError(caught).status === 409`
- * against the real thrown error, not just this file's hand-written fixture)
- * — the brief this shipped from deliberately did not predict which Prisma
- * error class would wrap a trigger's SQLSTATE. What was observed:
- *
- *   PrismaClientUnknownRequestError: Invalid `prisma.class.update()` invocation
- *   Error occurred during query execution:
- *   ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(
- *     PostgresError { code: "23514", message: "Class <id> is completed, which
- *     is terminal; cannot change status to <status>", severity: "ERROR",
- *     detail: None, column: None, hint: None }), transient: false })
- *
- * The entry-level guards' messages differ only after the shared clause, so the
- * same match covers them (observed via `db.calendarEntry.update`, #327):
- *
- *     PostgresError { code: "23514", message: "CalendarEntry <id> is completed,
- *     which is terminal; cannot change its date, start time or duration", ... }
- *
- * TWO ERROR SHAPES CARRY THE SAME SQLSTATE, and which one arrives is decided
- * by how the statement was issued, not by what failed. A typed
- * `class.update`/`updateMany` falls back to `PrismaClientUnknownRequestError`
- * — there is no P-code for "a trigger fired" — and spells the SQLSTATE
- * `code: "23514"`. A raw query has a P-code of its own, `P2010` ("raw query
- * failed"), and spells it ``Code: `23514` ``. BOTH ARE MATCHED.
- *
- * An earlier revision admitted only the Unknown shape and argued the raw one
- * was unreachable. The argument was true, and it was the wrong thing to
- * depend on: it made a 409-vs-500 hinge on a whole-repo census of raw
- * `Class` writers that nothing could keep honest, and the census as written
- * was already falsified by the date guard's own test file. `isTransientDbError`
- * below had settled the identical question the other way for `55P03`, for the
- * reason that applies here too — both shapes mean the same thing to a caller,
- * so a matcher built for one silently misses the other. `class-terminal-
- * date.test.ts` observes both shapes from this one trigger and pins both.
+ * Typed and raw writes are both matched, because both carry the adapter's
+ * cause: which one arrives is decided by how the statement was issued, not by
+ * what failed, and the two mean the same thing to a caller. Where the SQLSTATE
+ * and the message are read from: `docs/technical-architecture.md`, "Database
+ * errors".
  *
  * `23514` (check_violation) alone is not a safe match: it is Postgres's
  * default SQLSTATE for a plain `CHECK` constraint too, and this schema
@@ -155,27 +120,21 @@ export type ApiFailure =
  * of those as "that class can no longer be changed." The `which is terminal`
  * wording is what actually discriminates.
  *
- * That wording is no longer unique to ONE trigger — since #247 more than one
- * emits it — but it does not need to be, and the matcher must not be narrowed
- * to restore uniqueness. What it needs is to be unique to *this class of
- * failure*, and it is: no other `23514` in this schema uses the phrase, and
- * every writer that does means the identical thing to a caller. Matching a set
- * of triggers deliberately is the design; they are kept in step by
- * `class-terminal-status.test.ts` and `class-terminal-date.test.ts`, each of
- * which pins `classifyApiError(...).status === 409` against its own real
- * thrown error.
+ * That wording is not unique to ONE trigger, and it does not need to be; the
+ * matcher must not be narrowed to restore uniqueness. What it needs is to be
+ * unique to *this class of failure*, and it is: no other `23514` in this
+ * schema uses the phrase, and every writer that does means the identical
+ * thing to a caller. Matching a set of triggers deliberately is the design;
+ * they are kept in step by `class-terminal-status.test.ts` and
+ * `class-terminal-date.test.ts`, each of which pins
+ * `classifyApiError(...).status === 409` against its own real thrown error.
  *
- * The SQLSTATE is matched inside its Postgres framing rather than as a bare
- * substring — the trap `isTransientDbError` documents below, and which this
- * function used to be the standing example of.
- *
- * Narrows to `Error` so the branch in `classifyApiError` can read the
- * trigger's message tail without a cast.
+ * Answers the `PgError` so the branch in `classifyApiError` can read the
+ * trigger's message tail from Postgres's own text.
  */
-function isTerminalStatusViolation(error: unknown): error is Error {
-  if (!(error instanceof Error)) return false;
-  if (!error.message.includes('which is terminal')) return false;
-  return error.message.includes('code: "23514"') || error.message.includes('Code: `23514`');
+function terminalViolationOf(error: unknown): PgError | null {
+  const pg = pgErrorOf(error);
+  return pg !== null && pg.sqlState === '23514' && pg.message.includes('which is terminal') ? pg : null;
 }
 
 /**
@@ -327,8 +286,8 @@ function transientKindShallow(error: unknown): TransientKind | null {
  * bare substring. A bare `message.includes('40001')` would relabel any error
  * whose text happens to quote that as a digit string — a postcode, an amount,
  * an id fragment — as "the database is busy, try again", which is exactly the
- * wrong advice and exactly the trap `isTerminalStatusViolation` above
- * documents for `23514`.
+ * wrong advice, and the reason `terminalViolationOf` above reads a
+ * structured SQLSTATE for `23514`.
  *
  * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
  * `SpotFreedError` that carries the real failure as `cause` does not silently
@@ -386,7 +345,7 @@ export function isLockTimeout(error: unknown): boolean {
  * two places. This module's own imports stay within that same table —
  * `isExclusionConflictOn` (`./exclusion-conflict`) is the shared DB-error
  * matcher `classifyApiError` reuses below rather than re-implementing, and it
- * in turn imports only `@/lib/prisma-client` — so a service using this module for
+ * in turn imports only `./pg-error` — so a service using this module for
  * classification alone still pulls in nothing web-framework-shaped.
  */
 export function isRecordNotFound(error: unknown): boolean {
@@ -394,30 +353,27 @@ export function isRecordNotFound(error: unknown): boolean {
 }
 
 /**
- * True when Prisma refused a delete because a `RESTRICT` foreign key still
- * points at the row — `P2003` — and the constraint that refused is one of
+ * True when Postgres refused a delete because a `RESTRICT` foreign key still
+ * points at the row (`23503`), and the constraint that refused is one of
  * `constraints`.
  *
- * Keyed on `meta.constraint`, never on `meta.modelName`, because the same
- * constraint reports different models depending on the statement that tripped
- * it. Measured: `teacherRoom.delete` and `teacherRoom.deleteMany` both report
- * `modelName: "TeacherRoom"`, while a bare `room.delete` reports
- * `modelName: "Room"` — it trips the constraint through
+ * Keyed on the constraint name, never on the model Prisma reports, because
+ * the same constraint reports different models depending on the statement
+ * that tripped it. Measured: `teacherRoom.delete` and `teacherRoom.deleteMany`
+ * both report `modelName: "TeacherRoom"`, while a bare `room.delete` reports
+ * `modelName: "Room"`: it trips the constraint through
  * `TeacherRoom_roomId_fkey`'s CASCADE.
  *
- * CORRECTED IN PR REVIEW, because the earlier justification here was false and
- * a maintainer would have tested it and found it did not bite. It claimed
- * `DELETE /api/rooms/[id]` emits `"Room"`. It does not: that route issues
- * `teacherRoom.deleteMany` BEFORE `room.delete`, so a blocker aborts at the
- * first statement and reports `"TeacherRoom"`, same as its sibling route.
- * Both routes emit `"TeacherRoom"` today.
+ * So this is a FORWARD-LOOKING guarantee, not a current-state one. Both room
+ * delete routes refuse at a `teacherRoom` statement today, but the
+ * `deleteMany` in `rooms/[id]` is redundant (the CASCADE already takes the
+ * links) and that route says so inline, so the day someone removes it that
+ * route starts reporting `"Room"`. Keying on the constraint alone is what
+ * makes that edit safe.
  *
- * So this is a FORWARD-LOOKING guarantee, not a current-state one, and that is
- * exactly why it matters: the `deleteMany` is redundant (the CASCADE already
- * takes the links) and `rooms/[id]` says so inline, so the day someone removes
- * it that route starts emitting `"Room"`. Keying on `constraint` alone is what
- * makes that edit safe. A matcher narrowed to `modelName` would pass every
- * test today and 500 the rooms route later.
+ * A typed delete (`P2003`) and a raw one (`P2010`) both carry the adapter's
+ * cause and mean the same thing, so both are admitted. Where the SQLSTATE and
+ * the name are read from: `docs/technical-architecture.md`, "Database errors".
  *
  * NARROW BY CONSTRUCTION, and that is the whole design. A blanket
  * `P2003 → 409` in `classifyApiError` would be less code and worse: almost
@@ -434,11 +390,8 @@ export function isRecordNotFound(error: unknown): boolean {
  * who imports it.
  */
 export function isRestrictViolationOn(error: unknown, constraints: readonly string[]): boolean {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') {
-    return false;
-  }
-  const constraint = error.meta?.constraint;
-  return typeof constraint === 'string' && constraints.includes(constraint);
+  const pg = pgErrorOf(error);
+  return pg !== null && pg.sqlState === '23503' && pg.constraint !== undefined && constraints.includes(pg.constraint);
 }
 
 /**
@@ -512,13 +465,14 @@ const TERMINAL_TRIGGER_FACETS = Object.keys(
  * something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
-  // The terminality triggers named in `isTerminalStatusViolation`'s docblock
+  // The terminality triggers named in `terminalViolationOf`'s docblock
   // raise with SQLSTATE 23514. Reaching here means a write to a frozen class —
   // its status, its liveness, or since #247 its place in the calendar — got
   // past the guard that should have refused it first. That is a 409 either
   // way: the request is well-formed and it conflicts with a state the class
   // has already reached.
-  if (isTerminalStatusViolation(error)) {
+  const terminal = terminalViolationOf(error);
+  if (terminal) {
     // WHICH trigger fired, read from the message tail the matcher itself
     // deliberately ignores. Classification is shared; the operator's reading
     // is not, and `level` is the only field that can say so.
@@ -560,7 +514,7 @@ export function classifyApiError(error: unknown): ApiFailure {
     // branch cannot place it.
     const trigger: TerminalTriggerFacet =
       TERMINAL_TRIGGER_FACETS.find((facet) =>
-        error.message.includes(TERMINAL_TRIGGER_TAILS[facet]),
+        terminal.message.includes(TERMINAL_TRIGGER_TAILS[facet]),
       ) ?? 'unknown';
     return {
       status: 409,

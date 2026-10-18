@@ -79,7 +79,7 @@ export const DELETE = withErrorHandler(async (
   //    `modelName: "TeacherRoom"`; without it, `room.delete` refuses through
   //    the CASCADE and reports `modelName: "Room"` (both measured, both
   //    pinned in `room-deletion.test.ts`). `isRoomDeleteBlocked` reads only
-  //    `meta.constraint`, so the edit is safe — but a matcher narrowed to the
+  //    the constraint name, so the edit is safe — but a matcher narrowed to the
   //    model would pass every test today and 500 this route afterwards.
   //
   // 2. THE CHECK ABOVE IS NOT REDUNDANT WITH THE CATCH BELOW, AND REMOVING IT

@@ -139,8 +139,8 @@ export type RoomDescriptor = Readonly<{
     teacherId: string,
   ) => Promise<{ ok: true; isArchived: boolean } | { ok: false }>;
   /**
-   * The constraint `isRestrictViolationOn` must match on, named as Prisma
-   * reports it in `meta.constraint`. A migration renames it at its own peril:
+   * The constraint `isRestrictViolationOn` must match on, by the constraint
+   * name. A migration renames it at its own peril:
    * the provoked-delete tests (`class-template-lifecycle.test.ts`,
    * `template-room-constraint.test.ts`) pin this value red when it drifts from
    * the live migration. The class family's value is the single scalar

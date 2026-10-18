@@ -15,7 +15,7 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
-import { pgPoolTimeout } from '../../tests/adapter-errors';
+import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -131,14 +131,11 @@ $$ LANGUAGE plpgsql;
 
 /**
  * Built from the real message `src/services/class-terminal-status.test.ts`
- * observed for an actual trigger fire, not a hand-written approximation —
- * `PrismaClientUnknownRequestError` carries no `code`/`meta`, so the
- * SQLSTATE and the trigger's own wording only exist inside this string.
+ * observed for an actual trigger fire, not a hand-written approximation. A
+ * typed write's shape: a `DriverAdapterError` whose cause carries the SQLSTATE
+ * and the trigger's own wording.
  */
-const terminalStatusErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.class.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "Class 824c3362-c21f-466e-a741-7301d469730f is cancelled, which is terminal; cannot change status to open", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalStatusErrorFixture = driverAdapterError(pgCause('23514', 'Class 824c3362-c21f-466e-a741-7301d469730f is cancelled, which is terminal; cannot change status to open'));
 
 /**
  * The SECOND trigger to reach the same branch (#247), which since #327 is
@@ -154,10 +151,7 @@ const terminalStatusErrorFixture = new Prisma.PrismaClientUnknownRequestError(
  * one trigger — turns schedule violations into 500s, and this is the test that
  * refuses to let that happen quietly.
  */
-const terminalDateErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 6c218048-a8f5-4478-a846-5722ec90278d is completed, which is terminal; cannot change its date, start time or duration", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalDateErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 6c218048-a8f5-4478-a846-5722ec90278d is completed, which is terminal; cannot change its date, start time or duration'));
 
 /**
  * The THIRD, `entry_terminal_liveness_guard` (#327,
@@ -170,10 +164,7 @@ const terminalDateErrorFixture = new Prisma.PrismaClientUnknownRequestError(
  * triggers write different rows on different tables, and a facet that called
  * both `status` could not tell an operator which CAS was losing races.
  */
-const terminalLivenessErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry dbdb2fe7-0571-44e3-9a68-89080663a0f8 is cancelled, which is terminal; cannot change its cancellation", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalLivenessErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry dbdb2fe7-0571-44e3-9a68-89080663a0f8 is cancelled, which is terminal; cannot change its cancellation'));
 
 /**
  * The FOURTH, `entry_completion_marker_guard` (#327,
@@ -189,30 +180,21 @@ const terminalLivenessErrorFixture = new Prisma.PrismaClientUnknownRequestError(
  * the two guards defend one guarantee from its two ends and an operator must
  * read them the same way.
  */
-const terminalCompletionErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalCompletionErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion'));
 
 /**
  * The SIXTH, `entry_rule_kind_mismatch_guard` (#328,
  * `20260829120000_entry_rule_kind_guard`) — an entry referencing a rule of a
  * different kind.
  */
-const terminalEntryRuleKindErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.calendarEntry.create()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry e3b0c442-98fc-1c14-9afb-4c8996fb9242 references ScheduleRule 12345678-1234-1234-1234-123456789abc of kind studio, which is terminal; cannot attach to mismatched rule kind", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalEntryRuleKindErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry e3b0c442-98fc-1c14-9afb-4c8996fb9242 references ScheduleRule 12345678-1234-1234-1234-123456789abc of kind studio, which is terminal; cannot attach to mismatched rule kind'));
 
 /**
  * The SEVENTH, `schedule_rule_kind_immutability_guard` (#328,
  * `20260829120000_entry_rule_kind_guard`) — an attempt to change a ScheduleRule's
  * kind after creation.
  */
-const terminalRuleKindErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.scheduleRule.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "ScheduleRule 12345678-1234-1234-1234-123456789abc is regular, which is terminal; cannot change its kind", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
-);
+const terminalRuleKindErrorFixture = driverAdapterError(pgCause('23514', 'ScheduleRule 12345678-1234-1234-1234-123456789abc is regular, which is terminal; cannot change its kind'));
 
 /**
  * The EIGHTH shape, and the one that is not a trigger: a `23514` terminality
@@ -231,31 +213,16 @@ const terminalRuleKindErrorFixture = new Prisma.PrismaClientUnknownRequestError(
  * exists, which is the point. The sweep further down is what keeps it that way
  * — every live `23514` function must own one of the four known tails.
  */
-const terminalUnplaceableErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  `Invalid \`prisma.calendarEntry.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "CalendarEntry 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is completed, which is terminal; cannot change its room", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: 'test' },
+const terminalUnplaceableErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is completed, which is terminal; cannot change its room'));
+
+
+/** A typed write's `23P01`: a `DriverAdapterError` carrying Postgres's own message. */
+const exclusionConflictErrorFixture = driverAdapterError(
+  pgCause('23P01', 'conflicting key value violates exclusion constraint "ScheduleRule_teacher_slot_excl"'),
 );
 
-
-/**
- * The measured shape of a `23P01` through Prisma Client (`exclusion-
- * conflict.test.ts`'s own fixture): `code` and `meta` are both undefined, and
- * the SQLSTATE and constraint name survive only in `message`.
- */
-const exclusionConflictErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  'Invalid `db.scheduleRule.create()` invocation\n\nError occurred during query execution:\n' +
-    'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError ' +
-    '{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"ScheduleRule_teacher_slot_excl\\"", ' +
-    'severity: "ERROR", detail: Some("Key ..."), column: None, hint: None }), transient: false })',
-  { clientVersion: 'test' },
-);
-
-const calendarEntryExclusionConflictErrorFixture = new Prisma.PrismaClientUnknownRequestError(
-  'Invalid `db.calendarEntry.create()` invocation\n\nError occurred during query execution:\n' +
-    'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError ' +
-    '{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"CalendarEntry_teacher_slot_excl\\"", ' +
-    'severity: "ERROR", detail: Some("Key ..."), column: None, hint: None }), transient: false })',
-  { clientVersion: 'test' },
+const calendarEntryExclusionConflictErrorFixture = driverAdapterError(
+  pgCause('23P01', 'conflicting key value violates exclusion constraint "CalendarEntry_teacher_slot_excl"'),
 );
 
 describe('classifyApiError', () => {
@@ -442,7 +409,7 @@ describe('classifyApiError', () => {
 
   /**
    * The other half of the same boundary, and the conjunct nothing pinned:
-   * deleting `error.message.includes('23514')` from `isTerminalStatusViolation`
+   * deleting the `23514` check from the terminality matcher
    * left the whole suite green, because every fixture carrying `which is
    * terminal` also carried that SQLSTATE. The wording alone was doing all the
    * work and no test could tell.
@@ -468,10 +435,7 @@ describe('classifyApiError', () => {
    * paragraph someone has to have read.
    */
   it('does not classify the terminality wording as terminal without the SQLSTATE', () => {
-    const wrongSqlstate = new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`prisma.class.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "P0001", message: "Class 4f2b1c90-6d1e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: 'test' },
-    );
+    const wrongSqlstate = driverAdapterError(pgCause('P0001', 'Class 4f2b1c90-6d1e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
 
     const failure = classifyApiError(wrongSqlstate);
 
@@ -482,32 +446,19 @@ describe('classifyApiError', () => {
   });
 
   /**
-   * BOTH error shapes of the same violation reach the 409. The SQLSTATE is
-   * one thing and the error CLASS is another: which arrives is decided by how
-   * the statement was issued, not by what failed. A typed `class.update`
-   * produces `PrismaClientUnknownRequestError` (no P-code exists for "a
-   * trigger fired"), spelling the code `code: "23514"`; a `$executeRaw`
-   * produces `PrismaClientKnownRequestError` P2010, "raw query failed",
-   * spelling it ``Code: `23514` ``. `class-terminal-date.test.ts` catches
+   * BOTH error shapes of the same violation reach the 409. Which arrives is
+   * decided by how the statement was issued, not by what failed: a typed
+   * `class.update` throws a `DriverAdapterError`, and a `$executeRaw` throws
+   * a `P2010` carrying the same cause. `class-terminal-date.test.ts` catches
    * both from the one trigger, against a real database.
    *
-   * This test used to assert 500 for this shape and call it a recorded
-   * choice. The choice was defensible — no raw writer of `Class` exists in
-   * `src/` — but it made the 409 depend on a whole-repo census of raw
-   * writers, which is a claim no test can hold true and which had already
-   * drifted in the prose that asserted it. `isTransientDbError` had answered
-   * the identical question for `55P03` by matching both shapes, and the
-   * matcher now does the same. What used to require noticing an asymmetry in
-   * a production log is now simply correct.
-   *
    * Still not transient: a terminal class is still terminal on the retry, so
-   * this must not slip into the 503 branch on its way past the 409 one. That
-   * assertion is the one part of this test that did not change.
+   * this must not slip into the 503 branch on its way past the 409 one.
    */
   it('maps the raw-query shape of the same violation to a 409, like the typed shape', () => {
-    const rawPath = new Prisma.PrismaClientKnownRequestError(
-      'Raw query failed. Code: `23514`. Message: `ERROR: Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01`',
-      { code: 'P2010', clientVersion: 'test' },
+    const rawPath = knownWithAdapterCause(
+      'P2010',
+      pgCause('23514', 'Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'),
     );
 
     const failure = classifyApiError(rawPath);
@@ -520,18 +471,13 @@ describe('classifyApiError', () => {
   /**
    * A bare `message.includes('23514')` would relabel any error whose text
    * merely quotes those five digits — an id fragment, an amount, a postcode —
-   * as a terminality violation, which is the trap `isTransientDbError`'s
-   * docblock names and which this matcher used to be the standing example of.
-   * It now matches the SQLSTATE inside its Postgres framing, and this is the
-   * fixture that tells the two apart: the digits appear, in a class id, and
-   * the `which is terminal` clause appears too — everything the old bare
-   * match needed, and no SQLSTATE anywhere.
+   * as a terminality violation. The SQLSTATE is read from a structured field,
+   * and this is the fixture that tells the two apart: the digits appear, in a
+   * class id, and the `which is terminal` clause appears too, under another
+   * SQLSTATE.
    */
-  it('does not treat the digits 23514 outside their SQLSTATE framing as the code', () => {
-    const digitsInAnId = new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`prisma.class.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "P0001", message: "Class 23514fbc-1d0e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: 'test' },
-    );
+  it('does not treat the digits 23514 in the message as the SQLSTATE', () => {
+    const digitsInAnId = driverAdapterError(pgCause('P0001', 'Class 23514fbc-1d0e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
 
     expect(classifyApiError(digitsInAnId).status).toBe(500);
   });
@@ -539,7 +485,7 @@ describe('classifyApiError', () => {
   /**
    * THE CONTRACT FOR THE NEXT TRIGGER, made mechanical.
    *
-   * `isTerminalStatusViolation` needs two things at once: SQLSTATE `23514`
+   * `terminalViolationOf` needs two things at once: SQLSTATE `23514`
    * AND the literal clause `which is terminal`. `classifyApiError` then needs a
    * third — a message tail it can place, or the fire is filed under `unknown`.
    * The sweep below re-derives which functions must satisfy all three rather
@@ -618,19 +564,14 @@ describe('classifyApiError', () => {
   it.each([
     [
       'class_reject_frozen_currency_change',
-      'class',
       'Class 30cb2d25-dd22-4bd3-8baf-e99f4f9c8219 is booked or terminal and cannot change its currency',
     ],
     [
       'studio_class_reject_frozen_currency_change',
-      'studioClass',
       'Studio class 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is a past income record and cannot change its currency',
     ],
-  ] as const)('classifies %s as a 500, not CLASS_FROZEN', (_guard, model, message) => {
-    const error = new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`prisma.${model}.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "${message}", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: 'test' },
-    );
+  ] as const)('classifies %s as a 500, not CLASS_FROZEN', (_guard, message) => {
+    const error = driverAdapterError(pgCause('23514', message));
 
     const failure = classifyApiError(error);
 
@@ -680,7 +621,7 @@ describe('classifyApiError', () => {
    * SQLSTATE with no `USING ERRCODE` override (`Student_income_tier_check`,
    * for one). A classifier that matched on the code alone would relabel any of
    * those as "that class can no longer be changed." This fixture has the same
-   * code and the same error class, and deliberately not the `which is
+   * SQLSTATE and the same error shape, and deliberately not the `which is
    * terminal` wording, so it pins that the message text — not just the
    * SQLSTATE — is what discriminates.
    *
@@ -690,9 +631,8 @@ describe('classifyApiError', () => {
    * trigger vs another.
    */
   it('does not classify an unrelated check_violation as a terminality trigger', () => {
-    const otherCheckViolation = new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`prisma.student.update()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: 'test' },
+    const otherCheckViolation = driverAdapterError(
+      pgCause('23514', 'new row for relation "Student" violates check constraint "Student_income_tier_check"'),
     );
 
     const failure = classifyApiError(otherCheckViolation);
@@ -874,36 +814,25 @@ describe('classifyApiError', () => {
 
 describe('isRestrictViolationOn', () => {
   /**
-   * The three shapes were MEASURED on 2026-08-19 by provoking each delete
-   * against a TeacherRoom carrying one archived ClassTemplate and zero Class
-   * rows, not hand-written. Both constraints' NAMEs have since changed —
-   * issue 272's mirror (`20260827120000_template_room_archive_invariant`)
-   * renamed `ClassTemplate_teacherRoomId_fkey` to
-   * `ClassTemplate_teacherRoomId_roomArchived_fkey`, and issue 339's mirror
-   * (`20260905120000_class_room_archive_invariant`) renamed
-   * `Class_teacherRoomId_fkey` to `Class_teacherRoomId_roomArchived_fkey` the
-   * same way — so neither old name is one a refused delete reports any more.
-   * The payload lines below were updated by hand for both renames rather than
-   * re-provoked — which would make them a claim with no owner, except that
-   * `room-deletion.test.ts` provokes all three deletes against the real
-   * database and asserts `meta.constraint` equals the new name. That file is
-   * the measurement; these lines are the illustration:
-   *
-   *   teacherRoom.delete:     {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
-   *   teacherRoom.deleteMany: {"modelName":"TeacherRoom","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
-   *   room.delete:            {"modelName":"Room","constraint":"ClassTemplate_teacherRoomId_roomArchived_fkey"}
-   *
-   * `modelName` DIFFERS across them — a bare `room.delete` trips the
-   * constraint through TeacherRoom_roomId_fkey's CASCADE — which is why the
-   * matcher keys on `constraint` alone.
-   *
-   * NOTE, corrected in PR review: `DELETE /api/rooms/[id]` does not currently
-   * emit the `"Room"` shape. It issues `teacherRoom.deleteMany` first, so a
-   * blocker aborts there reporting `"TeacherRoom"`. The `"Room"` row above is
-   * the shape that route WILL emit once the redundant `deleteMany` is removed,
-   * which its own handler comment invites. Keeping the matcher blind to
-   * `modelName` is what makes that removal safe.
+   * `room-deletion.test.ts` provokes these deletes against the real database
+   * and asserts the constraint each reports; these fixtures are the
+   * illustration. The model Prisma names DIFFERS across them — a bare
+   * `room.delete` trips the constraint through `TeacherRoom_roomId_fkey`'s
+   * CASCADE and reports `"Room"` — which is why the matcher keys on the
+   * constraint name alone.
    */
+  /** The adapter's cause for a refused delete: the name sits in `constraint.index`. */
+  function restrictCause(constraint: string) {
+    return pgCause(
+      '23503',
+      `update or delete on table "TeacherRoom" violates foreign key constraint "${constraint}" on table "X"`,
+      { constraint: { index: constraint } },
+    );
+  }
+  function restrictError(constraint: string, meta: Record<string, unknown> = { modelName: 'TeacherRoom' }) {
+    return knownWithAdapterCause('P2003', restrictCause(constraint), meta);
+  }
+
   const ROOM_FKS = [
     'ClassTemplate_teacherRoomId_roomArchived_fkey',
     'Class_teacherRoomId_roomArchived_fkey',
@@ -911,20 +840,18 @@ describe('isRestrictViolationOn', () => {
 
   it('matches the template FK from either delete, despite the differing modelName', () => {
     for (const modelName of ['TeacherRoom', 'Room']) {
-      const err = prismaError('P2003', {
-        modelName,
-        constraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey',
-      });
+      const err = restrictError('ClassTemplate_teacherRoomId_roomArchived_fkey', { modelName });
       expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
     }
   });
 
   it('matches the class FK too — the Class guard has the same race and no other backstop', () => {
-    const err = prismaError('P2003', {
-      modelName: 'TeacherRoom',
-      constraint: 'Class_teacherRoomId_roomArchived_fkey',
-    });
-    expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(true);
+    expect(isRestrictViolationOn(restrictError('Class_teacherRoomId_roomArchived_fkey'), ROOM_FKS)).toBe(true);
+  });
+
+  it('matches the raw-query shape, a P2010 carrying the same cause', () => {
+    const raw = knownWithAdapterCause('P2010', restrictCause('Class_teacherRoomId_roomArchived_fkey'));
+    expect(isRestrictViolationOn(raw, ROOM_FKS)).toBe(true);
   });
 
   /**
@@ -938,29 +865,32 @@ describe('isRestrictViolationOn', () => {
    * distinguish a working matcher from one that matches nothing at all.
    */
   it('does not match a P2003 from an unrelated foreign key', () => {
-    const err = prismaError('P2003', {
-      modelName: 'Registration',
-      constraint: 'Registration_classId_fkey',
-    });
+    const err = restrictError('Registration_classId_fkey', { modelName: 'Registration' });
     expect(isRestrictViolationOn(err, ROOM_FKS)).toBe(false);
   });
 
-  it('does not match a non-P2003, a non-Prisma throwable, or a missing constraint', () => {
+  it('does not match another SQLSTATE, a non-Prisma throwable, or a missing constraint', () => {
     expect(
       isRestrictViolationOn(
-        prismaError('P2002', { constraint: 'ClassTemplate_teacherRoomId_roomArchived_fkey' }),
+        knownWithAdapterCause(
+          'P2002',
+          pgCause('23505', 'duplicate key value violates unique constraint "ClassTemplate_teacherRoomId_roomArchived_fkey"'),
+        ),
         ROOM_FKS,
       ),
     ).toBe(false);
-    // The bare-substring trap `isTransientDbError` documents at :208 — an
-    // Error whose text merely quotes the constraint name is not a P2003.
+    // An Error whose text merely quotes the constraint name is not a refusal.
     expect(isRestrictViolationOn(new Error('ClassTemplate_teacherRoomId_roomArchived_fkey'), ROOM_FKS)).toBe(
       false,
     );
     expect(isRestrictViolationOn(undefined, ROOM_FKS)).toBe(false);
-    expect(isRestrictViolationOn(prismaError('P2003', { modelName: 'TeacherRoom' }), ROOM_FKS)).toBe(
-      false,
+    // The name is read from `constraint.index` only; a cause without one names nothing.
+    const unnamed = knownWithAdapterCause(
+      'P2003',
+      pgCause('23503', 'update or delete on table "TeacherRoom" violates foreign key constraint "Class_teacherRoomId_roomArchived_fkey" on table "Class"'),
+      { modelName: 'TeacherRoom' },
     );
+    expect(isRestrictViolationOn(unnamed, ROOM_FKS)).toBe(false);
   });
 });
 

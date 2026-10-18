@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { fixtureRun } from '../../tests/room-fixtures';
+import { pgErrorOf } from '@/lib/pg-error';
 import {
   countTeacherRoomDeleteBlockers,
   countRoomDeleteBlockers,
@@ -143,17 +144,15 @@ describe('the shared constants', () => {
 /**
  * The FK names, checked against what Postgres and Prisma actually report.
  *
- * The cases above and `api-errors.test.ts`'s all build their P2003 by hand
- * (`prismaError('P2003', {...})`), so between them they pin the MATCHER and
+ * `api-errors.test.ts` fabricates its refusals, so it pins the MATCHER and
  * the LIST but never the claim joining the two: that a refused delete really
- * arrives as `code: 'P2003'` with the constraint name in `meta.constraint`.
+ * arrives as `code: 'P2003'` carrying the constraint name where `pgErrorOf`
+ * reads it.
  *
  * Nothing else in the suite closes that gap. Both routes' integration cases
  * are stopped by the pre-check and never reach the `isRoomDeleteBlocked`
- * catch, so a Prisma upgrade that moved the name — to `meta.field_name`, or
- * into a nested `target` — would disarm both backstops with every test in the
- * repo still green. The shape was verified live once, by the mutation recorded
- * in 2798c5a, but that proof left with the mutation.
+ * catch, so a Prisma or adapter upgrade that moved the name would disarm both
+ * backstops with every test in the repo still green.
  *
  * These cases provoke the real errors instead of constructing them, which also
  * pins the reason the matcher keys on `constraint` alone: the SAME constraint
@@ -179,12 +178,12 @@ describe('the FK names, against a real refused delete', () => {
     expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
+    expect(pgErrorOf(err)?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 
   it('a BARE room delete reports the same constraint under modelName "Room"', async () => {
-    // The whole reason the matcher keys on `constraint` and never on
+    // The whole reason the matcher keys on the constraint and never on
     // `modelName`. `Room` has no template FK —
     // `ClassTemplate_teacherRoomId_roomArchived_fkey` is declared on
     // `TeacherRoom` — so this error can only arrive via
@@ -205,7 +204,7 @@ describe('the FK names, against a real refused delete', () => {
 
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
+    expect(pgErrorOf(err)?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(known.meta?.modelName).toBe('Room');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
@@ -233,7 +232,7 @@ describe('the FK names, against a real refused delete', () => {
     expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
+    expect(pgErrorOf(err)?.constraint).toBe('ClassTemplate_teacherRoomId_roomArchived_fkey');
     expect(known.meta?.modelName).toBe('TeacherRoom');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
@@ -250,7 +249,7 @@ describe('the FK names, against a real refused delete', () => {
 
     const known = err as Prisma.PrismaClientKnownRequestError;
     expect(known.code).toBe('P2003');
-    expect(known.meta?.constraint).toBe('Class_teacherRoomId_roomArchived_fkey');
+    expect(pgErrorOf(err)?.constraint).toBe('Class_teacherRoomId_roomArchived_fkey');
     expect(isRoomDeleteBlocked(err)).toBe(true);
   });
 });
