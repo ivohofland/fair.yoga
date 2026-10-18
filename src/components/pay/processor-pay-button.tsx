@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import type { AllowedMollieMethod } from '@/lib/processor-methods';
@@ -12,14 +12,25 @@ interface ProcessorPayButtonProps {
   label: string;
 }
 
+const UNAVAILABLE = 'Paying online isn’t available right now. Try again, or choose another way to pay.';
+
 /**
  * Starts a Mollie payment by `method` and sends the browser to its checkout.
- * A refusal or a network error shows beneath the button, which can then be
- * pressed again.
+ * A refusal, a network error or an answer that does not parse shows beneath
+ * the button, which can then be pressed again; so can a page restored from
+ * the back-forward cache after leaving for the checkout.
  */
 export function ProcessorPayButton({ paymentId, method, label }: ProcessorPayButtonProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      if (event.persisted) setBusy(false);
+    }
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
 
   async function pay() {
     setBusy(true);
@@ -42,9 +53,19 @@ export function ProcessorPayButton({ paymentId, method, label }: ProcessorPayBut
       setBusy(false);
       return;
     }
-    const json = (await res.json()) as { data: { checkoutUrl: string } };
+    let checkoutUrl: unknown;
+    try {
+      checkoutUrl = ((await res.json()) as { data?: { checkoutUrl?: unknown } }).data?.checkoutUrl;
+    } catch (err) {
+      logRequestFailure('processor-pay-button', { paymentId, method }, err);
+    }
+    if (typeof checkoutUrl !== 'string') {
+      setError(UNAVAILABLE);
+      setBusy(false);
+      return;
+    }
     // Left busy: the page is about to be replaced by the checkout.
-    window.location.assign(json.data.checkoutUrl);
+    window.location.assign(checkoutUrl);
   }
 
   return (
