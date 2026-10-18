@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MOLLIE_SCOPES, livePayoutIdentity, missingMollieScopes, takesMolliePayments } from './processor-liveness';
+import { MOLLIE_SCOPES, livePayoutIdentity, missingMollieScopes, takesMolliePayments, takesMolliePaymentsIn } from './processor-liveness';
 
 const live = { organizationId: 'org_a', profileId: 'pfl_1', disconnectedAt: null, scopes: [...MOLLIE_SCOPES] };
 
@@ -28,5 +28,18 @@ describe('takesMolliePayments', () => {
     expect(takesMolliePayments({ ...live, profileId: null })).toBe(false);
     expect(takesMolliePayments({ ...live, disconnectedAt: new Date() })).toBe(false);
     expect(takesMolliePayments(null)).toBe(false);
+  });
+});
+
+describe('takesMolliePaymentsIn', () => {
+  it('is takesMolliePayments for a connection made in the server’s mode', () => {
+    expect(takesMolliePaymentsIn({ ...live, testmode: true }, { testmode: true })).toBe(true);
+    expect(takesMolliePaymentsIn({ ...live, testmode: false }, { testmode: false })).toBe(true);
+    expect(takesMolliePaymentsIn({ ...live, testmode: true, scopes: ['payments.read'] }, { testmode: true })).toBe(false);
+    expect(takesMolliePaymentsIn(null, { testmode: true })).toBe(false);
+  });
+  it('is false for a connection made in the other mode', () => {
+    expect(takesMolliePaymentsIn({ ...live, testmode: true }, { testmode: false })).toBe(false);
+    expect(takesMolliePaymentsIn({ ...live, testmode: false }, { testmode: true })).toBe(false);
   });
 });

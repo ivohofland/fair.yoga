@@ -5,7 +5,7 @@ import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { MollieUnavailable, type MollieProfile, type TokenGrant } from '@/lib/mollie/client';
 import {
-  livePayoutIdentity, maskOrganizationId, maskProfileId, missingMollieScopes, MOLLIE_SCOPES, type LiveIdentity,
+  livePayoutIdentity, maskOrganizationId, maskProfileId, MOLLIE_SCOPES, takesMolliePaymentsIn, type LiveIdentity,
 } from '@/lib/processor-liveness';
 import { LIVE_REFUND_STATUSES } from '@/lib/processor-refund-status';
 import type { AllowedMollieMethod } from '@/lib/processor-methods';
@@ -493,20 +493,23 @@ export type ConnectionView =
       profiles: { id: string; name: string }[];
       offered: AllowedMollieMethod[];
       excluded: ExcludedMethod[];
-      missingScopes: string[];
+      /** `takesMolliePaymentsIn` for this row on this server; false asks the teacher to reconnect. */
+      takesPayments: boolean;
     }
   | { kind: 'unavailable' };
 
 /**
  * What the settings section shows. A row that is disconnected, or absent, is
- * `none`. A connection whose grant lacks a requested scope lists no methods:
- * it takes no payments until the teacher reconnects.
+ * `none`. A connection that takes no payments on this server — its grant
+ * lacks a requested scope, or it was made in the other mode — lists no
+ * methods until the teacher reconnects.
  */
 export async function readConnectionView(db: PrismaClient, deps: MollieDeps, teacherId: string): Promise<ConnectionView> {
   const row = await db.processorConnection.findUnique({
     where: { teacherId },
     select: {
       id: true,
+      organizationId: true,
       profileId: true,
       disconnectedAt: true,
       scopes: true,
@@ -532,7 +535,7 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
 
   const profileId = row.profileId;
-  const missingScopes = missingMollieScopes(row.scopes);
+  const takesPayments = takesMolliePaymentsIn(row, deps.config);
   const base = {
     kind: 'connected' as const,
     organizationName: org.name,
@@ -540,9 +543,9 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
     profileName: profiles.find((p) => p.id === profileId)?.name ?? maskProfileId(profileId),
     testmode: row.testmode,
     profiles,
-    missingScopes,
+    takesPayments,
   };
-  if (missingScopes.length > 0) return { ...base, offered: [], excluded: [] };
+  if (!takesPayments) return { ...base, offered: [], excluded: [] };
   const methods = await listOfferedMethods(db, deps, { id: row.id, profileId, testmode: row.testmode }, VIEW_AMOUNT, row.teacher.currency);
   if (methods.kind === 'unavailable') return { kind: 'unavailable' };
   return { ...base, offered: methods.offered, excluded: methods.excluded };

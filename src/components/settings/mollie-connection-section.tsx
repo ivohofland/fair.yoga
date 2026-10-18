@@ -107,7 +107,7 @@ function ConnectedBody({
         <p className="type-body">Mollie connected — {view.organizationName} · {view.profileName}</p>
         {view.testmode && <p className="type-caption">Test mode</p>}
       </div>
-      {view.missingScopes.length > 0 ? (
+      {!view.takesPayments ? (
         <>
           <p className="type-body">Reconnect Mollie to enable payments.</p>
           <ConnectButton teacherId={teacherId} label="Reconnect Mollie" />

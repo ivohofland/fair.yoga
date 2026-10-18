@@ -1,6 +1,6 @@
 import type { Currency, Prisma, PrismaClient } from '@/lib/prisma-client';
 import { paymentMethodsForTeacher, teacherPaymentSelect, type PaymentMethodsAnswer } from '@/lib/payment-methods';
-import { livePayoutIdentity, takesMolliePayments } from '@/lib/processor-liveness';
+import { livePayoutIdentity, takesMolliePaymentsIn } from '@/lib/processor-liveness';
 import type { MollieDeps } from './mollie-deps';
 import { listOfferedMethods } from './processor-methods-offer';
 
@@ -17,9 +17,9 @@ export type PayPageTeacher = Prisma.TeacherGetPayload<{ select: typeof payPageTe
 /**
  * The pay page's answer: `paymentMethodsForTeacher`'s, with the Mollie
  * methods the teacher offers for this amount and currency put first. Mollie
- * is asked only for a connection that may take payments; when it is not
- * configured, or cannot answer, the answer is `paymentMethodsForTeacher`'s
- * unchanged.
+ * is asked only for a connection that may take payments in the server's mode
+ * (`takesMolliePaymentsIn`); when it is not configured, or cannot answer, the
+ * answer is `paymentMethodsForTeacher`'s unchanged.
  */
 export async function payPageMethods(
   db: PrismaClient,
@@ -31,7 +31,7 @@ export async function payPageMethods(
   const manual = paymentMethodsForTeacher(teacher, currency);
   if (manual.kind === 'paused' || deps === null) return manual;
   const connection = teacher.processorConnection;
-  const identity = takesMolliePayments(connection) ? livePayoutIdentity(connection) : null;
+  const identity = takesMolliePaymentsIn(connection, deps.config) ? livePayoutIdentity(connection) : null;
   if (connection === null || identity === null) return manual;
 
   const offer = await listOfferedMethods(

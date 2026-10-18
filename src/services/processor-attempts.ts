@@ -17,7 +17,7 @@ import { log } from '@/lib/log';
 import { MollieUnavailable, type MollieAmount, type MolliePaymentView } from '@/lib/mollie/client';
 import { PAYMENTS_PAUSED_COPY, paymentReference } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
-import { livePayoutIdentity, takesMolliePayments } from '@/lib/processor-liveness';
+import { livePayoutIdentity, takesMolliePayments, takesMolliePaymentsIn } from '@/lib/processor-liveness';
 import { isRefundStatus, refundIsFinal } from '@/lib/processor-refund-status';
 import { isAllowedMollieMethod, mollieMethodLabel, MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
 import type { MollieDeps } from './mollie-deps';
@@ -38,9 +38,9 @@ export type CreateAttemptOutcome =
   | { kind: 'refused'; refusal: AttemptRefusal }
   | { kind: 'unavailable' };
 
-/** The connection columns `takesMolliePayments` reads, and the row's id. */
+/** The connection columns `takesMolliePaymentsIn` reads, and the row's id. */
 const LIVENESS_SELECT = {
-  id: true, organizationId: true, profileId: true, disconnectedAt: true, scopes: true,
+  id: true, organizationId: true, profileId: true, disconnectedAt: true, scopes: true, testmode: true,
 } as const satisfies Prisma.ProcessorConnectionSelect;
 
 /** An open attempt is reused only while it has more than this long left. */
@@ -80,13 +80,20 @@ function expiryOf(view: MolliePaymentView, method: AllowedMollieMethod, now: Dat
 /**
  * Starts the student's Mollie payment for one of their own payments, or
  * reuses an open attempt for the same method, made under the connection's
- * current profile and mode, that has more than a minute left. Every Mollie
- * call runs before its transaction opens. The attempt row is written after `createPayment` answers, in that transaction, which
- * takes the teacher's lock first and re-checks the payment, the pause and the
+ * current profile and mode, that has more than a minute left. A connection
+ * that takes no payments is refused before Mollie's configuration is looked
+ * at, so a teacher without Mollie answers `PROCESSOR_NOT_CONNECTED` even when
+ * it is unconfigured (`unavailable`); one made in the other mode than the
+ * server's is refused once it is (`takesMolliePaymentsIn`).
+ *
+ * Every Mollie call runs before its transaction opens. The attempt row is
+ * written after `createPayment` answers, in that transaction, which takes the
+ * teacher's lock first and re-checks the payment, the pause and the
  * connection under it; so when `createPayment`'s answer is lost no row is
  * written and the student is given no checkout URL. A connection that stopped
  * taking payments while Mollie was called is refused with nothing written,
- * and the Mollie payment it started expires unpaid.
+ * and the Mollie payment it started is never shown to the student and is left
+ * to expire.
  */
 export async function createAttempt(
   db: PrismaClient,
@@ -113,7 +120,7 @@ export async function createAttempt(
                   teacher: {
                     select: {
                       paymentsPausedAt: true,
-                      processorConnection: { select: { ...LIVENESS_SELECT, testmode: true } },
+                      processorConnection: { select: LIVENESS_SELECT },
                     },
                   },
                 },
@@ -129,9 +136,10 @@ export async function createAttempt(
   const { currency, calendarEntry: entry } = payment.registration.class;
   if (entry.teacher.paymentsPausedAt !== null) return refused(PAUSED);
   const connection = entry.teacher.processorConnection;
-  const identity = takesMolliePayments(connection) ? livePayoutIdentity(connection) : null;
-  if (connection === null || identity === null) return refused(NOT_CONNECTED);
+  if (!takesMolliePayments(connection)) return refused(NOT_CONNECTED);
   if (deps === null) return { kind: 'unavailable' };
+  const identity = takesMolliePaymentsIn(connection, deps.config) ? livePayoutIdentity(connection) : null;
+  if (connection === null || identity === null) return refused(NOT_CONNECTED);
   const method = input.method;
   if (!isAllowedMollieMethod(method)) return refused(methodUnavailable('That payment method'));
 
@@ -229,7 +237,7 @@ export async function createAttempt(
     const teacher = current.registration.class.calendarEntry.teacher;
     if (teacher.paymentsPausedAt !== null) return refused(PAUSED);
     const row = teacher.processorConnection;
-    if (row === null || row.id !== connection.id || !takesMolliePayments(row)) return refused(NOT_CONNECTED);
+    if (row === null || row.id !== connection.id || !takesMolliePaymentsIn(row, deps.config)) return refused(NOT_CONNECTED);
 
     await tx.processorPayment.create({
       data: {

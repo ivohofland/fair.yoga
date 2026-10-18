@@ -319,6 +319,18 @@ describe('createAttempt', () => {
       expect(fake.createPayment).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['made in test mode, on a server now live', true, false],
+      ['made live, on a server now in test mode', false, true],
+    ])('a connection %s with PROCESSOR_NOT_CONNECTED, without calling Mollie', async (_label, made, serverTestmode) => {
+      const { paymentId } = await freshPayment();
+      await seedConnection({ testmode: made });
+      const server = { ...deps, config: { ...deps.config, testmode: serverTestmode } };
+      expect(refusalCode(await createAttempt(prisma, server, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_NOT_CONNECTED');
+      expect(fake.listMethods).not.toHaveBeenCalled();
+      expect(fake.createPayment).not.toHaveBeenCalled();
+    });
+
     it('a method off the allowlist with PROCESSOR_METHOD_UNAVAILABLE', async () => {
       const { paymentId } = await freshPayment();
       expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'klarna' }))).toBe('PROCESSOR_METHOD_UNAVAILABLE');
@@ -391,6 +403,16 @@ describe('createAttempt', () => {
           where: { id: connectionId },
           data: { disconnectedAt: at, revokeAfter: at, revokedAt: at, accessToken: null, refreshToken: null, accessTokenExpiresAt: null },
         });
+        return molliePayment();
+      });
+      expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_NOT_CONNECTED');
+      expect(await prisma.processorPayment.count({ where: { paymentId } })).toBe(0);
+    });
+
+    it('records nothing and refuses PROCESSOR_NOT_CONNECTED on a connection remade in the other mode meanwhile', async () => {
+      const { paymentId } = await freshPayment();
+      fake.createPayment.mockImplementation(async () => {
+        await prisma.processorConnection.update({ where: { id: connectionId }, data: { testmode: false } });
         return molliePayment();
       });
       expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_NOT_CONNECTED');

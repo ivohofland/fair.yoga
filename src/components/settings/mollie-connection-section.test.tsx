@@ -17,7 +17,7 @@ afterEach(() => {
 const PROFILES = [{ id: 'pfl_one', name: 'Studio Anna' }, { id: 'pfl_two', name: 'Retreats' }];
 const CONNECTED: Extract<ConnectionView, { kind: 'connected' }> = {
   kind: 'connected', organizationName: 'Anna Yoga', profileId: 'pfl_one', profileName: 'Studio Anna', testmode: false,
-  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: [{ id: 'klarna', description: 'Pay later.' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'giropay', description: null }], missingScopes: [],
+  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: [{ id: 'klarna', description: 'Pay later.' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'giropay', description: null }], takesPayments: true,
 };
 
 function show(view: ConnectionView, opts: { status?: Parameters<typeof MollieConnectionSection>[0]['status'] } = {}) {
@@ -110,11 +110,11 @@ describe('MollieConnectionSection', () => {
     expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toEqual({ profileId: 'pfl_two' });
   });
 
-  it('asks a narrower grant to reconnect, and lists no methods', async () => {
+  it('asks a connection that takes no payments to reconnect, and lists no methods', async () => {
     const assign = vi.fn();
     Object.defineProperty(window, 'location', { value: { assign }, writable: true });
     fetchMock.mockResolvedValue(ok({ authorizeUrl: 'https://my.mollie.com/x' }));
-    show({ ...CONNECTED, offered: [], excluded: [], missingScopes: ['refunds.write'] });
+    show({ ...CONNECTED, offered: [], excluded: [], takesPayments: false });
     expect(screen.getByText('Reconnect Mollie to enable payments.')).toBeInTheDocument();
     expect(screen.queryByText('iDEAL')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Reconnect Mollie' }));

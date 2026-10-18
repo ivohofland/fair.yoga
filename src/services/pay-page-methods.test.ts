@@ -28,7 +28,9 @@ let teacherId = '';
 let accountId = '';
 let connectionId = '';
 
-async function seedConnection(overrides: Partial<{ profileId: string | null; disconnectedAt: Date | null; revokeAfter: Date | null; scopes: string[] }> = {}) {
+async function seedConnection(
+  overrides: Partial<{ profileId: string | null; disconnectedAt: Date | null; revokeAfter: Date | null; scopes: string[]; testmode: boolean }> = {},
+) {
   await prisma.processorConnection.deleteMany({ where: { teacherId } });
   const row = await prisma.processorConnection.create({
     data: {
@@ -142,6 +144,16 @@ describe('payPageMethods', () => {
     await seedConnection({ profileId: null });
     const t = await teacher();
     expect(await payPageMethods(prisma, deps, t, 'EUR', AMOUNT)).toEqual(paymentMethodsForTeacher(t, 'EUR'));
+    expect(fake.listMethods).not.toHaveBeenCalled();
+  });
+
+  it('asks Mollie nothing for a connection made in the other mode than the server now runs in', async () => {
+    await seedConnection({ testmode: false });
+    const t = await teacher();
+    expect(await payPageMethods(prisma, deps, t, 'EUR', AMOUNT)).toEqual(paymentMethodsForTeacher(t, 'EUR'));
+    await seedConnection({ testmode: true });
+    const live = { ...deps, config: { ...deps.config, testmode: false } };
+    expect(await payPageMethods(prisma, live, await teacher(), 'EUR', AMOUNT)).toEqual(paymentMethodsForTeacher(t, 'EUR'));
     expect(fake.listMethods).not.toHaveBeenCalled();
   });
 
