@@ -206,8 +206,8 @@ export function payGuidanceFor(answer: PaymentMethodsAnswer): PayGuidance {
 /**
  * The instruction for a teacher read with `teacherPaymentSelect`:
  * `payGuidanceFor` their manual methods in `currency`, except that a teacher
- * with none whose Mollie connection takes payments answers `methods`, since
- * the pay page offers Mollie there. Paused still answers `hold_off`.
+ * with none whose Mollie connection takes payments answers `methods`, so the
+ * copy names no "pay directly" instruction. Paused still answers `hold_off`.
  */
 export function payGuidanceForTeacher(teacher: TeacherPaymentSources, currency: Currency): PayGuidance {
   const guidance = payGuidanceFor(paymentMethodsForTeacher(teacher, currency));

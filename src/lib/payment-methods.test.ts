@@ -229,7 +229,7 @@ describe('payGuidanceForTeacher', () => {
     expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, profileId: null } }, 'EUR')).toBe('directly');
     expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, scopes: ['payments.read'] } }, 'EUR')).toBe('directly');
   });
-  it('answers methods for a manual method, with or without Mollie', () => {
+  it('answers methods for a manual method', () => {
     expect(payGuidanceForTeacher({ ...none, paymentLink: LINK, processorConnection: null }, 'EUR')).toBe('methods');
   });
   it('answers hold off while paused, even with Mollie connected', () => {
