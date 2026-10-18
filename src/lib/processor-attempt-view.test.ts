@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma, type ProcessorPaymentStatus, type ProcessorRefundStatus } from '@/lib/prisma-client';
-import { attemptRefundState, isRefundStatus, settlingAttempt, toAttemptView, type AttemptView } from './processor-attempt-view';
+import { attemptRefundState, settlingAttempt, toAttemptView, type AttemptView } from './processor-attempt-view';
+import { isRefundStatus } from './processor-refund-status';
 
 function attempt(over: Partial<AttemptView> = {}): AttemptView {
   return {

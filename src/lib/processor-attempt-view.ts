@@ -1,4 +1,5 @@
-import type { Prisma, ProcessorRefundStatus } from '@/lib/prisma-client';
+import type { Prisma } from '@/lib/prisma-client';
+import { REFUND_STAGE, type RefundStage } from '@/lib/processor-refund-status';
 
 /** The attempt columns a teacher's payment row shows: what Mollie took, and what became of it. */
 export const TEACHER_ATTEMPT_SELECT = {
@@ -30,25 +31,9 @@ export function toAttemptView(attempt: TeacherAttempt): AttemptView {
  */
 export type AttemptRefundState = 'refundable' | 'failed' | 'pending' | 'refunded' | 'none';
 
-type RefundStage = 'live' | 'refunded' | 'failed' | 'canceled';
-
-const STAGE_OF = {
-  queued: 'live',
-  pending: 'live',
-  processing: 'live',
-  refunded: 'refunded',
-  failed: 'failed',
-  canceled: 'canceled',
-} as const satisfies Record<ProcessorRefundStatus, RefundStage>;
-
-/** Whether `value` is a `ProcessorRefundStatus`, as a client reads one off the wire. */
-export function isRefundStatus(value: unknown): value is ProcessorRefundStatus {
-  return typeof value === 'string' && Object.hasOwn(STAGE_OF, value);
-}
-
 export function attemptRefundState(attempt: Pick<AttemptView, 'status' | 'chargedBackAt' | 'refunds'>): AttemptRefundState {
   if (attempt.status !== 'paid' || attempt.chargedBackAt !== null) return 'none';
-  const stages = new Set<RefundStage>(attempt.refunds.map((r) => STAGE_OF[r.status]));
+  const stages = new Set<RefundStage>(attempt.refunds.map((r) => REFUND_STAGE[r.status]));
   if (stages.has('refunded')) return 'refunded';
   if (stages.has('live')) return 'pending';
   return stages.has('failed') ? 'failed' : 'refundable';

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Currency, ProcessorRefundStatus } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
-import { isRefundStatus } from '@/lib/processor-attempt-view';
+import { isRefundStatus } from '@/lib/processor-refund-status';
 import type { RefundChoice } from '@/services/processor-refunds';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';

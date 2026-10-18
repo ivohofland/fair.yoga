@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { REFUND_STAGE, refundEndedAtMollie } from '@/lib/processor-refund-status';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createClassFixture } from '../../tests/class-fixtures';
 
@@ -171,5 +172,13 @@ describe('ProcessorRefund live index', () => {
     ).rejects.toMatchObject({ code: 'P2002' });
     await prisma.processorRefund.update({ where: { id: first.id }, data: { status: 'failed' } });
     await prisma.processorRefund.create({ data: { attemptId, amount: new Prisma.Decimal('10.00'), status: 'queued' } });
+  });
+
+  it('leaves out exactly the statuses refundEndedAtMollie names', async () => {
+    const [index] = await prisma.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'ProcessorRefund_one_live_per_attempt'`;
+    const excluded = [...(index?.indexdef ?? '').matchAll(/'([a-z_]+)'::"ProcessorRefundStatus"/g)].map((m) => m[1]).sort();
+    const ended = (Object.keys(REFUND_STAGE) as (keyof typeof REFUND_STAGE)[]).filter(refundEndedAtMollie).sort();
+    expect(excluded).toEqual(ended);
   });
 });

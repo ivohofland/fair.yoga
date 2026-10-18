@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   Prisma,
   ProcessorPaymentStatus,
-  ProcessorRefundStatus,
+  type ProcessorRefundStatus,
   type PaymentStatus,
   type PrismaClient,
   type RefundOutcome,
@@ -17,6 +17,7 @@ import { MollieUnavailable, type MollieAmount, type MolliePaymentView } from '@/
 import { PAYMENTS_PAUSED_COPY, paymentReference } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 import { livePayoutIdentity, takesMolliePayments } from '@/lib/processor-liveness';
+import { isRefundStatus, refundIsFinal } from '@/lib/processor-refund-status';
 import { isAllowedMollieMethod, mollieMethodLabel, MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
 import type { MollieDeps } from './mollie-deps';
 import { listOfferedMethods } from './processor-methods-offer';
@@ -317,12 +318,9 @@ export type RefundSyncDecision =
   | { kind: 'unchanged' }
   | { kind: 'status'; status: ProcessorRefundStatus; complete: boolean; notifyFailed: boolean };
 
-/** Refund statuses a row never leaves: its outcome has been applied, the teacher was told it failed, or Mollie canceled it. */
-const FINAL_REFUND: ReadonlySet<ProcessorRefundStatus> = new Set<ProcessorRefundStatus>(['refunded', 'failed', 'canceled']);
-
-/** A row newly `refunded` completes; one newly `failed` tells the teacher; a row in `FINAL_REFUND` stays put. */
+/** A row newly `refunded` completes; one newly `failed` tells the teacher; a row `refundIsFinal` holds for stays put. */
 export function decideRefundSync(input: { storedStatus: ProcessorRefundStatus; mollieStatus: ProcessorRefundStatus }): RefundSyncDecision {
-  if (input.storedStatus === input.mollieStatus || FINAL_REFUND.has(input.storedStatus)) return { kind: 'unchanged' };
+  if (input.storedStatus === input.mollieStatus || refundIsFinal(input.storedStatus)) return { kind: 'unchanged' };
   return {
     kind: 'status',
     status: input.mollieStatus,
@@ -423,7 +421,6 @@ export async function notifyRefundFailed(tx: Prisma.TransactionClient, { teacher
 }
 
 const paymentStatusSchema = z.enum(ProcessorPaymentStatus);
-const refundStatusSchema = z.enum(ProcessorRefundStatus);
 
 /** The attempt columns a sync reads before it calls Mollie. */
 const SYNC_ATTEMPT_SELECT = {
@@ -512,8 +509,8 @@ export async function syncAttempt(
 
   const refunds: { id: string; status: ProcessorRefundStatus; amount: MollieAmount }[] = [];
   for (const refund of view.refunds) {
-    const status = refundStatusSchema.safeParse(refund.status);
-    if (status.success) refunds.push({ id: refund.id, status: status.data, amount: refund.amount });
+    const status = refund.status;
+    if (isRefundStatus(status)) refunds.push({ id: refund.id, status, amount: refund.amount });
     else log.warn({ attemptId: attempt.id, refundId: refund.id, status: refund.status }, 'Mollie reported a refund status fair.yoga does not know');
   }
 
