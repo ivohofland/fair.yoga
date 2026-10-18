@@ -10,8 +10,12 @@ const KEY_BYTES = 32;
 export class TokenCipherError extends Error {}
 
 /** AES-256-GCM, laid out `[version][iv][tag][ciphertext]`; the version byte is authenticated. */
-export function sealToken(plaintext: string, key: Buffer): Buffer {
+function assertKey(key: Buffer): void {
   if (key.length !== KEY_BYTES) throw new TokenCipherError(`token key must be ${KEY_BYTES} bytes`);
+}
+
+export function sealToken(plaintext: string, key: Buffer): Buffer {
+  assertKey(key);
   const version = Buffer.from([TOKEN_CIPHER_VERSION]);
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -21,6 +25,7 @@ export function sealToken(plaintext: string, key: Buffer): Buffer {
 }
 
 export function openToken(sealed: Uint8Array, key: Buffer): string {
+  assertKey(key);
   const buf = Buffer.from(sealed);
   if (buf.length < 1 + IV_BYTES + TAG_BYTES) throw new TokenCipherError('sealed token is too short');
   const version = buf[0];
