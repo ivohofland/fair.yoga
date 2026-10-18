@@ -1,9 +1,9 @@
-import { z } from 'zod';
-import { Prisma, ProcessorRefundStatus, type PrismaClient, type RefundOutcome } from '@/lib/prisma-client';
+import { Prisma, type ProcessorRefundStatus, type PrismaClient, type RefundOutcome } from '@/lib/prisma-client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { setLockTimeout } from '@/lib/db-locks';
 import { logDegraded } from '@/lib/degradation';
 import { log } from '@/lib/log';
+import { isRefundStatus, refundEndedAtMollie } from '@/lib/processor-refund-status';
 import { MollieUnavailable, type MollieRefundView, type RefundAnswer } from '@/lib/mollie/client';
 import type { MollieDeps } from './mollie-deps';
 import { completeRefund, notifyRefundFailed } from './processor-attempts';
@@ -27,8 +27,6 @@ export type RefundResult =
   | { kind: 'invalid'; message: string }
   | { kind: 'refused'; refusal: RefundRefusal }
   | { kind: 'unavailable' };
-
-const refundStatusSchema = z.enum(ProcessorRefundStatus);
 
 const OUTCOME_OF: Record<RefundChoice, RefundOutcome> = { waive: 'waived', ask_again: 'reopened' };
 
@@ -274,15 +272,12 @@ async function reconcileStale(db: PrismaClient, deps: MollieDeps | null, intent:
   }
 }
 
-/** Mollie refund statuses that mean no money moved. */
-const ENDED_AT_MOLLIE: ReadonlySet<string> = new Set<ProcessorRefundStatus>(['failed', 'canceled']);
-
 type Unheld = { kind: 'found'; refund: MollieRefundView } | { kind: 'none' } | { kind: 'failed' };
 
 /**
  * The refund Mollie lists on the attempt's payment that no `ProcessorRefund`
- * row holds, for the attempt's amount and currency — one not in
- * `ENDED_AT_MOLLIE` when there is one, since an ended refund may be an
+ * row holds, for the attempt's amount and currency — one
+ * `refundEndedAtMollie` does not hold for when there is one, since an ended refund may be an
  * earlier one made in Mollie's dashboard. `failed`, logged with the intent's
  * ids, when Mollie cannot be asked.
  */
@@ -306,7 +301,7 @@ async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: str
   });
   const heldIds = new Set(held.map((r) => r.processorRefundId));
   const matching = refunds.filter((r) => !heldIds.has(r.id) && refundMatches(r, attempt.amount, attempt.currency));
-  const refund = matching.find((r) => !ENDED_AT_MOLLIE.has(r.status)) ?? matching[0];
+  const refund = matching.find((r) => !(isRefundStatus(r.status) && refundEndedAtMollie(r.status))) ?? matching[0];
   return refund === undefined ? { kind: 'none' } : { kind: 'found', refund };
 }
 
@@ -320,11 +315,10 @@ async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: str
  */
 async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundView): Promise<RefundResult> {
   const { attempt, refundId, outcome, paymentId, now } = intent;
-  const parsed = refundStatusSchema.safeParse(mollie.status);
-  if (!parsed.success) {
+  if (!isRefundStatus(mollie.status)) {
     log.warn({ attemptId: attempt.id, refundId: mollie.id, status: mollie.status }, 'Mollie reported a refund status fair.yoga does not know');
   }
-  const refundStatus: ProcessorRefundStatus = parsed.success ? parsed.data : 'queued';
+  const refundStatus: ProcessorRefundStatus = isRefundStatus(mollie.status) ? mollie.status : 'queued';
   const { registration } = attempt.payment;
   const teacherId = registration.class.calendarEntry.teacherId;
 
