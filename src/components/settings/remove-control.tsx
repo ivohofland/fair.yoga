@@ -4,8 +4,12 @@ import { useEffect, useId, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 
 interface RemoveControlProps {
-  /** What the trigger removes, read aloud after "Remove" ("EUR details"). */
+  /** What the trigger removes, read aloud after the verb ("EUR details"). */
   label: string;
+  /** The trigger's and the confirmation's word; "Remove" unless given. */
+  verb?: string;
+  /** The confirmation's word while the request is in flight; "Removing..." unless given. */
+  busyVerb?: string;
   /** The confirmation question, saying what removal does to students. */
   question: string;
   confirming: boolean;
@@ -25,7 +29,9 @@ interface RemoveControlProps {
  * question describes; Cancel hands focus back to the trigger. A refusal shows
  * here, beside the control that failed.
  */
-export function RemoveControl({ label, question, confirming, removing, disabled, error, children, onAsk, onCancel, onConfirm }: RemoveControlProps) {
+export function RemoveControl({
+  label, verb = 'Remove', busyVerb = 'Removing...', question, confirming, removing, disabled, error, children, onAsk, onCancel, onConfirm,
+}: RemoveControlProps) {
   const questionId = useId();
   const confirmRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -60,9 +66,9 @@ export function RemoveControl({ label, question, confirming, removing, disabled,
             type="button"
             onClick={onAsk}
             disabled={disabled}
-            className="type-label text-danger disabled:opacity-50 disabled:cursor-not-allowed"
+            className="type-label text-danger min-h-11 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Remove <span className="sr-only">{label}</span>
+            {verb} <span className="sr-only">{label}</span>
           </button>
         )}
       </div>
@@ -80,7 +86,7 @@ export function RemoveControl({ label, question, confirming, removing, disabled,
               onClick={onConfirm}
               disabled={disabled}
             >
-              {removing ? 'Removing...' : 'Remove'}
+              {removing ? busyVerb : verb}
             </Button>
             <Button type="button" variant="secondary" onClick={cancel} disabled={disabled}>
               Cancel
