@@ -36,7 +36,7 @@ function review(overrides: Partial<ResumeReview> = {}): ResumeReview {
     events: [],
     outstanding: [],
     settled: [],
-    details: { paymentLink: null, bankAccounts: [] },
+    details: { paymentLink: null, bankAccounts: [], processorIdentity: null },
     fingerprint: 'fp',
     passkeyRequired: false,
     sessionSatisfiesPasskey: false,
@@ -157,6 +157,7 @@ describe('the resume-payments change list', () => {
           currency: 'AUD', holderName: 'Anna', iban: null, bic: null, sortCode: null,
           routingNumber: null, bankCode: '062000', accountNumber: '12345678',
         }],
+        processorIdentity: null,
       },
     }));
     render(await ResumePaymentsPage());

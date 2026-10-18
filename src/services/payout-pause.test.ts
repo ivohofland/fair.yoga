@@ -2,12 +2,11 @@ import { describe, it, expect, afterAll, vi } from 'vitest';
 import crypto from 'crypto';
 import { hashToken } from '@/lib/auth/magic-link';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
-import { bankAccountDataSelect } from '@/lib/payment-methods';
 import { mintPayoutPauseToken, PAUSE_TOKEN_TTL_DAYS } from './payout-pause-token';
 import { pausePayments, pauseWindowFloor, pausePasskeyCutoff, PAUSE_PASSKEY_LOOKBACK_DAYS } from './payout-pause';
 import { deletePasskey } from './passkey-credentials';
 import { savePaymentLink } from './payment-link';
-import { PAUSE_PASSKEY_FALLBACK_DAYS, resumePayments } from './payout-resume';
+import { PAUSE_PASSKEY_FALLBACK_DAYS, readPayoutDetails, resumePayments } from './payout-resume';
 import { uniqueSuffix, seedSession } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -349,11 +348,7 @@ describe('pausePayments', () => {
 
 describe('a passkey removed before the pause', () => {
   async function fingerprintOf(teacherId: string): Promise<string> {
-    const t = await prisma.teacher.findUniqueOrThrow({
-      where: { id: teacherId },
-      select: { paymentLink: true, bankAccounts: { select: bankAccountDataSelect } },
-    });
-    return payoutFingerprint(t);
+    return payoutFingerprint(await readPayoutDetails(prisma, teacherId));
   }
 
   async function removed(accountId: string, credentialCreatedAt: Date, removedAt: Date): Promise<void> {

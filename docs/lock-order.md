@@ -2168,6 +2168,26 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   teacher profile takes no teacher lock, and `lockAccountForSignOut` sets the
   shared `lock_timeout` for it.
 
+- The Mollie connection writers (`src/services/processor-connection.ts`):
+  the OAuth callback's rewrite (`completeConnect`, behind
+  `GET /api/processor/mollie/callback`), the profile choice (`chooseProfile`,
+  behind `PUT /api/teachers/[id]/processor/profile`) and the disconnect
+  (`disconnect`, behind `DELETE /api/teachers/[id]/processor`). Each runs
+  `lockTeacherForNoKeyUpdate` as its first statement (#896), then a plain read
+  of the teacher's `ProcessorConnection` row, then one write of that row — an
+  upsert in the callback, an `UPDATE` in the other two — and, when the live
+  payout identity changed or the row was disconnected, an insert of the
+  `PayoutChangeEvent` that records it. The disconnect also reads the
+  connection's `ProcessorPayment` rows, unlocked, for the latest expiry still
+  open. Every Mollie call happens before the transaction opens. Reading under
+  the lock is what makes the event's "before" the identity the write replaces,
+  and what lets the resume's fingerprint, which reads the connection under the
+  same lock, see a stable identity. The row's place after `Teacher` is in "The
+  `ProcessorConnection` row is a leaf lock" below. A write arriving during an
+  erasure waits on the lock, finds the row erased and writes no connection
+  or event: the callback answers its refusal (its state already consumed),
+  the choice `not_connected`, the disconnect `teacher_gone`.
+
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
 lock (`claimRuleForGeneration`, `entry-generation.ts`). The switch takes every
@@ -2181,15 +2201,16 @@ Re-derive the call sites with:
     grep -rnE "(lockTeacherForNoKeyUpdate|lockTeacherForShare|lockLiveTeacher|lockForPasskeyRemoval)\(" src | grep -v "\.test\." | grep -v "db-locks.ts" | grep -v "export async function" | grep -vE ":[0-9]+: *(\*|//)"
 
 It prints call lines only: an import has no `(` after the name, and the last
-three filters drop the definitions and comment lines. Run on 2026-10-10, it
+three filters drop the definitions and comment lines. Run on 2026-10-18, it
 printed `classes/route.ts`,
 `studio-classes/route.ts`, `class-template-lifecycle.ts`,
 `studio-class-template-lifecycle.ts`, `gdpr.ts`, `currency-switch.ts`,
 `teacher-photo.ts`, `bank-accounts.ts` (its save and its removal),
 `payment-link.ts` (its save and its removal), `payout-pause.ts`,
 `payout-resume.ts`, `passkey-credentials.ts` (the helper's own lock and
-`deletePasskey`'s call of it) and `passkey-revoke.ts`, each a site with an
-entry above.
+`deletePasskey`'s call of it), `passkey-revoke.ts` and
+`processor-connection.ts` (`completeConnect`, `chooseProfile` and
+`disconnect`), each a site with an entry above.
 Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
@@ -2197,8 +2218,8 @@ Re-derive the list rather than trusting it.
 An insert into any table with a foreign key to `Teacher` takes `FOR KEY SHARE`
 on the teacher's row in the foreign-key check. `CalendarEntry`, `ScheduleRule`,
 `TeacherStudent`, `TeacherRoom`, `Invitation`, `TeacherBlock`, `StudentPrivacy`,
-`TeacherPhoto`, `TeacherBankAccount`, `Announcement`, `PayoutChangeEvent` and
-`PayoutPauseToken` all reference it
+`TeacherPhoto`, `TeacherBankAccount`, `Announcement`, `PayoutChangeEvent`,
+`PayoutPauseToken`, `ProcessorConnection` and `OAuthState` all reference it
 (`prisma/schema.prisma`).
 `FOR UPDATE` conflicts with `FOR KEY SHARE`, so a `Teacher` lock in that mode
 would add a wait edge to every site that inserts such a row while holding a
@@ -2387,25 +2408,52 @@ restored afterwards: `FOR KEY SHARE` in
 
 ## The `ProcessorConnection` row is a leaf lock (#896)
 
-`getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`)
-takes `FOR UPDATE` on one `ProcessorConnection` row, reads whether
-`disconnectedAt` was already set, then updates the row and inserts the
-teacher's `Notification` in the same transaction. The lock exists so that a
-disconnect committing while this waits is seen: an unlocked read under
-READ COMMITTED would report the older `disconnectedAt` and send a notification
-the teacher's own disconnect makes redundant.
+A teacher has at most one `ProcessorConnection` row (`teacherId` is unique).
+Where a transaction takes it, it is the last row that transaction locks:
 
-It is a **leaf**: the transaction takes this one row and nothing else
-lockable after it. The `Notification` insert locks no other row, and the
-update leaves `teacherId` alone, so it takes no key lock on the `Teacher`
-parent. Nothing in the line at the top of this file precedes or follows it, and
-no site holds another listed row while taking it. A new site that locks this
-row together with any other row has to be placed in the order here first.
+    Teacher → ProcessorConnection
 
-The lock is plain `FOR UPDATE` with no `OF`, so it does not appear in the
-`FOR UPDATE OF` census of `Class` locks above. The statement is held in place
-by the test that disconnects the row from a second transaction while this one
-waits on it (`processor-token.test.ts`).
+The sites:
+
+- `completeConnect`, `chooseProfile` and `disconnect`
+  (`src/services/processor-connection.ts`) take `lockTeacherForNoKeyUpdate`
+  first (their entry in "The `Teacher` row is the first lock" above) and then
+  write the connection row, which takes its row lock: the callback's upsert
+  carries a real `update` payload, so it is the atomic `INSERT … ON CONFLICT
+  DO UPDATE` and locks an existing row (see "The empty-`update` upsert quirk"
+  below), and the other two are plain `UPDATE`s. After that write each takes
+  nothing lockable except, in an event-writing case, the `PayoutChangeEvent`
+  insert. That insert's foreign-key check takes `FOR KEY SHARE` on the
+  teacher's row, which the same transaction already holds `FOR NO KEY
+  UPDATE`, so it waits on nothing. The callback's upsert, when it inserts,
+  takes the same `FOR KEY SHARE` for the connection's own foreign key, with
+  the same result.
+- `getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`)
+  takes the row alone: `FOR UPDATE` on it, a read of whether `disconnectedAt`
+  was already set, the row's `UPDATE`, and the teacher's `Notification`
+  insert. The lock exists so that a disconnect committing while this waits is
+  seen: an unlocked read under READ COMMITTED would report the older
+  `disconnectedAt` and send a notification the teacher's own disconnect makes
+  redundant. The `Notification` insert locks no other row, and the update
+  leaves `teacherId` alone, so it takes no key lock on the `Teacher` parent.
+  The statement is held in place by the test that disconnects the row from a
+  second transaction while this one waits on it (`processor-token.test.ts`).
+
+Two more statements write the row outside any transaction, each a single
+`updateMany` that locks only the row it matches: the refresh's conditional
+write in `getAccessToken`, and the post-revoke write in `revokeDueConnection`
+(`processor-connection.ts`), which nulls the tokens only while the row still
+holds the refresh token Mollie was asked to revoke and is still disconnected.
+
+No site takes `Teacher`, or any other row in this file, after the
+`ProcessorConnection` row, so the four sites cannot form a cycle between
+them: the three teacher-first writers queue on `Teacher` before they reach
+the row, and `invalid_grant` holds the row while waiting on nothing. A new
+site that locks this row together with any row other than `Teacher` before
+it has to be placed in the order here first.
+
+The `invalid_grant` lock is plain `FOR UPDATE` with no `OF`, so it does not
+appear in the `FOR UPDATE OF` census of `Class` locks above.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
