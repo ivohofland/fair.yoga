@@ -807,18 +807,26 @@ describe('readConnectionView', () => {
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
       kind: 'connected', organizationName: ORG_A.name, profileId: P1.id, profileName: P1.name, testmode: false,
       profiles: [{ id: P1.id, name: P1.name }, { id: P2.id, name: P2.name }],
-      offered: ['ideal', 'wero'], excluded: [{ id: 'klarna', description: null }], missingScopes: [],
+      offered: ['ideal', 'wero'], excluded: [{ id: 'klarna', description: null }], takesPayments: true,
     });
     expect(fake.listMethods).toHaveBeenCalledWith('access_1', { profileId: P1.id, amount: { value: '10.00', currency: 'EUR' }, testmode: false });
   });
 
-  it('names the missing scopes of a narrower grant and lists no methods', async () => {
+  it('asks for a reconnect and lists no methods for a narrower grant', async () => {
     const t = await freshTeacher();
     mollieAnswers(ORG_A, [P1], { ...FULL_GRANT, scopes: ['payments.read', 'profiles.read', 'organizations.read'] });
     const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
     await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'c', sessionId: t.sessionId, now });
     const view = await readConnectionView(prisma, liveDeps, t.teacherId);
-    expect(view).toMatchObject({ kind: 'connected', offered: [], excluded: [], missingScopes: ['payments.write', 'refunds.read', 'refunds.write'] });
+    expect(view).toMatchObject({ kind: 'connected', offered: [], excluded: [], takesPayments: false });
+    expect(fake.listMethods).not.toHaveBeenCalled();
+  });
+
+  it('asks for a reconnect and lists no methods for a connection made in the other mode than the server now runs in', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1], testDeps);
+    const view = await readConnectionView(prisma, liveDeps, t.teacherId);
+    expect(view).toMatchObject({ kind: 'connected', testmode: true, offered: [], excluded: [], takesPayments: false });
     expect(fake.listMethods).not.toHaveBeenCalled();
   });
 

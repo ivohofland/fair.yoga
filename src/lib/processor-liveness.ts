@@ -54,6 +54,21 @@ export function takesMolliePayments(
   return livePayoutIdentity(row) !== null && row !== null && missingMollieScopes(row.scopes).length === 0;
 }
 
+/**
+ * `takesMolliePayments`, on a server running in `config`'s mode: a connection
+ * made in the other mode (its `testmode`) takes none here until a reconnect
+ * stores one made in this mode. Every check made with a Mollie config uses
+ * this one.
+ */
+export function takesMolliePaymentsIn(
+  row: {
+    organizationId: string; profileId: string | null; disconnectedAt: Date | null; scopes: readonly string[]; testmode: boolean;
+  } | null,
+  config: { testmode: boolean },
+): boolean {
+  return takesMolliePayments(row) && row !== null && row.testmode === config.testmode;
+}
+
 /** The attempt column `canRefundThroughGrant` reads, as a Prisma select fragment. */
 export const ATTEMPT_GRANT_SELECT = { connection: { select: { revokedAt: true } } } as const;
 

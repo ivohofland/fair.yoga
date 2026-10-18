@@ -156,7 +156,14 @@ is what Mollie's server-side POST is.
   **Live** is `disconnectedAt IS NULL AND profileId IS NOT NULL`
   (`livePayoutIdentity`); a row with no profile is mid-connect and offers
   nothing. A live connection takes payments only while its grant also holds
-  every requested scope (`takesMolliePayments`, `src/lib/processor-liveness.ts`). Disconnecting and revoking are
+  every requested scope (`takesMolliePayments`, `src/lib/processor-liveness.ts`),
+  and, on a server with a Mollie config, only while its `testmode` is the
+  config's (`takesMolliePaymentsIn`, same file): a connection made in test mode
+  takes none once the server runs live, and the reverse, until the teacher
+  reconnects. The pay page, `createAttempt` (before Mollie is called and again
+  under the teacher lock) and the settings section all ask
+  `takesMolliePaymentsIn`; an attempt already made keeps its own `testmode`
+  for every later sync and refund. Disconnecting and revoking are
   separate moments: a disconnected row keeps its tokens until `revokedAt`,
   because its open attempts' webhooks still need them (§1). `CHECK`s pin that
   both tokens are present exactly when `revokedAt IS NULL`, and that
@@ -382,7 +389,9 @@ call and leaves the connection alone.
   reader that only needs the Level 1 rows (email copy, reminders) and a new
   async `payPageMethods` adds the Mollie rows for the pay page alone. A Mollie
   outage never fails the page: `unavailable` renders the Level 1 rows.
-- **Settings section:** connection state (organization, profile, test/live),
+- **Settings section:** connection state (organization, profile, test/live;
+  a connection that takes no payments here, for a missing scope or the other
+  mode, asks the teacher to reconnect),
   the methods students will see in the teacher's currency, the methods
   excluded with one sentence ("fair.yoga doesn't offer pay-later credit at
   checkout" for the pay-later ids, "not offered yet" for the rest), Wero's
