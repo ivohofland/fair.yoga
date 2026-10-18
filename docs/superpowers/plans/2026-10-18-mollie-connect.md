@@ -40,10 +40,10 @@
 No code. The later tasks are built on these answers; a wrong one changes Task 3, 7, 8 or 9.
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-10-18-mollie-connect-design.md` (section *To verify against Mollie before the plan*, and any section a finding contradicts)
+- Modify: `docs/superpowers/specs/2026-10-18-mollie-connect-design.md` (section *Mollie facts, as checked*, and any section a finding contradicts)
 - Modify: this plan, where a finding changes a request shape in Task 3
 
-- [ ] **Step 1:** For each bullet in the spec's *To verify* section, find the answer on docs.mollie.com (API reference and guides). Record, per bullet: verdict (holds / wrong / not documented), the URL, and a one-line quote.
+- [ ] **Step 1:** For each bullet in the spec's *Mollie facts, as checked* section, find the answer on docs.mollie.com (API reference and guides). Record, per bullet: verdict (holds / wrong / not documented), the URL, and a one-line quote.
 - [ ] **Step 2:** Check also, for Task 3's request shapes: the OAuth authorize URL and its parameters (`approval_prompt`), the token endpoint's auth (HTTP Basic with client id/secret) and body encoding, the revoke endpoint's body (`token_type_hint`, `token`), the `testmode` parameter on each v2 call under OAuth, `GET /v2/payments/{id}?embed=refunds`, the refund create body, and the error body shape (`status`, `title`, `detail`, `field`).
 - [ ] **Step 3: The PayPal check (Decision 3).** Determine whether a Mollie-created PayPal payment can show PayPal's own pay-later offers, and whether a Mollie or PayPal setting removes them. If they can appear and cannot be turned off, remove `paypal` from the allowlist in Task 4's constant and say so in the spec's Decision 2/3.
 - [ ] **Step 4:** Replace each verified bullet in the spec with the fact as found; correct any section a finding contradicts (correct by replacing, never "this previously said"). Where a finding changes Task 3's code below, edit this plan.
@@ -706,6 +706,19 @@ describe('createRefund', () => {
   });
 });
 
+describe('authorizeUrl', () => {
+  it('forces the consent prompt only on a reconnect', () => {
+    const { mollie } = client([]);
+    const input = { redirectUri: 'https://fair.yoga/api/processor/mollie/callback', state: 's1', scopes: ['payments.read', 'refunds.write'] };
+    const first = new URL(mollie.authorizeUrl({ ...input, forcePrompt: false }));
+    expect(first.origin + first.pathname).toBe('https://my.mollie.com/oauth2/authorize');
+    expect(first.searchParams.get('scope')).toBe('payments.read refunds.write');
+    expect(first.searchParams.get('response_type')).toBe('code');
+    expect(first.searchParams.has('approval_prompt')).toBe(false);
+    expect(new URL(mollie.authorizeUrl({ ...input, forcePrompt: true })).searchParams.get('approval_prompt')).toBe('force');
+  });
+});
+
 describe('revoke and a 401', () => {
   it('revokes the refresh token', async () => {
     const { fetchImpl, mollie } = client([new Response(null, { status: 204 })]);
@@ -1343,7 +1356,8 @@ Event rule (spec, Data and §1): the payout identity is the live row's `(organiz
 - [ ] **Step 1: Write the failing service tests** (unit tier, real DB, fake client)
 
 Cases, each its own `it`:
-1. `startConnect` stores one `OAuthState` with `stateHash = hashToken(state)` and `expiresAt = now + 10 min`, and the authorize URL carries `state` and every `MOLLIE_SCOPES` member (space-joined in `scope`).
+1. `startConnect` stores one `OAuthState` with `stateHash = hashToken(state)` and `expiresAt = now + 10 min`, and the authorize URL carries `state` and every `MOLLIE_SCOPES` member (space-joined in `scope`). A teacher with no `ProcessorConnection` row (first connect) → `fake.authorizeUrl` called with `forcePrompt: false`.
+1a. A teacher with a `ProcessorConnection` row — live, live with missing scopes, or disconnected — → `forcePrompt: true` (a reconnect).
 2. `completeConnect` with one profile → `connected`, the row has `organizationId`, `profileId`, sealed tokens, `scopes`, `testmode` from config; one `PayoutChangeEvent` `processor_connected` with `after = 'org_…' + last four + ' · ' + name`; the state row is gone.
 3. Same with two profiles and no previous live identity → `choose_profile`, `profileId` null, **no** event; the same with a previous live profile that is not in the new list (or a different organization) → `choose_profile`, `profileId` null, no event, and the row is no longer live.
 3a. Reconnect to the same organization with two profiles, the previous live profile among them → `connected`, `eventId: null`, `profileId` still the previous one, the row still live.
@@ -1361,7 +1375,7 @@ Cases, each its own `it`:
 
 - [ ] **Step 2: Run, see them fail.**
 
-- [ ] **Step 3: Implement the service.** Shape of `completeConnect`, the one with the subtle order:
+- [ ] **Step 3: Implement the service.** `startConnect`: a reconnect is a `ProcessorConnection` row for the teacher in any state, so `forcePrompt = (await db.processorConnection.findUnique({ where: { teacherId }, select: { id: true } })) !== null`, passed to `deps.client.authorizeUrl` with `mollieRedirectUri(deps.config.appUrl)`, the state and `MOLLIE_SCOPES` (spec §1: a forced prompt re-shows the scopes and replaces the earlier authorization; on a first connect it is an extra screen). Shape of `completeConnect`, the one with the subtle order:
 
 ```ts
 export async function completeConnect(db: PrismaClient, deps: MollieDeps, input: { state: string; code: string; sessionId: string; now?: Date }): Promise<CompleteConnectOutcome> {
@@ -1600,7 +1614,7 @@ git commit -m "feat: Mollie rows on the pay page and the attempt route (#896)"
 ## Task 8: Settling — the webhook, the return route, and "in progress"
 
 **Files:**
-- Modify: `src/services/processor-attempts.ts` (add `syncAttempt`, `decideSync`)
+- Modify: `src/services/processor-attempts.ts` (add `syncAttempt`, `decideSync`, `decideRefundSync`, `completeRefund`)
 - Modify: `src/services/processor-attempts.test.ts`
 - Modify: `src/services/payments.ts` (`PaidMethod`, `markPaymentPaid` takes a transaction client, `reopenPayment` → `reopenInTransaction`, which refuses a Mollie-settled payment unless a refund names its attempt; `PaymentRefusal` gains `PAYMENT_SETTLED_BY_PROCESSOR`)
 - Modify: `src/lib/api-error-codes.ts` (`PAYMENT_SETTLED_BY_PROCESSOR: 409`)
@@ -1630,6 +1644,16 @@ export function decideSync(input: {
   settledByThis: boolean; chargedBack: boolean; alreadyChargedBack: boolean;
 }): SyncDecision;
 export function inProgress(payment: { studentReportedAt: Date | null; processorAttempts: readonly { status: ProcessorPaymentStatus }[] }): boolean;
+
+// refunds: pure, for the table test
+export type RefundSyncDecision =
+  | { kind: 'unchanged' }
+  | { kind: 'status'; status: ProcessorRefundStatus; complete: boolean; notifyFailed: boolean };
+export function decideRefundSync(input: { storedStatus: ProcessorRefundStatus; mollieStatus: ProcessorRefundStatus }): RefundSyncDecision;
+// Applies a completed refund's outcome and tells the student. With outcome 'reopened' the caller's
+// transaction must not have locked the payment before the TeacherStudent link.
+export type CompletionResult = 'applied' | 'missed' | 'no_outcome';
+export function completeRefund(tx: Prisma.TransactionClient, input: { paymentId: string; attemptId: string; outcome: RefundOutcome | null; now: Date }): Promise<CompletionResult>;
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -1650,9 +1674,18 @@ export function inProgress(payment: { studentReportedAt: Date | null; processorA
 4. Same webhook again → `unchanged`, nothing written (`updatedAt` unchanged).
 5. Payment already `paid` with `manual` → `paid_twice`: attempt `paid`, `settledPayment: false`, payment untouched, one `payment_paid_twice` teacher notification; repeat → `unchanged`, still one notification.
 6. `getPayment` null → `unknown`; `MollieUnavailable` → `unavailable`; `deps` null with a known attempt → `unavailable`.
-7. Refunds: a fair.yoga `ProcessorRefund` with `processorRefundId: 're_1'` and status `queued`, Mollie says `refunded` → row `refunded`; Mollie says `failed` → row `failed` and one `refund_failed` teacher notification; a Mollie refund id with no row → no row created.
+7. Refunds (seed a settled attempt and a fair.yoga `ProcessorRefund` with `processorRefundId: 're_1'`, status `queued`):
+   - outcome null (a duplicate's refund), Mollie says `refunded` → row `refunded`, `Payment` untouched, one `payment_refunded` student notification; the same webhook again → nothing more.
+   - outcome `waived`, Mollie says `refunded` → `Payment` `not_charged`, `notChargedAt` set, `studentReportedAt` null; attempt `settledPayment: false`; one `payment_refunded`.
+   - outcome `reopened`, Mollie says `refunded` → `Payment` `pending`, `method`/`paidAt` null, attempt `settledPayment: false`, one `payment_refunded` (the transaction took the link lock first).
+   - Mollie says `processing` → row `processing`, `Payment` still `paid`, attempt still settling, no notification.
+   - Mollie says `failed` → row `failed`, `Payment` still `paid`, attempt still settling, one `refund_failed` teacher notification ("A refund didn't go through. Check your Mollie balance and try again from the payment.").
+   - CAS miss: outcome `waived`, the payment set to `pending` before the sync, Mollie says `refunded` → row `refunded`, payment left `pending`, one `log.warn`, `payment_refunded` still sent (the money went back).
+   - A Mollie refund id with no row → no row created.
 8. Review Focus 5: settle via the return route's call first, then the webhook's → second is `unchanged`.
 9. Chargeback: a settled attempt, Mollie answers `paid` with `amountChargedBack: { value: '4.00', … }` (partial) → `charged_back`: attempt `chargedBackAt` set, `settledPayment: false`; `Payment` still `paid`; one `payment_charged_back` teacher notification whose body ends "You can mark the payment unpaid to ask again."; the same webhook again → `unchanged`, still one notification. A duplicate attempt charged back → `charged_back`, notification without that sentence.
+
+`decideRefundSync` table (pure): stored equals Mollie's → `unchanged`; any stored non-terminal → `refunded` gives `complete: true`; → `failed` gives `notifyFailed: true`; → `queued`/`pending`/`processing`/`canceled` gives neither; a stored `refunded` or `failed` row is never moved again (`unchanged`).
 
 `reopenPayment` (extend its existing test):
 - (a) reopening a Mollie-settled payment is refused `PAYMENT_SETTLED_BY_PROCESSOR`; the payment stays `paid` and the attempt keeps `settledPayment`.
@@ -1672,7 +1705,8 @@ Webhook `route.test.ts` (services mocked): form body `id=tr_x` → calls `syncAt
 - [ ] **Step 3: Implement.**
 - `markPaymentPaid`: widen `db` to `PrismaClient | Prisma.TransactionClient`, type `method: PaidMethod`; update the docblock's example values to `'manual'`/`'mollie'`. `markPaidSchema`: `method: z.literal('manual')`.
 - `reopenPayment`: move its transaction body into exported `reopenInTransaction(tx, paymentId, opts?: { refundAttemptId?: string })` (the link lock stays its first statement, unchanged). After the link lock, when `opts?.refundAttemptId` is absent: `if (await tx.processorPayment.count({ where: { paymentId, settledPayment: true } }) > 0)` answer `{ kind: 'refused', refusal: codedRefusal('PAYMENT_SETTLED_BY_PROCESSOR', 'Mollie confirmed this payment. Refund it instead.') }` (Decision 17). When `refundAttemptId` is given, after the CAS succeeds: `await tx.processorPayment.updateMany({ where: { id: opts.refundAttemptId, paymentId }, data: { settledPayment: false } })`. Add `'PAYMENT_SETTLED_BY_PROCESSOR'` to `PaymentRefusal`'s codes and register it in `api-error-codes.ts`. `reopenPayment` becomes `db.$transaction((tx) => reopenInTransaction(tx, paymentId))` plus its existing refusal handling; its route already answers a refusal with `respondRefusal`, so the 409 needs no route change.
-- `syncAttempt`: find the attempt by `processorPaymentId` (select id, paymentId, connectionId, status, `connection.testmode`, `payment.registration.class.calendarEntry.teacherId`); unknown or `connectionId` null → `unknown`; `deps` null → `unavailable`; token (`disconnected` → `log.warn` and `unknown`; `unavailable` → `unavailable`); `getPayment` (null → `unknown`; `MollieUnavailable` → `logDegraded('MOLLIE_UNAVAILABLE', …)` and `unavailable`); map Mollie's status string with a `z.enum` of `ProcessorPaymentStatus` (an unparseable status → `log.warn`, `unknown`). Then one transaction: `SELECT … FROM "Payment" WHERE id = … FOR UPDATE` via `$queryRaw`, re-read the attempt and the payment status inside it, `decideSync`, with `chargedBack = view.amountChargedBack !== null && new Prisma.Decimal(view.amountChargedBack.value).greaterThan(0)` and `alreadyChargedBack = attempt.chargedBackAt !== null` (re-read inside the transaction with `settledPayment`), then write: attempt `status`, `method` (Mollie's if present), `paidAt`; if `recordChargeback`, attempt `chargedBackAt: now, settledPayment: false` and `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_charged_back', title: 'Payment disputed', body: '<student first name> disputed <amount> with their bank and it was taken back.' + (settledByThis ? ' You can mark the payment unpaid to ask again.' : ''), relatedClassId })`; if `settle`, `markPaymentPaid(tx, paymentId, 'mollie')` and — only when it answers `applied` — `settledPayment: true` (an answer other than `applied` downgrades the result to `paid_twice` and notifies); if `notifyPaidTwice`, `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_paid_twice', title: 'Paid twice', body: '<student first name> also paid <amount> by <method label>. You can refund it from the payment.', relatedClassId })`. Refunds: for each `view.refunds`, `updateMany({ where: { processorRefundId: r.id }, data: { status } })` and, on a transition to `failed`, a `refund_failed` notification ("A refund didn't go through. Check your Mollie balance and try again from the payment.").
+- `syncAttempt`: find the attempt by `processorPaymentId` (select id, paymentId, connectionId, status, `connection.testmode`, `payment.registration.studentId`, `payment.registration.class.calendarEntry.teacherId`); unknown or `connectionId` null → `unknown`; `deps` null → `unavailable`; token (`disconnected` → `log.warn` and `unknown`; `unavailable` → `unavailable`); `getPayment` (null → `unknown`; `MollieUnavailable` → `logDegraded('MOLLIE_UNAVAILABLE', …)` and `unavailable`); map Mollie's status string with a `z.enum` of `ProcessorPaymentStatus` (an unparseable status → `log.warn`, `unknown`). Before opening the transaction, read the attempt's fair.yoga refund rows (`processorRefundId`, `status`, `outcome`) and decide `takesLinkLock` = some row with `outcome: 'reopened'` whose `decideRefundSync` against the view is `complete` (spec *Locks*). Then one transaction: when `takesLinkLock`, first `lockTeacherStudentLink(tx, { teacherId, studentId })` (the statement `reopenInTransaction` itself starts with, so its own re-lock of the held row is a no-op); then `SELECT … FROM "Payment" WHERE id = … FOR UPDATE` via `$queryRaw`, re-read the attempt and the payment status inside it, `decideSync`, with `chargedBack = view.amountChargedBack !== null && new Prisma.Decimal(view.amountChargedBack.value).greaterThan(0)` and `alreadyChargedBack = attempt.chargedBackAt !== null` (re-read inside the transaction with `settledPayment`), then write: attempt `status`, `method` (Mollie's if present), `paidAt`; if `recordChargeback`, attempt `chargedBackAt: now, settledPayment: false` and `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_charged_back', title: 'Payment disputed', body: '<student first name> disputed <amount> with their bank and it was taken back.' + (settledByThis ? ' You can mark the payment unpaid to ask again.' : ''), relatedClassId })`; if `settle`, `markPaymentPaid(tx, paymentId, 'mollie')` and — only when it answers `applied` — `settledPayment: true` (an answer other than `applied` downgrades the result to `paid_twice` and notifies); if `notifyPaidTwice`, `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_paid_twice', title: 'Paid twice', body: '<student first name> also paid <amount> by <method label>. You can refund it from the payment.', relatedClassId })`. Refunds, in the same transaction: for each `view.refunds` with a fair.yoga row, re-read the row and `decideRefundSync`; on `status`, `updateMany({ where: { id, status: storedStatus }, data: { status } })` (a count of 0 means another sync moved it: skip); when `complete`, `completeRefund(tx, { paymentId, attemptId, outcome, now })` — an outcome of `reopened` reached without `takesLinkLock` (the stored status moved between the two reads) is skipped and left to the next webhook rather than taking the link lock after the payment; when `notifyFailed`, a `refund_failed` notification ("A refund didn't go through. Check your Mollie balance and try again from the payment."). A failed refund changes no `Payment`.
+- `completeRefund`: `reopened` → `reopenInTransaction(tx, paymentId, { refundAttemptId: attemptId })` first, `applied` when it answers `applied`; `waived` → `tx.payment.updateMany({ where: { id: paymentId, status: 'paid' }, data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null } })` and, when it wrote a row, `tx.processorPayment.updateMany({ where: { id: attemptId, paymentId }, data: { settledPayment: false } })`; null → `no_outcome`. A CAS miss → `log.warn({ paymentId, attemptId, outcome }, …)` and `missed`. Then, whatever the result, the `payment_refunded` student notification ("<teacher first name> refunded <amount>. It goes back the way you paid.").
 - Webhook route: `export const POST = withErrorHandler(async (request) => { … })`. Read the body with `request.text()` and `new URLSearchParams(text).get('id')` (avoids a throwing `formData()` on a wrong content type). Answer `new NextResponse(null, { status })`. Its docblock states why it is unauthenticated and unthrottled (spec §5) in one paragraph.
 - Return route `GET /api/payments/[id]/processor-return?attempt=…`: `requireStudent`; look up the attempt where `id = attempt AND paymentId = id AND payment.registration.studentId = session.studentId`; if found, `await syncAttempt(…)`; always `NextResponse.redirect(new URL(`/bookings/${classId}/pay?attempt=${attemptId}`, request.url), 303)` (class id from the payment; when the payment is not the student's, redirect to `/bookings`).
 - Pay page: read `searchParams.attempt`; when it names an attempt of this payment, show above the rows: status `paid` → "Paid — thank you." (and the page's own paid state already applies); `pending`/`authorized` → "Processing — we'll let you know."; `canceled`/`expired`/`failed` → "That payment didn't go through. You can try again below."; `open` → nothing. Independently, when `inProgress(payment)` and no claim is standing, show the same "processing" state the #898 claim shows.
@@ -1680,7 +1714,7 @@ Webhook `route.test.ts` (services mocked): form body `id=tr_x` → calls `syncAt
 
 - [ ] **Step 4: Run, see them pass.** Unit for the touched files; `pnpm exec vitest run --project integration tests/integration/mollie-webhook.test.ts tests/integration/payments-api.test.ts` (curl `/api/webhooks/mollie` once first to warm it).
 
-- [ ] **Step 5: Prove the guards bite.** (a) Remove the `PAYMENT_SETTLED_BY_PROCESSOR` refusal from `reopenInTransaction`; reopen test (a) fails — record; restore. Then remove the `settledPayment: false` from the chargeback write; reopen test (b) fails with P2002 on the second settle — record; restore. (b) Make the webhook trust a `status` field in the body instead of fetching; add the test "a body claiming paid does not settle" if not already present, see it fail, restore. (c) Remove the `FOR UPDATE`; no test is expected to catch a race deterministically — say so in the PR body rather than claiming coverage.
+- [ ] **Step 5: Prove the guards bite.** (a) Remove the `PAYMENT_SETTLED_BY_PROCESSOR` refusal from `reopenInTransaction`; reopen test (a) fails — record; restore. Then remove the `settledPayment: false` from the chargeback write; `syncAttempt` case 9's `settledPayment: false` assertion fails — record; restore. (d) Make `completeRefund` run for a refund Mollie reports `processing`; case 7's `processing` assertion (payment still `paid`) fails — record; restore. (b) Make the webhook trust a `status` field in the body instead of fetching; add the test "a body claiming paid does not settle" if not already present, see it fail, restore. (c) Remove the `FOR UPDATE`; no test is expected to catch a race deterministically — say so in the PR body rather than claiming coverage.
 
 - [ ] **Step 6: Commit**
 
@@ -1700,20 +1734,21 @@ git commit -m "feat: settle Mollie payments by webhook and on return (#896)"
 - Create: `src/services/processor-refunds.ts`, `src/services/processor-refunds.test.ts`
 - Create: `src/app/api/payments/[id]/refund/route.ts` and `route.test.ts`
 - Create: `src/components/payments/refund-dialog.tsx` (+ `.test.tsx`)
-- Modify: the teacher payment row component(s) — find them with `grep -rln "usePaymentActions\|use-payment-actions" src/components src/app`; the received row renders `MarkUnpaidButton` (`src/components/class/mark-unpaid-button.tsx`) — to show **Refund** on a row with a `paid` attempt that has no live refund and no `chargedBackAt`, and the refund's status ("Refund queued", "Refunded", "Refund failed") otherwise; and to hide "Mark unpaid" while an attempt with `settledPayment` exists (Decision 17), Refund standing in its place. Component test in the row's existing test file: a Mollie-settled row shows Refund and no "Mark unpaid"; a row whose settling attempt was charged back shows "Mark unpaid" and no Refund; a manually paid row is unchanged.
+- Modify: the teacher payment row component(s) — find them with `grep -rln "usePaymentActions\|use-payment-actions" src/components src/app`; the received row renders `MarkUnpaidButton` (`src/components/class/mark-unpaid-button.tsx`) — to show **Refund** on a row with a `paid` attempt that has no live refund and no `chargedBackAt`, and the refund's status otherwise ("Refund pending" while `queued`, `pending` or `processing`; "Refunded"; "Refund failed", with Refund offered again); and to hide "Mark unpaid" while an attempt with `settledPayment` exists (Decision 17), Refund standing in its place. Component test in the row's existing test file: a Mollie-settled row shows Refund and no "Mark unpaid"; a row whose settling attempt was charged back shows "Mark unpaid" and no Refund; a manually paid row is unchanged.
 - Modify: `TeacherPaymentRow` (`src/services/payments.ts`) and its loaders to carry `processorAttempts: { id, method, status, settledPayment, chargedBackAt, amount, refunds: { status }[] }[]`
 - Modify: `src/lib/api-error-codes.ts` (`REFUND_NOT_ALLOWED: 409`, `REFUND_ALREADY_REQUESTED: 409`, `REFUND_REFUSED: 409`)
 - Modify: `src/lib/schemas.ts` (`refundSchema`)
 
 **Interfaces:**
-- Consumes: `getAccessToken`, `reopenInTransaction`, `createNotification`, `loadOwnedPayment` (`src/app/api/payments/[id]/shared.ts`).
+- Consumes: `getAccessToken`, `completeRefund` (Task 8), `createNotification`, `loadOwnedPayment` (`src/app/api/payments/[id]/shared.ts`).
 - Produces:
 
 ```ts
 export type RefundChoice = 'waive' | 'ask_again';
 export type RefundRefusal = Extract<CodedRefusal, { code: 'NOT_FOUND' | 'REFUND_NOT_ALLOWED' | 'REFUND_ALREADY_REQUESTED' | 'REFUND_REFUSED' | 'PROCESSOR_NOT_CONNECTED' }>;
 export type RefundResult =
-  | { kind: 'refunded'; refundStatus: ProcessorRefundStatus; outcomeApplied: boolean }
+  // `outcomeApplied`: the refund completed in this call (Mollie answered `refunded`) and its outcome applied.
+  | { kind: 'requested'; refundStatus: ProcessorRefundStatus; outcomeApplied: boolean }
   | { kind: 'invalid'; message: string }
   | { kind: 'refused'; refusal: RefundRefusal }
   | { kind: 'unavailable' };
@@ -1721,17 +1756,18 @@ export function refundAttempt(db: PrismaClient, deps: MollieDeps | null, input: 
 ```
 
 - [ ] **Step 1: Write the failing tests** (unit, real DB, fake client)
-1. Settling attempt, `waive` → Mollie `createRefund` called with the attempt's amount and currency; refund row `outcome: 'waived'`, `processorRefundId` stored; `Payment` `not_charged`, `notChargedAt` set, `studentReportedAt` null; attempt `settledPayment: false`; one `payment_refunded` student notification; result `outcomeApplied: true`.
-2. Settling attempt, `ask_again` → `Payment` `pending`, `method`/`paidAt` null (reopen's columns), `settledPayment: false`, `outcome: 'reopened'` — through `reopenInTransaction`'s `refundAttemptId`, so `PAYMENT_SETTLED_BY_PROCESSOR` does not refuse it.
+1. Settling attempt, `waive`, Mollie answers `queued` → `createRefund` called with the attempt's amount and currency; refund row `outcome: 'waived'`, `processorRefundId` stored, status `queued`; `Payment` still `paid`, attempt still `settledPayment: true`; no `payment_refunded`; result `requested` with `outcomeApplied: false`. Then `syncAttempt` with the refund `refunded` → `Payment` `not_charged`, `notChargedAt` set, `studentReportedAt` null, `settledPayment: false`, one `payment_refunded`.
+2. Settling attempt, `ask_again`, Mollie answers `queued` → `Payment` still `paid`, `outcome: 'reopened'`; then `syncAttempt` with the refund `refunded` → `Payment` `pending`, `method`/`paidAt` null (reopen's columns), `settledPayment: false` — through `reopenInTransaction`'s `refundAttemptId`, so `PAYMENT_SETTLED_BY_PROCESSOR` does not refuse it.
+2a. Settling attempt, `waive`, Mollie's create answer already `refunded` → applied in the call: `Payment` `not_charged`, `settledPayment: false`, one `payment_refunded`, `outcomeApplied: true`; a later `syncAttempt` with the refund `refunded` → nothing more (still one notification). The same with `ask_again` → `Payment` `pending`.
 3. Duplicate attempt (`settledPayment: false`), `choice: null` → refund created, `Payment` untouched, `outcome: null`.
 4. `choice` required: settling attempt with `null` → `invalid`; duplicate with `waive` → `invalid`; no Mollie call either way.
 5. `REFUND_NOT_ALLOWED`: attempt `open`/`failed`; an attempt with `chargedBackAt` set (no Mollie call); attempt of another payment → `NOT_FOUND`.
 6. `REFUND_ALREADY_REQUESTED`: two concurrent calls → exactly one `createRefund` call; the other refused (the partial unique index turns the second insert into P2002 — catch `Prisma.PrismaClientKnownRequestError` with code `P2002` only).
 7. Mollie refuses (`{ kind: 'refused', detail: 'Insufficient balance' }`) → `REFUND_REFUSED` with a message naming the balance, the queued row deleted, `Payment` untouched; `MollieUnavailable` → `unavailable`, row deleted.
-8. CAS miss: between steps 1 and 3 the payment left `paid` (in production, a chargeback cleared the attempt and the teacher marked it unpaid; simulate in `createRefund`'s mock by updating the payment to `pending`) → `refunded` with `outcomeApplied: false`, payment left `pending`, refund row stored.
-9. Guard: `markPaymentNotCharged` on a `paid` payment is still refused `PAYMENT_ALREADY_PAID` (Decision 9's narrowing — the refund service is the only writer of `paid → not_charged`).
+8. A refund that fails: `ask_again` accepted as `queued`, then `syncAttempt` with the refund `failed` → `Payment` still `paid`, attempt still settling, one `refund_failed`; a second `refundAttempt` on the same attempt is accepted (the live-refund index excludes `failed`) and still requires a choice. (The completion's CAS miss is Task 8's `syncAttempt` case 7.)
+9. Guard: `markPaymentNotCharged` on a `paid` payment is still refused `PAYMENT_ALREADY_PAID` (Decision 9's narrowing — a refund's completion is the only writer of `paid → not_charged`).
 
-Route test: teacher ownership via `loadOwnedPayment` (another teacher → 403/404 as that helper answers), each `RefundResult` mapped (`refunded` 200 with the row, `invalid` 400, `refused` `respondRefusal`, `unavailable` 503 `PROCESSOR_UNAVAILABLE`); body `refundSchema` = `z.object({ attemptId: z.string().uuid(), choice: z.enum(['waive', 'ask_again']).nullable() }).strict()`.
+Route test: teacher ownership via `loadOwnedPayment` (another teacher → 403/404 as that helper answers), each `RefundResult` mapped (`requested` 200 with the row, `invalid` 400, `refused` `respondRefusal`, `unavailable` 503 `PROCESSOR_UNAVAILABLE`); body `refundSchema` = `z.object({ attemptId: z.string().uuid(), choice: z.enum(['waive', 'ask_again']).nullable() }).strict()`.
 
 Dialog component test: for a settling attempt it offers **Refund and waive** and **Refund and ask again** with the amount ("€10.00 goes back to <student> from your Mollie balance."); for a duplicate it offers **Refund duplicate payment**; it POSTs the chosen body and shows a refusal's message.
 
@@ -1772,16 +1808,16 @@ export async function refundAttempt(db: PrismaClient, deps: MollieDeps | null, i
   });
   if (intent.kind !== 'recorded') return intent;
   // 2. The money: outside any transaction.
-  // 3. Mollie's answer decides whether the intent stays, and the outcome applies in the same transaction as storing it.
+  // 3. Mollie's answer decides whether the intent stays; the outcome applies only once the refund is `refunded`.
   …
 }
 ```
 
-Steps 2–3 as the spec says: `deps` null or token not `token` → delete the row, `unavailable`. `createRefund` → `refused`: delete the row, `REFUND_REFUSED` with `detail` mapped to copy (a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn't accept this refund: <detail>"). `MollieUnavailable`: delete the row, `unavailable`. `created`: one transaction — for `ask_again`, `reopenInTransaction(tx, paymentId, { refundAttemptId: attempt.id })` **first** (it takes the link lock first, the order `reopenPayment` uses, and clears that attempt's `settledPayment`); for `waive`, `tx.payment.updateMany({ where: { id, status: 'paid' }, data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null } })` and clear `settledPayment`; then update the refund row with `processorRefundId` and the mapped status; then the `payment_refunded` student notification ("<teacher first name> refunded <amount>. It goes back the way you paid."). `outcomeApplied` = whether the CAS / reopen answered `applied`.
+Steps 2–3 as the spec says: `deps` null or token not `token` → delete the row, `unavailable`. `createRefund` → `refused`: delete the row, `REFUND_REFUSED` with `detail` mapped to copy (a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn't accept this refund: <detail>"). `MollieUnavailable`: delete the row, `unavailable`. `created`: one transaction — when Mollie's status is `refunded`, `completeRefund(tx, { paymentId, attemptId: attempt.id, outcome, now })` **first** (for `reopened` it takes the link lock first, the order `reopenPayment` uses); then update the refund row with `processorRefundId` and the mapped status. Any other status writes only the refund row: the payment stays `paid`, its attempt still settling, and Task 8's `syncAttempt` completes the refund when Mollie reports it `refunded`. Answer `requested` with `outcomeApplied` = `completeRefund` answered `applied`.
 
-Update `markPaymentNotCharged`'s docblock sentence "a paid one is refused, because waiving it would be a refund" to state what is true now: a paid one is refused here; waiving after a real refund is `refundAttempt`'s, in the transaction that records the refund.
+Update `markPaymentNotCharged`'s docblock sentence "a paid one is refused, because waiving it would be a refund" to state what is true now: a paid one is refused here; waiving after a real refund is `completeRefund`'s, in the transaction that records the refund as `refunded`.
 
-- [ ] **Step 4: UI.** Rows and dialog as *Files* says. The dialog is a sheet (the one place shadows are allowed); copy states the amount and that the money comes from the teacher's Mollie balance; after success the row shows the refund status and, for `waive`, "Not charged".
+- [ ] **Step 4: UI.** Rows and dialog as *Files* says. The dialog is a sheet (the one place shadows are allowed); copy states the amount and that the money comes from the teacher's Mollie balance; after success the row shows "Refund pending" until the refund completes, then "Refunded" and, for `waive`, "Not charged".
 
 - [ ] **Step 5: Run, see them pass.**
 
@@ -1841,7 +1877,7 @@ git commit -m "feat: revoke Mollie access on disconnect and erasure; export atte
 - Modify: `docs/product-concept.md` (§7 Level 2: `:243`, and `:244` against `:256`)
 - Modify: `docs/technical-architecture.md` (stack row `:13`; *Unauthenticated API routes* table and its counts, re-derived with the section's own command; the token cipher under *The Services Layer*; the env block; the Level 2 retry note)
 - Modify: `docs/data-model.md` (the four tables; the dropped columns at `:172-176` and `:962`; the Payment section's `processor_ref` mention at `:973`; the narrowed #47 rule; Decision 17's reopen rule and its chargeback exception)
-- Modify: `docs/lock-order.md` (connection writers under the teacher lock; payment-then-attempt; refund-ask-again takes reopen's order)
+- Modify: `docs/lock-order.md` (connection writers under the teacher lock; payment-then-attempt; completing a `reopened` refund takes reopen's order, so that sync starts with the link lock)
 - Modify: `CLAUDE.md` (*Payment Model*: Level 2's line describes the allowlist and refunds; the grace-policy sentence "never a refund (`paid → not_charged` is refused)" states the refund exception; a Mollie-settled payment leaves `paid` only by refund until a chargeback, Decision 17)
 
 - [ ] **Step 1:** Write each edit. Product concept §7: replace "iDEAL, credit card, and other payment methods supported by the processor" with the allowlist rule and its reasoning (the spec's Decision 1 and the issue's four bullets, condensed); replace "Automatic charging after class" with a sentence that v1 has no automatic charging and that recurring payments are a later concept decision (consent, notice, SEPA refund right), which makes `:256` consistent. Technical architecture's stack row: "Level 2 uses the Mollie Payments API with one method per payment — no card-on-file, no subscriptions."

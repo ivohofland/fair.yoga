@@ -49,12 +49,15 @@ the numbering here is this spec's.
    money from the teacher's own balance to the original payer; fair.yoga never
    holds it. When the refunded attempt is the one that settled its `Payment`,
    the teacher chooses in the same dialog: **refund and waive**
-   (`paid → not_charged`) or **refund and ask again** (`paid → pending`). A
-   refund of a duplicate attempt (Decision 7) changes no `Payment`.
+   (`paid → not_charged`) or **refund and ask again** (`paid → pending`). The
+   choice applies when the refund completes (Mollie reports it `refunded`);
+   until then the payment stays `paid`. A refund of a duplicate attempt
+   (Decision 7) changes no `Payment`.
 9. **`paid → not_charged` becomes legal, through a refund only.** This
    narrows #47's "never a refund": `markPaymentNotCharged` still refuses a
-   paid payment, and the only writer of the transition is the refund service,
-   in the same transaction that records the refund. Waiving after money has
+   paid payment, and the only writer of the transition is the refund's
+   completion, in the transaction that records the refund as `refunded`.
+   Waiving after money has
    actually gone back is the leniency #47 describes, not a relabelled refund.
    Reporting is unaffected: it reads the completion snapshot.
 10. **Tokens are encrypted at rest in their own table**, AES-256-GCM, key
@@ -158,7 +161,8 @@ is what Mollie's server-side POST is.
   RefundOutcome?, requestedAt, updatedAt }`. Statuses are Mollie's
   (`queued`, `pending`, `processing`, `refunded`, `failed`, `canceled`).
   `RefundOutcome` is `waived | reopened` for a refund of the settling attempt
-  and null for a duplicate. At most one non-failed refund per attempt (partial
+  and null for a duplicate; it is the teacher's choice, applied when the
+  refund reaches `refunded`. At most one non-failed refund per attempt (partial
   unique index), so a second click cannot refund twice even before Mollie
   would refuse an amount above the remainder.
 - **`OAuthState`** `{ id, stateHash @unique, teacherId, sessionId, expiresAt }`
@@ -214,13 +218,17 @@ first, as the payout writers do (`docs/lock-order.md`, "The `Teacher` row is
 the first lock"), because each can write a `PayoutChangeEvent` and the resume
 fingerprint must read a stable set.
 
-Payment writers keep their CAS shape. The webhook's settle and the refund's
-outcome lock the `Payment` row (`FOR UPDATE`) and then its attempts, the
-order every writer here uses; `markPaymentPaid`'s own CAS is unchanged, so a
-manual mark-paid racing a webhook resolves by whichever `updateMany` lands
-first and the loser's re-read classifies it. "Refund and ask again" reuses
-`reopenPayment`'s transaction body, so it takes that function's order — the
-`TeacherStudent` link first, then the payment — rather than this one.
+Payment writers keep their CAS shape. The webhook's settle and a waived
+refund's completion lock the `Payment` row (`FOR UPDATE`) and then its
+attempts, the order every writer here uses; `markPaymentPaid`'s own CAS is
+unchanged, so a manual mark-paid racing a webhook resolves by whichever
+`updateMany` lands first and the loser's re-read classifies it. Completing a
+refund whose outcome is `reopened` reuses `reopenPayment`'s transaction body,
+so it takes that function's order — the `TeacherStudent` link first, then the
+payment — rather than this one. A sync transaction that may complete such a
+refund therefore starts with the link lock; whether it may is decided before
+the transaction opens, from the fetched view (a fair.yoga refund with that
+outcome that Mollie now reports `refunded` and the row does not yet).
 
 No database lock is ever held across a Mollie call. Refresh races are settled
 by a single-flight promise per connection in process (one process, one VPS)
@@ -235,7 +243,11 @@ re-reads and uses the winner's token.
 - **Start:** `POST /api/teachers/[id]/processor/connect` writes an
   `OAuthState` bound to the session and answers the Mollie authorize URL
   (`response_type=code`, the scopes, `state`, `approval_prompt=force` on a
-  reconnect). The browser navigates there.
+  reconnect — a `ProcessorConnection` row already exists for the teacher, in
+  any state). The browser navigates there. A forced prompt on a reconnect
+  makes Mollie show the scopes again and replaces the earlier authorization,
+  which is what a re-authorization for new scopes needs; on a first connect it
+  would be an extra screen for nothing.
 - **Return:** `GET /api/processor/mollie/callback?code&state` — the session
   must be the one the state was bound to; the code (30-second lifetime) is
   exchanged immediately; `/v2/organizations/me` and `/v2/profiles` are read.
@@ -364,10 +376,10 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
 | `pending`/`authorized` | any | attempt status only |
 | `canceled`/`expired`/`failed` | any | attempt status only |
-| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id; a newly `failed` one sends the teacher `refund_failed`. A refund made in Mollie's own dashboard has no row and is not created here. |
+| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund made in Mollie's own dashboard has no row and is not created here. |
 
 Every branch answers 200. Only a failure to reach Mollie or the database
-answers 500, so Mollie retries (10 times over 26 h).
+answers 503, so Mollie retries (10 times over 26 h).
 
 ## 6 · Refunds
 
@@ -384,16 +396,18 @@ money is the irreversible part:
 2. `POST /v2/payments/{id}/refunds` for the full amount.
 3. Mollie refuses: delete the row, answer the refusal (balance and similar
    map to a registered code with copy). Mollie accepts: store its id and
-   status, and in the same transaction apply `outcome` — `paid →
-   not_charged` (Decision 9) or `paid → pending` (`reopenPayment`'s columns) —
-   CAS on `status = 'paid'`. "Ask again" reopens through `reopenPayment`'s
-   body with the refunded attempt named, which is the one reopen Decision 17
-   allows, and clears that attempt's `settledPayment`. A CAS miss (the
-   payment left `paid` meanwhile — a chargeback cleared the attempt and the
-   teacher marked it unpaid) leaves the state the teacher chose and says so;
-   the money has gone back either way.
-4. The student gets `payment_refunded`. A `queued` refund (low balance) is
-   shown as queued on the payment row until a webhook moves it.
+   status. Only when that answer is already `refunded` does the refund
+   complete in the same transaction (§5's *refunds changed* row: the
+   `outcome` applies — `paid → not_charged` (Decision 9) or `paid → pending`
+   (`reopenPayment`'s columns), CAS on `status = 'paid'` — and the student
+   gets `payment_refunded`). Otherwise the payment stays `paid`, its attempt
+   still settling, and the webhook completes the refund when Mollie reports
+   it `refunded`. "Ask again" reopens through `reopenPayment`'s body with the
+   refunded attempt named, which is the one reopen Decision 17 allows, and
+   clears that attempt's `settledPayment`.
+4. The payment row shows "Refund pending" while the refund is `queued`,
+   `pending` or `processing`. A refund that fails leaves the payment `paid`;
+   the teacher is told and can refund again.
 
 On a payment an attempt settled, the teacher's row shows **Refund** where
 "Mark unpaid" would be (Decision 17). A chargeback is not a refund and is not
@@ -431,10 +445,7 @@ chargeback counts as a chargeback: any `amountChargedBack` above zero.
   `paid → not_charged`, and that a Mollie-settled payment leaves `paid` only
   by refund until a chargeback (Decision 17).
 
-## To verify against Mollie before the plan
-
-Each is stated above as the design assumes it; the plan's first task checks
-them and the spec is corrected where one fails.
+## Mollie facts, as checked
 
 Checked against docs.mollie.com on 2026-10-18; each line is the fact as found.
 
@@ -528,8 +539,10 @@ chargeback, so an attempt keeps `chargedBackAt` once stamped); a retry policy
     and Mollie down answer the Level 1 rows; attempt reuse; each webhook row;
     a repeat webhook `unchanged`; double payment; a chargeback and its
     repeat; reopen of a Mollie-settled payment refused, and allowed after a
-    chargeback; refund with each outcome and as a duplicate; a charged-back
-    attempt refused; double-click refund; `invalid_grant` disconnects and
+    chargeback; refund with each outcome and as a duplicate, each applied
+    only once the refund is `refunded`; a failed refund leaving `paid`; a
+    completion's CAS miss; a charged-back attempt refused; double-click
+    refund; `invalid_grant` disconnects and
     notifies; pause refuses the attempt.
   - *Routes*, unit-tier `route.test.ts` with services mocked.
   - *Integration*, only paths that make no outbound call: with no live
