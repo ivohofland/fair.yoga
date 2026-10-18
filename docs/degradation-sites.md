@@ -671,3 +671,58 @@ retries webhooks. A single connection that keeps failing with 401 or 403 has a
 revoked grant (`revokedAt` or `disconnectedAt` set); the teacher reconnects
 Mollie in settings. A repeating `status` of 422 or an unexpected shape means Mollie changed its API: fix the
 client, since the pay page will keep hiding Mollie until it does.
+
+### `PROCESSOR_DISCONNECTED`
+
+**What happened.** Mollie answered `invalid_grant` to the refresh token stored
+for `connectionId` (`getAccessToken`, `src/services/processor-token.ts`). The
+connection was revoked in the same transaction: both tokens nulled, `revokedAt`
+set, and the teacher got a `processor_disconnected` notification. Students see
+the teacher's other payment options until the teacher reconnects.
+
+**Where the bad value lives.** Mollie's side, usually: the teacher revoked the
+app in their Mollie dashboard, or the grant expired. Rarely ours: a refresh
+token overwritten by a bug.
+
+**Confirm.**
+
+```sql
+SELECT id, "teacherId", "connectedAt", "disconnectedAt", "revokeAfter", "revokedAt"
+  FROM "ProcessorConnection" WHERE id = '<connectionId>';
+```
+
+A single sample for a teacher who says they revoked access is expected. A
+cluster across many connections in a short window points at our app credentials
+(`MOLLIE_CLIENT_ID` / `MOLLIE_CLIENT_SECRET`), not at the teachers.
+
+**Correct.** Nothing for a single teacher: they reconnect Mollie in Settings →
+Profile. For a cluster, check the app credentials in the Mollie dashboard and
+the environment; the affected teachers reconnect once they are right.
+
+### `PROCESSOR_TOKEN_UNREADABLE`
+
+**What happened.** A sealed Mollie token for `connectionId` failed to open
+(`TokenCipherError`, `src/lib/processor-token-cipher.ts`). `getAccessToken`
+answered `unavailable` and left the connection as it was: the pay page hid
+Mollie's rows and webhooks were answered 503 to be retried.
+
+**Where the bad value lives.** In `ProcessorConnection.accessToken` or
+`refreshToken` for that row, or in the `PROCESSOR_TOKEN_KEY` environment
+variable: the key differs from the one the row was sealed with, or the bytes
+were damaged.
+
+**Confirm.**
+
+```sql
+SELECT id, "teacherId", length("accessToken") AS access_len,
+       length("refreshToken") AS refresh_len, "accessTokenExpiresAt", "connectedAt"
+  FROM "ProcessorConnection" WHERE id = '<connectionId>';
+```
+
+Samples across every connection mean the key is wrong. A sample for one
+connection means that row is damaged.
+
+**Correct.** For a wrong key, restore the key the rows were sealed with and
+restart; nothing in the database changes. For one damaged row, set
+`revokedAt`, `disconnectedAt` and null both tokens, then the teacher reconnects
+Mollie in Settings → Profile.
