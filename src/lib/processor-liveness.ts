@@ -43,3 +43,16 @@ export function takesMolliePayments(
 ): boolean {
   return livePayoutIdentity(row) !== null && row !== null && missingMollieScopes(row.scopes).length === 0;
 }
+
+/** The attempt column `canRefundThroughGrant` reads, as a Prisma select fragment. */
+export const ATTEMPT_GRANT_SELECT = { connection: { select: { revokedAt: true } } } as const;
+
+/**
+ * Whether fair.yoga can still refund an attempt through Mollie: the attempt
+ * still has its connection (an erased teacher's attempts have none) and that
+ * connection's grant is not revoked. Decision 17 holds only while this does
+ * (`docs/superpowers/specs/2026-10-18-mollie-connect-design.md`).
+ */
+export function canRefundThroughGrant(attempt: { connection: { revokedAt: Date | null } | null }): boolean {
+  return attempt.connection !== null && attempt.connection.revokedAt === null;
+}

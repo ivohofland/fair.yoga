@@ -3,6 +3,7 @@ import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { setLockTimeout } from '@/lib/db-locks';
 import { logDegraded } from '@/lib/degradation';
 import { log } from '@/lib/log';
+import { ATTEMPT_GRANT_SELECT, canRefundThroughGrant } from '@/lib/processor-liveness';
 import { isRefundStatus, refundEndedAtMollie } from '@/lib/processor-refund-status';
 import { MollieUnavailable, type MollieRefundView, type RefundAnswer } from '@/lib/mollie/client';
 import type { MollieDeps } from './mollie-deps';
@@ -32,6 +33,11 @@ const OUTCOME_OF: Record<RefundChoice, RefundOutcome> = { waive: 'waived', ask_a
 
 const ALREADY_REQUESTED: RefundRefusal = codedRefusal('REFUND_ALREADY_REQUESTED', 'A refund for this payment is already on its way.');
 
+const NOT_CONNECTED: RefundRefusal = codedRefusal(
+  'PROCESSOR_NOT_CONNECTED',
+  'Mollie is no longer connected, so this can’t be refunded here. Mark it unpaid or refund it in Mollie.',
+);
+
 /** The attempt columns the intent reads under the payment's lock. */
 const INTENT_ATTEMPT_SELECT = {
   id: true,
@@ -43,6 +49,7 @@ const INTENT_ATTEMPT_SELECT = {
   processorPaymentId: true,
   connectionId: true,
   testmode: true,
+  ...ATTEMPT_GRANT_SELECT,
   refunds: { select: { id: true, status: true, outcome: true, processorRefundId: true, requestedAt: true } },
   payment: {
     select: {
@@ -94,7 +101,9 @@ function refusedCopy(detail: string): string {
  *    attempt was made in.
  * 3. Mollie's answer. The intent is withdrawn (deleted by its id) only when
  *    no refund can exist at Mollie: no Mollie configuration, no usable token
- *    or a throw while getting one, or a refusal. A failure that leaves it
+ *    or a throw while getting one, or a refusal. A token lookup that answers
+ *    `disconnected` refuses `PROCESSOR_NOT_CONNECTED`, as step 1 does for an
+ *    attempt `canRefundThroughGrant` no longer holds for. A failure that leaves it
  *    unknown — `createRefund` throwing — is reconciled once against the
  *    refunds Mollie lists on the payment: one no row holds, for this amount,
  *    is adopted as this call's refund; with none the intent is withdrawn;
@@ -146,9 +155,7 @@ async function recordIntent(
     if (attempt.chargedBackAt !== null) {
       return { kind: 'refused', refusal: codedRefusal('REFUND_NOT_ALLOWED', 'The student’s bank already took this payment back.') };
     }
-    if (attempt.connectionId === null) {
-      return { kind: 'refused', refusal: codedRefusal('PROCESSOR_NOT_CONNECTED', 'Mollie is no longer connected.') };
-    }
+    if (attempt.connectionId === null || !canRefundThroughGrant(attempt)) return { kind: 'refused', refusal: NOT_CONNECTED };
     const settles = attempt.settledPayment && attempt.payment.status === 'paid';
     if (settles !== (input.choice !== null)) {
       return {
@@ -200,7 +207,7 @@ async function requestRefund(db: PrismaClient, deps: MollieDeps | null, intent: 
   }
   if (token.kind !== 'token') {
     await withdraw(db, intent);
-    return { kind: 'unavailable' };
+    return token.kind === 'disconnected' ? { kind: 'refused', refusal: NOT_CONNECTED } : { kind: 'unavailable' };
   }
 
   let answer: RefundAnswer;
@@ -253,7 +260,8 @@ async function reconcileStale(db: PrismaClient, deps: MollieDeps | null, intent:
     log.error({ attemptId: intent.attempt.id, refundId: intent.refundId, err }, 'a stale refund intent could not be checked: no token');
     return { kind: 'unavailable' };
   }
-  if (token.kind !== 'token') return { kind: 'unavailable' };
+  if (token.kind === 'disconnected') return { kind: 'refused', refusal: NOT_CONNECTED };
+  if (token.kind === 'unavailable') return { kind: 'unavailable' };
   const found = await unheldRefund(db, deps, token.accessToken, intent);
   switch (found.kind) {
     case 'found': {

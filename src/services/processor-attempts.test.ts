@@ -843,15 +843,48 @@ describe('syncAttempt', () => {
       expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
     });
 
-    it("made in Mollie's dashboard is ignored", async () => {
-      const { paymentId, attempt } = await settledAttempt();
-      const dashboard = reId();
-      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: dashboard, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }] }));
+    describe("made in Mollie's dashboard", () => {
+      const eur = (value: string) => ({ value, currency: 'EUR' });
 
-      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+      it('in full releases the attempt like a chargeback, leaving the payment paid, so Mark unpaid applies', async () => {
+        const info = vi.spyOn(log, 'info');
+        onTestFinished(() => info.mockRestore());
+        const { paymentId, attempt } = await settledAttempt();
+        const dashboard = reId();
+        fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: dashboard, status: 'refunded', amount: eur('10.00') }] }));
 
-      expect(await prisma.processorRefund.count({ where: { processorRefundId: dashboard } })).toBe(0);
-      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+        expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+
+        expect(await prisma.processorRefund.count({ where: { processorRefundId: dashboard } })).toBe(0);
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+        expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(false);
+        expect(info).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, refundIds: [dashboard] }), expect.any(String));
+        expect(await notes('payment_refunded', await classOf(paymentId))).toHaveLength(0);
+        expect((await reopenPayment(prisma, paymentId)).kind).toBe('applied');
+      });
+
+      it('in two parts that together cover the attempt releases it', async () => {
+        const { attempt } = await settledAttempt();
+        fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, {
+          refunds: [{ id: reId(), status: 'refunded', amount: eur('4.00') }, { id: reId(), status: 'refunded', amount: eur('6.00') }],
+        }));
+        await syncAttempt(prisma, deps, attempt.processorPaymentId);
+        expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(false);
+      });
+
+      it.each([
+        ['partial', [{ status: 'refunded', value: '4.00' }]],
+        ['still pending', [{ status: 'pending', value: '10.00' }]],
+        ['refunded in part, the rest pending', [{ status: 'refunded', value: '4.00' }, { status: 'processing', value: '6.00' }]],
+      ] as const)('%s changes nothing', async (_label, parts) => {
+        const { paymentId, attempt } = await settledAttempt();
+        fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, {
+          refunds: parts.map((p) => ({ id: reId(), status: p.status, amount: eur(p.value) })),
+        }));
+        expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+        expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(true);
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+      });
     });
 
     it('with no row while a fair.yoga refund awaits its Mollie id answers unavailable and writes nothing for it', async () => {

@@ -275,12 +275,17 @@ describe('PaymentChecklist', () => {
 
   describe('a payment Mollie settled (Decision 17)', () => {
     const settling = {
-      id: 'att-1', method: 'ideal', status: 'paid' as const, settledPayment: true, chargedBackAt: null, amount: 12, currency: 'EUR' as const, refunds: [],
+      id: 'att-1', method: 'ideal', status: 'paid' as const, settledPayment: true, chargedBackAt: null, grantHeld: true, amount: 12, currency: 'EUR' as const, refunds: [],
     };
 
     it('offers Refund on the paid row', () => {
       renderChecklist([{ paymentId: 'pay-1', studentName: 'Ana', status: 'paid', amount: 12, processorAttempts: [settling] }]);
       expect(screen.getByRole('button', { name: /^Refund iDEAL €12\.00 — Ana/ })).toBeInTheDocument();
+    });
+
+    it('offers no Refund once the settling attempt’s grant is gone', () => {
+      renderChecklist([{ paymentId: 'pay-1', studentName: 'Ana', status: 'paid', amount: 12, processorAttempts: [{ ...settling, grantHeld: false }] }]);
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
     });
 
     it('offers no Refund once the student’s bank took it back', () => {

@@ -27,6 +27,8 @@ describe('Mollie, without Mollie', () => {
   let pendingClassId = '';
   let settledPaymentId = '';
   let settledAttemptId = '';
+  let heldPaymentId = '';
+  let unheldPaymentId = '';
 
   beforeAll(async () => {
     const teacherEmail = `mollie-webhook-teacher-${suffix}@test.local`;
@@ -77,11 +79,33 @@ describe('Mollie, without Mollie', () => {
       },
     })).id;
 
+    // A grant not yet revoked: the connection takes no payments, but fair.yoga can still refund through it.
+    const sealed = new Uint8Array([1, 2, 3]);
+    const held = await prisma.processorConnection.create({
+      data: {
+        teacherId, processor: 'mollie', organizationId: 'org_hook', profileId: 'pfl_hook', scopes: [], testmode: true,
+        accessToken: sealed, refreshToken: sealed, accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+        disconnectedAt: new Date(), revokeAfter: new Date(Date.now() + 86_400_000),
+      },
+    });
+    ({ paymentId: heldPaymentId } = await paymentOn(3, 'paid'));
+    ({ paymentId: unheldPaymentId } = await paymentOn(4, 'paid'));
+    await prisma.processorPayment.createMany({
+      data: [
+        { paymentId: heldPaymentId, connectionId: held.id, processorPaymentId: `tr_hookh${compact}`, settledPayment: true },
+        { paymentId: unheldPaymentId, connectionId: null, processorPaymentId: `tr_hooku${compact}`, settledPayment: true },
+      ].map((row) => ({
+        ...row, profileId: 'pfl_hook', testmode: true, method: 'ideal', status: 'paid' as const, amount: 10, currency: 'EUR' as const, paidAt: new Date(),
+      })),
+    });
+
     // Warm the routes, so a first-compile delay is not read as the answer.
     await fetch(`${BASE_URL}/api/webhooks/mollie`, { method: 'POST' });
   });
 
   afterAll(async () => {
+    await prisma.processorPayment.deleteMany({ where: { connection: { teacherId } } });
+    await prisma.processorConnection.deleteMany({ where: { teacherId } });
     await prisma.student.deleteMany({ where: { id: studentId } });
     await prisma.calendarEntry.deleteMany({ where: { teacherId } });
     await prisma.teacherRoom.deleteMany({ where: { teacherId } });
@@ -209,12 +233,21 @@ describe('Mollie, without Mollie', () => {
     }
   });
 
-  it('POST /api/payments/[id]/unpaid refuses a payment Mollie settled: PAYMENT_SETTLED_BY_PROCESSOR', async () => {
-    const res = await fetch(`${BASE_URL}/api/payments/${settledPaymentId}/unpaid`, {
+  it('POST /api/payments/[id]/unpaid refuses a payment Mollie settled while its grant holds: PAYMENT_SETTLED_BY_PROCESSOR', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${heldPaymentId}/unpaid`, {
       method: 'POST',
       headers: cookie(teacherToken),
     });
     await expectRefusal(res, 'PAYMENT_SETTLED_BY_PROCESSOR');
-    expect((await prisma.payment.findUniqueOrThrow({ where: { id: settledPaymentId } })).status).toBe('paid');
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: heldPaymentId } })).status).toBe('paid');
+  });
+
+  it('POST /api/payments/[id]/unpaid reopens a payment Mollie settled once its attempt has no connection', async () => {
+    const res = await fetch(`${BASE_URL}/api/payments/${unheldPaymentId}/unpaid`, {
+      method: 'POST',
+      headers: cookie(teacherToken),
+    });
+    expect(res.status).toBe(200);
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: unheldPaymentId } })).status).toBe('pending');
   });
 });

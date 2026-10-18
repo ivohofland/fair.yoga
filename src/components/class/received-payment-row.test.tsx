@@ -84,7 +84,7 @@ describe('ReceivedPaymentRow', () => {
   describe('a payment Mollie took (Decision 17)', () => {
     function attempt(over: Partial<AttemptView> = {}): AttemptView {
       return {
-        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: true, chargedBackAt: null, amount: 14, currency: 'EUR', refunds: [],
+        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: true, chargedBackAt: null, grantHeld: true, amount: 14, currency: 'EUR', refunds: [],
         ...over,
       };
     }
@@ -101,6 +101,12 @@ describe('ReceivedPaymentRow', () => {
 
     it('whose settling attempt was charged back offers Mark unpaid and no Refund', () => {
       renderWith([attempt({ settledPayment: false, chargedBackAt: new Date('2026-06-14T10:00:00Z') })]);
+      expect(screen.getByRole('button', { name: /Mark unpaid/ })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
+    });
+
+    it('whose settling attempt’s grant is gone offers Mark unpaid and no Refund', () => {
+      renderWith([attempt({ grantHeld: false })]);
       expect(screen.getByRole('button', { name: /Mark unpaid/ })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
     });

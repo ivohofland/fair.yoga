@@ -100,12 +100,24 @@ the numbering here is this spec's.
     the record say unpaid while the money sits in the teacher's balance, and
     chase a student who paid. `reopenPayment` refuses (409
     `PAYMENT_SETTLED_BY_PROCESSOR`, "Mollie confirmed this payment. Refund it
-    instead.") while an attempt with `settledPayment` exists (a completing
-    refund's "ask again" leaves out only the attempt it refunded), and the teacher's
-    row offers **Refund** in its place. The exception is a chargeback: once
-    Mollie reports `amountChargedBack > 0` on the settling attempt, the attempt
-    records `chargedBackAt`, stops settling the payment, the teacher is told,
-    and "Mark unpaid" returns. A charged-back attempt cannot be refunded.
+    instead.") while an attempt with `settledPayment` exists that fair.yoga
+    can still refund through — its connection exists and its grant is not
+    revoked (`canRefundThroughGrant`, `src/lib/processor-liveness.ts`) — and
+    a completing refund's "ask again" leaves out only the attempt it
+    refunded; the teacher's row offers **Refund** in its place. Once the
+    settling attempt's grant is revoked, or its connection is gone with an
+    erased teacher, no refund can be made here: "Mark unpaid" returns, the
+    row offers no Refund, and a refund request answers 409
+    `PROCESSOR_NOT_CONNECTED` ("Mollie is no longer connected, so this can't
+    be refunded here. Mark it unpaid or refund it in Mollie."). Two events
+    release the settling attempt while its grant holds. A chargeback: once
+    Mollie reports `amountChargedBack > 0` on it, the attempt records
+    `chargedBackAt`, stops settling the payment, the teacher is told, and
+    "Mark unpaid" returns; a charged-back attempt cannot be refunded. And
+    refunds made in Mollie's own dashboard that together cover the attempt's
+    amount (§5): the attempt stops settling the payment, the payment stays
+    `paid`, and "Mark unpaid" returns; no notification type fits, so it is
+    logged at info. A partial dashboard refund changes nothing.
 
 ## The premise, as measured (`main` at `31498958`)
 
@@ -155,10 +167,11 @@ is what Mollie's server-side POST is.
   is Mollie's own set: `open`, `pending`, `authorized`, `paid`, `canceled`,
   `expired`, `failed`. `settledPayment` is true on at most one attempt per
   `Payment` (partial unique index `WHERE settled_payment`): the one whose
-  webhook moved the `Payment` to `paid`. While it is set, `reopenPayment`
-  refuses (Decision 17). It is cleared by a refund's outcome, in the
-  transaction that applies the outcome, and by a chargeback, which also
-  stamps `chargedBackAt` (§5); once cleared, a later settle cannot collide
+  webhook moved the `Payment` to `paid`. While it is set and the attempt's
+  grant holds, `reopenPayment` refuses (Decision 17). It is cleared by a
+  refund's outcome, in the transaction that applies the outcome, by a
+  chargeback, which also stamps `chargedBackAt`, and by dashboard refunds
+  that cover the attempt (§5); once cleared, a later settle cannot collide
   with the index. `currency` is a snapshot in the
   `docs/data-model.md` sense: what Mollie charged, which no later currency
   switch may relabel. `method` is a string, not the allowlist type, because
@@ -388,7 +401,7 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
 | `pending`/`authorized` | any | attempt status only |
 | `canceled`/`expired`/`failed` | any | attempt status only |
-| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund fair.yoga cannot apply yet is left unwritten and the sync answers 503, so Mollie retries: a newly `refunded` row with outcome `reopened` met by a sync that did not start with the link lock (the row changed between the fetch and the lock), or a Mollie refund id with no row while every one of this attempt's fair.yoga refunds still lacking its Mollie id is younger than two minutes (`ADOPT_AFTER_MS`: its refund request may still store the id). A refund id with no row is adopted into the oldest of this attempt's fair.yoga refunds that lacks a Mollie id, is at least two minutes old and has the same amount and currency: the row takes the Mollie id and is then applied like any other row, and the adoption is logged. A refund id with no row that neither waits nor is adopted was made in Mollie's own dashboard; it is ignored and not created here. |
+| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund fair.yoga cannot apply yet is left unwritten and the sync answers 503, so Mollie retries: a newly `refunded` row with outcome `reopened` met by a sync that did not start with the link lock (the row changed between the fetch and the lock), or a Mollie refund id with no row while every one of this attempt's fair.yoga refunds still lacking its Mollie id is younger than two minutes (`ADOPT_AFTER_MS`: its refund request may still store the id). A refund id with no row is adopted into the oldest of this attempt's fair.yoga refunds that lacks a Mollie id, is at least two minutes old and has the same amount and currency: the row takes the Mollie id and is then applied like any other row, and the adoption is logged. A refund id with no row that neither waits nor is adopted was made in Mollie's own dashboard: no row is created for it, and when such refunds reported `refunded` add up to the attempt's whole amount (in its currency), the attempt's `settledPayment` is cleared, as a chargeback clears it, with the `Payment` left `paid` and the release logged at info, so "Mark unpaid" applies again (Decision 17). A partial dashboard refund changes nothing. |
 
 Every branch answers 200, except that a failure to reach Mollie or the
 database, or a refund fair.yoga cannot apply yet, answers 503, so Mollie
@@ -403,7 +416,9 @@ not fit the attempt answers 400. Order, chosen because the money is the
 irreversible part:
 
 1. In a transaction: lock the payment; refuse (409) an attempt not `paid` or
-   one charged back (`chargedBackAt`; the bank already took the money back);
+   one charged back (`chargedBackAt`; the bank already took the money back),
+   and refuse 409 `PROCESSOR_NOT_CONNECTED` one fair.yoga can no longer
+   refund through (`canRefundThroughGrant`, Decision 17);
    answer an attempt whose refund is already `refunded` 200 `unchanged`;
    insert `ProcessorRefund` as `queued` with no Mollie id yet (the partial
    unique index stops a double click here). An earlier refund of the attempt
@@ -417,7 +432,10 @@ irreversible part:
 3. The refund row is withdrawn (deleted) only when no refund can exist at
    Mollie: Mollie is not configured, no usable token can be had (a throw
    while getting one included), or Mollie refuses (balance and similar map to
-   a registered code with copy). When the request's outcome is unknown — it
+   a registered code with copy). A token lookup that answers `disconnected`
+   (the grant is revoked, or Mollie refused the refresh token) answers 409
+   `PROCESSOR_NOT_CONNECTED`, as step 1 does; any other failure to get a
+   token answers 503. When the request's outcome is unknown — it
    throws, times out, or answers 5xx or an unreadable body — the payment's
    refunds are fetched from Mollie once: a refund no row holds, with the
    attempt's amount and currency, is adopted as this request's (one not
@@ -442,7 +460,7 @@ irreversible part:
    the teacher is told and can refund again.
 
 On a payment an attempt settled, the teacher's row shows **Refund** where
-"Mark unpaid" would be (Decision 17). A chargeback is not a refund and is not
+"Mark unpaid" would be, while the attempt's grant holds (Decision 17). A chargeback is not a refund and is not
 made here: §5 records it on the attempt, the teacher is told, and the row
 then offers "Mark unpaid" and no Refund for that attempt. A partial
 chargeback counts as a chargeback: any `amountChargedBack` above zero.

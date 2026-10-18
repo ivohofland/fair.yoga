@@ -368,7 +368,7 @@ describe('refundAttempt', () => {
       expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
     });
 
-    it('answers unavailable and deletes the row when the connection was revoked', async () => {
+    it('refuses PROCESSOR_NOT_CONNECTED, recording no row, when the connection was revoked', async () => {
       const c = await settledAttempt();
       const now = new Date();
       await prisma.processorConnection.update({
@@ -376,7 +376,23 @@ describe('refundAttempt', () => {
         data: { disconnectedAt: now, revokeAfter: now, revokedAt: now, accessToken: null, refreshToken: null, accessTokenExpiresAt: null },
       });
 
-      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' });
+
+      if (result.kind !== 'refused') throw new Error(`expected a refusal, got ${JSON.stringify(result)}`);
+      expect(result.refusal).toMatchObject({
+        code: 'PROCESSOR_NOT_CONNECTED',
+        message: 'Mollie is no longer connected, so this can’t be refunded here. Mark it unpaid or refund it in Mollie.',
+      });
+      expect(fake.createRefund).not.toHaveBeenCalled();
+      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
+    });
+
+    it('refuses PROCESSOR_NOT_CONNECTED and deletes the row when Mollie refuses the refresh token', async () => {
+      const c = await settledAttempt();
+      await prisma.processorConnection.update({ where: { id: connectionId }, data: { accessTokenExpiresAt: new Date(Date.now() + 1_000) } });
+      fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+
+      expect(refusalCode(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' }))).toBe('PROCESSOR_NOT_CONNECTED');
       expect(fake.createRefund).not.toHaveBeenCalled();
       expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
     });

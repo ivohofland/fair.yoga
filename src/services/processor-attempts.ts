@@ -454,7 +454,9 @@ const SYNC_ATTEMPT_SELECT = {
  *
  * A refund no row holds is adopted into this attempt's refund intent still
  * awaiting its Mollie id when `adoptionFor` says so, and then applied like
- * any other row; one it says to `ignore` was made in Mollie's own dashboard.
+ * any other row; one it says to `ignore` was made in Mollie's own dashboard,
+ * and such refunds release the attempt once they cover it
+ * (`releaseAfterDashboardRefunds`).
  *
  * The Mollie call runs before the transaction opens. The transaction locks
  * the payment's row (`FOR UPDATE`), and before it the `TeacherStudent` link
@@ -604,6 +606,7 @@ export async function syncAttempt(
     }
 
     const deferred: string[] = [];
+    const dashboard: { id: string; value: Prisma.Decimal }[] = [];
     for (const refund of refunds) {
       const held = await tx.processorRefund.findUnique({
         where: { processorRefundId: refund.id },
@@ -621,7 +624,12 @@ export async function syncAttempt(
           select: { id: true, attemptId: true, status: true, outcome: true, amount: true, requestedAt: true },
         });
         const adoption = adoptionFor(awaiting, refund, current.currency, now);
-        if (adoption.kind === 'ignore') continue;
+        if (adoption.kind === 'ignore') {
+          if (refund.status === 'refunded' && refund.amount.currency === current.currency) {
+            dashboard.push({ id: refund.id, value: new Prisma.Decimal(refund.amount.value) });
+          }
+          continue;
+        }
         if (adoption.kind === 'defer') {
           deferred.push(refund.id);
           continue;
@@ -649,6 +657,7 @@ export async function syncAttempt(
       if (step.complete) await completeRefund(tx, { paymentId: attempt.paymentId, attemptId: attempt.id, outcome: row.outcome, now });
       if (step.notifyFailed) await notifyRefundFailed(tx, { teacherId, classId: registration.classId });
     }
+    await releaseAfterDashboardRefunds(tx, { attemptId: attempt.id, amount: current.amount, dashboard });
     return { result, deferred };
   });
 
@@ -660,6 +669,29 @@ export async function syncAttempt(
     return 'unavailable';
   }
   return outcome.result;
+}
+
+/**
+ * Releases an attempt that still settles its payment once refunds made in
+ * Mollie's own dashboard — `refunded`, held by no row, adopted into none —
+ * add up to its whole amount, the way a chargeback releases it: the payment
+ * stays `paid` and "Mark unpaid" applies again. No `NotificationType` fits a
+ * refund the teacher made themselves, so it is logged instead. A partial
+ * dashboard refund releases nothing.
+ */
+async function releaseAfterDashboardRefunds(
+  tx: Prisma.TransactionClient,
+  { attemptId, amount, dashboard }: { attemptId: string; amount: Prisma.Decimal; dashboard: readonly { id: string; value: Prisma.Decimal }[] },
+): Promise<void> {
+  const total = dashboard.reduce((sum, r) => sum.plus(r.value), new Prisma.Decimal(0));
+  if (dashboard.length === 0 || total.lessThan(amount)) return;
+  const { count } = await tx.processorPayment.updateMany({ where: { id: attemptId, settledPayment: true }, data: { settledPayment: false } });
+  if (count === 1) {
+    log.info(
+      { attemptId, refundIds: dashboard.map((r) => r.id), refunded: total.toFixed(2) },
+      'refunds made in Mollie’s dashboard cover the attempt; it no longer settles its payment',
+    );
+  }
 }
 
 function completes(decision: RefundSyncDecision): boolean {
