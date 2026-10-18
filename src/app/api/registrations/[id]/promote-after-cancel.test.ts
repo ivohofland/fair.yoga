@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
+import { pgPoolTimeout } from '../../../../../tests/adapter-errors';
 import { SpotFreedError } from '@/services/waitlist';
 
 /**
@@ -105,12 +106,9 @@ function transientCause(): Error {
   });
 }
 
-/** A `pool_exhausted` failure (`P2024`), which logs at `error` despite being transient. */
+/** A `pool_exhausted` failure (pg-pool's wait timeout), which logs at `error` despite being transient. */
 function poolExhaustedCause(): Error {
-  return new Prisma.PrismaClientKnownRequestError('pool timeout', {
-    code: 'P2024',
-    clientVersion: Prisma.prismaVersion.client,
-  });
+  return pgPoolTimeout();
 }
 
 function registrationRow() {

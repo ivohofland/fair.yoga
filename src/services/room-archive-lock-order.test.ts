@@ -41,6 +41,7 @@ import { setTeacherRoomArchived } from './room-archive';
 import { pauseOrResumeTemplate } from './class-template-lifecycle';
 import { lockClassRow, setLockTimeout } from '@/lib/db-locks';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 const prisma = createPrismaClient();
 // `ral-` distinguishes this file's rows from `room-archive.test.ts`'s (`ra-`)
@@ -145,9 +146,8 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
 
     await withHeldChild(tpl.id, async () => {
       const startedAt = Date.now();
-      await expect(
-        setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived'),
-      ).rejects.toThrow(/55P03|lock timeout/i);
+      const err = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived').then(() => null, (e: unknown) => e);
+      expect(transientDbFailure(err)?.kind, String(err)).toBe('lock_timeout');
       expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_800);
     });
 
@@ -210,7 +210,8 @@ describe('setTeacherRoomArchived — lock discipline (issue 272)', () => {
           }),
         ).resolves.toBe('room was free');
 
-        await expect(archiving).rejects.toThrow(/55P03|lock timeout/i);
+        const err = await archiving.then(() => null, (e: unknown) => e);
+        expect(transientDbFailure(err)?.kind, String(err)).toBe('lock_timeout');
       });
     } finally {
       await prober.$disconnect();
@@ -400,9 +401,12 @@ describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () =
     });
 
     const results = await Promise.allSettled([cancelling, competing]);
-    const errs = results.flatMap((r) => (r.status === 'rejected' ? [String(r.reason)] : []));
+    const errs = results.flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
     // Neither a deadlock nor a lock timeout: one waits for the other.
-    expect(errs.join('\n')).not.toMatch(/40P01|55P03/);
+    for (const err of errs) {
+      expect(transientDbFailure(err)?.kind, String(err)).not.toBe('deadlock');
+      expect(transientDbFailure(err)?.kind, String(err)).not.toBe('lock_timeout');
+    }
   });
 
   // THE MUTATION, as a test rather than a manual step: this is what a fifth
@@ -432,7 +436,8 @@ describe('CalendarEntry → Class cascade — lock discipline (issue 339)', () =
         });
       });
 
-      await expect(backwards).rejects.toThrow(/40P01|55P03/);
+      const err = await backwards.then(() => null, (e: unknown) => e);
+      expect(transientDbFailure(err)?.kind, String(err)).toBe('lock_timeout');
     });
 
     const entryAfter = await prisma.calendarEntry.findUniqueOrThrow({ where: { id: entryId } });

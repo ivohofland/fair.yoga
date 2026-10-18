@@ -34,8 +34,8 @@ import {
  * `findUniqueOrThrow` if the profile is already gone, `P2003` from a foreign
  * key, a `TypeError` from a bug — and telling that caller to "press Delete
  * again" sends them into a loop that cannot terminate, while making the real
- * failure invisible to them. `P2024` is the sharpest case: it means the
- * connection pool is exhausted, so an immediate retry actively makes the
+ * failure invisible to them. Pool exhaustion (`pool_exhausted`) is the
+ * sharpest case: it means the connection pool is drained, so an immediate retry actively makes the
  * outage worse, which is why the retryable message asks for a moment first.
  *
  * `half` decides what the message may claim about state, and the two halves

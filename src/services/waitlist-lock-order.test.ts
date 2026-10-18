@@ -28,6 +28,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import * as dbLocks from '@/lib/db-locks';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
@@ -167,7 +168,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
    *
    * `outcome.ok === false` is what distinguishes "gave up at 2s" from "waited
    * the holder out", and it is the only thing that can: waiting the holder out
-   * does not fail slowly, it SUCCEEDS at 3.5s. `/55P03/` then names the
+   * does not fail slowly, it SUCCEEDS at 3.5s. The `lock_timeout` kind names the
    * mechanism as Postgres's `lock_timeout` rather than some other refusal, and
    * `waited > 1_000` excludes an instant failure that never reached the lock.
    *
@@ -178,7 +179,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
    * `toBeLessThan(3_400)`. It was not dead weight for every value, though: a
    * `lock_timeout` configured between 3.4s and 3.5s — say 3.45s — still sits
    * below the 3.5s hold, so the call still raises `55P03` and `ok === false`
-   * and `/55P03/` both stay green while `waited` lands past the 3_400 ceiling.
+   * and the `lock_timeout` kind both stay green while `waited` lands past the 3_400 ceiling.
    * That was its one sliver of unique coverage. Everywhere else it was
    * redundant with the other two assertions: at a 3.0s or 3.3s bound the call
    * raises `55P03` and passes the ceiling anyway; at 3.6s it acquires when the
@@ -226,7 +227,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     const startedAt = Date.now();
     const outcome = await addToWaitlist(prisma, lockedClassId, studentIds[0]!).then(
       () => ({ ok: true as const }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
+      (err: unknown) => ({ ok: false as const, err: String(err), kind: transientDbFailure(err)?.kind }),
     );
     const waited = Date.now() - startedAt;
 
@@ -234,7 +235,7 @@ describe('addToWaitlist + removeFromWaitlist (DB)', () => {
     await holderClient.$disconnect();
 
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+    if (!outcome.ok) expect(outcome.kind, outcome.err).toBe('lock_timeout');
     expect(waited).toBeGreaterThan(1_000);
 
     await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
@@ -286,7 +287,7 @@ describe('promoteNext (DB)', () => {
    *
    * The 3.5s hold sits above the 2s bound and below the 5s budget, so without
    * the bound this call acquires at 3.5s and succeeds. `outcome.ok === false`
-   * is therefore the discriminator, `/55P03/` names the mechanism, and
+   * is therefore the discriminator, the `lock_timeout` kind names the mechanism, and
    * `waited > 1_000` excludes an instant unrelated failure — see the sibling
    * guard in `addToWaitlist + removeFromWaitlist (DB)` above for why there is
    * no upper bound on `waited`, and for why the ceiling that used to be here
@@ -333,7 +334,7 @@ describe('promoteNext (DB)', () => {
       const startedAt = Date.now();
       const outcome = await promoteNext(prisma, lockedClassId).then(
         () => ({ ok: true as const }),
-        (err: unknown) => ({ ok: false as const, err: String(err) }),
+        (err: unknown) => ({ ok: false as const, err: String(err), kind: transientDbFailure(err)?.kind }),
       );
       const waited = Date.now() - startedAt;
 
@@ -341,7 +342,7 @@ describe('promoteNext (DB)', () => {
       await holderClient.$disconnect();
 
       expect(outcome.ok).toBe(false);
-      if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+      if (!outcome.ok) expect(outcome.kind, outcome.err).toBe('lock_timeout');
       expect(waited).toBeGreaterThan(1_000);
     } finally {
       await prisma.waitlistEntry.deleteMany({ where: { classId: lockedClassId } });
@@ -449,7 +450,7 @@ describe('claimSpot (DB)', () => {
     const startedAt = Date.now();
     const outcome = await claimSpot(prisma, classId, studentIds[0]!, IN_CLAIM_WINDOW).then(
       () => ({ ok: true as const }),
-      (err: unknown) => ({ ok: false as const, err: String(err) }),
+      (err: unknown) => ({ ok: false as const, err: String(err), kind: transientDbFailure(err)?.kind }),
     );
     const waited = Date.now() - startedAt;
 
@@ -457,7 +458,7 @@ describe('claimSpot (DB)', () => {
     await holderClient.$disconnect();
 
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.err).toMatch(/55P03/);
+    if (!outcome.ok) expect(outcome.kind, outcome.err).toBe('lock_timeout');
     expect(waited).toBeGreaterThan(1_000);
   }, 20_000);
 });
@@ -642,6 +643,7 @@ describe('handleSpotFreed (DB)', () => {
       (err: unknown) => ({
         ok: false as const,
         err: err instanceof Error ? String(err.cause) : String(err),
+        kind: transientDbFailure(err instanceof Error ? err.cause : err)?.kind,
         window: err instanceof SpotFreedError ? err.window : null,
       }),
     );
@@ -650,7 +652,7 @@ describe('handleSpotFreed (DB)', () => {
     // class, and returns `{ action: 'none' }` — `ok: true`, and this fails.
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
-      expect(outcome.err).toMatch(/55P03|lock timeout/i);
+      expect(outcome.kind, outcome.err).toBe('lock_timeout');
       // Pins the BROADCAST branch specifically — see the comment above.
       expect(outcome.window).toBe('first_come_first_claimed');
     }

@@ -5,6 +5,7 @@ import type { SessionUser } from '@/lib/types';
 import { log } from '@/lib/log';
 import { ErasureLockSetError } from '@/services/gdpr';
 import { expectUnchanged } from '../../../../tests/api-assertions';
+import { pgPoolTimeout } from '../../../../tests/adapter-errors';
 
 /**
  * #213 was this same race answering a 500 at `error` — a real defect, not
@@ -109,7 +110,7 @@ describe('DELETE /api/account — an already-erased half logs at info, not warn 
  * Not reachable through `tests/integration/account-api.test.ts`: that tier
  * drives the app over HTTP in a separate `next dev` process, so it can inject
  * a real `55P03` by holding a row (as it does for `ERASURE_BUSY`) but cannot
- * inject a `P2024`/`P2028` into that process's Prisma client. `@/services/gdpr`
+ * inject a pool timeout or a `P2028` into that process's Prisma client. `@/services/gdpr`
  * is mocked here instead, the same seam the already-erased suite above uses,
  * so both transient kinds are reachable directly.
  */
@@ -120,16 +121,13 @@ describe('DELETE /api/account — a transient failure logs at its kind\'s level'
   });
 
   const KINDS = [
-    { kind: 'tx_budget' as const, level: 'warn' as const, code: 'P2028' as const },
-    { kind: 'pool_exhausted' as const, level: 'error' as const, code: 'P2024' as const },
+    { kind: 'tx_budget' as const, level: 'warn' as const, make: () => new Prisma.PrismaClientKnownRequestError('transient', { code: 'P2028', clientVersion: Prisma.prismaVersion.client }) },
+    { kind: 'pool_exhausted' as const, level: 'error' as const, make: pgPoolTimeout },
   ];
 
-  it.each(KINDS)('logs the student half at $level for a $kind failure', async ({ kind, level, code }) => {
+  it.each(KINDS)('logs the student half at $level for a $kind failure', async ({ kind, level, make }) => {
     session = STUDENT_SESSION;
-    const failure = new Prisma.PrismaClientKnownRequestError('transient', {
-      code,
-      clientVersion: Prisma.prismaVersion.client,
-    });
+    const failure = make();
     deleteStudentAccount.mockRejectedValueOnce(failure);
 
     const spy = vi.spyOn(log, level).mockImplementation(() => log);
@@ -155,12 +153,9 @@ describe('DELETE /api/account — a transient failure logs at its kind\'s level'
     }
   });
 
-  it.each(KINDS)('logs the teacher half at $level for a $kind failure', async ({ kind, level, code }) => {
+  it.each(KINDS)('logs the teacher half at $level for a $kind failure', async ({ kind, level, make }) => {
     session = TEACHER_SESSION;
-    const failure = new Prisma.PrismaClientKnownRequestError('transient', {
-      code,
-      clientVersion: Prisma.prismaVersion.client,
-    });
+    const failure = make();
     deleteTeacherAccount.mockRejectedValueOnce(failure);
 
     const spy = vi.spyOn(log, level).mockImplementation(() => log);

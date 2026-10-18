@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
+import { driverAdapterError, pgCause, pgPoolTimeout } from '../../../../../tests/adapter-errors';
 
 /**
  * The STATUS CONTRACT for this route, and nothing else.
@@ -83,9 +84,7 @@ interface Body {
 
 /** A lock timeout, which `classifyApiError` classifies as transient (503). */
 function transientError(): Error {
-  return new Error(
-    'canceling statement due to lock timeout\ncode: "55P03"\nseverity: "ERROR"',
-  );
+  return driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
 }
 
 beforeEach(() => {
@@ -318,10 +317,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     try {
       cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
       reapClosedWaitlistEntries.mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('pool timeout', {
-          code: 'P2024',
-          clientVersion: Prisma.prismaVersion.client,
-        }),
+        pgPoolTimeout(),
       );
 
       await POST(post());

@@ -1229,20 +1229,21 @@ given a predicate that lets two live rules share an overlapping window, this
 exposure reopens for whichever pairing of template-driven writers is live.
 
 **A slot-key deadlock reaches the client as a 503, not a 500.**
-`classifyApiError` groups `40P01` with `55P03`/`40001`/the matching Prisma
+`classifyApiError` groups `40P01` with `55P03`/`40001`/the transient Prisma
 codes under "lost a contention race, not a bad request" (`isTransientDbError`,
 #174, checked after `terminalViolationOf`'s `23514` but before
 `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
 trusted (#196): two real `updateClass` writes racing over
 `Class_teacher_slot_unique` with no synchronisation, throwaway database, hit
-on attempt 5 of a 150-attempt budget. The error was a
-`PrismaClientUnknownRequestError` with no `.code` property and
-`code: "40P01"` embedded in its message — the exact shape
-`isTransientDbError` matches — and `classifyApiError` answered 503, "The
-system was busy … Please try again". Pinned at `src/lib/api-errors.test.ts`
-("maps the real Class_teacher_slot_unique deadlock … to a 503, not a 500"),
-mutation-proven against the branch (commented out: that test and 6 others in
-the file flip to 500).
+on attempt 5 of a 150-attempt budget, and `classifyApiError` answered 503,
+"The system was busy … Please try again". `updateClass`'s write is a model
+call, so a `40P01` from it is a typed `DriverAdapterError` whose `cause`
+carries `originalCode: '40P01'`, and `transientDbFailure` reads the SQLSTATE
+there (`docs/technical-architecture.md`, "Database errors"). Both shapes of a
+deadlock, typed and raw, are produced against the real database in
+`src/lib/db-transient-shapes.test.ts`; the classification is pinned at
+`src/lib/api-errors.test.ts` ("maps a slot-key deadlock (a model write's typed
+40P01) to a 503, not a 500").
 
 No code path in `src/` can raise the `40001` in that group (typed: `P2034`):
 the one transaction there not at Read Committed is `getPlatformCounts`'s

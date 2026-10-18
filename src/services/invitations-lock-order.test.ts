@@ -16,6 +16,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 /**
  * Concurrency invariants for the table pairs the describes below name, each
@@ -293,7 +294,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     const results = await Promise.allSettled([a, b]);
     const rejections = results.filter((r) => r.status === 'rejected');
     expect(rejections).toHaveLength(1);
-    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+    expect(transientDbFailure((rejections[0] as PromiseRejectedResult).reason)?.kind).toBe('deadlock');
   });
 
   /**
@@ -406,7 +407,7 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
     const rejections = results.filter((r) => r.status === 'rejected');
 
     expect(rejections).toHaveLength(1);
-    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+    expect(transientDbFailure((rejections[0] as PromiseRejectedResult).reason)?.kind).toBe('deadlock');
   }, 30_000);
 
   /**
@@ -978,7 +979,7 @@ describe('StudentPrivacy and TeacherStudent take one lock order (#174 task 7)', 
     const results = await Promise.allSettled([a, b]);
     const rejections = results.filter((r) => r.status === 'rejected');
     expect(rejections).toHaveLength(1);
-    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+    expect(transientDbFailure((rejections[0] as PromiseRejectedResult).reason)?.kind).toBe('deadlock');
   });
 
   /**
@@ -1419,7 +1420,7 @@ describe('Invitation and TeacherBlock take one lock order (#522)', () => {
 
     expect(booking.hook.fired).toBe(true);
     expect(rejections).toHaveLength(1);
-    expect(String((rejections[0] as PromiseRejectedResult).reason)).toMatch(/40P01|deadlock/i);
+    expect(transientDbFailure((rejections[0] as PromiseRejectedResult).reason)?.kind).toBe('deadlock');
   }, 30_000);
 });
 

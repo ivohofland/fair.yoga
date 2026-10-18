@@ -23,6 +23,7 @@ import {
   updateClassTemplate,
 } from './class-template-lifecycle';
 import { createClassFixture, createStudioClassFixture, wallSlotAt } from '../../tests/class-fixtures';
+import { driverAdapterError, pgCause } from '../../tests/adapter-errors';
 import { anyBlocked, countSkipReasons, type SkippedSlot } from '@/lib/generation';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -1461,10 +1462,7 @@ describe('generateClassInstances (per-template isolation)', () => {
   function contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set()) {
     const created: string[] = [];
     const failure = new Error('genuine failure');
-    const lockTimeoutError = new Prisma.PrismaClientUnknownRequestError(
-      'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
-      { clientVersion: 'test' },
-    );
+    const lockTimeoutError = driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
     const stub = {
       classTemplate: {
         findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1')],

@@ -15,6 +15,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
+import { driverAdapterError, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -2776,7 +2777,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
             async findUnique({ args, query }) {
               const where = args.where as { id?: string } | undefined;
               if (where?.id !== fixture.classId || !('include' in args)) return query(args);
-              throw new Error('injected: handleSpotFreed read failed (code: "55P03")');
+              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
         },
@@ -2844,7 +2845,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
               if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
                 return query(args);
               }
-              throw new Error('injected: broadcast write failed (code: "55P03")');
+              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
         },
@@ -2914,7 +2915,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
       // runs its own count read. And if that reasoning were ever wrong —
       // this match reaching a count inside `handleSpotFreed`'s own
       // transaction instead of this one — the collision would not pass
-      // silently: that read carries no `(code: "55P03")` to make it
+      // silently: that read's injected error carries no SQLSTATE to make it
       // transient, so the loop below would route to `log.error` instead of
       // `log.warn`, and `warn.mock.calls.find(...)` would come back
       // `undefined` against a real payload. This test fails loudly on that,
@@ -2927,7 +2928,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
               if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
                 return query(args);
               }
-              throw new Error('injected: broadcast write failed (code: "55P03")');
+              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
           waitlistEntry: {
@@ -2963,9 +2964,9 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
   /**
    * The other kind at this site: `pool_exhausted` is transient too, but its own
    * level in `TRANSIENT_KIND_LEVEL` (`lib/api-errors.ts`) is `error`, not
-   * `warn`. Injected as a real `P2024` rather than a `55P03`-shaped message, so
-   * the classifier's own code path (not just its SQLSTATE-in-message path) is
-   * exercised at this site.
+   * `warn`. Injected as pg-pool's wait timeout rather than a `55P03`, so the
+   * classifier's pool-timeout path (not just its SQLSTATE path) is exercised
+   * at this site.
    */
   it('names the broadcast branch at error level for a pool_exhausted failure after erasure', async () => {
     const fixture = await makeStudentWithFreedSpot();
@@ -2981,10 +2982,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
               if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
                 return query(args);
               }
-              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-                code: 'P2024',
-                clientVersion: Prisma.prismaVersion.client,
-              });
+              throw pgPoolTimeout();
             },
           },
         },

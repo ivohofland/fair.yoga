@@ -11,6 +11,7 @@ import { lockClassRowsOrdered, lockLiveStudent, lockStudentForErasure } from './
 import { createClassFixture } from '../../tests/class-fixtures';
 import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from './api-errors';
 
 const prisma = createPrismaClient();
 
@@ -522,8 +523,8 @@ describe('lockClassRowsOrdered takes multiple Class rows in one order', () => {
     ] as const) {
       if (settled.status === 'rejected') {
         const message = String(settled.reason);
-        expect(`${label}: ${message}`).not.toMatch(/40P01|deadlock detected/);
-        expect(`${label}: ${message}`).not.toMatch(/55P03|lock timeout/);
+        expect(transientDbFailure(settled.reason)?.kind, `${label}: ${message}`).not.toBe('deadlock');
+        expect(transientDbFailure(settled.reason)?.kind, `${label}: ${message}`).not.toBe('lock_timeout');
         throw new Error(`${label} rejected unexpectedly: ${message}`);
       }
     }

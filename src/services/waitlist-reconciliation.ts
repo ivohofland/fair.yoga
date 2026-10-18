@@ -490,7 +490,7 @@ async function reconcileOne(
   // invalid stored timezone and degrades to UTC (#145) rather than
   // raising. So this is a scope kept deliberately wider than its current need,
   // not a live catch: a database round-trip added ABOVE the `try` would let a
-  // `P2024` pool timeout escape the loop, abandon every class queued behind
+  // pool exhaustion (`pool_exhausted`) escape the loop, abandon every class queued behind
   // this one, and record nothing about which class failed. Drawing the
   // boundary at the top of the body makes that unreachable by construction
   // rather than by the current body happening to be infallible.

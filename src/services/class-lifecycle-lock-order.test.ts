@@ -55,6 +55,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { completeClass, transitionClass } from './class-lifecycle';
 import { createClassFixture, slotDate } from '../../tests/class-fixtures';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 const prisma = createPrismaClient();
 // PREFIXED, not just timestamped — the convention
@@ -310,7 +311,8 @@ describe('the Class row lock under real contention (DB)', () => {
 
     try {
       const startedAt = Date.now();
-      await expect(transitionClass(prisma, cls.id, 'in_progress')).rejects.toThrow(/55P03|lock timeout/i);
+      const err = await transitionClass(prisma, cls.id, 'in_progress').then(() => null, (e: unknown) => e);
+      expect(transientDbFailure(err)?.kind, String(err)).toBe('lock_timeout');
       const waited = Date.now() - startedAt;
 
       // Lower bound proves it waited rather than failing instantly. The 2s

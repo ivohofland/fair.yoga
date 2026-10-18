@@ -27,7 +27,7 @@ import {
   archiveOrUnarchiveTemplate,
   pauseOrResumeTemplate,
 } from './class-template-lifecycle';
-import { isTransientDbError } from '@/lib/api-errors';
+import { isTransientDbError, transientDbFailure } from '@/lib/api-errors';
 import { setLockTimeout } from '@/lib/db-locks';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
@@ -525,7 +525,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       // hit its own lock_timeout, and so never reversed anything.
       expect(flipFailure).toHaveLength(1);
       expect(isTransientDbError(flipFailure[0])).toBe(true);
-      expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
+      expect(transientDbFailure(flipFailure[0])?.kind, String(flipFailure[0])).toBe('lock_timeout');
 
       // With nothing reversed the CAS matches and the archive completes.
       expect(result).toMatchObject({ ok: true, action: 'archived' });
@@ -759,7 +759,7 @@ describe('pauseOrResumeTemplate (DB)', () => {
     // timed out, and so never flipped the CAS's predicate out from under it.
     expect(flipFailure).toHaveLength(1);
     expect(isTransientDbError(flipFailure[0])).toBe(true);
-    expect(String(flipFailure[0])).toMatch(/55P03|lock timeout/);
+    expect(transientDbFailure(flipFailure[0])?.kind, String(flipFailure[0])).toBe('lock_timeout');
 
     // With nothing pre-empted, the resume's CAS matches the paused row and the
     // resume completes — generating the class window instead of `busy`.

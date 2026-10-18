@@ -29,6 +29,18 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
   });
 }
 
+const LOCK_TIMEOUT_MESSAGE = 'canceling statement due to lock timeout';
+
+/** A Postgres error on a typed call's shape: a `DriverAdapterError`. */
+function typedPg(sqlState: string, message: string): Error {
+  return driverAdapterError(pgCause(sqlState, message));
+}
+
+/** A Postgres error on a raw call's shape: a Known `P2010` with the adapter's cause in `meta`. */
+function rawPg(sqlState: string, message: string): Prisma.PrismaClientKnownRequestError {
+  return knownWithAdapterCause('P2010', pgCause(sqlState, message));
+}
+
 
 /**
  * The declaration that puts a trigger function under the contract below, in
@@ -650,43 +662,19 @@ describe('classifyApiError', () => {
   });
 
   /**
-   * The two shapes a `lock_timeout` actually arrives in, both transcribed
-   * from real errors this project's own database produced (a model write and
-   * a `$queryRaw ... FOR UPDATE` blocked past `SET LOCAL lock_timeout =
-   * '300ms'`), not invented. They differ in error CLASS, in whether `.code`
-   * is set, and in how the SQLSTATE is spelled — a matcher written against
-   * either one alone misses the other, and `lockClassRow` emits both from the
-   * same helper (the raw `FOR UPDATE`, then every model write after it in the
-   * transaction it bounded).
+   * The two shapes a transient SQLSTATE arrives in under the pg driver
+   * adapter: a typed call's `DriverAdapterError` and a raw call's `P2010`.
+   * `lockClassRow` emits both from the same helper (the raw `FOR UPDATE`,
+   * then every model write after it in the transaction it bounded). Each is
+   * produced against the real database in `db-transient-shapes.test.ts`; the
+   * fabrications here are held to those by the fidelity cases there and in
+   * `pg-error.test.ts`.
    */
   it.each<[string, Error, TransientKind, 'warn' | 'error']>([
-    [
-      'a model write (PrismaClientUnknownRequestError, code: "55P03")',
-      new Prisma.PrismaClientUnknownRequestError(
-        `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-        { clientVersion: 'test' },
-      ),
-      'lock_timeout',
-      'warn',
-    ],
-    [
-      'a raw FOR UPDATE (PrismaClientKnownRequestError P2010, Code: `55P03`)',
-      new Prisma.PrismaClientKnownRequestError(
-        'Invalid `prisma.$queryRaw()` invocation:\n\n\nRaw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
-        { code: 'P2010', clientVersion: 'test' },
-      ),
-      'lock_timeout',
-      'warn',
-    ],
-    [
-      'a deadlock victim (PrismaClientUnknownRequestError, code: "40P01")',
-      new Prisma.PrismaClientUnknownRequestError(
-        `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected", severity: "ERROR", detail: Some("Process 1 waits for ShareLock on transaction 2; blocked by process 3."), column: None, hint: Some("See server log for query details.") }), transient: false })`,
-        { clientVersion: 'test' },
-      ),
-      'deadlock',
-      'error',
-    ],
+    ['a model write (typed DriverAdapterError, 55P03)', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['a raw FOR UPDATE (Known P2010, 55P03)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['a deadlock victim (typed DriverAdapterError, 40P01)', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['a deadlock victim (Known P2010, 40P01)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
   ])('maps %s to a 503 at its kind\'s level, telling the caller to try again', (_label, thrown, kind, level) => {
     expect(isTransientDbError(thrown)).toBe(true);
 
@@ -699,40 +687,18 @@ describe('classifyApiError', () => {
   });
 
   /**
-   * Task 6c (#196) set out to add a 409 branch for the deadlock
-   * `Class_teacher_slot_unique` measured against real `updateClass` writes
-   * (`docs/lock-order.md`, "The slot key is a wait edge", which records both
-   * the measurement and the move of that key onto
-   * `CalendarEntry_teacher_slot_excl` in #327) — on the premise
-   * that `classifyApiError` had no branch for `40P01` at all. Reproduced
-   * directly rather than trusting that premise (two real concurrent
-   * `updateClass(prisma, ...)` calls swapping slots, throwaway database,
-   * hit on the 5th natural attempt out of a 150-attempt budget, no
-   * synchronisation): the branch above already existed, landed by an
-   * unrelated already-merged PR (#174), and this scenario already lands in
-   * it. The verbatim shape measured — same error class, same code-embedded
-   * message, same absence of a `.code` property — as the `it.each` fixture
-   * two blocks up, differing only in the call site
-   * (`db.class.updateMany()`, `updateClass`'s own alias for the client, vs.
-   * that fixture's `prisma.class.updateMany()`) and in incidental detail
-   * (file path, process ids) that the predicate never inspects. This pins
-   * that #196's specific deadlock does NOT fall through to the generic 500
-   * — the outcome Task 6c wanted — without re-deciding #174's already-shipped
-   * 503-not-409 choice, which this task's own measurement found no basis to
-   * revisit (see the Task 6c report for the reasoning).
+   * The slot-key deadlock `docs/lock-order.md` records ("The slot key is a
+   * wait edge") comes from `updateClass`'s model write, so it arrives on the
+   * typed shape. It is a 503 at `error`, not the generic 500.
    */
-  it('maps the real Class_teacher_slot_unique deadlock (measured via a real updateClass race) to a 503, not a 500', () => {
-    const measured = new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`db.class.updateMany()\` invocation in\n/repo/src/services/class-lifecycle.ts:543:29\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected", severity: "ERROR", detail: Some("Process 1 waits for ShareLock on transaction 2; blocked by process 3.\\nProcess 3 waits for ShareLock on transaction 1; blocked by process 1."), column: None, hint: Some("See server log for query details.") }), transient: false })`,
-      { clientVersion: 'test' },
-    );
+  it('maps a slot-key deadlock (a model write\'s typed 40P01) to a 503, not a 500', () => {
+    const victim = typedPg('40P01', 'deadlock detected');
 
-    expect(isTransientDbError(measured)).toBe(true);
+    expect(isTransientDbError(victim)).toBe(true);
 
-    const failure = classifyApiError(measured);
+    const failure = classifyApiError(victim);
 
     expect(failure.status).toBe(503);
-    expect(failure.status).not.toBe(500);
     expect(failure.level).toBe('error');
     expect(failure.message).toMatch(/try again/i);
     expect(failure.detail).toEqual({ transientKind: 'deadlock' });
@@ -740,19 +706,28 @@ describe('classifyApiError', () => {
 
   it.each<[string, string, TransientKind, 'warn' | 'error']>([
     ['P2028 (interactive transaction budget expired)', 'P2028', 'tx_budget', 'warn'],
-    ['P2024 (connection pool timeout)', 'P2024', 'pool_exhausted', 'error'],
     ['P2034 (serialization failure)', 'P2034', 'serialization', 'warn'],
   ])('maps %s to a 503 at its kind\'s level', (_label, code, kind, level) => {
-    const failure = classifyApiError(prismaError(code));
+    const failure = classifyApiError(
+      code === 'P2034' ? knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')) : prismaError(code),
+    );
 
     expect(failure.status).toBe(503);
     expect(failure.level).toBe(level);
     expect(failure.detail).toEqual({ transientKind: kind });
   });
 
+  it('maps pg-pool\'s wait timeout (pool_exhausted) to a 503 at error', () => {
+    const failure = classifyApiError(pgPoolTimeout());
+
+    expect(failure.status).toBe(503);
+    expect(failure.level).toBe('error');
+    expect(failure.detail).toEqual({ transientKind: 'pool_exhausted' });
+  });
+
   /**
-   * The SQLSTATE is matched inside its Postgres framing, never as a bare
-   * substring. `40001` is five digits that a perfectly ordinary error message
+   * The SQLSTATE is read from the adapter's structured field, never from an
+   * error's text. `40001` is five digits that a perfectly ordinary error message
    * can quote — a postcode, an amount, an id fragment — and relabelling one of
    * those as "the system was busy, try again" is worse than the generic 500 it
    * replaced, because it tells the caller to repeat a request that will fail
@@ -908,7 +883,7 @@ describe('isRestrictViolationOn', () => {
  * of them cannot differ in anything but the number they pass.
  */
 function buriedUnder(layers: number): Error {
-  let wrapped: Error = new Error('ERROR code: "55P03" here');
+  let wrapped: Error = typedPg('55P03', LOCK_TIMEOUT_MESSAGE);
   for (let i = 0; i < layers; i += 1) wrapped = new Error(`layer ${i}`, { cause: wrapped });
   return wrapped;
 }
@@ -922,19 +897,16 @@ describe('isTransientDbError', () => {
    * classified as a defect that never clears, log at `error`, and (in the
    * reconciliation sweep) redden `/api/health` immediately.
    */
-  it('sees a transient Prisma code through one layer of cause wrapping', () => {
-    const pool = new Prisma.PrismaClientKnownRequestError('pool timeout', {
-      code: 'P2024',
-      clientVersion: Prisma.prismaVersion.client,
-    });
+  it('sees a pool timeout through one layer of cause wrapping', () => {
+    expect(isTransientDbError(new Error('spot-freed hook failed', { cause: pgPoolTimeout() }))).toBe(true);
+  });
 
-    expect(isTransientDbError(new Error('spot-freed hook failed', { cause: pool }))).toBe(true);
+  it('sees a transient Prisma code through one layer of cause wrapping', () => {
+    expect(isTransientDbError(new Error('spot-freed hook failed', { cause: prismaError('P2028') }))).toBe(true);
   });
 
   it('sees a transient SQLSTATE through two layers of cause wrapping', () => {
-    const lockTimeout = new Error(
-      'Raw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
-    );
+    const lockTimeout = rawPg('55P03', LOCK_TIMEOUT_MESSAGE);
     const inner = new Error('spot-freed hook failed', { cause: lockTimeout });
 
     expect(isTransientDbError(new Error('sweep failed', { cause: inner }))).toBe(true);
@@ -986,31 +958,19 @@ describe('isTransientDbError', () => {
    * there.
    */
   it('ends the walk at a non-Error cause', () => {
-    expect(isTransientDbError(new Error('outer', { cause: 'code: "55P03"' }))).toBe(false);
+    expect(isTransientDbError(new Error('outer', { cause: pgCause('55P03', LOCK_TIMEOUT_MESSAGE) }))).toBe(false);
   });
 });
 
 describe('transientDbFailure', () => {
-  const modelWrite = (state: string) =>
-    new Prisma.PrismaClientUnknownRequestError(
-      `Invalid \`prisma.class.updateMany()\` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${state}", message: "m", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-      { clientVersion: Prisma.prismaVersion.client },
-    );
-  const rawQuery = (state: string) =>
-    new Prisma.PrismaClientKnownRequestError(
-      `Invalid \`prisma.$queryRaw()\` invocation:\n\n\nRaw query failed. Code: \`${state}\`. Message: \`ERROR: m\``,
-      { code: 'P2010', clientVersion: Prisma.prismaVersion.client },
-    );
-
   it.each<[string, unknown, TransientKind, 'warn' | 'error']>([
-    ['55P03 model write', modelWrite('55P03'), 'lock_timeout', 'warn'],
-    ['55P03 raw query (P2010)', rawQuery('55P03'), 'lock_timeout', 'warn'],
-    ['40P01 model write', modelWrite('40P01'), 'deadlock', 'error'],
-    ['40P01 raw query (P2010)', rawQuery('40P01'), 'deadlock', 'error'],
-    ['40001 model write', modelWrite('40001'), 'serialization', 'warn'],
-    ['P2024', prismaError('P2024'), 'pool_exhausted', 'error'],
+    ['55P03 typed', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['55P03 raw (P2010)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['40P01 typed', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['40P01 raw (P2010)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['40001 raw (P2010)', rawPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
-    ['P2034', prismaError('P2034'), 'serialization', 'warn'],
+    ['P2034', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')), 'serialization', 'warn'],
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
@@ -1026,14 +986,17 @@ describe('transientDbFailure', () => {
   });
 
   it('finds the kind through a cause chain', () => {
-    const wrapped = new Error('spot-freed hook failed', { cause: prismaError('P2024') });
-    expect(transientDbFailure(wrapped)).toEqual({ kind: 'pool_exhausted', level: 'error' });
+    const wrapped = new Error('spot-freed hook failed', { cause: typedPg('40P01', 'deadlock detected') });
+    expect(transientDbFailure(wrapped)).toEqual({ kind: 'deadlock', level: 'error' });
   });
 
   it.each<[string, unknown]>([
-    ['a bare digit string with no framing', new Error('postcode 40P01 and 55P03 Lock Street')],
+    ['a bare digit string', new Error('postcode 40P01 and 55P03 Lock Street')],
+    ['an engine-framed SQLSTATE in a message', new Error('ConnectorError { kind: QueryError(PostgresError { code: "55P03" }) }')],
+    ['a non-transient SQLSTATE (57014)', typedPg('57014', 'canceling statement due to statement timeout')],
     ['a non-transient Prisma code', prismaError('P2002')],
-    ['a non-error', 'code: "55P03"'],
+    ['a P2024, which the adapter never raises', prismaError('P2024')],
+    ['a non-error', pgCause('55P03', LOCK_TIMEOUT_MESSAGE)],
   ])('returns null for %s', (_label, error) => {
     expect(transientDbFailure(error)).toBeNull();
     expect(isTransientDbError(error)).toBe(false);
@@ -1041,42 +1004,22 @@ describe('transientDbFailure', () => {
 });
 
 describe('isLockTimeout', () => {
-  it('matches a model write error with Postgres code 55P03 (PrismaClientUnknownRequestError)', () => {
-    const unknownError = new Prisma.PrismaClientUnknownRequestError(
-      'Invalid `prisma.class.updateMany()` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
-      { clientVersion: 'test' },
-    );
-    expect(isLockTimeout(unknownError)).toBe(true);
+  it('matches a model write\'s typed 55P03 (DriverAdapterError)', () => {
+    expect(isLockTimeout(typedPg('55P03', LOCK_TIMEOUT_MESSAGE))).toBe(true);
   });
 
-  it('matches a raw FOR UPDATE query error with Postgres Code 55P03 (PrismaClientKnownRequestError P2010)', () => {
-    const knownError = new Prisma.PrismaClientKnownRequestError(
-      'Invalid `prisma.$queryRaw()` invocation:\n\n\nRaw query failed. Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`',
-      { code: 'P2010', clientVersion: 'test' },
-    );
-    expect(isLockTimeout(knownError)).toBe(true);
+  it('matches a raw FOR UPDATE\'s 55P03 (Known P2010)', () => {
+    expect(isLockTimeout(rawPg('55P03', LOCK_TIMEOUT_MESSAGE))).toBe(true);
   });
 
   it.each<[string, Error]>([
-    [
-      'a deadlock (40P01)',
-      new Prisma.PrismaClientUnknownRequestError(
-        'ConnectorError(ConnectorError { kind: QueryError(PostgresError { code: "40P01", message: "deadlock detected" }) })',
-        { clientVersion: 'test' },
-      ),
-    ],
-    [
-      'a serialization failure (40001)',
-      new Prisma.PrismaClientUnknownRequestError(
-        'ConnectorError(ConnectorError { kind: QueryError(PostgresError { code: "40001", message: "could not serialize access" }) })',
-        { clientVersion: 'test' },
-      ),
-    ],
+    ['a deadlock (40P01)', typedPg('40P01', 'deadlock detected')],
+    ['a serialization failure (40001)', rawPg('40001', 'could not serialize access due to concurrent update')],
     ['transaction budget expired (P2028)', prismaError('P2028')],
-    ['connection pool timeout (P2024)', prismaError('P2024')],
-    ['serialization failure (P2034)', prismaError('P2034')],
+    ['connection pool timeout', pgPoolTimeout()],
+    ['serialization failure (P2034)', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update'))],
     ['record not found (P2025)', prismaError('P2025')],
-    ['generic Error', new Error('canceling statement due to lock timeout')],
+    ['generic Error', new Error(LOCK_TIMEOUT_MESSAGE)],
   ])('does not match %s', (_label, err) => {
     expect(isLockTimeout(err)).toBe(false);
   });
@@ -1090,16 +1033,11 @@ describe('isLockTimeout', () => {
   });
 
   it('matches a lock timeout carried as the cause of a wrapper error', () => {
-    const inner = new Prisma.PrismaClientUnknownRequestError(
-      'Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "55P03", message: "canceling statement due to lock timeout", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })',
-      { clientVersion: 'test' },
-    );
-    expect(isLockTimeout(new Error('wrapped', { cause: inner }))).toBe(true);
+    expect(isLockTimeout(new Error('wrapped', { cause: typedPg('55P03', LOCK_TIMEOUT_MESSAGE) }))).toBe(true);
   });
 
-  it('defers to the Prisma code, as transientDbFailure does, when both are present', () => {
-    // A transaction-budget expiry whose message quotes a 55P03 framing: one
-    // matcher means one answer, and the code is checked first.
+  it('reads no message: a P2028 quoting a 55P03 framing is tx_budget, as transientDbFailure says', () => {
+    // One matcher means one answer, and neither reads an error's text.
     const budget = new Prisma.PrismaClientKnownRequestError(
       'Transaction already closed: ... PostgresError { code: "55P03" }',
       { code: 'P2028', clientVersion: 'test' },
@@ -1111,8 +1049,8 @@ describe('isLockTimeout', () => {
   it.each<[string, unknown]>([
     ['undefined', undefined],
     ['null', null],
-    ['a string', 'code: "55P03"'],
-    ['a plain object', { message: 'code: "55P03"' }],
+    ['a string', '55P03'],
+    ['a plain object', { name: 'DriverAdapterError', cause: pgCause('55P03', LOCK_TIMEOUT_MESSAGE) }],
   ])('returns false for non-Error value %s', (_label, val) => {
     expect(isLockTimeout(val)).toBe(false);
   });
