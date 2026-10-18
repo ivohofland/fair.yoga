@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
+import { pgErrorOf } from '@/lib/pg-error';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -76,6 +77,6 @@ describe('deliverPayoutChangedNotice against the database', () => {
 
     if (!(err instanceof Prisma.PrismaClientKnownRequestError)) throw new Error(`expected a known request error, got ${String(err)}`);
     expect(err.code).toBe('P2003');
-    expect(PAUSE_TOKEN_FOREIGN_KEYS.has(String(err.meta?.constraint))).toBe(true);
+    expect(PAUSE_TOKEN_FOREIGN_KEYS.has(String(pgErrorOf(err)?.constraint))).toBe(true);
   });
 });

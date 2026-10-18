@@ -1,19 +1,19 @@
-import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import type { PrismaClient } from '@/lib/prisma-client';
+import { pgErrorOf } from '@/lib/pg-error';
 import { sendPayoutChangedEmail } from '@/lib/email';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
 import { mintPayoutPauseToken } from '@/services/payout-pause-token';
 
-/** The token's own foreign keys, as Prisma names them in a P2003's `meta.constraint`. */
+/** The token's own foreign keys, by constraint name. */
 export const PAUSE_TOKEN_FOREIGN_KEYS: ReadonlySet<string> = new Set([
   'PayoutPauseToken_eventId_fkey',
   'PayoutPauseToken_teacherId_fkey',
 ]);
 
 function isMintKeyRefusal(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2003') return false;
-  const constraint = err.meta?.constraint;
-  return typeof constraint === 'string' && PAUSE_TOKEN_FOREIGN_KEYS.has(constraint);
+  const pg = pgErrorOf(err);
+  return pg !== null && pg.sqlState === '23503' && pg.constraint !== undefined && PAUSE_TOKEN_FOREIGN_KEYS.has(pg.constraint);
 }
 
 /**

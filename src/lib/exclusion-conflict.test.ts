@@ -1,35 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
+import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
-// The measured shape of a 23P01 through Prisma Client: `code` and `meta` are
-// both undefined, and the SQLSTATE and constraint name survive only in
-// `message`. Captured from a real violation, not composed by hand.
-const raise = (constraint: string) =>
-  new Prisma.PrismaClientUnknownRequestError(
-    'Invalid `db.scheduleRule.create()` invocation\n\nError occurred during query execution:\n' +
-      'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError ' +
-      `{ code: "23P01", message: "conflicting key value violates exclusion constraint \\"${constraint}\\"", ` +
-      'severity: "ERROR", detail: Some("Key ..."), column: None, hint: None }), transient: false })',
-    { clientVersion: 'test' },
-  );
+const violation = (constraint: string): string =>
+  `conflicting key value violates exclusion constraint "${constraint}"`;
+
+/** A typed model call: a DriverAdapterError carrying the adapter's cause. */
+const raise = (constraint: string) => driverAdapterError(pgCause('23P01', violation(constraint)));
 
 describe('isExclusionConflictOn', () => {
   it('matches the named constraint', () => {
     expect(isExclusionConflictOn(raise('ScheduleRule_teacher_slot_excl'), 'ScheduleRule_teacher_slot_excl')).toBe(true);
   });
 
-  it('matches the raw-query shape, which spells the SQLSTATE differently', () => {
-    // `P2010`, the shape `$executeRaw` produces. Nothing in `src/` writes
-    // `ScheduleRule` raw today, so this shape is unreachable as the code
-    // stands; matched anyway — see `exclusion-conflict.ts`'s own docblock on
-    // why "unreachable" is not an argument for dropping a shape.
-    const err = new Prisma.PrismaClientKnownRequestError(
-      'Invalid `prisma.$executeRaw()` invocation:\n\n\n' +
-        'Raw query failed. Code: `23P01`. Message: `ERROR: conflicting key value ' +
-        'violates exclusion constraint "ScheduleRule_teacher_slot_excl"`',
-      { code: 'P2010', clientVersion: 'test' },
-    );
+  it('matches the raw-query shape, a P2010 carrying the same cause', () => {
+    const err = knownWithAdapterCause('P2010', pgCause('23P01', violation('ScheduleRule_teacher_slot_excl')));
     expect(isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')).toBe(true);
   });
 
@@ -37,16 +22,22 @@ describe('isExclusionConflictOn', () => {
     expect(isExclusionConflictOn(raise('SomeOther_excl'), 'ScheduleRule_teacher_slot_excl')).toBe(false);
   });
 
+  it('does not match the clause under another SQLSTATE', () => {
+    const err = driverAdapterError(pgCause('23514', violation('ScheduleRule_teacher_slot_excl')));
+    expect(isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')).toBe(false);
+  });
+
   it('does not match a unique violation', () => {
-    const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002', clientVersion: 'test', meta: { target: ['teacherId', 'dayOfWeek'] },
-    });
+    const p2002 = knownWithAdapterCause(
+      'P2002',
+      pgCause('23505', 'duplicate key value violates unique constraint "ScheduleRule_teacher_slot_excl"'),
+    );
     expect(isExclusionConflictOn(p2002, 'ScheduleRule_teacher_slot_excl')).toBe(false);
   });
 
   it('does not match a plain string that happens to quote the constraint', () => {
     expect(isExclusionConflictOn(
-      'conflicting key value violates exclusion constraint "ScheduleRule_teacher_slot_excl"',
+      violation('ScheduleRule_teacher_slot_excl'),
       'ScheduleRule_teacher_slot_excl',
     )).toBe(false);
   });

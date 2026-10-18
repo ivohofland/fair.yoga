@@ -1,24 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { Prisma } from '@/lib/prisma-client';
 import { isCheckViolationOn } from './check-violation';
+import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 const NAME = 'ClassTemplate_live_needs_open_room';
+const violation = (name: string): string =>
+  `new row for relation "ClassTemplate" violates check constraint "${name}"`;
 
-/** Shape 1: a typed model call. The SQLSTATE survives only in `message`. */
-const typedCall = new Prisma.PrismaClientUnknownRequestError(
-  'Invalid `prisma.teacherRoom.update()` invocation:\n\n\nError occurred during query execution:\n'
-  + 'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { '
-  + 'code: "23514", message: "new row for relation \\"ClassTemplate\\" violates check constraint '
-  + `\\"${NAME}\\"", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`,
-  { clientVersion: '6.19.3' },
-);
+/** A typed model call: a DriverAdapterError carrying the adapter's cause. */
+const typedCall = driverAdapterError(pgCause('23514', violation(NAME)));
 
-/** Shape 2: a raw query. Prisma wraps it as P2010 and spells the code differently. */
-const rawQuery = new Prisma.PrismaClientKnownRequestError(
-  'Raw query failed. Code: `23514`. Message: `ERROR: new row for relation "ClassTemplate" '
-  + `violates check constraint "${NAME}"\``,
-  { code: 'P2010', clientVersion: '6.19.3' },
-);
+/** A raw query: Prisma's `P2010`, with the same cause under `meta.driverAdapterError`. */
+const rawQuery = knownWithAdapterCause('P2010', pgCause('23514', violation(NAME)));
 
 describe('isCheckViolationOn', () => {
   it('matches a typed model call', () => {
@@ -34,16 +26,18 @@ describe('isCheckViolationOn', () => {
   });
 
   it('does not match a terminality trigger, which also raises 23514', () => {
-    const terminal = new Prisma.PrismaClientUnknownRequestError(
-      'PostgresError { code: "23514", message: "Class abc is completed, which is terminal; '
-      + 'cannot change status to open" }',
-      { clientVersion: '6.19.3' },
+    const terminal = driverAdapterError(
+      pgCause('23514', 'Class abc is completed, which is terminal; cannot change status to open'),
     );
     expect(isCheckViolationOn(terminal, NAME)).toBe(false);
   });
 
+  it('does not match the clause under another SQLSTATE', () => {
+    expect(isCheckViolationOn(driverAdapterError(pgCause('23505', violation(NAME))), NAME)).toBe(false);
+  });
+
   it('does not match a message that merely quotes the name without the SQLSTATE', () => {
-    const noCode = new Error(`something mentioning ${NAME} but no sqlstate`);
+    const noCode = new Error(`something mentioning ${violation(NAME)} but no sqlstate`);
     expect(isCheckViolationOn(noCode, NAME)).toBe(false);
   });
 
@@ -61,27 +55,15 @@ describe('isCheckViolationOn', () => {
     expect(isCheckViolationOn(rawQuery, '')).toBe(false);
   });
 
-  // `err.message` carries more than Postgres's classification: Prisma quotes
-  // the calling file's source lines around the failing statement, and
-  // `Failing row contains (…)` carries `ClassTemplate.description`, which a
-  // teacher types. Neither is Postgres saying which constraint refused the
-  // row, so neither may decide the answer.
-  it('does not match the name echoed by a source line or a failing-row dump', () => {
-    const sourceEcho = new Prisma.PrismaClientUnknownRequestError(
-      'Invalid `prisma.classTemplate.update()` invocation in\n/app/src/services/x.ts:12:9\n'
-      + `  11   // guarded by ${NAME}\n`
-      + '→ 12   await tx.classTemplate.update(\n'
-      + 'PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates '
-      + 'check constraint \\"Student_income_tier_check\\"" }',
-      { clientVersion: '6.19.3' },
-    );
-    expect(isCheckViolationOn(sourceEcho, NAME)).toBe(false);
-
-    const teacherText = new Prisma.PrismaClientUnknownRequestError(
-      'PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates '
-      + 'check constraint \\"Student_income_tier_check\\"", '
-      + `detail: Some("Failing row contains (abc, ${NAME}, 30.00)") }`,
-      { clientVersion: '6.19.3' },
+  // The cause carries more than Postgres's primary message: `detail` holds
+  // `Failing row contains (…)`, and for this table that includes
+  // `ClassTemplate.description`, which a teacher types. Only the primary
+  // message says which constraint refused the row.
+  it('does not match the name echoed by the failing-row detail', () => {
+    const teacherText = driverAdapterError(
+      pgCause('23514', violation('Student_income_tier_check'), {
+        detail: `Failing row contains (abc, ${violation(NAME)}, 30.00).`,
+      }),
     );
     expect(isCheckViolationOn(teacherText, NAME)).toBe(false);
   });

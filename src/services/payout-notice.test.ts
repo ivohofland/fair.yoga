@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import type { Prisma, PrismaClient } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { hashToken } from '@/lib/auth/magic-link';
+import { knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 type Sent = {
   kind: string; accountCurrency: string | null; before: string | null; after: string | null;
@@ -94,19 +95,27 @@ describe('deliverPayoutChangedNotice', () => {
     expect(sendPayoutChangedEmail).not.toHaveBeenCalled();
   });
 
-  function fkRefusal(meta?: Record<string, unknown>): Prisma.PrismaClientKnownRequestError {
-    return new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', { code: 'P2003', clientVersion: 'test', meta });
+  /** The token insert refused by a foreign key, as the adapter reports it; `constraint` absent names none. */
+  function fkRefusal(constraint?: string): Prisma.PrismaClientKnownRequestError {
+    return knownWithAdapterCause(
+      'P2003',
+      pgCause(
+        '23503',
+        `insert or update on table "PayoutPauseToken" violates foreign key constraint "${constraint ?? 'unnamed'}"`,
+        constraint === undefined ? {} : { constraint: { index: constraint } },
+      ),
+      { modelName: 'PayoutPauseToken' },
+    );
   }
 
-  // The `meta` shapes are what Prisma reports for this insert against a real
-  // database: an erasure keeps the anonymised teacher and deletes the event,
-  // so the event's key is the one that fails; a hard-deleted teacher fails on
-  // the teacher's.
+  // Which key refuses, against a real database: an erasure keeps the
+  // anonymised teacher and deletes the event, so the event's key is the one
+  // that fails; a hard-deleted teacher fails on the teacher's.
   it.each([
     'PayoutPauseToken_eventId_fkey',
     'PayoutPauseToken_teacherId_fkey',
   ])('warns, not errors, and sends nothing when the mint is refused by %s', async (constraint) => {
-    create.mockRejectedValue(fkRefusal({ modelName: 'PayoutPauseToken', constraint }));
+    create.mockRejectedValue(fkRefusal(constraint));
 
     deliverPayoutChangedNotice(db, 'ev-1');
 
@@ -118,10 +127,10 @@ describe('deliverPayoutChangedNotice', () => {
   });
 
   it.each([
-    ['another constraint', { modelName: 'PayoutPauseToken', constraint: 'Something_else_fkey' }],
+    ['another constraint', 'Something_else_fkey'],
     ['none', undefined],
-  ] as const)('logs an error for a foreign-key refusal naming %s', async (_case, meta) => {
-    create.mockRejectedValue(fkRefusal(meta));
+  ] as const)('logs an error for a foreign-key refusal naming %s', async (_case, constraint) => {
+    create.mockRejectedValue(fkRefusal(constraint));
 
     deliverPayoutChangedNotice(db, 'ev-1');
 

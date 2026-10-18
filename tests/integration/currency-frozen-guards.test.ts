@@ -12,6 +12,7 @@ import { Prisma } from '@/lib/prisma-client';
 import { fixtureRun, type RoomFixture } from '../room-fixtures';
 import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -72,19 +73,15 @@ async function setClassCurrency(id: string) {
   return prisma.class.update({ where: { id }, data: { currency: 'GBP' } });
 }
 
-/**
- * A refusal from one of the currency guards: SQLSTATE 23514, which Prisma
- * surfaces only inside the driver message, and the guard's own wording.
- */
+/** A refusal from one of the currency guards: SQLSTATE 23514 and the guard's own wording. */
 async function expectCurrencyRefusal(write: Promise<unknown>): Promise<void> {
   const err: unknown = await write.then(
     () => null,
     (e: unknown) => e,
   );
-  expect(err).toBeInstanceOf(Error);
-  const message = (err as Error).message;
-  expect(message).toContain('code: "23514"');
-  expect(message).toMatch(/cannot change its currency/);
+  const pg = pgErrorOf(err);
+  expect(pg?.sqlState).toBe('23514');
+  expect(pg?.message).toMatch(/cannot change its currency$/);
 }
 
 describe('class_currency_frozen_guard', () => {
