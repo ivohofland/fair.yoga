@@ -393,6 +393,21 @@ describe('produced against the real database: conflict codes', () => {
     expect(ownKeys(metaOf(fake).driverAdapterError.cause)).toEqual(ownKeys(metaOf(real).driverAdapterError.cause));
   });
 
+  it('the helper fabricates a Known P2002 (the slug collision) identical to a produced one', async () => {
+    const real = await rejectionOf(() => db.teacher.update({ where: { id: checkRoom.teacherId }, data: { pageSlug: takenSlug } }));
+    expect(real).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    const pg = pgErrorOf(real);
+    if (pg === null) throw new Error('no Postgres error on the produced value');
+    const realCause = metaOf(real).driverAdapterError.cause as { kind: unknown };
+    const fake = knownWithAdapterCause('P2002', pgCause('23505', pg.message), { modelName: 'Teacher' });
+    expect(pgErrorOf(fake)).toEqual(pg);
+    expect((fake as Prisma.PrismaClientKnownRequestError).code).toBe((real as Prisma.PrismaClientKnownRequestError).code);
+    expect((metaOf(fake).driverAdapterError.cause as { kind: unknown }).kind).toBe(realCause.kind);
+    expect(ownKeys(metaOf(fake))).toEqual(ownKeys(metaOf(real)));
+    expect(ownKeys(metaOf(fake).driverAdapterError)).toEqual(ownKeys(metaOf(real).driverAdapterError));
+    expect(ownKeys(metaOf(fake).driverAdapterError.cause)).toEqual(ownKeys(realCause));
+  });
+
   it('the helper fabricates a Known P2003 (the restrict delete) identical to a produced one', async () => {
     const real = await rejectionOf(() => db.teacherRoom.delete({ where: { id: checkRoom.linkId } }));
     expect(real).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);

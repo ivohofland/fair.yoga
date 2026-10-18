@@ -6,7 +6,7 @@
  */
 import { createPrismaClient, type Prisma, type PrismaClient } from '@/lib/prisma-client';
 
-const WAIT_MS = 1_500;
+const WAIT_MS = 3_000;
 
 function latch(): { promise: Promise<void>; open: () => void } {
   let open!: () => void;
