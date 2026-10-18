@@ -647,9 +647,9 @@ describe('updateClassTemplate (DB)', () => {
     // both families use, on the entry, and it is the constraint's own partial
     // predicate. Widen the pre-check past liveness and this goes red.
     //
-    // Pinned at 12:00 UTC today, as the case above: the probe's instant falls
-    // before both the `23:58` start and its `HOURS_2` check at 21:58, so
-    // today's occurrence is the answer unless the cancelled holder blocks it.
+    // Pinned by `clockAtNoonToday()`: the probe's instant falls before both
+    // the `23:58` start and its `HOURS_2` check at 21:58, so today's
+    // occurrence is the answer unless the cancelled holder blocks it.
     clockAtNoonToday();
     const solo = await seedTeacher('cross-family-probe-cancelled');
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
@@ -715,10 +715,10 @@ describe('updateClassTemplate (DB)', () => {
    * direction, and #194's original failure. The two now decide with the same
    * function.
    *
-   * The clock is pinned as in the two cases above, with the template at
-   * `23:59` and a `HOURS_2` check: the probe's instant falls before both
-   * today's start and its auto-cancel check, so neither the past-start filter
-   * nor the `past_cancel_check` decline moves the answer a week.
+   * The clock is pinned by `clockAtNoonToday()`. The template starts at
+   * `23:59` with a `HOURS_2` check, and the probe's instant falls before
+   * both, so neither the past-start filter nor the `past_cancel_check`
+   * decline moves the answer a week.
    * The holder at `23:30` runs into it from behind — 23:30–00:30 against
    * 23:59–00:59 — so the spans overlap and the start times differ, which is
    * the whole of the case.
@@ -790,12 +790,9 @@ describe('updateClassTemplate (DB)', () => {
    * `probeHorizon` drops an occurrence that does not start strictly after the
    * next sweep's latest instant, the predicate the generator applies to its
    * own candidates at its run instant. Without it the probe would name a week
-   * the sweep never fills, which is the dishonest direction.
-   * `class-templates-api.test.ts` drives both of its probe cases through
-   * `sameWeekDayPair()`, whose docblock states outright that neither day is
-   * ever today, and this file's own fixtures pin `dayOfWeek: 3`, so the
-   * template's weekday is today on one day in seven and the class hour was
-   * never arranged to have passed.
+   * the sweep never fills, which is the dishonest direction. This is the
+   * one case in this block that puts today's occurrence before the probe's
+   * instant on purpose.
    *
    * The arrangement is deliberate on all three inputs and none of them can
    * drift with the calendar:
@@ -804,15 +801,14 @@ describe('updateClassTemplate (DB)', () => {
    *     UTC, so today is the first occurrence `probeHorizon` enumerates.
    *   - `startTime` is `'00:00'` and the teacher's zone is UTC, so
    *     `classStartInstant` for today is today's midnight UTC, which is never
-   *     strictly after the next sweep's instant. Today is dropped on every
-   *     run, rather than only after some cutoff.
+   *     strictly after the next sweep's instant, whatever the clock reads.
    *   - No `Class` row exists for this template, so `heldWeeks` is empty and
    *     the answer is simply the first surviving candidate's week.
    *
-   * The filter is not the only thing dropping today here: a class's
-   * auto-cancel check always precedes its start, so `past_cancel_check`
-   * declines today's occurrence too. This case pins the answer both reasons
-   * agree on, not the filter in isolation.
+   * This case cannot tell the filter from the `past_cancel_check` decline:
+   * every `AutoCancelCheck` member precedes the start, so with the filter
+   * removed the decline would drop today's occurrence instead and the answer
+   * would not move. It pins the answer, not the filter in isolation.
    *
    * Both halves are asserted — the week it IS and the week it is NOT — because
    * the failure is off by exactly one week and `not.toBe` alone would pass for
@@ -820,9 +816,8 @@ describe('updateClassTemplate (DB)', () => {
    *
    * Built inline rather than through `makeTemplate`, which hardcodes
    * `dayOfWeek: 3` and a counter-derived `09:3x`; this case needs both fields
-   * to be something specific. Its own teacher, so the `(teacherId, dayOfWeek,
-   * startTime)` slot cannot collide with this block's other templates on the
-   * one day in seven when today is a Thursday.
+   * to be something specific. Its own teacher, so nothing else in this block
+   * shares its weekday slot.
    */
   it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
     clockAtNoonToday();
