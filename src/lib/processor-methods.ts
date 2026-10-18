@@ -57,5 +57,3 @@ export const EXCLUSION_COPY = {
   pay_later: "fair.yoga doesn't offer pay-later credit at checkout.",
   not_offered: 'fair.yoga doesn’t offer this method yet.',
 } as const satisfies Record<ExclusionReason, string>;
-
-export const LONGEST_METHOD_EXPIRY_MINUTES = Math.max(...ORDER.map((m) => MOLLIE_METHODS[m].expiresMinutes));

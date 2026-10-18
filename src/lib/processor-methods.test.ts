@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MOLLIE_METHODS, isAllowedMollieMethod, mollieMethodLabel, orderOffered, exclusionReason, LONGEST_METHOD_EXPIRY_MINUTES } from './processor-methods';
+import { MOLLIE_METHODS, isAllowedMollieMethod, mollieMethodLabel, orderOffered, exclusionReason } from './processor-methods';
 
 describe('the allowlist', () => {
   it('holds no pay-later method', () => {
@@ -52,10 +52,6 @@ describe('exclusionReason', () => {
     expect(exclusionReason('klarna')).toBe('pay_later');
     expect(exclusionReason('banktransfer')).toBe('not_offered');
   });
-});
-
-it('the longest expiry is PayPal\'s six hours', () => {
-  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(360);
 });
 
 describe('mollieMethodLabel', () => {

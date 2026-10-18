@@ -835,7 +835,6 @@ export function orderOffered(ids: readonly string[]): { offered: AllowedMollieMe
 export type ExclusionReason = 'pay_later' | 'not_offered';
 export function exclusionReason(id: string): ExclusionReason;
 export const EXCLUSION_COPY: Record<ExclusionReason, string>;
-export const LONGEST_METHOD_EXPIRY_MINUTES: number;
 
 // src/services/mollie-deps.ts
 export type MollieDeps = { client: MollieClient; config: MollieConfig };
@@ -858,7 +857,7 @@ export function forgetOfferedMethods(connectionId: string): void;
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import { MOLLIE_METHODS, isAllowedMollieMethod, orderOffered, exclusionReason, LONGEST_METHOD_EXPIRY_MINUTES } from './processor-methods';
+import { MOLLIE_METHODS, isAllowedMollieMethod, orderOffered, exclusionReason } from './processor-methods';
 
 describe('the allowlist', () => {
   it('holds no pay-later method', () => {
@@ -897,10 +896,6 @@ describe('exclusionReason', () => {
     expect(exclusionReason('klarna')).toBe('pay_later');
     expect(exclusionReason('banktransfer')).toBe('not_offered');
   });
-});
-
-it('the longest expiry is PayPal\'s six hours', () => {
-  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(360);
 });
 ```
 
@@ -960,8 +955,6 @@ export const EXCLUSION_COPY = {
   pay_later: "fair.yoga doesn't offer pay-later credit at checkout.",
   not_offered: 'fair.yoga doesn’t offer this method yet.',
 } as const satisfies Record<ExclusionReason, string>;
-
-export const LONGEST_METHOD_EXPIRY_MINUTES = Math.max(...ORDER.map((m) => MOLLIE_METHODS[m].expiresMinutes));
 ```
 
 (BLIK's `expiresMinutes` is 1: Mollie's BLIK page gives a 55-second session timeout and the expiry table has no row for it.)
