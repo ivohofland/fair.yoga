@@ -971,6 +971,7 @@ describe('transientDbFailure', () => {
     ['40001 raw (P2010)', rawPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
     ['P2034', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')), 'serialization', 'warn'],
+    ['P2034 with no adapter cause', prismaError('P2034'), 'serialization', 'warn'],
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
