@@ -18,7 +18,7 @@ export const POST = withErrorHandler(async (
   if ('error' in body) return body.error;
 
   const { id } = await params;
-  // No ownership gate here: the service scopes the payment to `session.studentId`.
+  // Ownership is part of this lookup: it is keyed by the session's own `studentId`.
   const outcome = await createAttempt(prisma, mollieDeps(), { paymentId: id, studentId: session.studentId, method: body.data.method });
   switch (outcome.kind) {
     case 'checkout':
