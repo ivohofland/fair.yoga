@@ -2557,9 +2557,11 @@ before it counts the payment's settling attempts. Without that lock a webhook
 settling the payment could commit between the count and the compare-and-swap,
 and the swap, re-evaluated on the now-`paid` row, would reopen a payment
 Mollie settled — what Decision 17 forbids. Pinned by `payments.test.ts`'s
-"reopenPayment: a settle racing the swap waits for the reopen, which answers
-unchanged"; measured on 2026-10-18 by dropping the `FOR UPDATE`: that case
-fails with `expected unchanged, got {"kind":"refused",…"CONCURRENT_MODIFICATION"…}`.
+"reopenInTransaction: a settle racing the swap waits on the reopen, which
+answers unchanged", which waits for the settle to be blocked by the reopen's
+own backend (`pg_blocking_pids`); measured on 2026-10-18 by dropping the
+`FOR UPDATE`: that case fails with `the settle never waited on the reopen's
+payment lock: expected false to be true`.
 No test pins `syncAttempt`'s own `FOR UPDATE`: removing it leaves
 `processor-attempts.test.ts` green, because no case there races two writers.
 
