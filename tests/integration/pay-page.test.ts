@@ -419,7 +419,7 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(html).toContain('Payment link');
     expect(html.match(/name="pay-method"/g)).toHaveLength(3);
     expect(html).not.toContain('iDEAL');
-    expect(html).not.toContain('Pay online');
+    expect(html).not.toContain('payment provider');
   });
 
   it('tells a late cancel why the class is still charged', async () => {

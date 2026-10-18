@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Currency } from '@/lib/prisma-client';
 import type { Prisma } from '@/lib/prisma-client';
 import * as schemas from './schemas';
+import { MOLLIE_METHODS } from './processor-methods';
 import {
   transitionClassSchema,
   magicLinkSendSchema,
@@ -2026,5 +2027,11 @@ describe('vatPercent on the four class and template schemas (#819)', () => {
     const r = schema.safeParse(base);
     expect(r.success).toBe(true);
     expect(r.data?.vatPercent).toBeUndefined();
+  });
+});
+
+describe('processorAttemptSchema', () => {
+  it.each(Object.keys(MOLLIE_METHODS))('accepts the allowlisted method %s', (method) => {
+    expect(schemas.processorAttemptSchema.safeParse({ method }).success).toBe(true);
   });
 });
