@@ -105,6 +105,8 @@ beforeAll(async () => {
         paymentId,
         connectionId,
         processorPaymentId: `tr_seed${suffix}`,
+        profileId: 'pfl_seed',
+        testmode: true,
         method: 'ideal',
         status: 'open',
         amount: new Prisma.Decimal('10.00'),
@@ -146,6 +148,8 @@ describe('ProcessorPayment settling index', () => {
     const base = {
       paymentId,
       connectionId,
+      profileId: 'pfl_seed',
+      testmode: true,
       method: 'ideal',
       status: 'paid' as const,
       amount: new Prisma.Decimal('10.00'),

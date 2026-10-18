@@ -146,7 +146,7 @@ is what Mollie's server-side POST is.
   Reconnecting after a disconnect rewrites the row rather than adding one.
 - **`ProcessorPayment`** (the attempt) `{ id, paymentId → Payment onDelete
   Cascade, connectionId → ProcessorConnection, processorPaymentId @unique,
-  method String, status ProcessorPaymentStatus, amount Decimal, currency
+  profileId String, testmode Boolean, method String, status ProcessorPaymentStatus, amount Decimal, currency
   Currency, checkoutUrl String?, expiresAt DateTime?, paidAt DateTime?,
   settledPayment Boolean, chargedBackAt DateTime?, createdAt, updatedAt }`. `ProcessorPaymentStatus`
   is Mollie's own set: `open`, `pending`, `authorized`, `paid`, `canceled`,
@@ -343,8 +343,8 @@ call and leaves the connection alone.
 - `POST /api/payments/[id]/processor-attempt { method }` — the student who
   owns the registration. Refuses (409): the payment not `pending`/`overdue`,
   the teacher paused, no live connection, `method` not in the overlap now.
-  Reuses an `open` attempt for the same method that has not passed
-  `expiresAt`. Otherwise creates the Mollie payment: `amount` (the class's
+  Reuses an `open` attempt for the same method, made under the connection's
+  current `profileId` and `testmode`, that has not passed `expiresAt`. Otherwise creates the Mollie payment: `amount` (the class's
   currency), `description` (class title and date), `method` (one value),
   `redirectUrl` (the return page), `webhookUrl`, `profileId`,
   `metadata: { paymentId }`, no `applicationFee`. Records the attempt, answers

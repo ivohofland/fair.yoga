@@ -1442,7 +1442,8 @@ model ProcessorConnection {
 }
 
 /// One charge attempt at the processor for a `Payment`. `currency` is what the
-/// processor charged and is never relabelled. `chargedBackAt` is when the
+/// processor charged and is never relabelled. `profileId` and `testmode` are
+/// the connection's when the attempt was made. `chargedBackAt` is when the
 /// processor first reported a chargeback on it. Hand-written in the migration:
 /// `ProcessorPayment_one_settling_per_payment` (partial unique on `paymentId`
 /// where `settledPayment`).
@@ -1451,6 +1452,8 @@ model ProcessorPayment {
   paymentId          String
   connectionId       String?
   processorPaymentId String                 @unique
+  profileId          String
+  testmode           Boolean
   method             String
   status             ProcessorPaymentStatus
   amount             Decimal                @db.Decimal(10, 2)
