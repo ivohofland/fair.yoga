@@ -128,6 +128,31 @@ describe('RefundDialog', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  it('shows the server’s message for a refund Mollie accepted but fair.yoga has not recorded', async () => {
+    answer(503, { error: { code: 'PROCESSOR_UNAVAILABLE', message: 'Mollie accepted the refund; fair.yoga will finish recording it shortly.' } });
+    render(<RefundDialog {...base} settles />);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Refund and waive' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refund €10.00' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Mollie accepted the refund; fair.yoga will finish recording it shortly.');
+    expect(onRequested).not.toHaveBeenCalled();
+  });
+
+  it('does not say the refund failed when the error body cannot be read', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 }));
+    render(<RefundDialog {...base} settles />);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Refund and waive' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refund €10.00' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('fair.yoga couldn’t confirm the refund. Check the payment before trying again.');
+    expect(alert).not.toHaveTextContent('didn’t go through');
+    error.mockRestore();
+  });
+
   it('closes on Cancel, on Escape and on the backdrop without posting', () => {
     render(<RefundDialog {...base} settles />);
     const dialog = screen.getByRole('dialog');

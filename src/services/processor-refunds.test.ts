@@ -15,7 +15,7 @@ import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
 import { markPaymentNotCharged } from './payments';
 import { syncAttempt } from './processor-attempts';
-import { refundAttempt, type RefundResult } from './processor-refunds';
+import { RefundNotRecorded, refundAttempt, type RefundResult } from './processor-refunds';
 import { ADOPT_AFTER_MS } from './refund-adoption';
 
 const prisma = createPrismaClient();
@@ -535,29 +535,35 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
     });
 
-    it('keeps the intent and logs it when Mollie cannot say either', async () => {
+    it('keeps the intent, answers unconfirmed and logs MOLLIE_UNAVAILABLE when Mollie cannot say either', async () => {
       const error = vi.spyOn(log, 'error');
       onTestFinished(() => error.mockRestore());
       const c = await settledAttempt();
-      fake.createRefund.mockRejectedValue(new MollieUnavailable('timed out', null));
+      fake.createRefund.mockRejectedValue(new TypeError('socket hang up'));
       fake.getPayment.mockRejectedValue(new MollieUnavailable('timed out', null));
 
-      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unconfirmed' });
 
       const kept = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
       expect(kept).toMatchObject({ processorRefundId: null, status: 'queued' });
       expect(error).toHaveBeenCalledWith(expect.objectContaining({ attemptId: c.attempt.id, refundId: kept.id }), expect.any(String));
+      expect(vi.mocked(logDegraded).mock.calls).toEqual([
+        ['MOLLIE_UNAVAILABLE', { connectionId, operation: 'createRefund' }, expect.stringContaining('did not confirm')],
+      ]);
     });
   });
 
-  it('logs Mollie’s refund id and rethrows when storing its answer fails, keeping the intent', async () => {
+  it('logs Mollie’s refund id and throws RefundNotRecorded when storing its answer fails, keeping the intent', async () => {
     const error = vi.spyOn(log, 'error');
     onTestFinished(() => error.mockRestore());
     const c = await settledAttempt();
     const mollieId = reId();
     fake.createRefund.mockResolvedValue(created('queued', mollieId));
 
-    await expect(refundAttempt(answerStoreThrows(), deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).rejects.toThrow('lock timeout');
+    const thrown = await refundAttempt(answerStoreThrows(), deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })
+      .then(() => null, (err: unknown) => err);
+    expect(thrown).toBeInstanceOf(RefundNotRecorded);
+    expect((thrown as RefundNotRecorded).cause).toEqual(new Error('lock timeout'));
 
     const kept = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
     expect(kept.processorRefundId).toBeNull();

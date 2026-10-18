@@ -77,7 +77,8 @@ export function RefundDialog({
       return;
     }
     if (!res.ok) {
-      setError(await readErrorMessage(res, 'The refund didn’t go through. Try again.'));
+      // The server's message says what happened; an unreadable one may follow a refund Mollie made.
+      setError(await readErrorMessage(res, 'fair.yoga couldn’t confirm the refund. Check the payment before trying again.'));
       setBusy(false);
       return;
     }

@@ -21,13 +21,28 @@ export type RefundRefusal = Extract<
 >;
 
 export type RefundResult =
-  // `outcomeApplied`: the refund completed in this call (Mollie answered `refunded`) and its outcome applied.
+  // `outcomeApplied`: this call's transaction applied the refund's outcome.
   | { kind: 'requested'; refundStatus: ProcessorRefundStatus; outcomeApplied: boolean }
   // The attempt's refund is already `refunded`.
   | { kind: 'unchanged' }
   | { kind: 'invalid'; message: string }
   | { kind: 'refused'; refusal: RefundRefusal }
-  | { kind: 'unavailable' };
+  // Nothing was sent to Mollie, or Mollie certainly made no refund.
+  | { kind: 'unavailable' }
+  // Mollie may have made the refund and could not say: the intent is kept for a later reconcile.
+  | { kind: 'unconfirmed' };
+
+/**
+ * Thrown when Mollie accepted (or this call adopted) a refund and the
+ * transaction recording it failed. The intent is kept without its Mollie id;
+ * `cause` is the transaction's error.
+ */
+export class RefundNotRecorded extends Error {
+  constructor(cause: unknown) {
+    super('Mollie took a refund fair.yoga could not record', { cause });
+    this.name = 'RefundNotRecorded';
+  }
+}
 
 const OUTCOME_OF: Record<RefundChoice, RefundOutcome> = { waive: 'waived', ask_again: 'reopened' };
 
@@ -74,7 +89,7 @@ type Held = {
 type Intent =
   | ({ kind: 'recorded' } & Held)
   | ({ kind: 'stale' } & Held)
-  | Exclude<RefundResult, { kind: 'requested' | 'unavailable' }>;
+  | Exclude<RefundResult, { kind: 'requested' | 'unavailable' | 'unconfirmed' }>;
 
 /** The teacher's copy for a refund Mollie would not take. */
 function refusedCopy(detail: string): string {
@@ -103,20 +118,22 @@ function refusedCopy(detail: string): string {
  *    no refund can exist at Mollie: no Mollie configuration, no usable token
  *    or a throw while getting one, or a refusal. A token lookup that answers
  *    `disconnected` refuses `PROCESSOR_NOT_CONNECTED`, as step 1 does for an
- *    attempt `canRefundThroughGrant` no longer holds for. A failure that leaves it
- *    unknown — `createRefund` throwing — is reconciled once against the
- *    refunds Mollie lists on the payment: one no row holds, for this amount,
- *    is adopted as this call's refund; with none the intent is withdrawn;
- *    when Mollie cannot be asked either, the intent is kept and logged. An
- *    accepted or adopted refund's Mollie id and status are stored in one
- *    transaction, which applies the outcome when the status is `refunded`
- *    (`completeRefund`) and tells the teacher when it is `failed`. If that
- *    transaction fails, Mollie's refund id is logged and the error rethrown.
+ *    attempt `canRefundThroughGrant` no longer holds for; a token lookup that
+ *    throws has its error rethrown. A failure that leaves it unknown —
+ *    `createRefund` throwing — is reconciled once against the refunds Mollie
+ *    lists on the payment: one no row holds, for this amount, is adopted as
+ *    this call's refund; with none the intent is withdrawn; when Mollie
+ *    cannot be asked either, the intent is kept, logged, and the answer is
+ *    `unconfirmed`. An accepted or adopted refund's Mollie id and status are
+ *    stored in one transaction, which applies the outcome when the status is
+ *    `refunded` (`completeRefund`) and tells the teacher when it is `failed`.
+ *    If that transaction fails, Mollie's refund id is logged and
+ *    `RefundNotRecorded` thrown.
  *
  * An intent kept without its Mollie id — after either logged failure, or a
  * crash between steps 1 and 3 — is reconciled by the attempt's next refund
- * request once it is older than `ADOPT_AFTER_MS`; `adoptionFor` is the rule
- * by which a sync adopts a Mollie refund into it.
+ * request once it is older than `ADOPT_AFTER_MS`; `adoptionFor`
+ * (`refund-adoption.ts`) is the rule for adopting a Mollie refund into it.
  * Lock order: `docs/lock-order.md`, "The `Payment` row is a Mollie sync's gate".
  */
 export async function refundAttempt(
@@ -235,7 +252,12 @@ async function requestRefund(db: PrismaClient, deps: MollieDeps | null, intent: 
         await withdraw(db, intent);
         return { kind: 'unavailable' };
       case 'failed':
-        return { kind: 'unavailable' };
+        logDegraded(
+          'MOLLIE_UNAVAILABLE',
+          { connectionId, operation: 'createRefund' },
+          'Mollie did not confirm a refund and could not list the payment’s refunds; the intent is kept for a later reconcile',
+        );
+        return { kind: 'unconfirmed' };
       default: {
         const unhandled: never = found;
         throw new Error(`unhandled reconcile: ${String(unhandled)}`);
@@ -319,7 +341,8 @@ async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: str
  * first when an ask-again completes here): its outcome applies when Mollie
  * says `refunded`, and the teacher is told when it says `failed`. A row that
  * gained a Mollie id meanwhile, through a sync's adoption, is left as that
- * sync wrote it. A failure is logged with Mollie's refund id and rethrown.
+ * sync wrote it. A failure is logged with Mollie's refund id and thrown as
+ * `RefundNotRecorded`.
  */
 async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundView): Promise<RefundResult> {
   const { attempt, refundId, outcome, paymentId, now } = intent;
@@ -357,6 +380,6 @@ async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundV
       { attemptId: attempt.id, refundId, mollieRefundId: mollie.id, refundStatus, err },
       'Mollie took a refund fair.yoga could not record; a sync adopts it once the intent is old enough',
     );
-    throw err;
+    throw new RefundNotRecorded(err);
   }
 }
