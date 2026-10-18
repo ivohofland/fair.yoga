@@ -99,7 +99,7 @@ async function refreshOnce(
 
   if (answer.kind === 'invalid_grant') {
     const outcome = await db.$transaction(async (tx): Promise<'disconnected' | 'teacher_gone' | 'superseded'> => {
-      // The teacher first, as every connection writer takes it
+      // The teacher first, as every transaction that takes this row does
       // (docs/lock-order.md). An erased teacher gets nothing written.
       if ((await lockTeacherForNoKeyUpdate(tx, teacherId)) === null) return 'teacher_gone';
       // The row is locked before `disconnectedAt` is read, so a disconnect

@@ -25,7 +25,7 @@ interface RemoveControlProps {
 
 /**
  * A text trigger, then an inline confirmation below it: nothing is sent on
- * the first tap. Opening the confirmation focuses its Remove button, which the
+ * the first tap. Opening the confirmation focuses its confirm button, which the
  * question describes; Cancel hands focus back to the trigger. A refusal shows
  * here, beside the control that failed.
  */

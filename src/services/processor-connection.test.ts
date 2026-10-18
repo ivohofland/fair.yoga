@@ -582,7 +582,7 @@ describe('revokeDueConnection', () => {
     expect(await connectionOf(t.teacherId)).toMatchObject({ accessToken: null, refreshToken: null, accessTokenExpiresAt: null, revokedAt: now });
   });
 
-  it('leaves the row as it was when Mollie fails, for the daily sweep to retry', async () => {
+  it('leaves the row as it was when Mollie fails, so a later revoke can retry', async () => {
     const t = await freshTeacher();
     const c = await seedDisconnected(t.teacherId, now);
     fake.revoke.mockRejectedValue(new MollieUnavailable('down', null));
