@@ -18,6 +18,7 @@ import { STUDIO_GENERATOR } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { driverAdapterError, pgCause } from '../../tests/adapter-errors';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
@@ -454,12 +455,11 @@ describe('the shared lifecycle verbs (DB)', () => {
       data: { isActive: false },
     });
 
-    const checkViolation = Object.assign(
-      new Error(
-        'Raw query failed. code: "23514". Message: `ERROR: new row for relation ' +
-          '"ClassTemplate" violates check constraint "__c1b_never_a_real_constraint"`',
+    const checkViolation = driverAdapterError(
+      pgCause(
+        '23514',
+        'new row for relation "ClassTemplate" violates check constraint "__c1b_never_a_real_constraint"',
       ),
-      { code: 'P2010' },
     );
 
     const throwing = prisma.$extends({

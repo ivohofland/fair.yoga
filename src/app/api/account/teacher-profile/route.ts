@@ -170,8 +170,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // ticket's window (`Account_email_key`), which may have no teacher side
       // at all, or a teacher row holds the address (`Teacher_email_key`).
       log.warn(
-        { route: 'teacher-profile' },
-        'teacher profile ticket path lost to an email that gained an account during the ticket window',
+        { route: 'teacher-profile', constraint: pgErrorOf(err)?.constraint },
+        'teacher profile ticket path found its email already held',
       );
       return clearDeclinedTicketCookie(
         respondError(

@@ -151,8 +151,14 @@ source.
     65,535. So 21,845 parents fail with `08P01`
     (`bind message supplies 0 parameters, but prepared statement "" requires 65536`,
     a `DriverAdapterError`). The query compiler does not split the
-    statement. Likewise a plain `where: { id: { in: ids } }` fails once
-    `ids` reaches 65,535 values. The app's own raw row-value SQL still
+    statement. An `in:` list is different: Prisma caps a statement at
+    32,766 bound parameters, splits a plain `findMany`'s `in:` filter and a
+    single-key relation load into statements of at most 32,765 values, and
+    refuses every other statement over the cap (`count`, `groupBy`,
+    `updateMany`, `deleteMany`, a `findMany` with `orderBy` or `take`, a
+    nested `in:`) before sending it, with `P2029`, also a 500 (Task 11's
+    measurement, `docs/technical-architecture.md` "Relation loads over
+    platform-wide sets"). The app's own raw row-value SQL still
     overflows: `rowValueIn(1000)` under 200 kB is `P2010` with
     `originalCode: '54001'`. Measured by `S/rev2/ceiling.ts` (seeds by
     `generate_series`, runs with sizes as arguments). The first observation
@@ -309,10 +315,11 @@ reddens a test instead of silently turning 503s into 500s.
 log facet only (D6). It returns a member of a closed set and `undefined`
 otherwise. The set is `@prisma/client/runtime/client.d.ts`'s `MappedError`
 kinds minus the other databases' (`mysql`, `sqlite`, `mssql`). That type is
-not exported, so it cannot be tethered by the compiler. A kind outside the set
-is simply not logged (fails closed), and `docs/technical-architecture.md`
-carries the re-derivation:
-`grep -n "kind: '" node_modules/@prisma/client/runtime/client.d.ts`.
+not exported, so the compiler cannot tether the set; a unit test does, by
+reading the same block and comparing it with `ADAPTER_KINDS`. A kind outside
+the set is simply not logged (fails closed), and
+`docs/technical-architecture.md` carries the re-derivation:
+`sed -n '/^declare type MappedError = {/,/^};/p' node_modules/@prisma/client/runtime/client.d.ts | grep -oE "kind: '[A-Za-z]+'"`.
 
 Why the alternative "read `meta` and `cause` at each site" is rejected: it is
 the shape that let `isMintKeyRefusal` and `isRestrictViolationOn` read
@@ -367,7 +374,8 @@ own 409 is in turn produced against the real DB (§7), which is acceptance
 anyway.
 
 The call sites, re-derived with
-`git grep -n "isUniqueConflictOn(err" -- src ':!*.test.ts'` (18 lines), and
+`git grep -o "isUniqueConflictOn(err" -- src ':!*.test.ts' ':!src/lib/unique-conflict.ts'`
+(18 calls on 17 lines; `student-profile/route.ts:168` holds two), and
 the names each must pass, read from the migrated dev database
 (`SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexdef LIKE 'CREATE UNIQUE%'`):
 
@@ -375,7 +383,7 @@ the names each must pass, read from the migrated dev database
 |---|---|---|
 | `account/student-profile/route.ts:168` (session) | `['accountId']` / `['email']` | `Student_account_live_unique` / `Student_email_key` (plus `Account_email_key` if the plan finds the session path can create an `Account`) |
 | `account/student-profile/route.ts:180` (ticket) | `['email']` | `Student_email_key`, `Account_email_key` (the ticket path creates the `Account` in the same write) |
-| `account/teacher-profile/route.ts:79-81` (`isSessionCollision`) | `accountId` / `email` / `pageSlug` | `Teacher_account_live_unique` / `Teacher_email_key`, `Account_email_key` / `Teacher_pageSlug_key` |
+| `account/teacher-profile/route.ts:79-81` (`isSessionCollision`) | `accountId` / `email` / `pageSlug` | `Teacher_account_live_unique` / `Teacher_email_key` / `Teacher_pageSlug_key` (the session path passes a scalar `accountId` and writes no `Account` row, so `Account_email_key` cannot arise) |
 | `account/teacher-profile/route.ts:144,156` | `['pageSlug']` | `Teacher_pageSlug_key` |
 | `account/teacher-profile/route.ts:168` | `['email']` | `Teacher_email_key`, `Account_email_key` |
 | `registrations/route.ts:544` | `['classId', 'studentId']` | `Registration_classId_studentId_key` |
@@ -423,7 +431,9 @@ inherited.
 Test call sites change the same way (`slot-constraints.test.ts`,
 `waitlist-position-index.test.ts` → `WaitlistEntry_waiting_position_key`,
 `live-profile-unique.test.ts`, `room-identity-index.test.ts`,
-`unique-conflict.test.ts`). `docs/data-model.md`'s room-identity paragraph,
+`unique-conflict.test.ts`), and the comment at
+`tests/integration/erased-profile-restart.test.ts:167`, which describes
+column matching, is rewritten. `docs/data-model.md`'s room-identity paragraph,
 which describes the unwrapping, is rewritten.
 
 ### D4. Pool policy lives in the factory
@@ -463,9 +473,8 @@ Settled sub-questions:
   each one opened then stays up to the 300 s idle timeout. Dev machine
   measured: `availableParallelism() = 10`, `hw.physicalcpu = 10`, so 21 either
   way. CI's `ubuntu-latest` (4 vCPU, likely SMT) probably goes from 5 to 9.
-  The plan records `nproc` and the physical core count
-  (`lscpu -p=core | grep -v '^#' | sort -u | wc -l`) from one CI run beside
-  the production value.
+  CI's pool size is not measured, by decision: it affects only test
+  defaults.
 - **Production value: 9, not 3.** D4 states "1 vCPU → 3", following
   `docs/technical-architecture.md`'s "VPS (2GB RAM, 1 vCPU)" and the `gdpr.ts`
   comment. The production host is a Hetzner CAX21: 4 Ampere Arm vCPUs, which
@@ -473,10 +482,11 @@ Settled sub-questions:
   Prisma's formula today and under the stand-in after. `docker-compose.prod.yml`
   sets no CPU limit (`grep -n -i cpu docker-compose.prod.yml` prints nothing).
   The "three connections" arithmetic in `gdpr.ts` was therefore already wrong
-  for the deployed box. To confirm on the server before merge (read-only):
-  `docker compose -f docker-compose.prod.yml exec app node -e "console.log(require('os').availableParallelism())"`
-  must print `4`. The number goes in `docs/technical-architecture.md` with
-  that command, not in a comment.
+  for the deployed box. The 9 is derived from the CAX21's published spec, not
+  measured on the server: `docs/technical-architecture.md` says so, with the
+  re-derivation command
+  `docker compose -f docker-compose.prod.yml exec app node -e "console.log(require('os').availableParallelism())"`,
+  which must print `4`. The number goes there, not in a comment.
 - **`connectionTimeoutMillis` default: 10 000**, Prisma's `pool_timeout`
   default. Trade-off, recorded: Prisma bounded a new connection separately at
   `connect_timeout` 5 s. With one knob, an unreachable host now takes up to
@@ -539,16 +549,19 @@ raw and model calls, but stays the raw error inside an interactive
 transaction (`S/probe3-client.log`, the `ENETUNREACH` rows). More machinery,
 the same driver string, and a new dependency on Prisma internals.
 
-What `pool_exhausted` covers, as measured: anything **but an interactive
-transaction** that waits past `connectionTimeoutMs`. That means raw and model
-calls, and a batch `$transaction([…])` too (`S/rev/pool-raw.ts`). An
-interactive transaction that cannot get a connection fails first at Prisma's
-own `maxWait` (2 s default), as `P2028` with `meta {}`, which classifies
-`tx_budget` at `warn`. Measured with
-`maxWait: 300` against a held single connection on C+A (`P2028`, `meta {}`)
-and on L (`P2028`, not `P2024`; `S/probe2-library.log`). The default `maxWait`
-of 2 s sits below the 10 s pool bound, so the same order holds there. Stated in
-`docs/technical-architecture.md`, not left to a reader's assumption.
+What `pool_exhausted` covers, as measured: any call whose wait for a pooled
+connection outlives `connectionTimeoutMs`. That means raw and model calls, a
+batch `$transaction([…])` (`S/rev/pool-raw.ts`), **and an interactive
+transaction**. Prisma's `maxWait` is not a deadline that fires while an
+interactive transaction waits at the pool; it is judged once the pool hands
+over a connection. So an interactive transaction behind a drained pool ends
+one of two ways: a wait that outlives the pool bound is pg-pool's timeout,
+`pool_exhausted` at `error`, whatever `maxWait` says; a connection freed
+within the pool bound but after `maxWait` is `P2028` with `meta {}`,
+`tx_budget` at `warn` (Task 8's measurement, `db-transient-shapes.test.ts`).
+With the defaults (`maxWait` 2 s, pool bound 10 s), a wait that ends between
+2 s and 10 s is `tx_budget` and one that reaches 10 s is `pool_exhausted`.
+Stated in `docs/technical-architecture.md`, not left to a reader's assumption.
 
 Comments that assert the old pool arithmetic are rewritten to what is true,
 without numbers that reach past their file (*Comment Discipline*): the
@@ -651,14 +664,16 @@ It still waits for the `health check: database probe failed` log line. It
 passes only when that line's `err.type` is `PrismaClientKnownRequestError` and
 its `err.code` is `ENETUNREACH`. Together those say the bundle constructed a
 client, the client handed the query to the adapter, and pg tried the network.
-The `ENGINE_MISSING` branch is replaced by named failures keyed on the
-logged `err.code`, not on message text, which is withheld. `ERR_MODULE_NOT_FOUND`
-means the bundle is missing a module the client loads lazily: the query
-compiler (that is the shape the spec review observed) or, if it surfaces the
-same way, `pg`. A second named failure catches a server that logs no probe
-line because a module failed at import (`Cannot find module` in the
-unwithheld server output). Which one a missing `pg` produces is measured
-(§6 item 5).
+The `ENGINE_MISSING` branch is replaced by two named failures, both keyed on
+Turbopack's `Failed to load external module` text in the server's unwithheld
+output, because the error a missing module produces carries no `code` (§6
+item 5's measurement). The check runs while the probe still awaits the first
+HTTP response as well as while it reads the log. A missing query compiler
+lets the server answer and logs a probe line whose error is a plain `Error`
+with no `code`: the bundle is missing a module the client loads lazily. A
+missing `pg` stops the server at instrumentation-hook load, before it answers
+HTTP, so no probe line is written: a module failed at import. The success
+check is unchanged: the logged `err.type` and `err.code`, never the message.
 Success line: `client loaded; database unreachable with ENETUNREACH as expected`.
 The step is renamed "Prisma client loads in the runner image", and its `grep`
 and `::error::` text follow.
@@ -778,8 +793,9 @@ name; §8's sweep is for the names):
 Decided on §2 item 14's measurement:
 
 - **`readInPages` and `SWEEP_PAGE_SIZE` stay.** Without paging, a platform-wide
-  sweep over more than 21,844 composite-key parents (or 65,534 single-key ids
-  in one `in` list) fails with `08P01`, a 500, every time it runs. The
+  sweep over more than 21,844 composite-key parents fails with `08P01`, a 500,
+  every time it runs; an `in:` list past 32,766 parameters in a statement
+  Prisma does not split fails with `P2029` (§2 item 14). The
   failure moves from about 7,500 parents (L, default stack) to 21,845 (C+A).
   The reason for paging changes, not the need. `SWEEP_PAGE_SIZE` at 500 keeps
   a composite load at 1,501 parameters.
@@ -851,7 +867,9 @@ the doc named, with its command.
    the measurement, not before.
 5. **Runner image**: the probe's logged line under `--network none` (the
    `type` and `code` strings are committed only after this). Broken-image
-   mutations: (a) `rm -rf` the standalone `node_modules/pg`, (b) item 4's
+   mutations: (a) remove `pg` from the bundle — the hashed external
+   `.next-build/node_modules/pg-*` resolves to `node_modules/.pnpm/pg@8.23.1`,
+   so that directory goes too, not only `node_modules/pg` — and (b) item 4's
    removal. Record each failure text in `supply-chain.md`.
 6. **Migrate image**: `check-reserved-slugs.ts` under `--network none` prints
    `ENETUNREACH` and exits 1. Mutation: drop the
@@ -860,13 +878,14 @@ the doc named, with its command.
 7. **Image sizes** before and after (`docker image inspect -f '{{.Size}}'` for
    both targets), and **idle RSS** of `server.js` in the runner image before
    and after (`docker stats --no-stream` after the first `/api/health`).
-8. **Production `availableParallelism()`** (D4's command), read-only, on the
-   server.
+8. **Production `availableParallelism()`**: not measured, by decision. The
+   pool size is derived from the host's published spec (D4), and the docs
+   carry D4's command to re-derive it.
 9. **Every vitest project and `next build` construct clients with a
    non-empty `DATABASE_URL`** (D4's throwing factory): the suite run and the
    build above are the measurement.
-10. **CI's pool size**: `nproc` and the physical core count from one CI run
-    (D4), recorded beside the production value.
+10. **CI's pool size**: not measured, by decision (D4); it affects only test
+    defaults.
 11. **The SQL-generation claims** (§8's second sweep), each with a measured
     verdict on C+A.
 12. **The bind-limit harness test's seed and run time** (D11), which decide
@@ -935,6 +954,7 @@ helper, `tests/adapter-errors.ts`:
 export function driverAdapterError(cause: AdapterCause): Error;          // typed shape
 export function knownWithAdapterCause(code: string, cause: AdapterCause, meta?: Record<string, unknown>): Prisma.PrismaClientKnownRequestError;
 export function pgCause(sqlState: string, message: string, extra?: Partial<AdapterCause>): AdapterCause;
+export function pgPoolTimeout(): Error;                                   // pg-pool's wait timeout
 ```
 
 A fidelity test in `pg-error.test.ts` produces one real error per path (typed
@@ -979,7 +999,7 @@ the plan's ledger, then restored and re-run green:
 | `isTerminalStatusViolation` requires `which is terminal` | drop the phrase check | the CHECK case classifies `CLASS_FROZEN` and fails |
 | `isExclusionConflictOn` requires `23P01` | compare against `'23514'` | both exclusion cases fail |
 | `isRestrictViolationOn` | read `meta.constraint` | restrict case fails (500, not the in-use refusal) |
-| `isMintKeyRefusal` | read `meta.constraint` | `payout-notice-delivery.test.ts`'s mint-refusal case fails |
+| `isMintKeyRefusal` | read `meta.constraint` | `payout-notice.test.ts`'s mint-refusal case fails |
 | `P2034 → serialization` | map it back to `deadlock` | typed `40001` case fails on `kind` and `level` |
 | `isPgPoolTimeout` literal | change one character | `pool_exhausted` case fails (500 instead of 503) |
 | `UNIQUE_CONSTRAINTS` registry | add `Room_bogus_unique` | registry test fails naming it |
@@ -1029,17 +1049,17 @@ git grep -nEi "prisma (splits|issues|emits|runs|sends|reads|selects|wraps|implem
 |---|---|---|
 | `docs/technical-architecture.md:304`, `src/lib/read-in-pages.ts:3` | composite relation loads send a row-value `IN` list | **False on C+A** (§2 item 14); rewritten (D11) |
 | `src/lib/degradation-store.ts:16` | upsert is one `INSERT … ON CONFLICT` | True; identical SQL on both engines (`S/rev/upsert.ts`) |
-| `src/services/roster-link.ts:27,33` | an empty `update` compiles to a `SELECT`; the type Prisma emits for a compound key | to measure; load-bearing (the lock gap this site exists to avoid) |
-| `src/services/invitations.ts:1656` | how an upsert compiles | to measure; load-bearing (atomicity) |
-| `src/services/invitations-lock-order.test.ts:213,1308` | an empty `update` compiles to non-locking `SELECT`s | to measure (same fact as `roster-link.ts`) |
-| `src/services/rule-lifecycle.ts:559` | emitted as a single `UPDATE` | to measure; load-bearing |
-| `src/services/class-lifecycle.ts:1847`, `class-lifecycle.test.ts:2126` | a real `UPDATE`, and no `UPDATE` for an all-unchanged data object | to measure |
-| `src/services/waitlist-retention.ts:242` | a `some` filter compiles to a semi-join | to measure (plan shape) |
-| `src/app/api/account/student-profile/route.ts:104`, `src/lib/auth/account.ts:61` | nested relation writes split into separate statements | to measure; load-bearing |
-| `src/services/gdpr.ts:1688`, `docs/lock-order.md:3116` | no per-statement `SAVEPOINT` | to measure |
-| `docs/lock-order.md:1899` | upserts issued as one statement | to measure |
-| `src/services/class-lifecycle-lock-order.test.ts:224` | the transaction ends with Prisma issuing `COMMIT` | to measure |
-| `src/lib/student-visibility.ts:16` | which columns Prisma selects | to measure |
+| `src/services/roster-link.ts:27,33` | an empty `update` compiles to a `SELECT`; the type Prisma emits for a compound key | True on C+A: an absent row is `SELECT` then `INSERT`; `skipDuplicates` sends a target-less `ON CONFLICT DO NOTHING` (Task 11) |
+| `src/services/invitations.ts:1656` | how an upsert compiles | True on C+A: one `INSERT … ON CONFLICT ("studentId","teacherId") DO UPDATE` (Task 11) |
+| `src/services/invitations-lock-order.test.ts:213,1308` | an empty `update` compiles to non-locking `SELECT`s | True on C+A: three plain `SELECT`s against an existing row (Task 11) |
+| `src/services/rule-lifecycle.ts:559` | emitted as a single `UPDATE` | True on C+A: `UPDATE "ScheduleRule" … WHERE ("id" = $4 AND "isArchived" = $5)` (Task 11) |
+| `src/services/class-lifecycle.ts:1847`, `class-lifecycle.test.ts:2126` | a real `UPDATE`, and no `UPDATE` for an all-unchanged data object | First half true. Second half false on C+A: an all-undefined `data` sends a `SELECT` of the matching ids and answers their count (1 for an existing row), not `{ count: 0 }`; comments rewritten, the guard stands (Task 11) |
+| `src/services/waitlist-retention.ts:242` | a `some` filter compiles to a semi-join | True on C+A: `EXISTS(…)` whose inner side re-joins `Class` (Task 11) |
+| `src/app/api/account/student-profile/route.ts:104`, `src/lib/auth/account.ts:61` | nested relation writes split into separate statements | False as the reason given: a nested `connect` or `create` on `Student` writes `claimedAt` and `accountId` in one `UPDATE`. Not load-bearing: both sites use the scalar `UPDATE`, one statement either way; comments rewritten (Task 11) |
+| `src/services/gdpr.ts:1688`, `docs/lock-order.md:3116` | no per-statement `SAVEPOINT` | True on C+A: no `SAVEPOINT` is sent, and the read after a caught error fails `25P02` (Task 11) |
+| `docs/lock-order.md:1899` | upserts issued as one statement | True on C+A: `INSERT … ON CONFLICT ("teacherId") DO UPDATE` (Task 11) |
+| `src/services/class-lifecycle-lock-order.test.ts:224` | the transaction ends with Prisma issuing `COMMIT` | True on C+A: `COMMIT` follows the callback's last statement (Task 11) |
+| `src/lib/student-visibility.ts:16` | which columns Prisma selects | Not a SQL claim: "Prisma selects" names the `select` objects it returns (Task 11) |
 | `src/lib/check-violation.test.ts:16`, `src/lib/prisma-client.ts:13` | P2010 framing; Prisma reads `DATABASE_URL` | rewritten by this change (D2, D4) |
 
 The grep is a floor, not the whole set. The plan also reads the
@@ -1095,9 +1115,11 @@ The grep is a floor, not the whole set. The plan also reads the
 7. **Client-engine gaps on 6.19.3** beyond the `name` / `char` / `void` /
    range columns already found. The full suite is the net (§6 item 1).
 8. **Unbounded `in` lists now fail where the Rust engine may have
-   coped.** Any read that passes more than 65,534 values to one `in`, or
-   loads a composite relation over more than 21,844 parents, fails with
-   `08P01` (§2 item 14). The query compiler does not split it. Whether the
+   coped.** A composite relation load over more than 21,844 parents fails in
+   Postgres with `08P01`; the query compiler does not split it. An `in:` list
+   that takes a statement past 32,766 bound parameters is split only in a
+   plain `findMany` or a single-key relation load; in every other statement
+   Prisma refuses it with `P2029` before sending it (§2 item 14). Whether the
    Rust engine split such lists was not measured. The plan sweeps for `in:`
    arguments not bounded by a page
    (`git grep -nE "(^|[^A-Za-z_])in: [A-Za-z_.]+" -- src ':!src/generated' ':!*.test.ts'`, 45 lines today),
@@ -1138,7 +1160,7 @@ Run from the worktree root. None uses `head` or `tail`.
 | `.message.*` call lines in non-test code (this grep sees no regex `.exec` readers such as the serializer's `PG_CODE`, nor the probe; those are in the D2/D3 table by hand) | 12 lines in 4 files | `git grep -nE "\.message\??\.(includes\|match\|startsWith\|endsWith\|search\|indexOf)\|\.test\([a-zA-Z_.]*message\|String\([a-z]+\)\.(includes\|match)" -- src scripts tests ':!src/generated' ':!*.test.ts' ':!*.test.tsx' ':!*.spec.ts'` |
 | Test files with engine framings | 15 | `git grep -lE 'PostgresError\|Code: \`\|code: \\"[0-9A-Z]{5}\|code: "[0-9A-Z]{5}"' -- '*.test.ts' '*.test.tsx' '*.spec.ts' 'tests/**' \| wc -l` |
 | Test files depending on the shapes (framing ∪ fabricated Prisma errors ∪ `meta.*` / P-code assertions ∪ non-comment SQLSTATE literals ∪ `meta: {` fabrications and `PrismaClientUnknownRequestError` mentions) | 53 = the report's 39 + 14 | `sh S/rev2/census-tests.sh \| wc -l` (the five greps, `sort -u`); the 39 are `S/census-test-union.txt` |
-| `isUniqueConflictOn` call lines in non-test code | 18 (student-profile 3 + teacher-profile 6 + registrations 1 + publish 1 + rooms/[id] 1 + rooms 2 + teacher-rooms 1 + teachers/[id] 1 + class-lifecycle 1 + invitations 1) | `git grep -n "isUniqueConflictOn(err" -- src ':!*.test.ts' \| wc -l` |
+| `isUniqueConflictOn` calls in non-test code | 18 calls on 17 lines (student-profile 3 calls on 2 lines + teacher-profile 6 + registrations 1 + publish 1 + rooms/[id] 1 + rooms 2 + teacher-rooms 1 + teachers/[id] 1 + class-lifecycle 1 + invitations 1) | `git grep -o "isUniqueConflictOn(err" -- src ':!*.test.ts' ':!src/lib/unique-conflict.ts' \| wc -l` (calls); `-n` in place of `-o` (lines) |
 | `isUniqueConflictOn` call lines in tests | 28 | `git grep -n "isUniqueConflictOn(" -- '*.test.ts' 'tests/**' \| wc -l` |
 | Files using URL pool parameters | 9 files, 6 of them callers (`measure-push-fanout.ts`, `handoff.test.ts`, three single-connection tests, `stack-ceiling.ts`); the other 3 are `log-serializers.ts` and its test (`meta.connection_limit`) and `gdpr.ts`'s comment | `git grep -lE "connection_limit" -- src tests scripts ':!src/generated'` |
 | `P2024` mentions to sweep | 54 lines | `git grep -n "P2024" -- src scripts tests ':!src/generated' \| wc -l` |
@@ -1156,15 +1178,18 @@ Run from the worktree root. None uses `head` or `tail`.
   extractor (§4, D2).
 - **D4:** the production pool is 9, not 3. The host is a 4-vCPU CAX21, not
   the 1-vCPU box the docs describe, and that held under Prisma's formula
-  already. To be confirmed on the server (§6 item 8). The option is named
+  already, derived from the host's published spec and not measured on the
+  server (§6 item 8). The option is named
   `connectionTimeoutMs`, not `poolTimeoutMs`, because pg's knob bounds the
   connect as well. `idleTimeoutMillis` is fixed at 300 000, a sub-decision D4
   did not mention, forced by four single-connection test clients the report
   missed.
-- **D4 (pool exhaustion scope):** `pool_exhausted` covers non-transactional
-  queries only. A pool-blocked interactive transaction surfaces as `P2028`
-  (`tx_budget`) whenever `maxWait` is below the pool bound, which the
-  defaults are (2 s against 10 s); measured on C+A and on L.
+- **D4 (pool exhaustion scope):** `pool_exhausted` covers every call whose
+  pool wait outlives `connectionTimeoutMs`, an interactive transaction
+  included: `maxWait` is judged only once the pool hands over a connection.
+  A pool-blocked interactive transaction is `P2028` (`tx_budget`) only when
+  its connection is freed within the pool bound but after `maxWait`;
+  measured on C+A (Task 8).
 - **D4 (process exit):** `allowExitOnIdle: true` joins the fixed defaults,
   so the 300 s idle timeout cannot hold a finished process open; an empty
   URL counts as missing.

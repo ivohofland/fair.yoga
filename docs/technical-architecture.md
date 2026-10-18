@@ -305,16 +305,30 @@ a second statement that binds the parent keys as parameters. For a
 column, `"id" IN ($1…) AND "kind" IN (…) AND "live" IN (…)`, so the statement
 binds 3n + 1 parameters for n parents. Postgres's wire protocol carries at
 most 65,535 parameters in one statement, and the query compiler does not split
-a relation load: 21,844 parents resolve, and 21,845 fail with `08P01`
-(`bind message supplies 0 parameters, but prepared statement "" requires
-65536`), which reaches the caller as a 500. A scalar `IN` list is flat in
-Postgres, so the load no longer overflows the parser's stack: 21,844 parents
-resolve even under a 200 kB `max_stack_depth`. A top-level scalar `in:`
-**filter** (`where: { id: { in: ids } }`) is different again: the query
-compiler splits it into statements of at most 32,765 values, and 200,000 ids
-resolve. Relation **filters** (`where: { calendarEntry: { cancelledAt: null } }`)
-compile to a `JOIN`, not an `IN` list, and are unaffected. Only relation
-*loads* are exposed.
+a composite relation load: 21,844 parents resolve, and 21,845 fail with
+`08P01` (`bind message supplies 0 parameters, but prepared statement ""
+requires 65536`), which reaches the caller as a 500. A scalar `IN` list is
+flat in Postgres, so the load no longer overflows the parser's stack: 21,844
+parents resolve even under a 200 kB `max_stack_depth`. Relation **filters**
+(`where: { calendarEntry: { cancelledAt: null } }`) compile to a `JOIN`, not
+an `IN` list, and are unaffected.
+
+**`in:` lists.** Prisma caps a Postgres statement at 32,766 bound parameters,
+and handles a statement over the cap in one of two ways. A plain `findMany`
+whose `in:` filter is the overflow — no `orderBy`, no `take` — and a
+**single-key** relation load (`Class.registrations`, keyed on
+`Registration.classId`) are split into statements of at most 32,765 values:
+200,000 ids resolve, and a 70,000-parent single-key load runs as three
+statements. Every other statement is sent whole, and one over the cap is
+refused before it is sent, with `P2029` (`The query parameter limit supported
+by your database is exceeded.`), which also reaches the caller as a 500.
+Measured refused past the cap: `count`, `groupBy`, `updateMany`,
+`deleteMany`, a `findMany` with `orderBy` or `take`, and an `in:` nested under
+a relation filter. The composite relation load above is the exception to both:
+neither split nor refused, it fails in Postgres. So an `in:` list that grows
+with the platform needs a bound whatever operation carries it, and
+`readInSlices` (`src/lib/read-in-pages.ts`) hands the list over
+`SWEEP_PAGE_SIZE` keys at a time.
 
 Re-deriving the numbers: the composite limit is the `bind-parameter limit`
 test, which seeds 21,845 classes by `generate_series` and loads 21,844 and
@@ -324,8 +338,11 @@ test, which seeds 21,845 classes by `generate_series` and loads 21,844 and
 pnpm exec vitest run --project unit-sweeps src/services/sweep-page-ceiling.test.ts -t "bind-parameter limit"
 ```
 
-The filter split, from the repo root (`pnpm exec tsx split.ts 32765 32766 200000`
-with this as `split.ts`; it prints the parameter count of every statement):
+The `in:` behaviour, from the repo root (`pnpm exec tsx split.ts 32765 32766 200000`
+with this as `split.ts`; it prints the parameter count of every statement, or
+the refusal). The plain `findMany` splits; add `orderBy: { id: 'asc' }` to it,
+or swap it for `db.class.count({ where: { id: { in: ids } } })`, and every size
+past the cap answers `P2029`:
 
 ```ts
 import 'dotenv/config';
@@ -340,8 +357,12 @@ void (async () => {
   for (const n of process.argv.slice(2).map(Number)) {
     counts.length = 0;
     const ids = Array.from({ length: n }, (_, i) => `00000000-0000-0000-0000-${String(i).padStart(12, '0')}`);
-    await db.class.findMany({ where: { id: { in: ids } } });
-    console.log(n, counts);
+    try {
+      await db.class.findMany({ where: { id: { in: ids } } });
+      console.log(n, counts);
+    } catch (e) {
+      console.log(n, (e as { code?: unknown }).code);
+    }
   }
   await db.$disconnect();
 })();
@@ -1620,9 +1641,9 @@ From the cause it requires `originalCode` to be a string matching
 `/^[0-9A-Z]{5}$/` and `originalMessage` to be a string; otherwise `null`. The
 adapter sets both from pg's `DatabaseError` (`code`, `message`) before any
 per-code mapping, so they exist for every Postgres-originated error whatever
-`kind` it gets. The kinds that carry no Postgres error (`SocketTimeout`,
-`DatabaseNotReachable`, `UnsupportedNativeDataType`, `TlsConnectionError`)
-have no SQLSTATE and answer `null`. There is no `detail` field: it carries row
+`kind` it gets. A cause with no `originalCode` — one the adapter builds
+without a Postgres error, such as `DatabaseNotReachable` — has no SQLSTATE and
+answers `null`. There is no `detail` field: it carries row
 values (`Failing row contains (…)`, `Key (…)=(…)`) and nothing reads it.
 
 The shapes it reads, measured on the client engine plus the pg adapter
@@ -1642,6 +1663,7 @@ and `mapDriverError` in
 | `P2028` `maxWait` exceeded | Known | none | — | `meta {}` |
 | Pool wait exceeded `connectionTimeoutMillis` (`$queryRaw`, `$executeRaw`, a model call, a batch `$transaction([…])`, each behind a raw or an interactive-transaction holder) | plain `Error('timeout exceeded when trying to connect')`, own key `clientVersion` only | none | — | — |
 | Bind-parameter count over 65,535 | `DriverAdapterError` | `err.cause` | `postgres` | `originalCode: '08P01'` |
+| Over 32,766 parameters in one statement Prisma does not split, refused before it is sent | `PrismaClientKnownRequestError` `P2029` | none | — | — |
 | Connect exceeded `connectionTimeoutMillis` | plain `Error('Connection terminated due to connection timeout')` | none | — | — |
 | `ENETUNREACH` / `EHOSTUNREACH` (raw, model) | Known, `code: 'ENETUNREACH'` | none | — | — |
 | Same, inside an interactive transaction | the raw pg `Error`, `code: 'ENETUNREACH'` | — | — | — |

@@ -15,7 +15,7 @@ export type { PrismaClient } from '../generated/prisma/client';
 export const DEFAULT_POOL_MAX = availableParallelism() * 2 + 1;
 /** pg's `connectionTimeoutMillis` when `connectionTimeoutMs` is omitted. */
 export const DEFAULT_CONNECTION_TIMEOUT_MS = 10_000;
-/** Long enough that an idle connection, and so a single-connection client's backend, survives between statements. */
+/** How long an idle connection stays open. Why 300 s: docs/technical-architecture.md, "Where Prisma comes from". */
 const IDLE_TIMEOUT_MS = 300_000;
 
 export interface PrismaClientFactoryOptions {
@@ -26,7 +26,7 @@ export interface PrismaClientFactoryOptions {
   /** pg's `connectionTimeoutMillis`: bounds both a pool wait and a new connection. */
   connectionTimeoutMs?: number;
   errorFormat?: Prisma.PrismaClientOptions['errorFormat'];
-  /** Passed through; the ceiling tests count bound parameters from the query event. */
+  /** Passed through to `PrismaClient`. */
   log?: Prisma.PrismaClientOptions['log'];
 }
 

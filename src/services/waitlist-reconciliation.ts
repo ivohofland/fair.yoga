@@ -28,7 +28,7 @@
 import type { PrismaClient } from '@/lib/prisma-client';
 import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
-import { readInPages } from '@/lib/read-in-pages';
+import { readInSlices } from '@/lib/read-in-pages';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import {
   broadcastStillStands,
@@ -350,17 +350,21 @@ export async function reconcileWaitlists(
   //
   // `groupBy`, not `findMany({ distinct })`: Prisma does not compile `distinct`
   // into SQL. It selects the rows (plus `id`, which it needs to compare) and
-  // dedupes in the query engine, so `distinct` would fetch one row per waiting
+  // dedupes in the client, so `distinct` would fetch one row per waiting
   // STUDENT to produce one id per CLASS. `groupBy` pushes it into Postgres.
   // `calendarEntry: { cancelledAt: null }` beside the status (#327): a
   // cancelled class keeps its `open` status, and reconciling one would
   // broadcast an opened seat in a class that is off.
+  //
+  // Ordered by `classId` so the slices below, and so the classes they read,
+  // come back in id order.
   const queued = await db.waitlistEntry.groupBy({
     by: ['classId'],
     where: {
       status: 'waiting',
       class: { status: 'open', calendarEntry: { cancelledAt: null } },
     },
+    orderBy: { classId: 'asc' },
   });
   const candidateIds = queued.map((q) => q.classId);
   if (candidateIds.length === 0) {
@@ -379,18 +383,18 @@ export async function reconcileWaitlists(
   // heap — and the two tests that hold a row lock against a wall clock then
   // race against however much work happens before their target is reached.
   //
-  // Paged because the `calendarEntry` relation load grows with the parent set
-  // — see `docs/technical-architecture.md` ("Relation loads over platform-wide
+  // Read in slices of `candidateIds`, because both the `in` list and the
+  // `calendarEntry` relation load grow with the candidate set — see
+  // `docs/technical-architecture.md` ("Relation loads over platform-wide
   // sets").
-  const classes = await readInPages<CandidateClass>((after, take) =>
+  const classes = await readInSlices<string, CandidateClass>(candidateIds, (slice) =>
     db.class.findMany({
       where: {
-        id: { in: candidateIds, ...(after ? { gt: after.id } : {}) },
+        id: { in: [...slice] },
         status: 'open',
         calendarEntry: { cancelledAt: null },
       },
       orderBy: { id: 'asc' },
-      take,
       select: {
         id: true,
         maxStudents: true,
@@ -420,18 +424,22 @@ export async function reconcileWaitlists(
     return emptySummary(0);
   }
 
-  // One grouped count for the whole candidate set, not one count per class: this
-  // runs on every tick on a 2 GB VPS. Keyed on the classes actually iterated
-  // rather than on `candidateIds`, so a class that closed between the two
-  // queries costs nothing here.
-  const counts = await db.registration.groupBy({
-    by: ['classId'],
-    where: {
-      classId: { in: classes.map((c) => c.id) },
-      status: { in: [...ACTIVE_REGISTRATION_STATUSES] },
-    },
-    _count: { _all: true },
-  });
+  // One grouped count per slice of the candidate set, not one count per class:
+  // this runs on every tick on a 2 GB VPS. Sliced like the class read above.
+  // Keyed on the classes actually iterated rather than on `candidateIds`, so a
+  // class that closed between the two queries costs nothing here.
+  const counts = await readInSlices(
+    classes.map((c) => c.id),
+    (slice) =>
+      db.registration.groupBy({
+        by: ['classId'],
+        where: {
+          classId: { in: [...slice] },
+          status: { in: [...ACTIVE_REGISTRATION_STATUSES] },
+        },
+        _count: { _all: true },
+      }),
+  );
   const activeByClass = new Map(counts.map((c) => [c.classId, c._count._all]));
 
   // The previous tick's counts to read, this tick's to build — swapped into

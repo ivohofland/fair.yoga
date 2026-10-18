@@ -102,9 +102,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       select: { id: true },
     });
 
-    // Scalar accountId, not a relation connect: Prisma splits nested
-    // connects into two statements, and the claim/link CHECK constraint
-    // requires both fields to change in one.
+    // One UPDATE writing `claimedAt` and `accountId` together, which the
+    // claim/link CHECK constraint requires.
     if (unclaimed) {
       const student = await prisma.student.update({
         where: { id: unclaimed.id },
@@ -184,8 +183,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // Worth a log line: unlike the session path's double-tap, this is
       // not the benign, expected shape of this collision.
       log.warn(
-        { route: 'student-profile' },
-        'student profile ticket path lost to an email that gained an account during the ticket window',
+        { route: 'student-profile', constraint: pgErrorOf(err)?.constraint },
+        'student profile ticket path found its email already held',
       );
       return respondError(
         'This email now has an account. Please sign in and add a student profile.',

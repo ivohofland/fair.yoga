@@ -86,7 +86,7 @@ export async function auditTeacherTimezones(
   // `groupBy`, not `findMany({ distinct })`, for the reason
   // `reconcileWaitlists` (`waitlist-reconciliation.ts`) records at its opening
   // `groupBy`: Prisma does not compile `distinct` into SQL, so that shape
-  // would select one row per TEACHER and dedupe in the query engine. The
+  // would select one row per TEACHER and dedupe in the client. The
   // `_count` rides along free and is what lets the summary report affected
   // teachers as well as zones.
   const rows = await db.teacher.groupBy({

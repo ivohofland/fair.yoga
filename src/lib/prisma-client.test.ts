@@ -60,7 +60,7 @@ describe('createPrismaClient', () => {
     }
   });
 
-  // Review Focus 3: a process that skips $disconnect() still exits promptly.
+  // A process that skips $disconnect() still exits promptly.
   it('a client left connected does not hold a finished process open', async () => {
     const script = "const { createPrismaClient } = require('./src/lib/prisma-client'); const c = createPrismaClient(); c.$queryRaw`SELECT 1`.then(() => console.log('done'));";
     const t0 = Date.now();

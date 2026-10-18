@@ -46,7 +46,7 @@ describe('pgErrorOf (fabricated branches)', () => {
     expect(pgErrorOf(fieldsOnly)?.constraint).toBeUndefined();
   });
 
-  // Review Focus 2: free text quoting a clause never names a constraint.
+  // Free text quoting a clause never names a constraint.
   it.each([
     ['23514', 'Class abc is completed, which is terminal; note: violates check constraint "Class_live_needs_open_room" in text'],
     ['23514', 'trigger said: new row violates check constraint "X" and more'],

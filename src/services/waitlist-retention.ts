@@ -206,7 +206,7 @@ export async function reapClosedWaitlistEntries(
   // `groupBy`, not `findMany({ distinct })`, for the reason
   // `waitlist-reconciliation.ts` records at its own opening statement: Prisma
   // does not compile `distinct` into SQL. It would select one row per matching
-  // ENTRY and dedupe in the query engine to produce one id per CLASS.
+  // ENTRY and dedupe in the client to produce one id per CLASS.
   //
   // `maxClasses + 1` rather than `maxClasses`, so `cappedOut` is exact rather
   // than "possibly": at exactly the cap a plain `take` cannot tell a full run
