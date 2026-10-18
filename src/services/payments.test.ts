@@ -4,6 +4,7 @@ import {
   markPaymentPaid,
   markPaymentOverdue,
   reopenPayment,
+  reopenInTransaction,
   markPaymentNotCharged,
   sendPaymentReminder,
   reportPaymentSent,
@@ -213,29 +214,29 @@ describe('Payment Service (DB)', () => {
   });
 
   it('markPaymentPaid updates status, method, and paidAt', async () => {
-    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'bank_transfer'), 'applied');
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'manual'), 'applied');
 
     expect(payment.status).toBe('paid');
-    expect(payment.method).toBe('bank_transfer');
+    expect(payment.method).toBe('manual');
     expect(payment.paidAt).not.toBeNull();
   });
 
   it('markPaymentPaid answers unchanged for a payment already paid that way, writing nothing', async () => {
-    // Paid with 'bank_transfer' by the previous test.
+    // Paid with 'manual' by the previous test.
     const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'bank_transfer'), 'unchanged');
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'manual'), 'unchanged');
 
-    expect(payment.method).toBe('bank_transfer');
+    expect(payment.method).toBe('manual');
     expect(payment.paidAt).toEqual(before.paidAt);
     expect(payment.updatedAt).toEqual(before.updatedAt);
   });
 
-  it('markPaymentPaid refuses a paid payment when the method differs', async () => {
-    expect(refusalCode(await markPaymentPaid(prisma, paymentId, 'cash'))).toBe('PAYMENT_ALREADY_PAID');
+  it('markPaymentPaid refuses a payment paid by hand that Mollie then reports paid', async () => {
+    expect(refusalCode(await markPaymentPaid(prisma, paymentId, 'mollie'))).toBe('PAYMENT_ALREADY_PAID');
 
     const row = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(row.method).toBe('bank_transfer');
+    expect(row.method).toBe('manual');
   });
 
   it('markPaymentOverdue updates status to overdue', async () => {
@@ -265,10 +266,10 @@ describe('Payment Service (DB)', () => {
 
   it('markPaymentPaid allows transition from overdue', async () => {
     // Payment is currently 'overdue' — should be allowed to mark as paid
-    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'cash'), 'applied');
+    const payment = paymentOf(await markPaymentPaid(prisma, paymentId, 'manual'), 'applied');
 
     expect(payment.status).toBe('paid');
-    expect(payment.method).toBe('cash');
+    expect(payment.method).toBe('manual');
   });
 
   it('reopenPayment undoes a mistaken mark: paid → pending, fields cleared', async () => {
@@ -291,7 +292,7 @@ describe('Payment Service (DB)', () => {
   });
 
   it('re-marking paid after an undo works', async () => {
-    expect(paymentOf(await markPaymentPaid(prisma, paymentId, 'cash'), 'applied').status).toBe('paid');
+    expect(paymentOf(await markPaymentPaid(prisma, paymentId, 'manual'), 'applied').status).toBe('paid');
   });
 
   it('sendPaymentReminder refuses a paid payment and sends nothing', async () => {
@@ -682,7 +683,7 @@ describe('Payment Service (DB)', () => {
           registrationId: registration.id,
           amount: 12.5,
           status,
-          ...(status === 'paid' ? { method: 'cash', paidAt: new Date() } : {}),
+          ...(status === 'paid' ? { method: 'manual', paidAt: new Date() } : {}),
           ...(status === 'not_charged' ? { notChargedAt: new Date() } : {}),
           studentReportedAt,
         },
@@ -781,7 +782,7 @@ describe('Payment Service (DB)', () => {
 
       it('markPaymentPaid refuses a not-charged payment with PAYMENT_WAIVED', async () => {
         const payment = await makePayment('not_charged');
-        expect(refusalCode(await markPaymentPaid(prisma, payment.id, 'cash'))).toBe('PAYMENT_WAIVED');
+        expect(refusalCode(await markPaymentPaid(prisma, payment.id, 'manual'))).toBe('PAYMENT_WAIVED');
         const row = await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
         expect(row.status).toBe('not_charged');
       });
@@ -844,6 +845,49 @@ describe('Payment Service (DB)', () => {
         );
       });
 
+      describe('of a payment Mollie settled (Decision 17)', () => {
+        let attemptTag = 0;
+        function attemptOn(paymentId: string, over: { settledPayment: boolean; chargedBackAt?: Date | null }) {
+          return prisma.processorPayment.create({
+            data: {
+              paymentId, connectionId: null, processorPaymentId: `tr_reopen${uniqueSuffix}${attemptTag++}`, profileId: 'pfl_reopen',
+              testmode: true, method: 'ideal', status: 'paid', amount: 12.5, currency: 'EUR', paidAt: new Date(), ...over,
+            },
+          });
+        }
+        async function settledByMollie() {
+          const payment = await makePayment('paid');
+          await prisma.payment.update({ where: { id: payment.id }, data: { method: 'mollie' } });
+          return { payment, attempt: await attemptOn(payment.id, { settledPayment: true }) };
+        }
+
+        it('is refused PAYMENT_SETTLED_BY_PROCESSOR, leaving it paid and its attempt settling', async () => {
+          const { payment, attempt } = await settledByMollie();
+          expect(refusalCode(await reopenPayment(prisma, payment.id))).toBe('PAYMENT_SETTLED_BY_PROCESSOR');
+          expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe('paid');
+          expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(true);
+        });
+
+        it('applies after a chargeback, and a second attempt can then settle it', async () => {
+          const payment = await makePayment('paid');
+          await attemptOn(payment.id, { settledPayment: false, chargedBackAt: new Date() });
+
+          paymentOf(await reopenPayment(prisma, payment.id), 'applied');
+
+          const second = await attemptOn(payment.id, { settledPayment: false });
+          paymentOf(await markPaymentPaid(prisma, payment.id, 'mollie'), 'applied');
+          await prisma.processorPayment.update({ where: { id: second.id }, data: { settledPayment: true } });
+          expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).method).toBe('mollie');
+        });
+
+        it('applies for the refund that names its attempt, releasing that attempt', async () => {
+          const { payment, attempt } = await settledByMollie();
+          const outcome = await prisma.$transaction((tx) => reopenInTransaction(tx, payment.id, { refundAttemptId: attempt.id }));
+          expect(paymentOf(outcome, 'applied')).toMatchObject({ status: 'pending', method: null, paidAt: null });
+          expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(false);
+        });
+      });
+
       it('logs nothing for a reopen whose student is linked', async () => {
         const info = vi.spyOn(log, 'info');
         onTestFinished(() => info.mockRestore());
@@ -853,6 +897,27 @@ describe('Payment Service (DB)', () => {
           expect.objectContaining({ paymentId: payment.id }),
           expect.any(String),
         );
+      });
+    });
+
+    describe('getOutstandingPayments order', () => {
+      it('puts a payment whose Mollie payment is processing with the claimed ones, and ships no attempts', async () => {
+        const plain = await makePayment('pending');
+        const moving = await makePayment('pending');
+        await prisma.processorPayment.create({
+          data: {
+            paymentId: moving.id, connectionId: null, processorPaymentId: `tr_order${uniqueSuffix}`, profileId: 'pfl_order',
+            testmode: true, method: 'ideal', status: 'pending', amount: 12.5, currency: 'EUR',
+          },
+        });
+        const { payment: claimed } = await makeClaimedPayment('pending');
+        const ours = new Set([plain.id, moving.id, claimed.id]);
+
+        const rows = (await getOutstandingPayments(prisma, teacherId)).filter((r) => ours.has(r.id));
+
+        expect(rows.map((r) => r.id).slice(0, 2).sort()).toEqual([moving.id, claimed.id].sort());
+        expect(rows[2]!.id).toBe(plain.id);
+        expect(rows.every((r) => !('processorAttempts' in r))).toBe(true);
       });
     });
 
@@ -1069,7 +1134,7 @@ describe('Payment Service (DB)', () => {
 
       it('markPaymentPaid keeps it', async () => {
         const { payment } = await makeClaimedPayment('pending');
-        const row = paymentOf(await markPaymentPaid(prisma, payment.id, 'bank_transfer'), 'applied');
+        const row = paymentOf(await markPaymentPaid(prisma, payment.id, 'manual'), 'applied');
         expect(row.studentReportedAt).toEqual(REPORTED_AT);
       });
 
@@ -1105,7 +1170,7 @@ describe('Payment Service (DB)', () => {
           }),
         );
 
-        const result = await markPaymentPaid(racing.db, payment.id, 'cash');
+        const result = await markPaymentPaid(racing.db, payment.id, 'manual');
 
         expect(racing.fired()).toBe(true);
         expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
@@ -1126,19 +1191,27 @@ describe('Payment Service (DB)', () => {
         expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
       });
 
-      it('reopenPayment: a pending payment settled in between → CONCURRENT_MODIFICATION', async () => {
+      // The reopen holds the payment's row lock from before its compare-and-
+      // swap, so a settle cannot land between the swap and the re-read: it
+      // waits, and the reopen answers what the row held when it looked.
+      it('reopenPayment: a settle racing the swap waits for the reopen, which answers unchanged', async () => {
         const payment = await makePayment('pending');
-        const racing = interposeAfterPaymentWrite(() =>
-          prisma.payment.update({
-            where: { id: payment.id },
-            data: { status: 'paid', method: 'cash', paidAt: new Date() },
-          }),
-        );
+        let settling: Promise<unknown> | null = null;
+        const racing = interposeAfterPaymentWrite(async () => {
+          // `.then` starts the query; a Prisma query left un-awaited never runs.
+          settling = prisma.payment
+            .update({ where: { id: payment.id }, data: { status: 'paid', method: 'manual', paidAt: new Date() } })
+            .then((row) => row);
+          // Long enough for the update to reach the row lock it waits on.
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        });
 
         const result = await reopenPayment(racing.db, payment.id);
+        await settling;
 
         expect(racing.fired()).toBe(true);
-        expect(refusalCode(result)).toBe('CONCURRENT_MODIFICATION');
+        expect(paymentOf(result, 'unchanged').status).toBe('pending');
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe('paid');
       });
     });
   });
@@ -1148,7 +1221,7 @@ describe('Payment Service (DB)', () => {
     const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
 
     it.each([
-      ['markPaymentPaid', () => markPaymentPaid(prisma, UNKNOWN_PAYMENT_ID, 'cash')],
+      ['markPaymentPaid', () => markPaymentPaid(prisma, UNKNOWN_PAYMENT_ID, 'manual')],
       ['markPaymentNotCharged', () => markPaymentNotCharged(prisma, UNKNOWN_PAYMENT_ID)],
       ['reopenPayment', () => reopenPayment(prisma, UNKNOWN_PAYMENT_ID)],
       ['sendPaymentReminder', () => sendPaymentReminder(prisma, UNKNOWN_PAYMENT_ID)],

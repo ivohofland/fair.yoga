@@ -26,7 +26,6 @@ import {
   EQUIPMENT_ITEM_MAX,
   EQUIPMENT_ITEMS_MAX,
   LONG_TEXT_MAX,
-  PAYMENT_METHOD_MAX,
   EMAIL_MAX,
   PAGE_SLUG_MAX,
   DURATION_MAX_MINUTES,
@@ -767,8 +766,9 @@ export const claimWaitlistSchema = z.object({
 // PAYMENTS
 // ============================================================================
 
+/** A teacher marks a payment paid by hand only; `'mollie'` is written by the webhook. */
 export const markPaidSchema = z.object({
-  method: singleLineText(PAYMENT_METHOD_MAX).min(1),
+  method: z.literal('manual'),
 });
 
 // ============================================================================

@@ -24,7 +24,6 @@ export const FLOOR_MAX = 40;
 export const EQUIPMENT_ITEM_MAX = 60;
 export const EQUIPMENT_ITEMS_MAX = 30;
 export const LONG_TEXT_MAX = 2000;
-export const PAYMENT_METHOD_MAX = 64;
 /** RFC 5321's limit on a forward path. */
 export const EMAIL_MAX = 254;
 export const PAGE_SLUG_MAX = 60;

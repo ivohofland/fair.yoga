@@ -534,7 +534,7 @@ describe('POST /api/payments/[id]/remind', () => {
 });
 
 const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
-const paid = (token: string | null, id: string, body: unknown = { method: 'cash' }) =>
+const paid = (token: string | null, id: string, body: unknown = { method: 'manual' }) =>
   fetch(`${BASE_URL}/api/payments/${id}/paid`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? cookie(token) : {}) },
@@ -598,7 +598,7 @@ describe('POST /api/payments/[id]/paid', () => {
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.status).toBe('paid');
-    expect(stamped.method).toBe('cash');
+    expect(stamped.method).toBe('manual');
     expect(stamped.paidAt).not.toBeNull();
   });
 
@@ -607,11 +607,11 @@ describe('POST /api/payments/[id]/paid', () => {
 
     const res = await paid(teacherToken, paymentId);
     const data = (await expectUnchanged(res)) as { status: string; method: string | null };
-    expect(data).toMatchObject({ status: 'paid', method: 'cash' });
+    expect(data).toMatchObject({ status: 'paid', method: 'manual' });
 
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(after.status).toBe('paid');
-    expect(after.method).toBe('cash');
+    expect(after.method).toBe('manual');
     expect(after.paidAt).toEqual(before.paidAt);
     expect(after.updatedAt).toEqual(before.updatedAt);
   });
@@ -621,14 +621,16 @@ describe('POST /api/payments/[id]/paid', () => {
     await expectForbidden(res);
   });
 
-  it('refuses a mark with another method: PAYMENT_ALREADY_PAID', async () => {
+  // A teacher marks by hand only; 'mollie' is the webhook's to write. The
+  // different-method refusal itself is `markPaymentPaid`'s unit test.
+  it.each(['mollie', 'cash'])('400s a mark with method %s, writing nothing', async (method) => {
     const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    const res = await paid(teacherToken, paymentId, { method: 'bank_transfer' });
-    await expectRefusal(res, 'PAYMENT_ALREADY_PAID');
+    const res = await paid(teacherToken, paymentId, { method });
+    expect(res.status).toBe(400);
 
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(after.method).toBe('cash');
+    expect(after.method).toBe('manual');
     expect(after.updatedAt).toEqual(before.updatedAt);
   });
 

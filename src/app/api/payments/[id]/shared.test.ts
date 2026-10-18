@@ -47,6 +47,7 @@ describe('respondPaymentOutcome', () => {
     PAYMENTS_PAUSED: true,
     PAYMENT_ALREADY_PAID: true,
     PAYMENT_SETTLED: true,
+    PAYMENT_SETTLED_BY_PROCESSOR: true,
     PAYMENT_WAIVED: true,
   } as const satisfies Record<Exclude<PaymentRefusal['code'], 'NOT_FOUND'>, true>;
 

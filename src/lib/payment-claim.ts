@@ -1,4 +1,4 @@
-import type { Payment } from '@/lib/prisma-client';
+import type { Payment, ProcessorPaymentStatus } from '@/lib/prisma-client';
 import { isOutstanding } from '@/lib/payment-status';
 import { paymentStateText } from '@/lib/format';
 
@@ -26,15 +26,33 @@ export function studentPaymentStateText(
   return paymentStateText(payment.status);
 }
 
+/** What `inProgress` reads: the claim's columns and the payment's Mollie attempts. */
+export type InProgressInput = Pick<Payment, 'status' | 'studentReportedAt'> & {
+  readonly processorAttempts: readonly { readonly status: ProcessorPaymentStatus }[];
+};
+
+/** Mollie's statuses for a payment the student has made that has not yet arrived. */
+const MOVING: ReadonlySet<ProcessorPaymentStatus> = new Set<ProcessorPaymentStatus>(['pending', 'authorized']);
+
+/** Is an outstanding payment's Mollie attempt paid by the student and not yet confirmed? An `open` one is not: a tap is not a payment. */
+export function attemptProcessing(payment: InProgressInput): boolean {
+  return isOutstanding(payment.status) && payment.processorAttempts.some((a) => MOVING.has(a.status));
+}
+
 /**
- * The rows whose payment has a standing claim first, each group in its given
- * order: a claim is the payment a teacher can settle by checking their bank,
- * so it leads the list it sits in. Returns a new array.
+ * Is the money for this payment on its way? A standing claim, or a Mollie
+ * attempt that is processing: the same display state either way.
  */
-export function claimedFirst<T>(
-  rows: readonly T[],
-  paymentOf: (row: T) => Pick<Payment, 'status' | 'studentReportedAt'>,
-): T[] {
-  const claimed = (row: T) => isClaimStanding(paymentOf(row));
-  return [...rows.filter(claimed), ...rows.filter((row) => !claimed(row))];
+export function inProgress(payment: InProgressInput): boolean {
+  return isClaimStanding(payment) || attemptProcessing(payment);
+}
+
+/**
+ * The rows whose payment is `inProgress` first, each group in its given
+ * order: that money is already moving, so it leads the list it sits in.
+ * Returns a new array.
+ */
+export function inProgressFirst<T>(rows: readonly T[], paymentOf: (row: T) => InProgressInput): T[] {
+  const lifted = (row: T) => inProgress(paymentOf(row));
+  return [...rows.filter(lifted), ...rows.filter((row) => !lifted(row))];
 }

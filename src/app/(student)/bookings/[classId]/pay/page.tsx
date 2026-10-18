@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { Currency, PaymentStatus } from '@/lib/prisma-client';
+import type { Currency, PaymentStatus, ProcessorPaymentStatus } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
@@ -13,7 +13,7 @@ import { ProcessorPayButton } from '@/components/pay/processor-pay-button';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, formatMoney } from '@/lib/format';
-import { studentPaymentStateText } from '@/lib/payment-claim';
+import { attemptProcessing, isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
@@ -89,19 +89,55 @@ function MethodPanel({
   }
 }
 
+/**
+ * What the student is told on coming back from Mollie, from the attempt's
+ * status as last synced; nothing for one still `open`. Only a paid attempt
+ * speaks once the payment is settled, since the others point at the rows a
+ * settled payment no longer shows.
+ */
+function attemptBanner(status: ProcessorPaymentStatus, outstanding: boolean): string | null {
+  switch (status) {
+    case 'paid':
+      return 'Paid — thank you.';
+    case 'pending':
+    case 'authorized':
+      return outstanding ? 'Processing — we’ll let you know.' : null;
+    case 'canceled':
+    case 'expired':
+    case 'failed':
+      return outstanding ? 'That payment didn’t go through. You can try again below.' : null;
+    case 'open':
+      return null;
+    default: {
+      // A status added to `ProcessorPaymentStatus` without a banner fails the build here.
+      const unhandled: never = status;
+      log.error({ status: String(unhandled) }, 'pay page: unhandled attempt status');
+      return null;
+    }
+  }
+}
+
 // One class's payment for the signed-in student: how to pay it, or that it
-// is settled.
-export default async function PayPage({ params }: { params: Promise<{ classId: string }> }) {
+// is settled. `?attempt=` names the Mollie attempt the student just came back
+// from.
+export default async function PayPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ classId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
   const { classId } = await params;
+  const { attempt: attemptParam } = await searchParams;
 
   // Keyed by the session's own student: another student's class finds no
   // row, and answers exactly as a class that does not exist.
   const registration = await prisma.registration.findUnique({
     where: { classId_studentId: { classId, studentId: session.studentId } },
     include: {
-      payment: true,
+      payment: { include: { processorAttempts: { select: { id: true, status: true } } } },
       class: {
         include: {
           calendarEntry: {
@@ -143,7 +179,14 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const methods = isOutstanding(payment.status)
     ? await payPageMethods(prisma, mollieDeps(), teacher, cls.currency, payment.amount)
     : paymentMethodsForTeacher(teacher, cls.currency);
-  const state = studentPaymentStateText(payment);
+  // A Mollie payment on its way reads as the claim does: the money is moving.
+  const state =
+    attemptProcessing(payment) && !isClaimStanding(payment)
+      ? { label: 'Processing', className: 'text-brown' }
+      : studentPaymentStateText(payment);
+  const returnedFrom =
+    typeof attemptParam === 'string' ? payment.processorAttempts.find((a) => a.id === attemptParam) : undefined;
+  const banner = returnedFrom === undefined ? null : attemptBanner(returnedFrom.status, isOutstanding(payment.status));
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
   const breakdown = resolveReportedPaymentBreakdown(
@@ -179,6 +222,11 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         </div>
         {chargeNote !== null && <p className="type-caption mt-1">{chargeNote}</p>}
       </div>
+      {banner !== null && (
+        <p role="status" data-testid="attempt-banner" className="type-body mb-6 bg-sand-soft border border-border rounded-card p-4">
+          {banner}
+        </p>
+      )}
       <PayBody
         status={payment.status}
         methods={methods}
