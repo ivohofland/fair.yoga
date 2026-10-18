@@ -533,15 +533,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             'CONCURRENT_MODIFICATION',
           );
     }
-    // This check matches the column set of `Registration @@unique([classId,
-    // studentId])`, met when a twin request booked this student into this
-    // class first. Re-read outside the rolled-back transaction; an active row
-    // is the booking this request asks for. A violation matching some other
-    // column set, or a twin no longer active, or one met before the
-    // transaction knew its student, falls through to `withErrorHandler`,
-    // which answers 409 and logs `warn` naming `meta.target`.
+    // This check matches `Registration_classId_studentId_key`, met when a
+    // twin request booked this student into this class first. Re-read
+    // outside the rolled-back transaction; an active row is the booking this
+    // request asks for. A violation of any other unique constraint, or a twin
+    // no longer active, or one met before the transaction knew its student,
+    // falls through to `withErrorHandler`, which answers 409 and logs `warn`
+    // naming the constraint.
     const studentId = bookedStudent.id;
-    if (studentId !== null && isUniqueConflictOn(err, ['classId', 'studentId'])) {
+    if (studentId !== null && isUniqueConflictOn(err, ['Registration_classId_studentId_key'])) {
       const twin = await prisma.registration.findUnique({
         where: { classId_studentId: { classId: body.classId, studentId } },
         select: { id: true, status: true },

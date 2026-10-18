@@ -81,7 +81,7 @@ export const POST = withErrorHandler(async (
       data: { isPublic: true },
     });
   } catch (err) {
-    if (isUniqueConflictOn(err, ['address', 'floor', 'roomName'])) {
+    if (isUniqueConflictOn(err, ['Room_public_identity_unique'])) {
       return respondError(
         'A shared room at this address already exists',
         409,

@@ -80,11 +80,9 @@ async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
  * the exclusion constraint absent these would still pass on a sequential
  * retry and fail only under a race, which is the case that motivated #196.
  *
- * The assertions name the exclusion constraint by NAME (`isExclusionConflictOn`)
- * rather than by `meta.target`, because a 23P01 exclusion violation carries no
- * `meta.target`: `code` and `meta` are both `undefined` on the Prisma error
- * (`src/lib/exclusion-conflict.ts`), which is the whole reason that matcher
- * exists rather than reusing `isUniqueConflictOn`.
+ * The assertions name the exclusion constraint through `isExclusionConflictOn`
+ * (`src/lib/exclusion-conflict.ts`): a 23P01 exclusion violation is not a
+ * unique violation, so `isUniqueConflictOn` never matches it.
  *
  * LOAD-BEARING PROPERTY THIS WHOLE DESCRIBE DEPENDS ON:
  * `ScheduleRule_teacher_slot_excl` keys on `(teacherId, dayOfWeek, slot)` only

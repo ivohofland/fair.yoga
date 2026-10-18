@@ -14,6 +14,7 @@ import {
   clearDeclinedTicketCookie,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { liveProfile } from '@/lib/live-profile';
 import { log } from '@/lib/log';
 
@@ -76,9 +77,7 @@ async function answerForLiveTeacher(
 /** A unique key a session-path create can collide on. */
 function isSessionCollision(err: unknown): boolean {
   return (
-    isUniqueConflictOn(err, ['accountId']) ||
-    isUniqueConflictOn(err, ['email']) ||
-    isUniqueConflictOn(err, ['pageSlug'])
+    isUniqueConflictOn(err, ['Teacher_email_key', 'Teacher_pageSlug_key', 'Teacher_account_live_unique'])
   );
 }
 
@@ -141,7 +140,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // and then the slug belongs to another teacher.
       const answer = await answerForLiveTeacher(auth.session.accountId, requested);
       if (answer) return clearDeclinedTicketCookie(answer, auth);
-      if (isUniqueConflictOn(err, ['pageSlug'])) {
+      if (isUniqueConflictOn(err, ['Teacher_pageSlug_key'])) {
         return clearDeclinedTicketCookie(
           respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN'),
           auth,
@@ -153,7 +152,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       );
       throw new Error('teacher profile create: account key collision with no live teacher side');
     }
-    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['pageSlug'])) {
+    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['Teacher_pageSlug_key'])) {
       const conflict = respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
       // The ticket that got us here is already spent (single-use, consumed
       // above) — without a fresh one the client's cookie now names a dead
@@ -165,10 +164,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       setSignupTicketCookie(conflict.headers, freshTicket);
       return clearDeclinedTicketCookie(conflict, auth);
     }
-    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['email'])) {
+    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['Account_email_key', 'Teacher_email_key'])) {
       // The ticket path creates the account in this same statement, so its
       // address colliding means another account appeared for it during the
-      // ticket's window. That account may have no teacher side at all.
+      // ticket's window (`Account_email_key`), which may have no teacher side
+      // at all, or a teacher row holds the address (`Teacher_email_key`).
       log.warn(
         { route: 'teacher-profile' },
         'teacher profile ticket path lost to an email that gained an account during the ticket window',
@@ -186,7 +186,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // generic conflict, which is the defect this catch exists to remove.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       log.error(
-        { err, rawTarget: err.meta?.target },
+        { err, constraint: pgErrorOf(err)?.constraint },
         'teacher profile create hit a unique constraint its authorization path cannot reach',
       );
       throw new Error('teacher profile create: unrecognised unique constraint');

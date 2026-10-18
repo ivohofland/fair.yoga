@@ -279,12 +279,20 @@ describe('classifyApiError', () => {
   });
 
   it('maps P2002 to a 409 logged at warn, naming the constraint that fired', () => {
-    const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
+    const failure = classifyApiError(knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "TeacherRoom_teacherId_roomId_key"')));
 
     expect(failure.status).toBe(409);
     expect(failure.code).toBe('UNIQUE_CONFLICT');
     expect(failure.level).toBe('warn');
-    expect(failure.detail).toEqual({ target: ['teacherId', 'roomId'] });
+    expect(failure.detail).toEqual({ constraint: 'TeacherRoom_teacherId_roomId_key' });
+  });
+
+  it('maps a P2002 carrying no Postgres error to the same 409, its constraint unnamed', () => {
+    const failure = classifyApiError(prismaError('P2002', { target: ['teacherId', 'roomId'] }));
+
+    expect(failure.status).toBe(409);
+    expect(failure.code).toBe('UNIQUE_CONFLICT');
+    expect(failure.detail).toEqual({ constraint: undefined });
   });
 
   /**

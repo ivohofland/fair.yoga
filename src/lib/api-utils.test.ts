@@ -51,7 +51,7 @@ import {
 } from './api-utils';
 import { getSessionToken, validateSession } from './auth';
 import { classifyApiError } from './api-errors';
-import { Prisma } from '@/lib/prisma-client';
+import { knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 import { log } from '@/lib/log';
 
 const mockedGetSessionToken = vi.mocked(getSessionToken);
@@ -690,11 +690,10 @@ describe('withErrorHandler', () => {
    * server-side trace whatsoever.
    */
   it('logs an escaped P2002 at warn with its constraint, and still returns 409', async () => {
-    const thrown = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002',
-      clientVersion: 'test',
-      meta: { target: ['teacherId', 'roomId'] },
-    });
+    const thrown = knownWithAdapterCause(
+      'P2002',
+      pgCause('23505', 'duplicate key value violates unique constraint "TeacherRoom_teacherId_roomId_key"'),
+    );
     const handler = withErrorHandler(async () => {
       throw thrown;
     });
@@ -711,7 +710,7 @@ describe('withErrorHandler', () => {
       expect.objectContaining({
         method: 'POST',
         path: '/api/teacher-rooms',
-        target: ['teacherId', 'roomId'],
+        constraint: 'TeacherRoom_teacherId_roomId_key',
       }),
       expect.any(String),
     );

@@ -13,6 +13,7 @@ import { erasedAddress } from '@/lib/erased-address';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied, expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { knownWithAdapterCause, pgCause } from '../../../../tests/adapter-errors';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -615,11 +616,11 @@ describe('POST /api/registrations — a booking that already exists', () => {
   }
 
   function uniqueViolation(): Prisma.PrismaClientKnownRequestError {
-    return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002',
-      clientVersion: Prisma.prismaVersion.client,
-      meta: { target: ['classId', 'studentId'] },
-    });
+    return knownWithAdapterCause(
+      'P2002',
+      pgCause('23505', 'duplicate key value violates unique constraint "Registration_classId_studentId_key"'),
+      { modelName: 'Registration' },
+    );
   }
 
   beforeAll(async () => {

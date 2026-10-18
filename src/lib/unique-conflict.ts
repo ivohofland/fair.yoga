@@ -1,74 +1,52 @@
-import { Prisma } from '@/lib/prisma-client';
+import { pgErrorOf } from '@/lib/pg-error';
+
+/** Every unique index a caller names; `pg-error.test.ts` holds each to `pg_indexes`. */
+export const UNIQUE_CONSTRAINTS = [
+  'Account_email_key',
+  'CalendarEntry_scheduleRuleId_date_key',
+  'Invitation_teacherId_email_key',
+  'Registration_classId_studentId_key',
+  'Room_private_identity_unique',
+  'Room_public_identity_unique',
+  'Student_account_live_unique',
+  'Student_email_key',
+  'Teacher_account_live_unique',
+  'Teacher_email_key',
+  'Teacher_pageSlug_key',
+  'TeacherRoom_teacherId_roomId_key',
+  'WaitlistEntry_waiting_position_key',
+] as const;
+export type UniqueConstraintName = (typeof UNIQUE_CONSTRAINTS)[number];
 
 /**
- * Extracts the underlying column identifier from a raw or PostgreSQL-decompiled
- * target expression (e.g. `lower(TRIM(BOTH FROM address))` -> `address`).
+ * True when `err` carries a Postgres unique violation (`23505`) on one of
+ * `names`, whether it arrived as a typed P2002, a raw P2010 or a bare
+ * `DriverAdapterError`.
  *
- * Expression indexes (#260): `Room_public_identity_unique` and
- * `Room_private_identity_unique` use `lower(trim(...))` expression keys.
- * PostgreSQL decompiles these in `meta.target` as `lower(TRIM(BOTH FROM address))`.
- * Target expressions are unwrapped to their base column identifier so callers
- * continue to branch on standard column arrays (`['address', 'floor', 'roomName']`).
+ * Matched by name because two tables can share a column set and only the
+ * name tells them apart: `Student.email` and the `Account.email` a ticket
+ * signup inserts in the same statement are both `email`. A name is also the
+ * only whole identity an expression index reports. Where the name comes
+ * from, and what the adapter's other fields hold: `docs/technical-architecture.md`,
+ * "Database errors".
+ *
+ * A name match is narrower than a column match: a collision on a name the
+ * caller did not list falls past it. What that costs depends on the catch.
+ * One that rethrows hands it to `classifyApiError`'s 409 fallback; one that
+ * refuses it as unrecognised answers 500.
+ *
+ * When a caller has no use for telling two names apart, it lists both and
+ * answers them alike. When a caller does need to tell two models' collisions
+ * apart and cannot from their names, the fix is consolidating the keys, not
+ * this matcher, as the slot keys are one exclusion constraint
+ * (`exclusion-conflict.ts`).
  */
-function extractColumnIdentifier(targetExpr: unknown): string {
-  if (typeof targetExpr !== 'string') return '';
-  const stripped = targetExpr.trim().replace(/["']/g, '');
-  const match = stripped.match(/([a-zA-Z0-9_]+)[\s)]*$/);
-  return match ? match[1]! : stripped;
-}
-
-/**
- * True when `err` is a P2002 raised by the unique key covering exactly
- * `columns`.
- *
- * Branching on columns rather than on the index name is not a preference: an
- * index Prisma cannot see (every partial index this project hand-authors) still
- * reports `meta.target` as the column-name array, identically to a declared
- * `@unique`. Measured on `Teacher_account_live_unique`, a partial index
- * hand-authored without expression keys — `SELECT indexname FROM pg_indexes
- * WHERE schemaname='public' AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%WHERE%'`
- * lists every partial unique index live today, rather than trusting a number
- * here: `{"modelName":"Teacher","target":["accountId"]}`.
- *
- * For partial indexes with expression keys (such as `Room_public_identity_unique`
- * and `Room_private_identity_unique`, #260), PostgreSQL decompiles expressions
- * into `meta.target` (e.g. `lower(TRIM(BOTH FROM address))`), which this helper
- * unwraps to base column names via `extractColumnIdentifier`.
- *
- * Compared as a set. Two unique keys over the same columns in a different
- * order cannot meaningfully coexist, and an order-insensitive check would turn a
- * harmless index rewrite into a silently unreachable branch.
- *
- * Deliberately ignores `err.meta?.modelName`. The invariant that actually
- * holds is narrower than "one model per caller": no single `try` block may
- * raise P2002 from two models that share a column-name set — if one ever did,
- * this matcher could not tell which model's row collided. That is correct
- * wherever the caller has no use for the distinction. For example, `POST
- * /api/account/teacher-profile` (#161) creates `Teacher` and, for a new
- * signup, `Account` together, and both report `['email']` on conflict; the
- * caller does not need to know which one collided — either way it means
- * "email already in use," and the Account profile column is a denormalized
- * copy set at link time with no email-change flow (see the model header
- * comment). This is the pattern to reach for whenever a matcher's caller has
- * no use for distinguishing models on the same columns — other such pairs
- * may exist elsewhere in the codebase without this comment tracking them.
- *
- * Two historical examples were resolved by consolidation, not by this pattern:
- * `(teacherId, date, startTime)` used to name both `Class_teacher_slot_unique`
- * and `StudioClass_teacher_slot_unique`; #327 replaced both with one `EXCLUDE
- * USING gist` on `CalendarEntry`, which raises `23P01` and carries no
- * `meta.target` at all — see `exclusion-conflict.ts`, which this function
- * cannot substitute for. `(teacherId, dayOfWeek, startTime)` went the same way
- * one layer up, in #298. The caution still binds the next pair someone
- * introduces: if a future pair's caller DOES need to know which model
- * collided, consolidation (not this matcher) is the right answer.
- */
-export function isUniqueConflictOn(err: unknown, columns: readonly string[]): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') return false;
-  const target = err.meta?.target;
-  if (!Array.isArray(target)) return false;
-  if (target.length !== columns.length) return false;
-  const got = [...(target as string[])].map(extractColumnIdentifier).sort();
-  const want = [...columns].sort();
-  return got.every((c, i) => c === want[i]);
+export function isUniqueConflictOn(err: unknown, names: readonly UniqueConstraintName[]): boolean {
+  const pg = pgErrorOf(err);
+  return (
+    pg !== null &&
+    pg.sqlState === '23505' &&
+    pg.constraint !== undefined &&
+    (names as readonly string[]).includes(pg.constraint)
+  );
 }

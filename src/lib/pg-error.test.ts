@@ -10,6 +10,7 @@ import { isCheckViolationOn } from './check-violation';
 import { isExclusionConflictOn } from './exclusion-conflict';
 import { serializeErr, type SerializedErr } from './log-serializers';
 import { ADAPTER_KINDS, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgPoolTimeout, pgErrorOf } from './pg-error';
+import { UNIQUE_CONSTRAINTS, isUniqueConflictOn, type UniqueConstraintName } from './unique-conflict';
 import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import type { ClassWithEntry } from '../../tests/class-fixtures';
@@ -110,12 +111,31 @@ describe('adapterKindOf', () => {
   });
 });
 
+describe('UNIQUE_CONSTRAINTS', () => {
+  const db = createPrismaClient();
+
+  afterAll(async () => {
+    await db.$disconnect();
+  });
+
+  it('every UNIQUE_CONSTRAINTS member is a unique index in the database', async () => {
+    const rows = await db.$queryRaw<{ indexname: string }[]>`
+      SELECT indexname::text AS indexname FROM pg_indexes
+      WHERE schemaname = 'public' AND indexdef LIKE 'CREATE UNIQUE%'`;
+    const present = new Set(rows.map((r) => r.indexname));
+    expect(UNIQUE_CONSTRAINTS.filter((n) => !present.has(n))).toEqual([]);
+  });
+});
+
 describe('produced against the real database: conflict codes', () => {
   const db = createPrismaClient();
   const run = fixtureRun('pgerr');
   let checkRoom: RoomFixture;
   let frozen: ClassWithEntry;
   let slot: { teacherId: string; date: string; time: string; ruleTime: string };
+  let takenSlug: string;
+  let privateRoom: { createdById: string; address: string; floor: string; roomName: string };
+  let publicRoom: { createdById: string; address: string; floor: string; roomName: string };
 
   beforeAll(async () => {
     // One fixture per refusal family, so no case's blocker can be reported in
@@ -136,6 +156,12 @@ describe('produced against the real database: conflict codes', () => {
       time: held.calendarEntry.startTime.toISOString().slice(11, 16),
       ruleTime: rule.startTime.toISOString().slice(11, 16),
     };
+    takenSlug = (await db.teacher.findUniqueOrThrow({ where: { id: slotRoom.teacherId }, select: { pageSlug: true } })).pageSlug;
+    const identity = { createdById: true, address: true, floor: true, roomName: true } as const;
+    privateRoom = await db.room.findUniqueOrThrow({ where: { id: checkRoom.roomId }, select: identity });
+    const publicFixture = await run.makeFixture(db);
+    const twin = await run.addSharedTwin(db, publicFixture);
+    publicRoom = { createdById: twin.createdById, address: twin.address, floor: twin.floor, roomName: twin.roomName };
   });
 
   afterAll(async () => {
@@ -197,6 +223,14 @@ describe('produced against the real database: conflict codes', () => {
   };
   const restrictVerdict = (name: string) => (err: unknown): void =>
     expect(isRestrictViolationOn(err, [name])).toBe(true);
+  const uniqueVerdict = (name: UniqueConstraintName, fallbackDetail: boolean) => (err: unknown): void => {
+    expect(isUniqueConflictOn(err, [name])).toBe(true);
+    expect(isUniqueConflictOn(err, UNIQUE_CONSTRAINTS.filter((n) => n !== name))).toBe(false);
+    if (fallbackDetail) expect(classifyApiError(err)).toMatchObject({ detail: { constraint: name } });
+  };
+  const roomData = (identity: typeof privateRoom, isPublic: boolean) => ({
+    venueName: 'pgerr dup', city: 'Amsterdam', postcode: '1011AB', maxCapacity: 20, isPublic, ...identity,
+  });
 
   const cases: readonly ConflictCase[] = [
     {
@@ -278,6 +312,39 @@ describe('produced against the real database: conflict codes', () => {
       })),
       want: { sqlState: '23503', constraint: 'TeacherRoom_roomId_fkey', status: 500 },
       verdict: restrictVerdict('TeacherRoom_roomId_fkey'),
+    },
+    {
+      label: 'unique Teacher_pageSlug_key, a single column (typed)',
+      produce: () => rejectionOf(() => db.teacher.update({ where: { id: checkRoom.teacherId }, data: { pageSlug: takenSlug } })),
+      want: { sqlState: '23505', constraint: 'Teacher_pageSlug_key', status: 409, code: 'UNIQUE_CONFLICT' },
+      verdict: uniqueVerdict('Teacher_pageSlug_key', true),
+    },
+    {
+      label: 'unique TeacherRoom_teacherId_roomId_key, a composite (typed)',
+      produce: () => rejectionOf(() => db.teacherRoom.create({
+        data: { teacherId: checkRoom.teacherId, roomId: checkRoom.roomId, rentalRate: 1, capacityOverride: 15 },
+      })),
+      want: { sqlState: '23505', constraint: 'TeacherRoom_teacherId_roomId_key', status: 409, code: 'UNIQUE_CONFLICT' },
+      verdict: uniqueVerdict('TeacherRoom_teacherId_roomId_key', true),
+    },
+    {
+      label: 'unique Room_private_identity_unique, an expression partial index (typed)',
+      produce: () => rejectionOf(() => db.room.create({ data: roomData(privateRoom, false) })),
+      want: { sqlState: '23505', constraint: 'Room_private_identity_unique', status: 409, code: 'UNIQUE_CONFLICT' },
+      verdict: uniqueVerdict('Room_private_identity_unique', true),
+    },
+    {
+      label: 'unique Room_public_identity_unique, an expression partial index (typed)',
+      produce: () => rejectionOf(() => db.room.create({ data: roomData(publicRoom, true) })),
+      want: { sqlState: '23505', constraint: 'Room_public_identity_unique', status: 409, code: 'UNIQUE_CONFLICT' },
+      verdict: uniqueVerdict('Room_public_identity_unique', true),
+    },
+    {
+      // The P2002 fallback is not widened to raw queries, so this one answers 500.
+      label: 'unique Teacher_pageSlug_key (raw)',
+      produce: () => rejectionOf(() => db.$executeRaw`UPDATE "Teacher" SET "pageSlug" = ${takenSlug} WHERE id = ${checkRoom.teacherId}`),
+      want: { sqlState: '23505', constraint: 'Teacher_pageSlug_key', status: 500 },
+      verdict: uniqueVerdict('Teacher_pageSlug_key', false),
     },
   ];
 

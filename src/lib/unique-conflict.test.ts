@@ -1,186 +1,66 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { isUniqueConflictOn } from './unique-conflict';
+import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
-/**
- * Matches the construction used in `src/lib/api-errors.test.ts` — Prisma 6
- * takes the code and clientVersion in an options object.
- */
-function prismaError(code: string, meta?: Record<string, unknown>) {
-  return new Prisma.PrismaClientKnownRequestError('constraint failed', {
-    code,
-    clientVersion: 'test',
-    meta,
-  });
+function uniqueViolation(name: string, code = 'P2002', extra: Record<string, unknown> = {}) {
+  return knownWithAdapterCause(code, pgCause('23505', `duplicate key value violates unique constraint "${name}"`, extra));
 }
 
 /**
- * Unit coverage for `isUniqueConflictOn`'s own branches. `slot-constraints
- * .test.ts` measures the real `meta.target` shape Postgres/Prisma actually
- * produce for the unique indexes against a live DB — that is the premise
- * this helper is built on. This file tests `isUniqueConflictOn` directly
- * across all input variations and edge cases.
+ * Unit coverage for `isUniqueConflictOn`'s own branches, on fabricated
+ * adapter shapes. `pg-error.test.ts` holds the fabrication to produced errors
+ * and every registry member to `pg_indexes`.
  */
 describe('isUniqueConflictOn', () => {
-  it('is true when meta.target names exactly the given columns, same order', () => {
-    const err = prismaError('P2002', { target: ['teacherId', 'date', 'startTime'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(true);
+  it('matches a P2002 naming one of the given constraints', () => {
+    expect(isUniqueConflictOn(uniqueViolation('Teacher_pageSlug_key'), ['Teacher_pageSlug_key'])).toBe(true);
+    expect(isUniqueConflictOn(uniqueViolation('Teacher_email_key'), ['Teacher_pageSlug_key', 'Teacher_email_key'])).toBe(true);
   });
 
-  it('is true when meta.target names the same columns in a different order', () => {
-    // The docblock's whole reason to exist: two unique keys over the same
-    // columns in a different order cannot meaningfully coexist, so the
-    // compare is order-insensitive rather than positional.
-    const err = prismaError('P2002', { target: ['startTime', 'teacherId', 'date'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(true);
+  it('does not match a sibling constraint over the same columns', () => {
+    // `Student.email` and `Account.email` are both `@unique`: only the name
+    // tells the two collisions apart.
+    expect(isUniqueConflictOn(uniqueViolation('Account_email_key'), ['Student_email_key'])).toBe(false);
   });
 
-  it('is false when meta.target has the same length but different columns', () => {
-    const err = prismaError('P2002', { target: ['teacherId', 'dayOfWeek', 'startTime'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false when meta.target has one extra column beyond the given columns', () => {
-    // A legitimate different-shape input, but NOT what pins the length
-    // guard: sorted, ['date','roomId','startTime','teacherId'] already
-    // disagrees with ['date','startTime','teacherId'] at index 1
-    // ('roomId' !== 'startTime'), so the element-wise compare below fails
-    // on its own even with `target.length !== columns.length` deleted.
-    const err = prismaError('P2002', { target: ['teacherId', 'date', 'startTime', 'roomId'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false when meta.target is a sorted prefix of the given columns', () => {
-    // This is the case that actually pins the length guard. `.every()`
-    // walks `got` (the sorted `target`), so it never reaches `want`'s extra
-    // elements — a `target` that is a sorted PREFIX of `columns` passes
-    // every check `.every()` performs and returns `true` unless the length
-    // guard rejects it first. Sorted, ['date','startTime'] is a prefix of
-    // ['date','startTime','teacherId'].
-    const err = prismaError('P2002', { target: ['date', 'startTime'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false for a P2002 whose meta.target is not an array', () => {
-    // Measured shape aside, Prisma's own types leave `meta` as
-    // `Record<string, unknown> | undefined` — nothing stops a future Prisma
-    // version, or a differently-shaped constraint violation, from putting a
-    // string there instead of an array.
-    const err = prismaError('P2002', { target: 'teacherId_date_startTime_key' });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false for a P2002 with no meta at all', () => {
-    const err = prismaError('P2002');
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false for a PrismaClientKnownRequestError with a different code', () => {
-    const err = prismaError('P2025', { target: ['teacherId', 'date', 'startTime'] });
-    expect(isUniqueConflictOn(err, ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false for a non-Prisma error', () => {
-    // A legitimate different input, but not what pins the `instanceof`
-    // check: a bare Error has no `.code` at all, so `err.code !== 'P2002'`
-    // alone already returns false — this passes even with `instanceof`
-    // deleted.
-    expect(isUniqueConflictOn(new Error('boom'), ['teacherId', 'date', 'startTime'])).toBe(false);
-  });
-
-  it('is false for an object shaped like a P2002 but not a real Prisma error', () => {
-    // This is the case that actually pins `instanceof
-    // Prisma.PrismaClientKnownRequestError`. Give an impostor the exact
-    // `.code`/`.meta.target` shape a real P2002 has and nothing here can
-    // tell it apart on those fields alone — only the `instanceof` check
-    // can.
-    const impostor = Object.assign(new Error('impostor'), {
-      code: 'P2002',
-      meta: { target: ['teacherId', 'date', 'startTime'] },
+  it('matches an expression key whose reported fields are truncated', () => {
+    // The adapter's `constraint.fields` for this index is what Postgres's
+    // detail line held, cut off mid-expression; the name is whole.
+    const err = uniqueViolation('Room_private_identity_unique', 'P2002', {
+      constraint: { fields: ['"createdById"', 'lower(TRIM(BOTH FROM address'] },
     });
-    expect(isUniqueConflictOn(impostor, ['teacherId', 'date', 'startTime'])).toBe(false);
+    expect(isUniqueConflictOn(err, ['Room_private_identity_unique'])).toBe(true);
+    expect(isUniqueConflictOn(err, ['Room_public_identity_unique'])).toBe(false);
   });
 
-  it('is false for a thrown non-error value', () => {
-    // `catch (err)` types `err` as `unknown`, and nothing stops a caller
-    // from rethrowing something that isn't an Error at all.
-    expect(isUniqueConflictOn('not an error', ['teacherId', 'date', 'startTime'])).toBe(false);
-    expect(isUniqueConflictOn(undefined, ['teacherId', 'date', 'startTime'])).toBe(false);
+  it('matches a raw P2010 carrying a 23505 on a listed name', () => {
+    expect(isUniqueConflictOn(uniqueViolation('Teacher_pageSlug_key', 'P2010'), ['Teacher_pageSlug_key'])).toBe(true);
   });
 
-  // Expression index unwrapping (#260)
-  it('unwraps Postgres expression index targets to their column names', () => {
-    // Measured shape from Room_public_identity_unique:
-    // Postgres decompiles lower(trim(...)) to lower(TRIM(BOTH FROM col))
-    const publicErr = prismaError('P2002', {
-      target: [
-        'lower(TRIM(BOTH FROM address))',
-        'lower(TRIM(BOTH FROM floor))',
-        'lower(TRIM(BOTH FROM roomName))',
-      ],
-    });
-    expect(isUniqueConflictOn(publicErr, ['address', 'floor', 'roomName'])).toBe(true);
-
-    // Measured shape from Room_private_identity_unique:
-    const privateErr = prismaError('P2002', {
-      target: [
-        'createdById',
-        'lower(TRIM(BOTH FROM address))',
-        'lower(TRIM(BOTH FROM floor))',
-        'lower(TRIM(BOTH FROM roomName))',
-      ],
-    });
-    expect(isUniqueConflictOn(privateErr, ['createdById', 'address', 'floor', 'roomName'])).toBe(true);
+  it('matches a typed DriverAdapterError carrying a 23505 on a listed name', () => {
+    const err = driverAdapterError(pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"'));
+    expect(isUniqueConflictOn(err, ['Teacher_pageSlug_key'])).toBe(true);
   });
 
-  it('unwraps expression targets regardless of order', () => {
-    const err = prismaError('P2002', {
-      target: [
-        'lower(TRIM(BOTH FROM roomName))',
-        'lower(TRIM(BOTH FROM address))',
-        'lower(TRIM(BOTH FROM floor))',
-      ],
-    });
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+  it('does not match a 23505 whose message names no constraint', () => {
+    const err = knownWithAdapterCause('P2002', pgCause('23505', 'note: duplicate key value violates unique constraint "Teacher_pageSlug_key"'));
+    expect(isUniqueConflictOn(err, ['Teacher_pageSlug_key'])).toBe(false);
   });
 
-  it('is false when an expression target wraps a different column', () => {
-    const err = prismaError('P2002', {
-      target: [
-        'lower(TRIM(BOTH FROM venueName))',
-        'lower(TRIM(BOTH FROM floor))',
-        'lower(TRIM(BOTH FROM roomName))',
-      ],
-    });
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(false);
+  it.each([
+    ['a P2025', new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: Prisma.prismaVersion.client })],
+    ['a non-23505 Known error', knownWithAdapterCause('P2010', pgCause('23514', 'new row for relation "Teacher" violates check constraint "Teacher_pageSlug_key"'))],
+    ['a P2002 without the adapter error', new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: Prisma.prismaVersion.client, meta: { target: ['pageSlug'] } })],
+    ['null', null],
+    ['undefined', undefined],
+    ['a plain Error', new Error('duplicate key value violates unique constraint "Teacher_pageSlug_key"')],
+  ])('does not match %s', (_label, err) => {
+    expect(isUniqueConflictOn(err, ['Teacher_pageSlug_key'])).toBe(false);
   });
 
-  it('unwraps quoted column identifiers in expression targets', () => {
-    const err = prismaError('P2002', {
-      target: [
-        'lower(TRIM(BOTH FROM "address"))',
-        'lower(TRIM(BOTH FROM "floor"))',
-        'lower(TRIM(BOTH FROM "roomName"))',
-      ],
-    });
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
-  });
-
-  it('handles expression targets with trailing whitespace', () => {
-    const err = prismaError('P2002', {
-      target: [
-        'lower(TRIM(BOTH FROM address)) ',
-        'lower(TRIM(BOTH FROM floor))  ',
-        ' lower(TRIM(BOTH FROM roomName)) ',
-      ],
-    });
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
-  });
-
-  it('returns false cleanly when meta.target contains non-string elements', () => {
-    const err = prismaError('P2002', {
-      target: [null, 123, undefined],
-    });
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(false);
+  it('accepts only registered names (checked by `pnpm run typecheck`, not by vitest)', () => {
+    // @ts-expect-error unknown name
+    void isUniqueConflictOn(uniqueViolation('Teacher_bogus_key'), ['Teacher_bogus_key']);
   });
 });
