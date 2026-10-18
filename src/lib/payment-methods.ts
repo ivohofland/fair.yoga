@@ -4,6 +4,7 @@ import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
 import { formatDayHeader } from '@/lib/format';
 import { MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
+import { takesMolliePayments } from '@/lib/processor-liveness';
 
 /** The one currency an EPC QR can carry. */
 export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
@@ -141,15 +142,22 @@ function bankMethodsFor(account: StoredBankAccount): PaymentMethod[] {
   ];
 }
 
-/** The teacher columns `paymentMethodsForTeacher` reads, so one select serves every call site. */
+/**
+ * The teacher columns `paymentMethodsForTeacher` and `payGuidanceForTeacher`
+ * read, so one select serves every call site.
+ */
 export const teacherPaymentSelect = {
   id: true,
   paymentLink: true,
   paymentsPausedAt: true,
   bankAccounts: { select: bankAccountSelect },
+  processorConnection: { select: { organizationId: true, profileId: true, disconnectedAt: true, scopes: true } },
 } as const satisfies Prisma.TeacherSelect;
 
 export type TeacherPaymentSources = Prisma.TeacherGetPayload<{ select: typeof teacherPaymentSelect }>;
+
+/** What `paymentMethodsForTeacher` reads: the manual-payment sources, without the connection. */
+export type ManualPaymentSources = Omit<TeacherPaymentSources, 'processorConnection'>;
 
 /**
  * What a student may do about paying a teacher: hold off while the teacher has
@@ -163,7 +171,7 @@ export type PaymentMethodsAnswer = { kind: 'paused' } | { kind: 'methods'; metho
 export const PAYMENTS_PAUSED_COPY = 'Payment details are being checked — please hold off for now.';
 
 /** The answer for a teacher read with `teacherPaymentSelect`, using their account in `currency`. */
-export function paymentMethodsForTeacher(teacher: TeacherPaymentSources, currency: Currency): PaymentMethodsAnswer {
+export function paymentMethodsForTeacher(teacher: ManualPaymentSources, currency: Currency): PaymentMethodsAnswer {
   if (teacher.paymentsPausedAt !== null) return { kind: 'paused' };
   return {
     kind: 'methods',
@@ -193,6 +201,17 @@ export function payGuidanceFor(answer: PaymentMethodsAnswer): PayGuidance {
       throw new Error(`unhandled payment methods answer: ${JSON.stringify(unhandled)}`);
     }
   }
+}
+
+/**
+ * The instruction for a teacher read with `teacherPaymentSelect`:
+ * `payGuidanceFor` their manual methods in `currency`, except that a teacher
+ * with none whose Mollie connection takes payments answers `methods`, since
+ * the pay page offers Mollie there. Paused still answers `hold_off`.
+ */
+export function payGuidanceForTeacher(teacher: TeacherPaymentSources, currency: Currency): PayGuidance {
+  const guidance = payGuidanceFor(paymentMethodsForTeacher(teacher, currency));
+  return guidance === 'directly' && takesMolliePayments(teacher.processorConnection) ? 'methods' : guidance;
 }
 
 /** Onboarding's `bank` step: an account in the current currency, or a link. */

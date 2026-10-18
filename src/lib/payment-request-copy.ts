@@ -40,7 +40,7 @@ function classPhrase(cls: PaymentRequestClass): string {
  * `RegistrationStatus`, so a new status does not compile until its wording is
  * decided.
  *
- * `guidance` (`payGuidanceFor`) decides only the payment instruction: "Pay
+ * `guidance` (`payGuidanceForTeacher`) decides only the payment instruction: "Pay
  * your teacher directly" with no method, nothing beside one, and the hold-off
  * line while the teacher has paused payments. A no-show or late cancel always
  * ends "If this isn't right, talk to your teacher."
@@ -74,7 +74,7 @@ export function studentPaymentRequestBody(
 
 /**
  * The student's outstanding-payment `reminder` body, with the same payment
- * instruction as the request (`guidance`, from `payGuidanceFor`).
+ * instruction as the request (`guidance`, from `payGuidanceForTeacher`).
  */
 export function studentPaymentReminderBody(
   cls: PaymentRequestClass,

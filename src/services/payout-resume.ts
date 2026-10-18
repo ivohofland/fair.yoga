@@ -4,8 +4,7 @@ import { payoutFingerprint } from '@/lib/payout-fingerprint';
 import { livePayoutIdentity, type LiveIdentity } from '@/lib/processor-liveness';
 import {
   bankAccountDataSelect,
-  payGuidanceFor,
-  paymentMethodsForTeacher,
+  payGuidanceForTeacher,
   teacherPaymentSelect,
   type BankAccountData,
 } from '@/lib/payment-methods';
@@ -353,7 +352,7 @@ export async function resumePayments(
     if (unclaimedOwed.length > 0) {
       const notifications: CreateNotificationInput[] = unclaimedOwed.map((p) => {
         const cls = p.registration.class;
-        const guidance = payGuidanceFor(paymentMethodsForTeacher(resumed, cls.currency));
+        const guidance = payGuidanceForTeacher(resumed, cls.currency);
         return {
           recipientType: 'student',
           recipientId: p.registration.studentId,

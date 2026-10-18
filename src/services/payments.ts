@@ -16,7 +16,7 @@ import {
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -493,9 +493,7 @@ function remindInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
       },
     });
 
-    const guidance = payGuidanceFor(
-      paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency),
-    );
+    const guidance = payGuidanceForTeacher(registration.class.calendarEntry.teacher, registration.class.currency);
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
 
     await createBulkNotifications(tx, [
@@ -697,7 +695,7 @@ function rejectInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
     });
 
     const { calendarEntry, currency } = registration.class;
-    const guidance = payGuidanceFor(paymentMethodsForTeacher(calendarEntry.teacher, currency));
+    const guidance = payGuidanceForTeacher(calendarEntry.teacher, currency);
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED_NOT_RECEIVED);
 
     await createBulkNotifications(tx, [
