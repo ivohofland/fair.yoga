@@ -32,6 +32,7 @@ import { driverAdapterError, pgCause, pgPoolTimeout } from '../../../../../tests
  */
 
 const cleanupExpiredAuth = vi.fn();
+const revokeDueConnections = vi.fn();
 const reapClosedWaitlistEntries = vi.fn();
 const reapExpiredNotifications = vi.fn();
 const reapStalePushSubscriptions = vi.fn();
@@ -43,6 +44,9 @@ vi.mock('@/services/degradation-digest', () => ({
 }));
 vi.mock('@/services/auth-cleanup', () => ({
   cleanupExpiredAuth: (...args: unknown[]) => cleanupExpiredAuth(...args),
+}));
+vi.mock('@/services/processor-revocation', () => ({
+  revokeDueConnections: (...args: unknown[]) => revokeDueConnections(...args),
 }));
 vi.mock('@/services/waitlist-retention', () => ({
   reapClosedWaitlistEntries: (...args: unknown[]) => reapClosedWaitlistEntries(...args),
@@ -74,6 +78,7 @@ function post(): NextRequest {
 interface Body {
   data: {
     auth: { ok: boolean; error?: string };
+    processorRevocation: { ok: boolean; error?: string };
     waitlistRetention: { ok: boolean; error?: string };
     notificationRetention: { ok: boolean; error?: string };
     pushSubscriptionRetention: { ok: boolean; error?: string };
@@ -89,6 +94,9 @@ function transientError(): Error {
 
 beforeEach(() => {
   cleanupExpiredAuth.mockReset();
+  // Same reason as the audit below: an unmocked `vi.fn()` would read as a success.
+  revokeDueConnections.mockReset();
+  revokeDueConnections.mockResolvedValue({ revoked: 0, failed: 0, skipped: 0 });
   reapClosedWaitlistEntries.mockReset();
   reapExpiredNotifications.mockReset();
   auditTeacherTimezones.mockReset();
@@ -117,6 +125,7 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
 
     expect(res.status).toBe(200);
     expect(body.data.auth.ok).toBe(true);
+    expect(body.data.processorRevocation.ok).toBe(true);
     expect(body.data.waitlistRetention.ok).toBe(true);
     expect(body.data.notificationRetention.ok).toBe(true);
     expect(body.data.pushSubscriptionRetention.ok).toBe(true);
@@ -179,6 +188,21 @@ describe('POST /api/cron/daily-cleanup — status contract', () => {
     expect(body.data.auth.ok).toBe(false);
     expect(body.data.auth.error).toContain('auth cleanup exploded');
     expect(body.data.waitlistRetention.ok).toBe(true);
+  });
+
+  it('runs the other sweeps when the revocation sweep throws, and answers non-2xx naming it', async () => {
+    cleanupExpiredAuth.mockResolvedValue({ sessions: 0 });
+    reapClosedWaitlistEntries.mockResolvedValue({ deleted: 0, classes: 0 });
+    revokeDueConnections.mockRejectedValue(new Error('revocation exploded'));
+
+    const res = await POST(post());
+    const body = (await res.json()) as Body;
+
+    expect(res.status).toBe(500);
+    expect(body.data.processorRevocation.ok).toBe(false);
+    expect(body.data.processorRevocation.error).toContain('revocation exploded');
+    expect(body.data.auth.ok).toBe(true);
+    expect(reapClosedWaitlistEntries).toHaveBeenCalledTimes(1);
   });
 
   /**

@@ -50,6 +50,7 @@ export interface SchedulerSweeps {
   processPaymentReminders: (db: PrismaClient) => Promise<unknown>;
   processClassReminders: (db: PrismaClient) => Promise<unknown>;
   cleanupExpiredAuth: (db: PrismaClient) => Promise<unknown>;
+  revokeDueConnections: (db: PrismaClient) => Promise<unknown>;
   /**
    * The WRAPPER, never `reconcileWaitlists` itself — and the name is the
    * smaller half of why. `reconcileWaitlists` takes a required second argument
@@ -166,6 +167,7 @@ export async function startScheduler(): Promise<void> {
   const { processPaymentReminders } = await import('@/services/payment-reminders');
   const { processClassReminders } = await import('@/services/class-reminders');
   const { cleanupExpiredAuth } = await import('@/services/auth-cleanup');
+  const { revokeDueConnections } = await import('@/services/processor-revocation');
   const { runWaitlistReconciliationTick } = await import('@/services/waitlist-reconciliation');
   const { reapClosedWaitlistEntries } = await import('@/services/waitlist-retention');
   const { reapExpiredNotifications } = await import('@/services/notification-retention');
@@ -184,6 +186,7 @@ export async function startScheduler(): Promise<void> {
     processPaymentReminders,
     processClassReminders,
     cleanupExpiredAuth,
+    revokeDueConnections,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
@@ -321,6 +324,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
     processPaymentReminders,
     processClassReminders,
     cleanupExpiredAuth,
+    revokeDueConnections,
     runWaitlistReconciliationTick,
     reapClosedWaitlistEntries,
     reapExpiredNotifications,
@@ -385,6 +389,7 @@ export function buildJobs(sweeps: SchedulerSweeps): Job[] {
       intervalMs: 24 * 60 * MINUTE,
       run: isolatedSweeps('daily-cleanup', [
         cleanupExpiredAuth,
+        revokeDueConnections,
         reapClosedWaitlistEntries,
         reapExpiredNotifications,
         reapStalePushSubscriptions,

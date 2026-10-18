@@ -37,6 +37,7 @@ const SWEEP_NAMES = [
   'processPaymentReminders',
   'processClassReminders',
   'cleanupExpiredAuth',
+  'revokeDueConnections',
   'runWaitlistReconciliationTick',
   'reapClosedWaitlistEntries',
   'reapExpiredNotifications',
@@ -198,6 +199,7 @@ describe('buildJobs', () => {
       // list pins the order of the sweeps above them without asserting why.
       'daily-cleanup': [
         'cleanupExpiredAuth',
+        'revokeDueConnections',
         'reapClosedWaitlistEntries',
         'reapExpiredNotifications',
         'reapStalePushSubscriptions',
