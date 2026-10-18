@@ -45,7 +45,7 @@ No code. The later tasks are built on these answers; a wrong one changes Task 3,
 
 - [ ] **Step 1:** For each bullet in the spec's *Mollie facts, as checked* section, find the answer on docs.mollie.com (API reference and guides). Record, per bullet: verdict (holds / wrong / not documented), the URL, and a one-line quote.
 - [ ] **Step 2:** Check also, for Task 3's request shapes: the OAuth authorize URL and its parameters (`approval_prompt`), the token endpoint's auth (HTTP Basic with client id/secret) and body encoding, the revoke endpoint's body (`token_type_hint`, `token`), the `testmode` parameter on each v2 call under OAuth, `GET /v2/payments/{id}?embed=refunds`, the refund create body, and the error body shape (`status`, `title`, `detail`, `field`).
-- [ ] **Step 3: The PayPal check (Decision 3).** Determine whether a Mollie-created PayPal payment can show PayPal's own pay-later offers, and whether a Mollie or PayPal setting removes them. If they can appear and cannot be turned off, remove `paypal` from the allowlist in Task 4's constant and say so in the spec's Decision 2/3.
+- [ ] **Step 3: The PayPal check (Decision 3).** Determine whether a Mollie-created PayPal payment can show PayPal's own pay-later offers, and whether a Mollie or PayPal setting removes them. Either way `paypal` stays on the allowlist in Task 4's constant, by the owner's decision (spec Decision 3); record the finding in the spec.
 - [ ] **Step 4:** Replace each verified bullet in the spec with the fact as found; correct any section a finding contradicts (correct by replacing, never "this previously said"). Where a finding changes Task 3's code below, edit this plan.
 - [ ] **Step 5: Commit**
 
@@ -870,8 +870,9 @@ describe('the allowlist', () => {
     expect(isAllowedMollieMethod('banktransfer')).toBe(false);
     expect(isAllowedMollieMethod('googlepay')).toBe(false);
   });
-  it('holds no PayPal, whose checkout can offer pay-later (Decision 3)', () => {
-    expect(isAllowedMollieMethod('paypal')).toBe(false);
+  it('holds PayPal, by decision, though its own checkout can show pay-later (Decision 3)', () => {
+    expect(isAllowedMollieMethod('paypal')).toBe(true);
+    expect(MOLLIE_METHODS.paypal.label).toBe('PayPal');
   });
   it('lists iDEAL and Wero as separate rows', () => {
     expect(MOLLIE_METHODS.ideal.label).toBe('iDEAL');
@@ -886,7 +887,7 @@ describe('the allowlist', () => {
 describe('orderOffered', () => {
   it('keeps allowlisted ids in allowlist order and reports the rest', () => {
     expect(orderOffered(['twint', 'klarna', 'ideal', 'paypal', 'newmethod'])).toEqual({
-      offered: ['ideal', 'twint'], excluded: ['klarna', 'paypal', 'newmethod'],
+      offered: ['ideal', 'twint', 'paypal'], excluded: ['klarna', 'newmethod'],
     });
   });
 });
@@ -898,8 +899,8 @@ describe('exclusionReason', () => {
   });
 });
 
-it('the longest expiry is an hour', () => {
-  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(60);
+it('the longest expiry is PayPal\'s six hours', () => {
+  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(360);
 });
 ```
 
@@ -926,6 +927,7 @@ export const MOLLIE_METHODS = {
   blik: { label: 'BLIK', expiresMinutes: 1, recurring: false },
   przelewy24: { label: 'Przelewy24', expiresMinutes: 60, recurring: false },
   twint: { label: 'TWINT', expiresMinutes: 45, recurring: false },
+  paypal: { label: 'PayPal', expiresMinutes: 360, recurring: false },
 } as const satisfies Record<string, MollieMethodEntry>;
 
 export type AllowedMollieMethod = keyof typeof MOLLIE_METHODS;

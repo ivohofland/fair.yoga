@@ -16,18 +16,20 @@ the numbering here is this spec's.
    pay-later product needs naming: one Mollie adds tomorrow is excluded until a
    reviewed PR adds it.
 2. **The allowlist, first version:** `ideal`, `wero`, `creditcard`,
-   `applepay`, `bancontact`, `eps`, `blik`, `przelewy24`, `twint`.
+   `applepay`, `bancontact`, `eps`, `blik`, `przelewy24`, `twint`, `paypal`.
    iDEAL and Wero are separate rows labelled "iDEAL" and "Wero"; Mollie has
    both as method ids, and the teacher's enablement decides which a student
    sees. Mollie's `banktransfer` is **not** on it: it duplicates the Level 1
    transfer and stays open up to 12 days, which would break Decision 6's
    short window. `googlepay` cannot be a payment `method` and is not on it.
-3. **PayPal is not on the allowlist.** Mollie's PayPal page lists PayPal's own
-   pay-later products as part of the method (Pay in 4 in the US, FR and AU, Pay
-   Monthly, Pay in 3 in the UK, ES and IT, PayPal Credit, Pay in 30 in DE) and
-   documents no setting, on Mollie's side or the merchant's, that removes them.
-   A PayPal row could therefore put deferred payment in front of a student, so
-   it stays out until Mollie documents a switch; a later PR can add it.
+3. **PayPal is on the allowlist, by the owner's decision: it matters in some
+   countries.** Mollie's PayPal page lists PayPal's own pay-later products as
+   part of the method (Pay in 4 in the US, FR and AU, Pay Monthly, Pay in 3 in
+   the UK, ES and IT, PayPal Credit, Pay in 30 in DE) and documents no setting,
+   on Mollie's side or the merchant's, that removes them, so a student may see
+   them inside PayPal's own checkout. fair.yoga offers no pay-later method of
+   its own; PayPal is the one allowed method whose checkout can show such an
+   offer.
 4. **No per-currency Level setting.** Mollie filters methods by currency once
    given the amount (iDEAL, Wero, Bancontact and EPS are EUR only; USD gets
    cards). An empty overlap shows the Level 1 rows alone. A currency
@@ -39,8 +41,8 @@ the numbering here is this spec's.
    paid by hand or waives it. No Mollie call on the manual paths. The window is
    the method's expiry, written on its allowlist entry (Data): Wero 10 min,
    iDEAL 15, card and Apple Pay 30, Twint 45, Bancontact, EPS and
-   Przelewy24 60, BLIK 1 (Mollie's BLIK page gives a 55-second session timeout; the
-   expiry table has no row for it). A completion inside it is a double payment
+   Przelewy24 60, PayPal 360, BLIK 1 (Mollie's BLIK page gives a 55-second
+   session timeout; the expiry table has no row for it). A completion inside it is a double payment
    (Decision 7).
 7. **A webhook reporting paid for a payment already settled** records the
    attempt as paid, leaves the `Payment` untouched, tells the teacher the
@@ -529,8 +531,8 @@ Checked against docs.mollie.com on 2026-10-18; each line is the fact as found.
   comes back. A revoked grant answers `invalid_grant` on the next refresh
   (https://docs.mollie.com/docs/connect-manage-merchants); the HTTP status of
   that answer is not documented.
-- **PayPal pay-later.** It can appear and no switch is documented; PayPal is
-  off the allowlist (Decision 3).
+- **PayPal pay-later.** Its products can appear inside PayPal's checkout and no
+  switch is documented; PayPal is on the allowlist by decision (Decision 3).
 - **Chargebacks.** (a) The payment carries `amountChargedBack`: "The total
   amount that was charged back for this payment. Only available when the total
   charged back amount is not zero"; the docs do not say that `status` changes,
