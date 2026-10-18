@@ -263,11 +263,14 @@ describe('transient kinds produced against the real database', () => {
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'expired' });
     });
 
-    it('maxWait exceeded, the connection freed inside the pool bound: P2028 with meta {}, at warn', async () => {
-      const started = Date.now();
-      const err = await behindHeldConnection(5_000, (single, release) => {
+    it('an explicit maxWait below the pool bound, exceeded with the connection freed inside it: P2028 with meta {}, at warn', async () => {
+      let waited = 0;
+      const err = await behindHeldConnection(5_000, async (single, release) => {
+        const started = Date.now();
         setTimeout(release, 600);
-        return rejectionOf(() => single.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 300 }));
+        const refusal = await rejectionOf(() => single.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 300 }));
+        waited = Date.now() - started;
+        return refusal;
       });
       expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
       expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2028');
@@ -276,7 +279,7 @@ describe('transient kinds produced against the real database', () => {
       expectKind(err, 'tx_budget', 'warn');
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
       // `maxWait` is judged once the pool hands over a connection, not at its own deadline.
-      expect(Date.now() - started).toBeGreaterThanOrEqual(600);
+      expect(waited).toBeGreaterThanOrEqual(600);
     });
   });
 

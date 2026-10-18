@@ -61,6 +61,15 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
 }
 
 /**
+ * The client's default interactive-transaction options for `pool`: `maxWait`
+ * equals the pool's wait bound, so pg-pool's timeout is the bound a waiting
+ * transaction meets. Why: `docs/technical-architecture.md`, "Database errors".
+ */
+export function transactionOptionsFor(pool: PgPoolConfig): { readonly maxWait: number } {
+  return { maxWait: pool.connectionTimeoutMillis };
+}
+
+/**
  * Every TypeScript module builds its `PrismaClient` here. This never caches;
  * each call returns a new client with its own pool. The client runs on
  * Prisma's client engine through `PrismaPg`, which owns the connections: the
@@ -72,9 +81,10 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
  * `docs/test-database.md`, section "Undefined filters in test cleanup (#783)".
  */
 export function createPrismaClient(options: PrismaClientFactoryOptions = {}): PrismaClient {
-  const adapter = new PrismaPg(poolConfigFor(options));
+  const pool = poolConfigFor(options);
   return new PrismaClient({
-    adapter,
+    adapter: new PrismaPg(pool),
+    transactionOptions: transactionOptionsFor(pool),
     ...(options.errorFormat === undefined ? {} : { errorFormat: options.errorFormat }),
     ...(options.log === undefined ? {} : { log: options.log }),
   });

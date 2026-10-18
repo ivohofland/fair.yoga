@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
-import { createPrismaClient, poolConfigFor, DEFAULT_POOL_MAX, Prisma, ClassStatus, Currency } from './prisma-client';
+import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, Prisma, ClassStatus, Currency } from './prisma-client';
 import * as enums from './prisma-enums';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
@@ -59,6 +59,38 @@ describe('createPrismaClient', () => {
       await client.$disconnect();
     }
   });
+
+  // Prisma's own default maxWait is 2 s; the freed connection arrives after it.
+  it('an interactive transaction waits for a connection as long as the pool bound', async () => {
+    const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 4_000 });
+    let release = (): void => {};
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let holding = (): void => {};
+    const held = new Promise<void>((resolve) => { holding = resolve; });
+    const holder = client.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT 1`;
+        holding();
+        await released;
+      },
+      { timeout: 10_000, maxWait: 5_000 },
+    );
+    try {
+      await held;
+      const timer = setTimeout(release, 2_500);
+      const started = Date.now();
+      const outcome = await client.$transaction(async (tx) => tx.$queryRaw<{ one: number }[]>`SELECT 1 AS one`)
+        .then((rows) => rows[0]?.one, (e: unknown) => e);
+      const waited = Date.now() - started;
+      clearTimeout(timer);
+      expect(outcome).toBe(1);
+      expect(waited).toBeGreaterThanOrEqual(2_400);
+    } finally {
+      release();
+      await holder;
+      await client.$disconnect();
+    }
+  }, 15_000);
 
   // A process that skips $disconnect() still exits promptly.
   it('a client left connected does not hold a finished process open', async () => {
@@ -146,6 +178,13 @@ describe('prisma funnel imports', () => {
   it('re-exports the generated client, so its runtime values come from this module', () => {
     expect(new Prisma.Decimal('1.50').toFixed(2)).toBe('1.50');
     expect(ClassStatus.open).toBe('open');
+  });
+});
+
+describe('transactionOptionsFor', () => {
+  it.each([undefined, 200, 4_000])('sets maxWait to the pool bound (connectionTimeoutMs %s)', (connectionTimeoutMs) => {
+    const pool = poolConfigFor({ connectionTimeoutMs });
+    expect(transactionOptionsFor(pool)).toEqual({ maxWait: pool.connectionTimeoutMillis });
   });
 });
 
