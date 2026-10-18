@@ -249,9 +249,11 @@ grep the section above prescribes, minus the template tables:
       | grep -vE ':[0-9]+: *(\*|//)' \
       | grep -vE 'OF (ct|sct|tpl)`|"ClassTemplate"|"StudioClassTemplate"|family\.childTable'
 
-**Expect TEN lines: the four in `src/lib/db-locks.ts` — `lockClassRow`'s two
-and `lockClassRowsOrdered`'s two — plus six that are not `Class` or
-`CalendarEntry` locks at all:**
+**Expect THIRTEEN lines (re-run 2026-10-18): the four in `src/lib/db-locks.ts` —
+`lockClassRow`'s two and `lockClassRowsOrdered`'s two — plus nine that are not
+`Class` or `CalendarEntry` locks at all.** A checkout that has generated the
+Prisma client also sees one line from `src/generated/` (the schema text the
+client embeds), which is not in git; read past it.
 
 - `src/services/room-archive.ts:251` and `src/services/room-switch.ts:88`, the
   archive's and the switch's step-1 pre-locks, both on `ClassTemplate` rows;
@@ -263,20 +265,26 @@ and `lockClassRowsOrdered`'s two — plus six that are not `Class` or
   `HandoffAttemptBudget` row (#767), a standing exception: a single-row budget
   lock. The reservation's transaction holds only that row and waits on nothing
   else, so the erasures that delete the same row after their profile locks
-  cannot form a cycle with it.
+  cannot form a cycle with it;
+- `src/services/processor-token.ts:112`, `getAccessToken`'s `invalid_grant`
+  lock on one `ProcessorConnection` row (#896) — "The `ProcessorConnection`
+  row is a leaf lock" below;
+- `src/services/processor-attempts.ts:519` and `src/services/payments.ts:320`,
+  `syncAttempt`'s and `reopenInTransaction`'s lock on one `Payment` row (#896)
+  — "The `Payment` row is a Mollie sync's gate" below.
 
-Four of the six are false positives this command cannot suppress: the
+Five of the nine are false positives this command cannot suppress: the
 table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,
 `"TeacherRoom"` at `room-switch.ts:138`, `"TeacherStudent"` at
-`roster-link.ts:123`) sits on a line ABOVE its `FOR UPDATE`, and every
-filter here matches line by line. The other two, `room-switch.ts:93` and
-`handoff.ts:149`, carry their table name (`"TeacherRoom"`,
-`"HandoffAttemptBudget"`) on their own line and pass only because this command
-filters the template tables, not every table that is not `Class` or
-`CalendarEntry`.
-Both copies of this census share these lines, so both return ten; the
-four blind-spot lines cannot be "fixed" by tightening the filter, only by
-rewriting each statement onto one line, which nothing else wants. Any ELEVENTH
+`roster-link.ts:123`, `"ProcessorConnection"` at `processor-token.ts:112`) sits
+on a line ABOVE its `FOR UPDATE`, and every filter here matches line by line.
+The other four, `room-switch.ts:93`, `handoff.ts:149` and the two `Payment`
+locks, carry their table name (`"TeacherRoom"`, `"HandoffAttemptBudget"`,
+`"Payment"`) on their own line and pass only because this command filters the
+template tables, not every table that is not `Class` or `CalendarEntry`.
+Both copies of this census share these lines, so both return thirteen; the
+five blind-spot lines cannot be "fixed" by tightening the filter, only by
+rewriting each statement onto one line, which nothing else wants. Any FOURTEENTH
 line is the real signal — a site that took a `Class` or `CalendarEntry` row
 lock without going through either helper.
 
@@ -1026,12 +1034,12 @@ its own reader. That is the failure the `FOR UPDATE` census one section up
 records: a reader who runs the unfiltered version concludes on first use that
 the convention is not worth checking.
 
-**Re-run on 2026-10-14 it returns 24.** Three are the bound itself and the
+**Re-run on 2026-10-18 it returns 25.** Three are the bound itself and the
 helper that issues it, all three in `db-locks.ts`. One is `gdpr.ts`'s
 `  setLockTimeout,` line, a member of a multi-line `import { … }` block that
 names `setLockTimeout` without issuing it, which the `import ` filter cannot
 drop, since it matches only a line that itself starts with `import `. The
-remaining twenty are transactions arming it:
+remaining twenty-one are transactions arming it:
 
 - eight helpers in `db-locks.ts`: `lockClassRow`, `lockClassRowsOrdered`,
   `lockStudentForErasure` and `lockLiveStudent` (#183); `lockLiveTeacher`, the
@@ -1044,9 +1052,12 @@ remaining twenty are transactions arming it:
 - three in `rule-lifecycle.ts`, one in `entry-generation.ts` (spliced
   `LOCK_TIMEOUT_SQL`), two in `gdpr.ts` and one in `room-archive.ts`;
 - `switchToSharedRoom`'s own transaction (`room-switch.ts`, #259);
-- three before a `TeacherStudent` row lock (#265): `reopenPayment`
-  (`payments.ts`) and `archiveStudent`'s two (`student-archive.ts` — its own
-  transaction, and the re-read after a waive miss);
+- three before a `TeacherStudent` row lock (#265): `reopenInTransaction`'s
+  body (`payments.ts`, which `reopenPayment` and a refund's completion share)
+  and `archiveStudent`'s two (`student-archive.ts` — its own transaction, and
+  the re-read after a waive miss);
+- `syncAttempt`'s transaction (`processor-attempts.ts`, #896), before its
+  optional `TeacherStudent` lock and its `Payment` lock;
 - `reserveHandoffComparisons` (`src/lib/auth/handoff.ts`, #767), the
   handoff-code budget reservation, before its `HandoffAttemptBudget` row lock.
 
@@ -1766,15 +1777,21 @@ throw: that case fails with `expected a refusal, got
 
 No cycle follows from the archive waiting on a `Payment` row while holding
 `TeacherStudent`: none of those payment writers ever requests the link lock,
-so none holds a `Payment` row while waiting on one.
+so none holds a `Payment` row while waiting on one. `syncAttempt` holds the
+`Payment` row and never requests the link after it: a refund that would need
+the link there is deferred instead ("The `Payment` row is a Mollie sync's
+gate" below).
 
 ### Where `Payment` sits: after `TeacherStudent`
 
 `archiveStudent` takes `TeacherStudent` (lock), reads `Registration` and
 `Payment` unlocked, writes `Payment` (the waive), then writes
-`TeacherStudent`. `reopenPayment` reads the payment unlocked, then takes
-`TeacherStudent`, then writes `Payment`. Both take the link before any
-`Payment` row lock, which is the position the canonical line gives it. The
+`TeacherStudent`. `reopenPayment` (through `reopenInTransaction`) reads the
+payment unlocked, then takes `TeacherStudent`, then locks the `Payment` row
+`FOR UPDATE` and writes it. `syncAttempt` takes `TeacherStudent` only when it
+may complete a refund that reopens, and then first. All three take the link
+before any `Payment` row lock, which is the position the canonical line gives
+it. The
 booking paths are unchanged in order (`… → Registration → TeacherStudent`, then
 `Invitation`/`TeacherBlock` on the paths that reach them);
 `TeacherStudent` is an actual lock on them, for an existing link as much as
@@ -1785,16 +1802,20 @@ which of them also locks `TeacherStudent`:
 
     grep -rnE "payment\.(create|update|updateMany|delete|deleteMany|upsert)\(" src | grep -v "\.test\."
 
-On 2026-10-17 it returned 13
+On 2026-10-18 it returned 14
 lines = 8 in `payments.ts` (`markPaymentPaid`, `markPaymentOverdue`,
-`reopenPayment`, `markPaymentNotCharged`, `sendPaymentReminder`,
+`reopenInTransaction`'s body, `markPaymentNotCharged`, `sendPaymentReminder`,
 `reportPaymentSent`, `withdrawPaymentReport`, `rejectPaymentReport`) + 2 in
 `payment-reminders.ts` (`markOverduePayments`, `sendPaymentReminders`) + 1 in
 `class-lifecycle.ts` (`completeClass`'s `create`) + 1 in `student-archive.ts`
 (`archiveStudent`'s waive) + 1 in `payout-resume.ts` (`resumePayments`'s
-`reminderSentAt` stamp). The arithmetic: 8 + 2 + 1 + 1 + 1 = 13. Two of the thirteen
-also lock `TeacherStudent` — `reopenPayment` and `archiveStudent`, both
-link-first — and none touches `Invitation` or `TeacherBlock`. The three claim
+`reminderSentAt` stamp) + 1 in `processor-attempts.ts` (`completeRefund`'s
+waive). The arithmetic: 8 + 2 + 1 + 1 + 1 + 1 = 14. Two of the fourteen
+lock `TeacherStudent` themselves — `reopenInTransaction` and `archiveStudent`,
+both link-first — and `completeRefund`'s waive runs inside `syncAttempt`'s
+transaction, which takes the link first when it takes it at all (#896);
+none touches `Invitation` or `TeacherBlock`. `markPaymentPaid` also runs
+inside `syncAttempt`'s transaction, after its `Payment` lock. The three claim
 writers take no link lock and no `Class` row lock; each is a single-row
 `UPDATE` of the payment, scoped by `id` (the student doors also by the
 registration's `studentId`). A wider pattern,
@@ -1816,12 +1837,13 @@ transaction opens. So no erasure transaction holds `Payment` and
 
     git grep -n -E '(lockTeacherStudentLink|activateTeacherStudentLink|linkTeacherStudent)\(' -- src ':!*.test.ts'
 
-On 2026-09-28 it returned 15 lines = 3 definitions + 2 calls inside
+On 2026-10-18 it returned 16 lines = 3 definitions + 2 calls inside
 `roster-link.ts` (`linkTeacherStudent` → `activateTeacherStudentLink` →
-`lockTeacherStudentLink`) + 10 call sites:
+`lockTeacherStudentLink`) + 11 call sites:
 
 - `lockTeacherStudentLink` directly: `archiveStudent` (twice — its
-  transaction, and the re-read after a waive miss), `reopenPayment`;
+  transaction, and the re-read after a waive miss), `reopenInTransaction`'s
+  body (`payments.ts`), `syncAttempt` (`processor-attempts.ts`, #896);
 - `activateTeacherStudentLink` directly: the roster add in `POST
   /api/registrations` (`'missing'` rolls the registration back);
 - `linkTeacherStudent`: the self-booking branch of `POST /api/registrations`,
@@ -2493,6 +2515,90 @@ which returned 5 lines = 3 in `processor-connection.ts` (`completeConnect`,
 
 The `invalid_grant` lock is plain `FOR UPDATE` with no `OF`, so it does not
 appear in the `FOR UPDATE OF` census of `Class` locks above.
+
+## The `Payment` row is a Mollie sync's gate (#896)
+
+`syncAttempt` (`src/services/processor-attempts.ts`) applies what Mollie says
+about one attempt — the webhook's and the student's return share it. Its
+Mollie calls (`getAccessToken`, which may run a refresh transaction of its
+own, then `getPayment`) finish before its transaction opens, so no lock is
+held across them. The transaction then takes, in this order:
+
+    [TeacherStudent →] Payment → ProcessorPayment → ProcessorRefund
+
+1. `setLockTimeout`, then the pair's `TeacherStudent` link with
+   `lockTeacherStudentLink` — only when the fetched view shows a refund whose
+   row has outcome `reopened` and that Mollie now reports newly `refunded`,
+   decided from an unlocked read of the attempt's `ProcessorRefund` rows
+   before the transaction opens;
+2. `SELECT id FROM "Payment" WHERE id = … FOR UPDATE`;
+3. the attempt's own `ProcessorPayment` row (an `UPDATE` of its status,
+   method, `paidAt`, `chargedBackAt`, `settledPayment`), `markPaymentPaid`'s
+   `UPDATE` of the `Payment` row it already holds, and the attempt's
+   `ProcessorRefund` rows by Mollie id (a status-guarded `updateMany`);
+4. when a refund completes, `completeRefund`: a waive's `UPDATE` of the held
+   `Payment` row and of the attempt, or `reopenInTransaction`, which re-runs
+   steps 1 and 2 on rows this transaction already holds, then writes the
+   `Payment`, the attempt and possibly the link;
+5. `Notification` inserts for the teacher or the student, each carrying the
+   payment's class as `relatedClassId`.
+
+**The link is never taken after the payment.** A refund that would reopen,
+met by a sync that did not start with the link (its row gained its Mollie id
+or changed status between the unlocked read and the lock), is left unwritten,
+and the sync answers `unavailable` so Mollie retries; the retry's unlocked
+read sees the row and starts with the link. So this transaction holds
+`Payment` and waits on `TeacherStudent` never, and the archive (which holds
+`TeacherStudent` and waits on `Payment`) and `reopenPayment` (link first)
+cannot cycle with it.
+
+**`reopenInTransaction` locks the `Payment` row too**, after the link and
+before it counts the payment's settling attempts. Without that lock a webhook
+settling the payment could commit between the count and the compare-and-swap,
+and the swap, re-evaluated on the now-`paid` row, would reopen a payment
+Mollie settled — what Decision 17 forbids. Pinned by `payments.test.ts`'s
+"reopenPayment: a settle racing the swap waits for the reopen, which answers
+unchanged"; measured on 2026-10-18 by dropping the `FOR UPDATE`: that case
+fails with `expected unchanged, got {"kind":"refused",…"CONCURRENT_MODIFICATION"…}`.
+No test pins `syncAttempt`'s own `FOR UPDATE`: removing it leaves
+`processor-attempts.test.ts` green, because no case there races two writers.
+
+**The `Class` key share after `Payment` adds no edge.** Each notification's
+`relatedClassId` takes `FOR KEY SHARE` on the class (the fourth path, above)
+while the transaction holds the `Payment` row, as `sendPaymentReminder` and
+`rejectPaymentReport` already do. A cycle would need a transaction that holds
+that class `FOR UPDATE` and then waits on an existing `Payment` row, and the
+only `Payment` writer that holds a class lock, `completeClass`, inserts new
+`Payment` rows rather than waiting on one ("Where `Payment` sits" above).
+
+**It takes nothing in the `Teacher` line.** No `Notification` column
+references `Teacher`, and the `ProcessorPayment` and `ProcessorRefund`
+`UPDATE`s change no foreign-key column, so none takes a key share on a
+parent. `createAttempt`, which holds `Teacher` (`FOR NO KEY UPDATE`) when it
+inserts an attempt, takes `FOR KEY SHARE` on the `Payment` row through the
+insert's foreign key, so it can wait on this transaction; this transaction
+never waits on `Teacher` or on the `ProcessorConnection` row, so the two
+cannot cycle.
+
+**`ProcessorPayment` and `ProcessorRefund` rows sit after `Payment`.** Every
+statement that writes an existing attempt or refund row runs with that
+attempt's `Payment` row locked first: this transaction, and
+`reopenInTransaction` and `completeRefund` inside it. `createAttempt` inserts
+a new attempt, which no other transaction can hold. A new writer of either
+table takes the payment's row first. The writers, re-derived on 2026-10-18
+with
+
+    git grep -nE 'processor(Payment|Refund)\.(update|updateMany|upsert|delete|deleteMany)\(' -- src ':!*.test.ts'
+
+returned 5 lines = 4 in `processor-attempts.ts` (`completeRefund`'s waive
+releasing the attempt, and `syncAttempt`'s attempt write, its settle's
+`settledPayment` write and its refund-status write) + 1 in `payments.ts`
+(`reopenInTransaction` releasing a refunded attempt). The arithmetic: 4 + 1 = 5.
+No statement in `src/` deletes a `ProcessorConnection` or `Payment` row
+(`git grep -nE 'processorConnection\.(delete|deleteMany)\(|payment\.(delete|deleteMany)\(' -- src ':!*.test.ts'`
+returns nothing), so no foreign-key action (`connectionId`'s `SET NULL`, the
+`Payment` cascade) writes these rows either; a site that adds one is placed
+here first.
 
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
