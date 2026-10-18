@@ -680,9 +680,8 @@ connection was revoked in the same transaction: both tokens nulled, `revokedAt`
 set, and the teacher got a `processor_disconnected` notification. Students see
 the teacher's other payment options until the teacher reconnects.
 
-**Where the bad value lives.** Mollie's side, usually: the teacher revoked the
-app in their Mollie dashboard, or the grant expired. Rarely ours: a refresh
-token overwritten by a bug.
+**Where the bad value lives.** Mollie's side: the teacher revoked this app's
+access in their Mollie dashboard, or Mollie revoked the grant.
 
 **Confirm.**
 
@@ -691,13 +690,15 @@ SELECT id, "teacherId", "connectedAt", "disconnectedAt", "revokeAfter", "revoked
   FROM "ProcessorConnection" WHERE id = '<connectionId>';
 ```
 
-A single sample for a teacher who says they revoked access is expected. A
-cluster across many connections in a short window points at our app credentials
-(`MOLLIE_CLIENT_ID` / `MOLLIE_CLIENT_SECRET`), not at the teachers.
+A single sample is that teacher having revoked access. A cluster across many
+connections in a short window means the app was revoked or removed in Mollie's
+dashboard, or Mollie revoked grants. Wrong client credentials do not land here:
+Mollie answers them `invalid_client`, which the adapter reports as
+`MOLLIE_UNAVAILABLE`.
 
 **Correct.** Nothing for a single teacher: they reconnect Mollie in Settings →
-Profile. For a cluster, check the app credentials in the Mollie dashboard and
-the environment; the affected teachers reconnect once they are right.
+Profile. For a cluster, check the app in Mollie's dashboard; the affected
+teachers reconnect once it is restored.
 
 ### `PROCESSOR_TOKEN_UNREADABLE`
 
@@ -723,6 +724,13 @@ Samples across every connection mean the key is wrong. A sample for one
 connection means that row is damaged.
 
 **Correct.** For a wrong key, restore the key the rows were sealed with and
-restart; nothing in the database changes. For one damaged row, set
-`revokedAt`, `disconnectedAt` and null both tokens, then the teacher reconnects
-Mollie in Settings → Profile.
+restart; nothing in the database changes. For one damaged row, run the statement below, then the teacher reconnects Mollie in Settings →
+Profile.
+
+```sql
+UPDATE "ProcessorConnection"
+   SET "accessToken" = NULL, "refreshToken" = NULL, "accessTokenExpiresAt" = NULL,
+       "disconnectedAt" = COALESCE("disconnectedAt", now()),
+       "revokeAfter" = NULL, "revokedAt" = now()
+ WHERE id = '<connectionId>';
+```

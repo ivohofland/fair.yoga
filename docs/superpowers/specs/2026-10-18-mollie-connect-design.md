@@ -76,7 +76,11 @@ the numbering here is this spec's.
     webhook then hits `markPaymentPaid`'s existing same-method `unchanged`.
 14. **A refresh answering `invalid_grant` disconnects**: the connection is
     marked disconnected, the pay page offers no Mollie rows from the next render, the teacher is
-    told in-app and by email, and `logDegraded` records it.
+    told in-app and by email, and `logDegraded` records it. The disconnect
+    applies only while the row still holds the refresh token that got
+    `invalid_grant` (a newer grant, from a reconnect or a peer's refresh, wins),
+    keeps `disconnectedAt` if it is already set, and tells the teacher only when
+    the connection was not already disconnected.
 15. **The methods list is cached in memory for 60 s** per `(teacher, currency,
     amount)`. One process on one VPS, so in-memory is shared by every request.
 16. **The four placeholder columns go.** `Teacher.paymentLevel`,
@@ -304,9 +308,10 @@ leaving the byte.
 `getAccessToken(db, connectionId)` answers a live token or a typed
 `disconnected` result — refresh when within 5 minutes of expiry, single-flight
 per connection; `invalid_grant` runs Decision 14 in one transaction (the
-grant is already dead, so: null tokens, stamp `disconnectedAt` and
-`revokedAt`, `processor_disconnected` notification), then
-`logDegraded`. A network failure is not `invalid_grant`: it degrades that one
+grant is already dead, so: null tokens, stamp `disconnectedAt` unless it is
+set and `revokedAt`, all only while the row still holds the refresh token that
+got `invalid_grant`; `processor_disconnected` notification only when the
+connection was not already disconnected), then `logDegraded`. A network failure is not `invalid_grant`: it degrades that one
 call and leaves the connection alone.
 
 ## 3 · Methods and the pay page

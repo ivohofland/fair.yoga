@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@/lib/prisma-client';
-import { MollieUnavailable, type TokenGrant } from '@/lib/mollie/client';
+import { MollieUnavailable, type TokenAnswer, type TokenGrant } from '@/lib/mollie/client';
 import { openToken, sealToken, TokenCipherError } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
 import { createNotification } from './notifications';
@@ -77,7 +77,12 @@ async function refreshOnce(
   sealedRefresh: Uint8Array<ArrayBuffer>,
   now: Date,
 ): Promise<TokenLookup> {
-  let answer;
+  // The caller's read may predate a flight that has since finished; the row
+  // as it stands now says whether a refresh is still due.
+  const settled = await settledLookup(db, deps, connectionId, now);
+  if (settled !== null) return settled;
+
+  let answer: TokenAnswer;
   try {
     answer = await deps.client.refresh(refreshToken);
   } catch (err) {
@@ -92,20 +97,21 @@ async function refreshOnce(
   }
 
   if (answer.kind === 'invalid_grant') {
-    await db.$transaction(async (tx) => {
-      const current = await tx.processorConnection.findUnique({ where: { id: connectionId }, select: { disconnectedAt: true } });
-      const { count } = await tx.processorConnection.updateMany({
-        where: { id: connectionId, revokedAt: null },
-        data: {
-          accessToken: null,
-          refreshToken: null,
-          accessTokenExpiresAt: null,
-          disconnectedAt: current?.disconnectedAt ?? now,
-          revokeAfter: null,
-          revokedAt: now,
-        },
-      });
-      if (count === 1) {
+    const disconnected = await db.$transaction(async (tx) => {
+      // One statement keeps an existing `disconnectedAt` (COALESCE) and hands
+      // back whether there was one; it applies only while the row still holds
+      // the refresh token Mollie refused.
+      const changed = await tx.$queryRaw<{ wasDisconnected: boolean }[]>`
+        UPDATE "ProcessorConnection" AS c
+           SET "accessToken" = NULL, "refreshToken" = NULL, "accessTokenExpiresAt" = NULL,
+               "disconnectedAt" = COALESCE(c."disconnectedAt", ${now}),
+               "revokeAfter" = NULL, "revokedAt" = ${now}
+          FROM "ProcessorConnection" AS old
+         WHERE c.id = ${connectionId} AND old.id = c.id
+           AND c."revokedAt" IS NULL AND c."refreshToken" = ${sealedRefresh}
+        RETURNING (old."disconnectedAt" IS NOT NULL) AS "wasDisconnected"`;
+      if (changed.length === 0) return false;
+      if (!changed[0].wasDisconnected) {
         await createNotification(tx, {
           recipientType: 'teacher',
           recipientId: teacherId,
@@ -114,10 +120,14 @@ async function refreshOnce(
           body: 'fair.yoga can no longer reach your Mollie account, so students see your other payment options. Reconnect in Settings → Profile.',
         });
       }
+      return true;
     });
-    logDegraded('PROCESSOR_DISCONNECTED', { connectionId }, 'Mollie refused the refresh token; the connection was disconnected');
-    forgetOfferedMethods(connectionId);
-    return { kind: 'disconnected' };
+    if (disconnected) {
+      logDegraded('PROCESSOR_DISCONNECTED', { connectionId }, 'Mollie refused the refresh token; the connection was disconnected');
+      forgetOfferedMethods(connectionId);
+      return { kind: 'disconnected' };
+    }
+    return (await settledLookup(db, deps, connectionId, now)) ?? { kind: 'unavailable' };
   }
 
   const { count } = await db.processorConnection.updateMany({
@@ -125,16 +135,20 @@ async function refreshOnce(
     data: sealGrant(answer.grant, deps.config.tokenKey, now),
   });
   if (count === 1) return { kind: 'token', accessToken: answer.grant.accessToken };
+  return (await settledLookup(db, deps, connectionId, now)) ?? { kind: 'unavailable' };
+}
 
-  const winner = await db.processorConnection.findUnique({
+/** What the row now says, or null when it still needs a refresh. */
+async function settledLookup(db: PrismaClient, deps: MollieDeps, connectionId: string, now: Date): Promise<TokenLookup | null> {
+  const row = await db.processorConnection.findUnique({
     where: { id: connectionId },
     select: { accessToken: true, accessTokenExpiresAt: true, revokedAt: true },
   });
-  if (!winner || winner.revokedAt !== null) return { kind: 'disconnected' };
-  if (!winner.accessToken || !winner.accessTokenExpiresAt) return { kind: 'unavailable' };
-  if (winner.accessTokenExpiresAt.getTime() - now.getTime() <= REFRESH_MARGIN_MS) return { kind: 'unavailable' };
+  if (!row || row.revokedAt !== null) return { kind: 'disconnected' };
+  if (!row.accessToken || !row.accessTokenExpiresAt) return null;
+  if (row.accessTokenExpiresAt.getTime() - now.getTime() <= REFRESH_MARGIN_MS) return null;
   try {
-    return { kind: 'token', accessToken: openToken(winner.accessToken, deps.config.tokenKey) };
+    return { kind: 'token', accessToken: openToken(row.accessToken, deps.config.tokenKey) };
   } catch (err) {
     if (!(err instanceof TokenCipherError)) throw err;
     logDegraded('PROCESSOR_TOKEN_UNREADABLE', { connectionId }, 'stored processor token could not be opened; is PROCESSOR_TOKEN_KEY the key it was sealed with?', err);
