@@ -1,6 +1,6 @@
 import { pgErrorOf } from '@/lib/pg-error';
 
-/** Every unique index a caller names; `pg-error.test.ts` holds each to `pg_indexes`. */
+/** The unique indexes `isUniqueConflictOn` may be asked about: its `names` parameter is typed by this list, and `pg-error.test.ts` holds each member to `pg_indexes`. */
 export const UNIQUE_CONSTRAINTS = [
   'Account_email_key',
   'CalendarEntry_scheduleRuleId_date_key',

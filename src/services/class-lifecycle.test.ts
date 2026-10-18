@@ -2120,7 +2120,7 @@ describe('updateClass (DB)', () => {
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });
 
-  it('treats an all-undefined payload as no edit, not as a vanished row', async () => {
+  it('answers an all-undefined payload as no_fields before any write', async () => {
     const cls = await makeClass(false);
 
     // Prisma sends no UPDATE for a data object whose every value is

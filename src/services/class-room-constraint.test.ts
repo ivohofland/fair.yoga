@@ -151,12 +151,9 @@ describe('Class_live_needs_open_room', () => {
 
   it('refuses a mirror that disagrees with its room', async () => {
     // The mirrors cannot drift because each is one column of a composite
-    // foreign key. Claiming a value the parent does not hold is 23503,
-    // surfaced through Prisma's typed client as `P2003` — the code
-    // `isRestrictViolationOn` matches. A raw query reports the same 23503
-    // wrapped as `P2010` instead, which that matcher deliberately does not
-    // read (see its docblock), so this goes through the typed `update`, not
-    // `$executeRawUnsafe`.
+    // foreign key. Claiming a value the parent does not hold is 23503 on
+    // `ROOM_FK`, which `isRestrictViolationOn` matches. This goes through the
+    // typed `update` because that is the path production writes take.
     //
     // A fresh `draft` class, scoped to this test: `draft` can never trip
     // `Class_live_needs_open_room` regardless of `roomArchived`, so the FK is
