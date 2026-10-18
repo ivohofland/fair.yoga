@@ -150,3 +150,140 @@ describe('revoke and a 401', () => {
     await expect(mollie.organization('tok')).rejects.toMatchObject({ status: 401 });
   });
 });
+
+const basicHeader = `Basic ${Buffer.from('app_id:secret').toString('base64')}`;
+const amount = { value: '10.00', currency: 'EUR' };
+const form = 'application/x-www-form-urlencoded';
+const payment = { id: 'tr_1', status: 'open', method: 'ideal', amount, _links: { checkout: { href: 'https://c' } } };
+
+describe('getPayment nullable fields', () => {
+  it('reads every optional field given as an explicit null', async () => {
+    const { mollie } = client([json(200, {
+      id: 'tr_1', status: 'open', method: null, amount, expiresAt: null, paidAt: null,
+      amountChargedBack: null, _embedded: null, _links: null,
+    })]);
+    expect(await mollie.getPayment('tok', 'tr_1', { testmode: false })).toEqual({
+      id: 'tr_1', status: 'open', method: null, amount, checkoutUrl: null, expiresAt: null, paidAt: null,
+      amountChargedBack: null, refunds: [],
+    });
+  });
+  it('reads null refunds and a null checkout link', async () => {
+    const { mollie } = client([json(200, { id: 'tr_1', status: 'open', amount, _embedded: { refunds: null }, _links: { checkout: null } })]);
+    const view = await mollie.getPayment('tok', 'tr_1', { testmode: false });
+    expect(view?.refunds).toEqual([]);
+    expect(view?.checkoutUrl).toBeNull();
+  });
+  it('asks for test mode only when it is set', async () => {
+    const { fetchImpl, mollie } = client([json(200, payment), json(200, payment)]);
+    await mollie.getPayment('tok', 'tr_1', { testmode: true });
+    await mollie.getPayment('tok', 'tr_1', { testmode: false });
+    expect(new URL(String(fetchImpl.mock.calls[0]![0])).searchParams.get('testmode')).toBe('true');
+    expect(new URL(String(fetchImpl.mock.calls[1]![0])).searchParams.has('testmode')).toBe(false);
+  });
+});
+
+describe('outgoing token requests', () => {
+  it('refresh posts the refresh token with basic auth as a form', async () => {
+    const { fetchImpl, mollie } = client([json(200, { access_token: 'a', refresh_token: 'r2', expires_in: 1, scope: 's' })]);
+    await mollie.refresh('refresh_old');
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.mollie.com/oauth2/tokens');
+    expect(init?.method).toBe('POST');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBe(basicHeader);
+    expect(headers.get('Content-Type')).toBe(form);
+    const body = new URLSearchParams(String(init?.body));
+    expect(body.get('grant_type')).toBe('refresh_token');
+    expect(body.get('refresh_token')).toBe('refresh_old');
+  });
+  it('revoke uses basic auth, a form, and the token endpoint', async () => {
+    const { fetchImpl, mollie } = client([new Response(null, { status: 204 })]);
+    await mollie.revoke('refresh_1');
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.mollie.com/oauth2/tokens');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBe(basicHeader);
+    expect(headers.get('Content-Type')).toBe(form);
+    expect(new URLSearchParams(String(init?.body)).get('token')).toBe('refresh_1');
+  });
+  it('exchangeCode sends the code and redirect uri', async () => {
+    const { fetchImpl, mollie } = client([json(200, { access_token: 'a', refresh_token: 'r', expires_in: 1, scope: 's' })]);
+    await mollie.exchangeCode('auth_code', 'https://fair.yoga/cb');
+    const body = new URLSearchParams(String(fetchImpl.mock.calls[0]![1]?.body));
+    expect(body.get('code')).toBe('auth_code');
+    expect(body.get('redirect_uri')).toBe('https://fair.yoga/cb');
+  });
+  it('exchangeCode throws when a grant carries no refresh token', async () => {
+    const { mollie } = client([json(200, { access_token: 'a', expires_in: 1, scope: 's' })]);
+    await expect(mollie.exchangeCode('c', 'https://x')).rejects.toBeInstanceOf(MollieUnavailable);
+  });
+});
+
+describe('outgoing v2 requests', () => {
+  it('createPayment posts the full body with a bearer token', async () => {
+    const { fetchImpl, mollie } = client([json(201, payment)]);
+    await mollie.createPayment('tok', {
+      amount, description: 'Hatha', method: 'ideal', redirectUrl: 'https://fair.yoga/r',
+      webhookUrl: 'https://fair.yoga/hook', profileId: 'pfl_1', metadata: { paymentId: 'pay_1', attemptId: 'att_1' }, testmode: true,
+    });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.mollie.com/v2/payments');
+    expect(init?.method).toBe('POST');
+    const headers = new Headers(init?.headers);
+    expect(headers.get('Authorization')).toBe('Bearer tok');
+    expect(headers.get('Content-Type')).toBe('application/json');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      amount, description: 'Hatha', method: 'ideal', redirectUrl: 'https://fair.yoga/r',
+      webhookUrl: 'https://fair.yoga/hook', profileId: 'pfl_1', metadata: { paymentId: 'pay_1', attemptId: 'att_1' }, testmode: true,
+    });
+  });
+  it('createRefund answers created for a 201 and posts amount and test mode', async () => {
+    const refund = { id: 're_1', status: 'queued', amount };
+    const { fetchImpl, mollie } = client([json(201, refund)]);
+    expect(await mollie.createRefund('tok', 'tr_1', { amount, testmode: true })).toEqual({ kind: 'created', refund });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.mollie.com/v2/payments/tr_1/refunds');
+    expect(init?.method).toBe('POST');
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer tok');
+    expect(JSON.parse(String(init?.body))).toEqual({ amount, testmode: true });
+  });
+  it('createRefund omits testmode when it is false', async () => {
+    const { fetchImpl, mollie } = client([json(201, { id: 're_1', status: 'queued', amount })]);
+    await mollie.createRefund('tok', 'tr_1', { amount, testmode: false });
+    expect(JSON.parse(String(fetchImpl.mock.calls[0]![1]?.body))).toEqual({ amount });
+  });
+  it('organization reads /v2/organizations/me with a bearer token', async () => {
+    const { fetchImpl, mollie } = client([json(200, { id: 'org_1', name: 'Yoga BV' })]);
+    expect(await mollie.organization('tok')).toEqual({ id: 'org_1', name: 'Yoga BV' });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://api.mollie.com/v2/organizations/me');
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer tok');
+  });
+  it('profiles reads /v2/profiles with a bearer token', async () => {
+    const profile = { id: 'pfl_1', name: 'Shop', mode: 'live', status: 'verified' };
+    const { fetchImpl, mollie } = client([json(200, { _embedded: { profiles: [profile] } })]);
+    expect(await mollie.profiles('tok')).toEqual([profile]);
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(String(url)).toBe('https://api.mollie.com/v2/profiles?limit=250');
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer tok');
+  });
+  it.each([403, 503])('a %i on a v2 call throws MollieUnavailable carrying that status', async (status) => {
+    const { mollie } = client([json(status, {})]);
+    await expect(mollie.organization('tok')).rejects.toMatchObject({ name: 'MollieUnavailable', status });
+  });
+});
+
+describe('timeout', () => {
+  it('passes an abort signal to fetch', async () => {
+    const { fetchImpl, mollie } = client([json(200, { id: 'org_1', name: 'n' })]);
+    await mollie.organization('tok');
+    expect(fetchImpl.mock.calls[0]![1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+  it('rejects with MollieUnavailable when a fetch honouring the signal never answers', async () => {
+    const fetchImpl = vi.fn<typeof fetch>((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+    }));
+    const mollie = createMollieClient({ clientId: 'a', clientSecret: 'b' }, { fetchImpl, timeoutMs: 50 });
+    await expect(mollie.organization('tok')).rejects.toMatchObject({ name: 'MollieUnavailable', status: null });
+  });
+});
