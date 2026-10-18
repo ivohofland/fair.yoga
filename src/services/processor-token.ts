@@ -110,8 +110,9 @@ async function refreshOnce(
          WHERE c.id = ${connectionId} AND old.id = c.id
            AND c."revokedAt" IS NULL AND c."refreshToken" = ${sealedRefresh}
         RETURNING (old."disconnectedAt" IS NOT NULL) AS "wasDisconnected"`;
-      if (changed.length === 0) return false;
-      if (!changed[0].wasDisconnected) {
+      const [first] = changed;
+      if (first === undefined) return false;
+      if (!first.wasDisconnected) {
         await createNotification(tx, {
           recipientType: 'teacher',
           recipientId: teacherId,
