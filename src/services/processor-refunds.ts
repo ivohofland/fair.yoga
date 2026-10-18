@@ -306,10 +306,11 @@ type Unheld = { kind: 'found'; refund: MollieRefundView } | { kind: 'none' } | {
 
 /**
  * The refund Mollie lists on the attempt's payment that no `ProcessorRefund`
- * row holds, for the attempt's amount and currency — one
- * `refundEndedAtMollie` does not hold for when there is one, since an ended refund may be an
- * earlier one made in Mollie's dashboard. `failed`, logged with the intent's
- * ids, when Mollie cannot be asked.
+ * row holds, for the attempt's amount and currency. When several match, one
+ * that has not ended at Mollie (`refundEndedAtMollie`) is preferred, because
+ * an ended one may be an earlier refund made in the dashboard. `failed`
+ * (logged with the intent's ids) when Mollie cannot be asked or no longer
+ * knows the payment.
  */
 async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: string, intent: Held): Promise<Unheld> {
   const { attempt } = intent;

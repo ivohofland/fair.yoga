@@ -2550,8 +2550,8 @@ the same refresh-token guard. The daily sweep (`revokeDueConnections`,
 `processor-revocation.ts`) writes only through `revokeDueConnection`, one row
 per call, so it adds no statement.
 
-Every transaction that takes the row takes `Teacher` first, so those six sites
-queue on `Teacher` before they reach it. None takes another lockable row of this
+Every transaction that locks or writes the row takes `Teacher` first, so those
+sites queue on `Teacher` before they reach it. None takes another lockable row of this
 file after the connection except the erasure's `SET NULL` writes of attempt
 rows, argued above. The three single-statement writes hold only the row they
 match while they wait, so they close no cycle either. A new site that locks
@@ -2682,7 +2682,8 @@ and the lock is deferred like any other.
 No test fails when `createRefund` moves inside the intent's transaction: a
 lock held across a network call is invisible to `processor-refunds.test.ts`,
 whose client answers at once. Measured on 2026-10-18 by making that move
-(with Mollie's answer, or its failure, carried out unchanged): 21 of 21 pass.
+(with Mollie's answer, or its failure, carried out unchanged): every test in
+that file passed.
 
 **`ProcessorPayment` and `ProcessorRefund` rows sit after `Payment`.** Every
 statement that writes an existing attempt or refund row runs with that

@@ -7,8 +7,8 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 
 /**
  * Mollie could not give an answer this call can act on: a network error, a
- * timeout, a 5xx, an unexpected shape, or a 401/403 on a `/v2` call (the token
- * service decides what that means). `status` is null when no response arrived.
+ * timeout, a 5xx, an unexpected shape, or a 401/403 on a `/v2` call. `status`
+ * is null when no response arrived.
  */
 export class MollieUnavailable extends Error {
   constructor(

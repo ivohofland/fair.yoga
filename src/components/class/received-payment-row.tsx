@@ -82,7 +82,7 @@ export function ReceivedPaymentRow({
           #128. `studentName` and `classContext` are threaded through so every
           row's button has a distinct accessible name for screen readers.
         */}
-        {/* Decision 17: a payment Mollie settled leaves `paid` by a refund, not "Mark unpaid". */}
+        {/* A payment Mollie settled leaves `paid` by a refund, not "Mark unpaid" (docs/data-model.md, "A payment Mollie settled cannot be reopened by hand"). */}
         {settling ? (
           <AttemptRefund
             paymentId={paymentId}

@@ -956,7 +956,7 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 | amount | decimal | In the currency of the registration's class (`Class.currency`); the row carries no currency of its own, because `completeClass` writes it after that class is already frozen. Includes the VAT |
 | vat_amount | decimal(10,2), default 0 | The VAT contained in `amount`, written at completion; `Payment_vat_amount_range_check`: `0 <= vat_amount <= amount` |
 | status | enum | pending → paid / overdue / not_charged; paid and not_charged both reopen to pending |
-| method | string, nullable | What settled it, typed in code as `PaidMethod` (`'manual' | 'mollie'`) when written. `manual` is the teacher's mark; `mollie` is a settled Mollie attempt, whose specific method (`ideal`, `creditcard`, …) is on the `ProcessorPayment`. A repeated webhook for the same attempt then meets `markPaymentPaid`'s same-method `unchanged` |
+| method | string, nullable | What settled it, typed in code as `PaidMethod` (`manual` or `mollie`) when written. `manual` is the teacher's mark; `mollie` is a settled Mollie attempt, whose specific method (`ideal`, `creditcard`, …) is on the `ProcessorPayment`. A repeated webhook for the same attempt is `unchanged` in `decideSync`; `markPaymentPaid`'s same-method `unchanged` is the second line of defence |
 | reminder_sent_at | datetime, nullable | Stamped by every reminder, automatic or manual, and by the teacher's "Not received" notice; the overdue-reminder sweep dedupes on it |
 | student_reported_at | datetime, nullable | The student's "I've sent it" claim on a Level 1 payment (#898). Set by `reportPaymentSent`, cleared by the student (`withdrawPaymentReport`), by the teacher's "Not received" (`rejectPaymentReport`), and by waiving the payment (`markPaymentNotCharged`, the student-archive waive). It displays as a standing claim only while the payment is outstanding; a paid row keeps it as the student's half of the record. See the note below |
 | **Timestamps** | | |
@@ -990,10 +990,10 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | testmode | boolean | Whether the grant is a test-mode one |
 | connected_at | datetime | |
 | disconnected_at | datetime, nullable | Set by a teacher's disconnect, or by a refresh answered `invalid_grant` (only while the row still holds the refresh token that was refused) |
-| revoke_after | datetime, nullable | When the tokens of a disconnected row may next be revoked at Mollie: set by the disconnect to the latest expiry among its unexpired open attempts (or then), and moved a day on each time the revoke finds an attempt still `open`, `pending` or `authorized` or a refund still live, since their webhooks need the token; from 30 days after the disconnect the grant is revoked regardless (`revokeDueConnection`) |
+| revoke_after | datetime, nullable | When the tokens of a disconnected row may next be revoked at Mollie: set by the disconnect to the latest expiry among its unexpired `open`, `pending` or `authorized` attempts (or then), and moved a day on each time the revoke finds an attempt still `open`, `pending` or `authorized` or a refund still live, since their webhooks need the token; from 30 days after the disconnect the grant is revoked regardless (`revokeDueConnection`) |
 | revoked_at | datetime, nullable | Set when the tokens were revoked and nulled. `revoked_at` and `revoke_after` are set only on a disconnected row (a `CHECK`) |
 
-**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`livePayoutIdentity`, `src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. A live connection takes payments only while its grant also holds every requested scope (`takesMolliePayments`, same module). The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect, and on a refresh answered `invalid_grant` that newly disconnects), with the masked organization id and the profile's name as before and after.
+**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`livePayoutIdentity`, `src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. A live connection takes payments only while its grant also holds every requested scope (`takesMolliePayments`, same module), and only on a server running in the mode it was made in (`takesMolliePaymentsIn`, same module): a test-mode connection takes none once the server runs live, and the reverse, until a reconnect. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect of a row that had a live identity, and on a refresh answered `invalid_grant` that newly disconnects), with the masked organization id and the profile's name as before and after.
 
 ### OAuthState (a connect in flight, #896)
 
@@ -1024,7 +1024,7 @@ Single use: the callback deletes the row as it consumes it, and the daily auth c
 | checkout_url | string, nullable | |
 | expires_at, paid_at | datetime, nullable | |
 | settled_payment | boolean, default false | True on at most one attempt per `Payment` (partial unique index `WHERE settled_payment`): the one whose webhook or student's return moved the `Payment` to `paid`. Cleared by a refund's outcome, by a chargeback, and by dashboard refunds that cover the attempt |
-| charged_back_at | datetime, nullable | Stamped when Mollie reports `amountChargedBack > 0` on the settling attempt |
+| charged_back_at | datetime, nullable | Stamped when Mollie reports `amountChargedBack > 0` on the attempt |
 | created_at, updated_at | datetime | |
 
 ### ProcessorRefund (a full refund of one attempt, #896)

@@ -9,7 +9,7 @@ import { mollieDeps } from '@/services/mollie-deps';
  * Where Mollie sends the student back. Always redirects. With the student's
  * session it applies the attempt's status as the webhook would, since the
  * webhook may not have arrived, then sends the student to the pay page,
- * naming the attempt only when it is theirs. A sync that fails is logged and
+ * naming the attempt only when it is theirs. A sync that throws is logged and
  * still redirects: the webhook settles the payment. Without a student
  * session it sends the visitor to sign in, returning to that pay page when
  * the attempt names this payment and to their bookings otherwise.

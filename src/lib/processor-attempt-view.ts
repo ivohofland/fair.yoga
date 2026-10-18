@@ -50,8 +50,9 @@ export function attemptRefundState(attempt: Pick<AttemptView, 'status' | 'charge
 
 /**
  * The attempt that settled the payment while fair.yoga can still refund
- * through it: Decision 17's Refund stands where "Mark unpaid" would. Null
- * once that attempt's grant is gone, so the row offers "Mark unpaid" again.
+ * through it: its Refund stands where "Mark unpaid" would (docs/data-model.md,
+ * "A payment Mollie settled cannot be reopened by hand"). Null once that
+ * attempt's grant is gone, so the row offers "Mark unpaid" again.
  */
 export function settlingAttempt<T extends Pick<AttemptView, 'settledPayment' | 'grantHeld'>>(attempts: readonly T[]): T | null {
   return attempts.find((a) => a.settledPayment && a.grantHeld) ?? null;

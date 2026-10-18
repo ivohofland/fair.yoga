@@ -21,7 +21,7 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * STATUS CONTRACT below and nothing else; the WIRING is deliberately uncovered.
  * `grep -rn "daily-cleanup\|auth-cleanup" tests/` still returns nothing — the
  * integration and e2e tiers do not touch this route, for the reason two
- * paragraphs down. One of the five `/api/cron/*` routes does have coverage
+ * paragraphs down. One of the `/api/cron/*` routes does have coverage
  * there, though:
  * `tests/e2e/recurring.spec.ts`'s `'the generation cron is idempotent over
  * the already-filled window'` test drives `/api/cron/generate-classes` from
@@ -69,12 +69,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS EVERY SWEEP RAN.
   // If any failed the answer is non-2xx and the body still carries every
-  // outcome — read `data.auth.ok`, `data.processorRevocation.ok`,
-  // `data.waitlistRetention.ok`,
-  // `data.notificationRetention.ok`, `data.pushSubscriptionRetention.ok`,
-  // `data.degradationDigest.ok`, and
-  // `data.timezoneAudit.ok` to see which
-  // one did not. Partial failure counts:
+  // outcome — read `data.<sweep>.ok` for every key of `data` (the `settle`
+  // calls below) to see which one did not. Partial failure counts:
   // one sweep succeeding does not make the request as a whole a success,
   // because for an HTTP caller a 2xx means "what you asked for happened", and
   // if a sweep did not run, it did not.

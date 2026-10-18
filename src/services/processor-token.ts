@@ -25,9 +25,15 @@ export function sealGrant(grant: TokenGrant, key: Buffer, now: Date) {
 }
 
 /**
- * A usable access token for a connection not yet revoked. Refreshes inside
- * `REFRESH_MARGIN_MS`, once per connection at a time in this process; a
- * conditional write settles a refresh that raced another.
+ * Answers `token`, `disconnected` or `unavailable`. A row that is
+ * disconnected but not yet revoked still yields a token, since its revoke
+ * window needs one. Refreshes inside `REFRESH_MARGIN_MS`, once per connection
+ * at a time in this process; a conditional write settles a refresh that raced
+ * another. A refresh Mollie refuses with `invalid_grant` revokes the
+ * connection here, and tells the teacher unless it was already disconnected
+ * (`docs/lock-order.md`, "The `ProcessorConnection` row is a leaf lock").
+ * A stored token that cannot be opened, or a Mollie failure, answers
+ * `unavailable`.
  */
 export async function getAccessToken(
   db: PrismaClient,
@@ -119,9 +125,8 @@ async function refreshOnce(
                "revokeAfter" = NULL, "revokedAt" = ${now}
          WHERE id = ${connectionId}`;
       if (!first.wasDisconnected) {
-        // The identity left as a disconnect leaves it, so a resume after a
-        // pause can say why Mollie dropped out of the details. No payout
-        // notice: the notification below already tells the teacher.
+        // Recorded as a disconnect writes it. No payout notice: the
+        // notification below already tells the teacher.
         await tx.payoutChangeEvent.create({
           data: { teacherId, kind: 'processor_disconnected', before: maskOrganizationId(first.organizationId), after: null },
         });

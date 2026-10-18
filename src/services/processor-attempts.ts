@@ -517,7 +517,7 @@ export async function syncAttempt(
     logDegraded(
       'MOLLIE_UNAVAILABLE',
       { connectionId, operation: 'getPayment', ...(err.status === null ? {} : { status: err.status }) },
-      'Mollie could not report a payment; the sync was answered 503 for Mollie to retry',
+      'Mollie could not report a payment; the sync reported unavailable',
       err,
     );
     return 'unavailable';
@@ -694,7 +694,7 @@ export async function syncAttempt(
   if (outcome.deferred.length > 0) {
     log.warn(
       { attemptId: attempt.id, deferred: true, refundIds: outcome.deferred },
-      'a Mollie refund could not be applied yet; the sync was answered 503 for Mollie to retry',
+      'a Mollie refund could not be applied yet; the sync reported unavailable',
     );
     return 'unavailable';
   }
@@ -704,10 +704,10 @@ export async function syncAttempt(
 /**
  * Releases an attempt that still settles its payment once refunds made in
  * Mollie's own dashboard — `refunded`, held by no row, adopted into none —
- * add up to its whole amount, the way a chargeback releases it: the payment
- * stays `paid` and "Mark unpaid" applies again. No `NotificationType` fits a
- * refund the teacher made themselves, so it is logged instead. A partial
- * dashboard refund releases nothing.
+ * add up to its whole amount: it clears `settledPayment`, leaves the payment
+ * `paid`, and logs the release at info. A partial dashboard refund releases
+ * nothing. Why a release is needed: `docs/data-model.md`, "A payment Mollie
+ * settled cannot be reopened by hand".
  */
 async function releaseAfterDashboardRefunds(
   tx: Prisma.TransactionClient,

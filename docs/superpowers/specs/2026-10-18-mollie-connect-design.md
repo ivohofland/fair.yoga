@@ -76,7 +76,8 @@ the numbering here is this spec's.
     nothing to mark.
 13. **`Payment.method` stays a column, its written values become a type**:
     `'manual' | 'mollie'`. The specific method lives on the attempt. A repeated
-    webhook then hits `markPaymentPaid`'s existing same-method `unchanged`.
+    webhook is `unchanged` in `decideSync`; `markPaymentPaid`'s existing
+    same-method `unchanged` is the second line of defence.
 14. **A refresh answering `invalid_grant` disconnects**: the connection is
     marked disconnected, the pay page offers no Mollie rows from the next render, the teacher is
     told in-app and by email, and `logDegraded` records it. The disconnect
