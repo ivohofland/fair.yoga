@@ -16,8 +16,8 @@ export type LiveIdentity = { organizationId: string; profileId: string };
 
 /**
  * The connection's payout identity while it is live — not disconnected, and
- * with a profile chosen — else null, as for no connection at all. The one
- * spelling of "live" (spec, Data).
+ * with a profile chosen — else null, as for no connection at all. Live as
+ * `docs/superpowers/specs/2026-10-18-mollie-connect-design.md` (Data) defines it.
  */
 export function livePayoutIdentity(
   row: { organizationId: string; profileId: string | null; disconnectedAt: Date | null } | null,
@@ -34,9 +34,9 @@ export function missingMollieScopes(granted: readonly string[]): string[] {
 }
 
 /**
- * Whether students may pay through this connection: it has a live payout
- * identity and its grant holds every requested scope. A narrower grant is
- * stored but takes no payments until the teacher reconnects.
+ * Whether this connection may take payments: it has a live payout identity
+ * and its grant holds every requested scope. A narrower grant answers false
+ * until a reconnect stores a full one.
  */
 export function takesMolliePayments(
   row: { organizationId: string; profileId: string | null; disconnectedAt: Date | null; scopes: readonly string[] } | null,

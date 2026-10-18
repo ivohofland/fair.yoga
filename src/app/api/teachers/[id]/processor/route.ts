@@ -21,7 +21,8 @@ async function authorise(request: NextRequest, { params }: Params): Promise<stri
 /**
  * Disconnects the teacher's Mollie account. Needs no Mollie call; with Mollie
  * configured, a connection with no attempt still open is revoked in the
- * background straight after, and otherwise the daily sweep revokes it.
+ * background straight after, and otherwise the row is left for a later
+ * revoke, its tokens kept.
  */
 export const DELETE = withErrorHandler(async (request: NextRequest, context: Params) => {
   const teacherId = await authorise(request, context);
