@@ -314,8 +314,10 @@ re-reads and uses the winner's token.
   missing a requested scope is stored and the section says "reconnect to
   enable payments" rather than half-working.
 - **Disconnect:** `DELETE /api/teachers/[id]/processor` — stamp
-  `disconnectedAt` (the pay page offers no Mollie rows from then on), write
-  `processor_disconnected` and alert, and set `revokeAfter` to the latest
+  `disconnectedAt` (the pay page offers no Mollie rows from then on); when
+  the row had a live payout identity, write `processor_disconnected` and
+  alert (a row still awaiting its profile never had one, so its disconnect
+  writes no event and sends no notice); and set `revokeAfter` to the latest
   `expiresAt` among the connection's attempts still `open`, `pending` or
   `authorized` that have not expired, or now when there are none. Open
   attempts finish: their webhooks still need a token. A separate sweep in the

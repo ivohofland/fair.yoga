@@ -561,6 +561,15 @@ describe('disconnect', () => {
     expect(await disconnect(prisma, { teacherId: t.teacherId, now })).toEqual({ kind: 'unchanged' });
   });
 
+  it('of a row still awaiting its profile writes no event, since no payout identity was live', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P2]);
+    const outcome = await disconnect(prisma, { teacherId: t.teacherId, now });
+    expect(outcome).toMatchObject({ kind: 'disconnected', eventId: null, revokeNow: true });
+    expect((await connectionOf(t.teacherId)).disconnectedAt).toEqual(now);
+    expect(await eventsOf(t.teacherId)).toEqual([]);
+  });
+
   it('with an open attempt defers the revoke until it expires, keeping the tokens', async () => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1]);

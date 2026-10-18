@@ -20,9 +20,10 @@ async function authorise(request: NextRequest, { params }: Params): Promise<stri
 
 /**
  * Disconnects the teacher's Mollie account. Needs no Mollie call; with Mollie
- * configured, a connection with no attempt still open is revoked in the
- * background straight after, and otherwise the row is left for a later
- * revoke, its tokens kept.
+ * configured, a connection that nothing at Mollie still owes a webhook
+ * (`revokeNow`) is revoked in the background straight after, and otherwise
+ * the row is left for a later revoke, its tokens kept. The payout notice goes
+ * out only for a disconnect that recorded an event.
  */
 export const DELETE = withErrorHandler(async (request: NextRequest, context: Params) => {
   const teacherId = await authorise(request, context);
@@ -31,7 +32,7 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Par
   const outcome = await disconnect(prisma, { teacherId });
   switch (outcome.kind) {
     case 'disconnected': {
-      deliverPayoutChangedNotice(prisma, outcome.eventId);
+      if (outcome.eventId !== null) deliverPayoutChangedNotice(prisma, outcome.eventId);
       forgetOfferedMethods(outcome.connectionId);
       const deps = mollieDeps();
       if (outcome.revokeNow && deps !== null) revokeConnection(prisma, deps, outcome.connectionId);

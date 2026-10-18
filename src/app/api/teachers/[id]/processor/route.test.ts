@@ -56,6 +56,14 @@ describe('DELETE /api/teachers/[id]/processor', () => {
     expect(m.revokeConnection).not.toHaveBeenCalled();
   });
 
+  it('sends no payout notice for a disconnect that recorded no event', async () => {
+    m.disconnect.mockResolvedValue({ kind: 'disconnected', eventId: null, connectionId: 'c-1', revokeNow: true });
+    await expectApplied(await DELETE(request(), ctx));
+    expect(m.deliverPayoutChangedNotice).not.toHaveBeenCalled();
+    expect(m.forgetOfferedMethods).toHaveBeenCalledWith('c-1');
+    expect(m.revokeConnection).toHaveBeenCalledWith({ marker: 'db' }, DEPS, 'c-1');
+  });
+
   it('disconnects without Mollie configured, leaving the revoke to the sweep', async () => {
     m.mollieDeps.mockReturnValue(null);
     m.disconnect.mockResolvedValue({ kind: 'disconnected', eventId: 'ev-1', connectionId: 'c-1', revokeNow: true });

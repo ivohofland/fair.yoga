@@ -340,13 +340,16 @@ export async function chooseProfile(
 }
 
 export type DisconnectOutcome =
-  | { kind: 'disconnected'; eventId: string; connectionId: string; revokeNow: boolean }
+  | { kind: 'disconnected'; eventId: string | null; connectionId: string; revokeNow: boolean }
   | { kind: 'unchanged' }
   | { kind: 'teacher_gone' };
 
 /**
  * Stamps `disconnectedAt`, so the connection stops being live
- * (`livePayoutIdentity`), and records it. The grant is not revoked here: an
+ * (`livePayoutIdentity`). A row that had a live payout identity records it as
+ * a `processor_disconnected` event (`eventId`); one that never had, awaiting
+ * its profile, records none, since no payout identity changed. The grant is
+ * not revoked here: an
  * attempt that may still hear from its webhook needs a token, so `revokeAfter`
  * is the latest expiry among those not yet expired, or now when there are
  * none. `revokeNow` says the caller may revoke straight after commit: the
@@ -359,9 +362,10 @@ export async function disconnect(db: PrismaClient, input: { teacherId: string; n
     if (!(await lockTeacherForNoKeyUpdate(tx, input.teacherId))) return { kind: 'teacher_gone' };
     const row = await tx.processorConnection.findUnique({
       where: { teacherId: input.teacherId },
-      select: { id: true, organizationId: true, disconnectedAt: true },
+      select: { id: true, organizationId: true, profileId: true, disconnectedAt: true },
     });
     if (row === null || row.disconnectedAt !== null) return { kind: 'unchanged' };
+    const wasLive = livePayoutIdentity(row) !== null;
     const unfinished = await tx.processorPayment.aggregate({
       where: { connectionId: row.id, status: { in: [...UNFINISHED_ATTEMPT_STATUSES] }, expiresAt: { gt: now } },
       _max: { expiresAt: true },
@@ -369,12 +373,14 @@ export async function disconnect(db: PrismaClient, input: { teacherId: string; n
     const revokeAfter = unfinished._max.expiresAt ?? now;
     const live = await liveWorkOf(tx, row.id);
     await tx.processorConnection.update({ where: { id: row.id }, data: { disconnectedAt: now, revokeAfter } });
-    const event = await tx.payoutChangeEvent.create({
-      data: { teacherId: input.teacherId, kind: 'processor_disconnected', before: maskOrganizationId(row.organizationId), after: null },
-      select: { id: true },
-    });
+    const event = wasLive
+      ? await tx.payoutChangeEvent.create({
+          data: { teacherId: input.teacherId, kind: 'processor_disconnected', before: maskOrganizationId(row.organizationId), after: null },
+          select: { id: true },
+        })
+      : null;
     const revokeNow = revokeAfter <= now && live.attempts === 0 && live.refunds === 0;
-    return { kind: 'disconnected', eventId: event.id, connectionId: row.id, revokeNow };
+    return { kind: 'disconnected', eventId: event?.id ?? null, connectionId: row.id, revokeNow };
   });
 }
 
