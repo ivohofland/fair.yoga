@@ -266,10 +266,10 @@ client embeds), which is not in git; read past it.
   lock. The reservation's transaction holds only that row and waits on nothing
   else, so the erasures that delete the same row after their profile locks
   cannot form a cycle with it;
-- `src/services/processor-token.ts:112`, `getAccessToken`'s `invalid_grant`
+- `src/services/processor-token.ts:113`, `getAccessToken`'s `invalid_grant`
   lock on one `ProcessorConnection` row (#896) — "The `ProcessorConnection`
   row is a leaf lock" below;
-- `src/services/processor-attempts.ts:542` and `src/services/payments.ts:322`,
+- `src/services/processor-attempts.ts:541` and `src/services/payments.ts:330`,
   `syncAttempt`'s and `reopenInTransaction`'s lock on one `Payment` row (#896)
   — "The `Payment` row is a Mollie sync's gate" below;
 - two lines in `src/services/processor-refunds.ts`, `refundAttempt`'s lock on
@@ -280,7 +280,7 @@ client embeds), which is not in git; read past it.
 Five of the eleven are false positives this command cannot suppress: the
 table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,
 `"TeacherRoom"` at `room-switch.ts:138`, `"TeacherStudent"` at
-`roster-link.ts:123`, `"ProcessorConnection"` at `processor-token.ts:112`) sits
+`roster-link.ts:123`, `"ProcessorConnection"` at `processor-token.ts:113`) sits
 on a line ABOVE its `FOR UPDATE`, and every filter here matches line by line.
 The other six, `room-switch.ts:93`, `handoff.ts:149` and the four `Payment`
 locks, carry their table name (`"TeacherRoom"`, `"HandoffAttemptBudget"`,
@@ -2230,8 +2230,8 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   the choice `not_connected`, the disconnect `teacher_gone`.
 - `getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`),
   reached from any caller that needs a Mollie token: `lockTeacherForNoKeyUpdate`
-  first, then the connection row `FOR UPDATE`, its `UPDATE` and a
-  `Notification` insert. Its entry is in "The `ProcessorConnection` row is a
+  first, then the connection row `FOR UPDATE`, its `UPDATE` and, when it newly
+  disconnects, a `PayoutChangeEvent` insert and a `Notification` insert. Its entry is in "The `ProcessorConnection` row is a
   leaf lock" below. An erased teacher answers `disconnected` with nothing
   written.
 - The student's Mollie payment (`createAttempt`,
@@ -2495,7 +2495,10 @@ The sites:
   the transaction (a connection's `teacherId` never changes), and answers
   `disconnected` with nothing written when the teacher is erased. Then
   `FOR UPDATE` on the connection row, a read of whether `disconnectedAt` was
-  already set, the row's `UPDATE`, and the teacher's `Notification` insert.
+  already set, the row's `UPDATE`, and, only when it was not, the
+  `processor_disconnected` `PayoutChangeEvent` insert and the teacher's
+  `Notification` insert. The event's foreign-key check takes `FOR KEY SHARE`
+  on the teacher's row, which this transaction already holds.
   The row lock exists so that a disconnect committing while this waits is
   seen: an unlocked read under READ COMMITTED would report the older
   `disconnectedAt` and send a notification the teacher's own disconnect makes

@@ -4,7 +4,9 @@ import { hashToken } from '@/lib/auth/magic-link';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { MollieUnavailable, type MollieProfile, type TokenGrant } from '@/lib/mollie/client';
-import { livePayoutIdentity, missingMollieScopes, MOLLIE_SCOPES, type LiveIdentity } from '@/lib/processor-liveness';
+import {
+  livePayoutIdentity, maskOrganizationId, maskProfileId, missingMollieScopes, MOLLIE_SCOPES, type LiveIdentity,
+} from '@/lib/processor-liveness';
 import { LIVE_REFUND_STATUSES } from '@/lib/processor-refund-status';
 import type { AllowedMollieMethod } from '@/lib/processor-methods';
 import { openToken, TokenCipherError } from '@/lib/processor-token-cipher';
@@ -64,16 +66,6 @@ const VIEW_AMOUNT = new Prisma.Decimal('10.00');
 /** Where Mollie sends the teacher back after the consent screen. */
 export function mollieRedirectUri(appUrl: string): string {
   return `${appUrl}/api/processor/mollie/callback`;
-}
-
-/** `org_…` and the id's last four characters. */
-export function maskOrganizationId(id: string): string {
-  return `org_…${id.slice(-4)}`;
-}
-
-/** `pfl_…` and the id's last four characters. */
-export function maskProfileId(id: string): string {
-  return `pfl_…${id.slice(-4)}`;
 }
 
 /**

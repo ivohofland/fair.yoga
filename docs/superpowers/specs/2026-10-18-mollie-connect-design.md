@@ -348,8 +348,11 @@ leaving the byte.
 per connection; `invalid_grant` runs Decision 14 in one transaction (the
 grant is already dead, so: null tokens, stamp `revokedAt`, and stamp `disconnectedAt`
 only if it is not already set, all only while the row still holds the refresh token that
-got `invalid_grant`; `processor_disconnected` notification only when the
-connection was not already disconnected), then `logDegraded`. A network failure is not `invalid_grant`: it degrades that one
+got `invalid_grant`; only when the connection was not already
+disconnected, a `processor_disconnected` `PayoutChangeEvent` whose `before`
+is the masked organization id, as a disconnect writes it, and the
+`processor_disconnected` notification, with no payout notice beside it),
+then `logDegraded`. A network failure is not `invalid_grant`: it degrades that one
 call and leaves the connection alone.
 
 ## 3 · Methods and the pay page

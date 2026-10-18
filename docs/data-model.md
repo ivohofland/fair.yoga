@@ -993,7 +993,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | revoke_after | datetime, nullable | When the tokens of a disconnected row may next be revoked at Mollie: set by the disconnect to the latest expiry among its unexpired open attempts (or then), and moved a day on each time the revoke finds an attempt still `open`, `pending` or `authorized` or a refund still live, since their webhooks need the token; from 30 days after the disconnect the grant is revoked regardless (`revokeDueConnection`) |
 | revoked_at | datetime, nullable | Set when the tokens were revoked and nulled. `revoked_at` and `revoke_after` are set only on a disconnected row (a `CHECK`) |
 
-**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect), with the masked organization id and the profile's name as before and after.
+**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect, and on a refresh answered `invalid_grant` that newly disconnects), with the masked organization id and the profile's name as before and after.
 
 ### OAuthState (a connect in flight, #896)
 

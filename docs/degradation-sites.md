@@ -696,8 +696,10 @@ access from their Mollie dashboard.
 **What happened.** Mollie answered `invalid_grant` to the refresh token stored
 for `connectionId` (`getAccessToken`, `src/services/processor-token.ts`). The
 connection was revoked in the same transaction: both tokens nulled, `revokedAt`
-set. The teacher got a `processor_disconnected` notification only when the
-connection was not already disconnected. Students see the teacher's other
+set. Only when the connection was not already disconnected, the teacher got
+a `processor_disconnected` notification and a `processor_disconnected`
+`PayoutChangeEvent` was written, so a resume after a pause shows why Mollie
+left the payout details. Students see the teacher's other
 payment options until the teacher reconnects.
 
 **Where the bad value lives.** Mollie's side: the teacher revoked this app's

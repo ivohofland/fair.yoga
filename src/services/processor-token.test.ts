@@ -133,6 +133,14 @@ describe('getAccessToken', () => {
     expect(degradations().map((d) => d.code)).toContain('PROCESSOR_DISCONNECTED');
     expect(forgetOfferedMethods).toHaveBeenCalledWith(c.id);
   });
+  it('records the identity change as a processor_disconnected payout event, as a disconnect does', async () => {
+    await prisma.payoutChangeEvent.deleteMany({ where: { teacherId } });
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
+    const events = await prisma.payoutChangeEvent.findMany({ where: { teacherId }, select: { kind: true, before: true, after: true } });
+    expect(events).toEqual([{ kind: 'processor_disconnected', before: 'org_…test', after: null }]);
+  });
   it('answers unavailable and leaves the connection alone when Mollie is down', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
     fake.refresh.mockRejectedValue(new MollieUnavailable('down', 503));
@@ -187,12 +195,14 @@ describe('getAccessToken', () => {
   });
   it('keeps an existing disconnectedAt and tells the teacher nothing new on invalid_grant', async () => {
     const earlier = new Date(now.getTime() - 86_400_000);
+    await prisma.payoutChangeEvent.deleteMany({ where: { teacherId } });
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1), disconnectedAt: earlier });
     fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
     expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
     const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
     expect(row).toMatchObject({ accessToken: null, refreshToken: null, disconnectedAt: earlier, revokedAt: now });
     expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
+    expect(await prisma.payoutChangeEvent.count({ where: { teacherId } })).toBe(0);
   });
   it('does not start a second refresh for a caller whose read predates the first flight', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
