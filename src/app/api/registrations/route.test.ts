@@ -13,7 +13,7 @@ import { erasedAddress } from '@/lib/erased-address';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { expectApplied, expectRefusal, expectUnchanged } from '../../../../tests/api-assertions';
 import { createPrismaClient } from '@/lib/prisma-client';
-import { knownWithAdapterCause, pgCause } from '../../../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../../../tests/adapter-errors';
 
 /**
  * What this route hands `resolveInvitationOnLink` (#418), pinned where it can
@@ -521,15 +521,15 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
 
   /**
    * Two transient kinds, one message: `tx_budget` (`P2028`) logs at `warn` and
-   * `pool_exhausted` (`P2024`) at `error` — `TRANSIENT_KIND_LEVEL`
+   * `pool_exhausted` (pg-pool's wait timeout) at `error` — `TRANSIENT_KIND_LEVEL`
    * (`lib/api-errors.ts`) is the authority, not a blanket "transient ⇒ warn".
    * Each case books its own student, since the fixture above already
    * consumed `studentId`'s one booking of `classId`.
    */
   it.each([
-    { kind: 'tx_budget' as const, level: 'warn' as const, code: 'P2028' as const },
-    { kind: 'pool_exhausted' as const, level: 'error' as const, code: 'P2024' as const },
-  ])('answers 201 and logs a $kind failure at $level', async ({ kind, level, code }) => {
+    { kind: 'tx_budget' as const, level: 'warn' as const, make: () => new Prisma.PrismaClientKnownRequestError('transient', { code: 'P2028', clientVersion: Prisma.prismaVersion.client }) },
+    { kind: 'pool_exhausted' as const, level: 'error' as const, make: pgPoolTimeout },
+  ])('answers 201 and logs a $kind failure at $level', async ({ kind, level, make }) => {
     const email = `reg-marker-${kind}-${suffix}@test.local`;
     const student = await prisma.student.create({
       data: {
@@ -544,10 +544,7 @@ describe('POST /api/registrations — a failed tier-marker write after the booki
     const markerToken = await seedSession(prisma, accountId);
 
     try {
-      const failure = new Prisma.PrismaClientKnownRequestError('transient', {
-        code,
-        clientVersion: Prisma.prismaVersion.client,
-      });
+      const failure = make();
       const markerWrite = vi.spyOn(appPrisma.student, 'updateMany').mockRejectedValueOnce(failure);
       onTestFinished(() => markerWrite.mockRestore());
       const spy = vi.spyOn(log, level).mockImplementation(() => undefined as unknown as void);

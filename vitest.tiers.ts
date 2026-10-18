@@ -186,6 +186,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #885: the `teacher-profile/route-lock-order.test.ts` shape, for the
   // unique-constraint names each conflict catch matches.
   'src/lib/pg-error-sites.test.ts',
+  // #885: holds row locks and pool connections to produce each transient
+  // kind; its header carries the reason.
+  'src/lib/db-transient-shapes.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

@@ -1519,11 +1519,11 @@ anything, so the defaults are unit-tested on their own
 - **`connectionTimeoutMs` bounds two waits with one knob**: waiting for a
   pooled connection, and establishing a new one (pg-pool hands its options to
   each `Client`). The 10 s default is Prisma's former `pool_timeout`. An
-  unreachable host therefore takes up to 10 s to fail. A raw or model call, or
-  a batch `$transaction([…])`, that waits past it fails with pg-pool's
-  timeout, which `transientDbFailure` classifies `pool_exhausted`
-  (`src/lib/api-errors.ts`). An interactive transaction gives up first, at
-  Prisma's `maxWait` (2 s by default), as `P2028`, classified `tx_budget`.
+  unreachable host therefore takes up to 10 s to fail. A call that waits past
+  it fails with pg-pool's timeout, which `transientDbFailure` classifies
+  `pool_exhausted` (`src/lib/api-errors.ts`). An interactive transaction can
+  instead end as `P2028` (`tx_budget`); which wait ends as which kind is
+  under "Database errors" (Transient kinds).
 - **`idleTimeoutMillis` is 300 s, fixed.** It matches the idle lifetime of
   Prisma's former pool, and keeps a `poolMax: 1` client on one backend between
   statements, which the lock-order tests rely on when they identify their
@@ -1678,6 +1678,39 @@ pg-pool's, matched here only; re-derive it with
 `grep -n "timeout exceeded when trying to connect" node_modules/.pnpm/pg-pool@*/node_modules/pg-pool/index.js`.
 `src/lib/pg-error.test.ts` reads the same file, so a pg-pool rewording reddens
 a test.
+
+**Transient kinds.** `transientDbFailure` (`src/lib/api-errors.ts`) decides
+the `TransientKind` link by link along `Error.cause`, from structured fields
+only: first the SQLSTATE `pgErrorOf` reads (`55P03` → `lock_timeout`, `40P01`
+→ `deadlock`, `40001` → `serialization`), then Prisma's code (`P2028` →
+`tx_budget`, `P2034` → `serialization`), then `isPgPoolTimeout` →
+`pool_exhausted`. No error text is read, so a message quoting a SQLSTATE is
+never relabelled transient. `P2024` is in no map: on the client engine with
+the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
+Every kind is produced against the real database, typed and raw where both
+are reachable, in `src/lib/db-transient-shapes.test.ts`.
+
+What `pool_exhausted` covers, measured there on 2026-10-18 (`poolMax: 1`, the
+one connection held by an interactive transaction): any call whose wait for a
+pooled connection outlives `connectionTimeoutMs`. That is a model call, a
+`$queryRaw`, a batch `$transaction([…])`, **and an interactive transaction**.
+Prisma's `maxWait` is not a deadline that fires while an interactive
+transaction waits at the pool; it is judged once the pool hands over a
+connection. So an interactive transaction behind a drained pool ends one of
+two ways:
+
+- the pool frees a connection within `connectionTimeoutMs` but after
+  `maxWait` → `P2028` with `meta {}`, `tx_budget` at `warn` (measured:
+  `maxWait: 300`, pool bound 5 s, connection freed at 600 ms → `P2028` after
+  ≥ 600 ms);
+- the wait outlives `connectionTimeoutMs` → pg-pool's timeout,
+  `pool_exhausted` at `error`, whatever `maxWait` says (measured: `maxWait:
+  100`, pool bound 200 ms).
+
+With the defaults (`maxWait` 2 s, pool bound 10 s) the same rule holds: a
+wait that ends between 2 s and 10 s is `tx_budget`, one that reaches 10 s is
+`pool_exhausted`. An expired transaction budget (`timeout`) is a different
+`P2028`, with `meta.timeout` and `meta.timeTaken`, also `tx_budget`.
 
 **`adapterKindOf(err)`** reads `cause.kind` from the same two paths, for the
 log facet only, and answers a member of `ADAPTER_KINDS` or `undefined`. That

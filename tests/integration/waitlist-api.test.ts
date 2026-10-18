@@ -730,9 +730,8 @@ describe('promotion and claim repair a missing teacher-roster link (#166)', () =
  * transaction for 3.5s — above `lockClassRow`'s 2s bound, below Prisma's 5s
  * default budget — and assert what the student meets. `waited > 1_000` is not
  * decoration: the 503 body is a fixed generic string, so the SQLSTATE is not
- * observable over HTTP, and `P2024` (pool timeout) is also in
- * `TRANSIENT_PRISMA_CODE_KIND` and also classifies 503, so any fast transient 503
- * would otherwise satisfy these. There is deliberately no upper bound — a wait
+ * observable over HTTP, and a pool timeout (`pool_exhausted`) also classifies
+ * 503, so any fast transient 503 would otherwise satisfy these. There is deliberately no upper bound — a wait
  * that reaches 3.5s acquires the row and SUCCEEDS, so the status assertion is
  * already the discriminator for every regression that matters here; the one
  * sliver a ceiling would still catch — a `lock_timeout` configured between

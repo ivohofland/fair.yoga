@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, onTestFinished, vi } from 'vitest';
-import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import crypto from 'crypto';
 import {
   getWaitlistWindow,
@@ -23,6 +23,7 @@ import { DEADLINE_HOURS, freeCancelUntil } from '@/lib/cancel-deadline';
 import { formatInstantInZone } from '@/lib/timezone';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
+import { pgPoolTimeout } from '../../tests/adapter-errors';
 import * as dbLocks from '@/lib/db-locks';
 import { lockClassRow } from '@/lib/db-locks';
 import { unlinkTeacher } from './invitations';
@@ -2391,10 +2392,7 @@ describe('handleSpotFreed (DB)', () => {
    * sweep — redden `/api/health` on the spot.
    */
   it('stays classifiable as transient through the wrapper', async () => {
-    const pool = new Prisma.PrismaClientKnownRequestError('pool timeout', {
-      code: 'P2024',
-      clientVersion: Prisma.prismaVersion.client,
-    });
+    const pool = pgPoolTimeout();
     const failing = prisma.$extends({
       query: { class: { findUnique() { throw pool; } } },
     }) as unknown as PrismaClient;

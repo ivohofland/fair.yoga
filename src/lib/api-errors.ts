@@ -155,9 +155,10 @@ function terminalViolationOf(error: unknown): PgError | null {
  * - `serialization` (`40001`, `P2034`) — a serialization failure, on its raw
  *   shape (`40001`) or its typed one (`P2034`). Which code paths can raise
  *   one is `docs/lock-order.md`'s.
- * - `pool_exhausted` (`P2024`, pg-pool's wait timeout) — the connection pool
- *   handing out nothing in time. The pool timeout's shape:
- *   `docs/technical-architecture.md`, "Database errors".
+ * - `pool_exhausted` (pg-pool's wait timeout) — the connection pool handing
+ *   out nothing in time. The pool timeout's shape, and which waits end as
+ *   this kind rather than `tx_budget`: `docs/technical-architecture.md`,
+ *   "Database errors".
  * - `tx_budget` (`P2028`) — the interactive-transaction budget expiring,
  *   which `deleteStudentAccount`'s flat 20s `timeout` can hit under load.
  */
@@ -225,7 +226,6 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
  * cannot appear here.
  */
 const TRANSIENT_PRISMA_CODE_KIND: ReadonlyMap<string, TransientKind> = new Map([
-  ['P2024', 'pool_exhausted'],
   ['P2028', 'tx_budget'],
   ['P2034', 'serialization'],
 ]);
@@ -246,48 +246,31 @@ const MAX_CAUSE_DEPTH = 4;
  * cannot hit a prototype key.
  */
 function transientKindShallow(error: unknown): TransientKind | null {
+  const sqlState = pgErrorOf(error)?.sqlState;
+  if (sqlState !== undefined) {
+    const kind = TRANSIENT_SQLSTATE_KIND.get(sqlState);
+    if (kind) return kind;
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     const kind = TRANSIENT_PRISMA_CODE_KIND.get(error.code);
     if (kind) return kind;
   }
-  if (!(error instanceof Error)) return null;
-  for (const [state, kind] of TRANSIENT_SQLSTATE_KIND) {
-    if (error.message.includes(`code: "${state}"`) || error.message.includes(`Code: \`${state}\``)) {
-      return kind;
-    }
-  }
-  if (isPgPoolTimeout(error)) return 'pool_exhausted';
-  return null;
+  return isPgPoolTimeout(error) ? 'pool_exhausted' : null;
 }
 
 /**
  * The kind and level for a transient failure a retry can eventually win, or
  * `null` when the error is not one.
  *
- * Two different error shapes carry the same SQLSTATE, and both were measured
- * against this project's own database rather than assumed — a matcher built
- * for one of them silently misses the other:
- *
- *   // tx.class.updateMany(...) blocked past `SET LOCAL lock_timeout`
- *   PrismaClientUnknownRequestError: ... ConnectorError(ConnectorError {
- *     ... kind: QueryError(PostgresError { code: "55P03", message:
- *     "canceling statement due to lock timeout", ... }) ... })
- *
- *   // tx.$queryRaw`SELECT ... FOR UPDATE` blocked past the same timeout
- *   PrismaClientKnownRequestError (code P2010): ... Raw query failed.
- *     Code: `55P03`. Message: `ERROR: canceling statement due to lock timeout`
- *
- * `lockClassRow` (`src/lib/db-locks.ts`) issues exactly the second shape, and
- * every model write after it in the same transaction issues the first, so
- * both reach routes from the same helper.
- *
- * Prisma codes are checked before SQLSTATEs, and a SQLSTATE is matched inside
- * its Postgres framing (`code: "55P03"` / `Code: \`55P03\``) rather than as a
- * bare substring. A bare `message.includes('40001')` would relabel any error
- * whose text happens to quote that as a digit string — a postcode, an amount,
- * an id fragment — as "the database is busy, try again", which is exactly the
- * wrong advice, and the reason `terminalViolationOf` above reads a
- * structured SQLSTATE for `23514`.
+ * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
+ * adapter's shapes carries it (a typed call's `DriverAdapterError` or a raw
+ * call's `P2010`); the shapes are in `docs/technical-architecture.md`,
+ * "Database errors". Nothing here reads an error's text, so a message that
+ * merely quotes a SQLSTATE as a digit string (a postcode, an amount, an id
+ * fragment) is never relabelled "the database is busy, try again", which
+ * would be exactly the wrong advice. `terminalViolationOf` above reads its
+ * `23514` the same way. A SQLSTATE is checked before a Prisma code, then
+ * pg-pool's wait timeout.
  *
  * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
  * `SpotFreedError` that carries the real failure as `cause` does not silently
@@ -318,9 +301,8 @@ export function isTransientDbError(error: unknown): boolean {
 
 /**
  * True when the failure is a Postgres lock_timeout expiry (`55P03`): the
- * `lock_timeout` kind of `transientDbFailure`, so it shares that function's
- * framing rules and walks the same `cause` chain. Both error shapes that carry
- * the SQLSTATE are described in its docblock.
+ * `lock_timeout` kind of `transientDbFailure`, so it reads the same
+ * structured SQLSTATE and walks the same `cause` chain.
  */
 export function isLockTimeout(error: unknown): boolean {
   return transientDbFailure(error)?.kind === 'lock_timeout';
@@ -546,7 +528,7 @@ export function classifyApiError(error: unknown): ApiFailure {
   // `transientDbFailure`'s `TRANSIENT_KIND_LEVEL` is the authority for which
   // kind gets which level.
   //
-  // Checked BEFORE the P2002 branch below on purpose — a `P2024`/`P2028` is a
+  // Checked BEFORE the P2002 branch below on purpose — a `P2028` is a
   // `PrismaClientKnownRequestError` too, and ordering these the other way
   // round would leave the transient codes to fall past a branch that does not
   // match them into the generic 500, i.e. exactly the behaviour this branch

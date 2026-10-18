@@ -23,6 +23,8 @@ import {
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
+import { pgPoolTimeout } from '../../tests/adapter-errors';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -357,7 +359,7 @@ describe('reconcileWaitlists (DB)', () => {
       // not the wrapper's own message.
       (err: unknown) => ({
         ok: false as const,
-        err: err instanceof SpotFreedError ? String(err.cause) : String(err),
+        err: err instanceof SpotFreedError ? err.cause : err,
       }),
     );
     // Snapshotted BEFORE `await holder`, because read after it the flag is
@@ -377,7 +379,7 @@ describe('reconcileWaitlists (DB)', () => {
     await holderClient.$disconnect();
 
     expect(dropped.ok).toBe(false);
-    if (!dropped.ok) expect(dropped.err).toMatch(/55P03/);
+    if (!dropped.ok) expect(pgErrorOf(dropped.err)?.sqlState).toBe('55P03');
 
     // `dropped.err` above is what carries this test: only a `lock_timeout`
     // produces `55P03`, so matching it names the mechanism as Postgres
@@ -1205,14 +1207,14 @@ describe('reconcileWaitlists (DB)', () => {
   /**
    * Two kinds, two levels, one shared claim: `TRANSIENT_KIND_LEVEL`
    * (`lib/api-errors.ts`) is the authority, not a blanket "transient ⇒ warn" —
-   * `pool_exhausted` (`P2024`) logs at `error` here despite being transient,
+   * `pool_exhausted` (pg-pool's wait timeout) logs at `error` here despite being transient,
    * which `summary.transientFailedClassIds` still records: `decideEscalation`'s
    * tolerance reads that boolean, not the log level.
    */
   it.each([
-    { kind: 'tx_budget' as const, level: 'warn' as const, code: 'P2028' as const },
-    { kind: 'pool_exhausted' as const, level: 'error' as const, code: 'P2024' as const },
-  ])('logs a $kind per-class failure at $level, still returned transient', async ({ kind, level, code }) => {
+    { kind: 'tx_budget' as const, level: 'warn' as const, make: () => new Prisma.PrismaClientKnownRequestError('transient', { code: 'P2028', clientVersion: Prisma.prismaVersion.client }) },
+    { kind: 'pool_exhausted' as const, level: 'error' as const, make: pgPoolTimeout },
+  ])('logs a $kind per-class failure at $level, still returned transient', async ({ kind, level, make }) => {
     const contended = await makeFreedSeat(`Transient-${kind}`);
     const healthy = await makeFreedSeat(`TransientOk-${kind}`);
     const clocks = windowClocks(contended.startTime);
@@ -1227,10 +1229,7 @@ describe('reconcileWaitlists (DB)', () => {
         class: {
           findUnique({ args, query }) {
             if (args.where?.id === contended.id) {
-              throw new Prisma.PrismaClientKnownRequestError('transient', {
-                code,
-                clientVersion: Prisma.prismaVersion.client,
-              });
+              throw make();
             }
             return query(args);
           },
@@ -1355,10 +1354,7 @@ describe('reconcileWaitlists (DB)', () => {
       query: {
         class: {
           findUnique() {
-            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-              code: 'P2024',
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw pgPoolTimeout();
           },
         },
       },
@@ -1400,10 +1396,7 @@ describe('reconcileWaitlists (DB)', () => {
       query: {
         class: {
           findUnique() {
-            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-              code: 'P2024',
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw pgPoolTimeout();
           },
         },
       },
@@ -1452,10 +1445,7 @@ describe('reconcileWaitlists (DB)', () => {
       query: {
         class: {
           findUnique() {
-            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-              code: 'P2024',
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw pgPoolTimeout();
           },
         },
       },
@@ -1523,10 +1513,7 @@ describe('reconcileWaitlists (DB)', () => {
       query: {
         class: {
           findUnique() {
-            throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-              code: 'P2024',
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw pgPoolTimeout();
           },
         },
       },
@@ -1826,10 +1813,7 @@ describe('reconcileWaitlists (DB)', () => {
         class: {
           findUnique({ args, query }) {
             if (args.where?.id === flaky.id) {
-              throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-                code: 'P2024',
-                clientVersion: Prisma.prismaVersion.client,
-              });
+              throw pgPoolTimeout();
             }
             return query(args);
           },

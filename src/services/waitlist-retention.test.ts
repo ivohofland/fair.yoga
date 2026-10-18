@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { Prisma, type PrismaClient } from '@/lib/prisma-client';
+import { type PrismaClient } from '@/lib/prisma-client';
 import type { ClassStatus, WaitlistStatus } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { FULFILLED_WAITLIST_STATUSES } from '@/lib/waitlist-status';
@@ -13,6 +13,7 @@ import {
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotTime } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { pgPoolTimeout } from '../../tests/adapter-errors';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 /**
@@ -972,10 +973,7 @@ describe('reapClosedWaitlistEntries', () => {
       $transaction: async (fn: (tx: unknown) => Promise<number>) => {
         const classId = classIds[calls++];
         if (classId === 'class-a') {
-          throw new Prisma.PrismaClientKnownRequestError('pool timeout', {
-            code: 'P2024',
-            clientVersion: Prisma.prismaVersion.client,
-          });
+          throw pgPoolTimeout();
         }
         return fn({
           $executeRawUnsafe: async () => 0,

@@ -31,6 +31,7 @@ import { deleteAccountPasskeys, removePasskeyLocked } from '@/services/passkey-c
 import { createClassFixture } from '../../tests/class-fixtures';
 import { seedSession, uniqueSuffix } from '../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { pgErrorOf } from './pg-error';
 
 const prisma = createPrismaClient();
 
@@ -594,7 +595,7 @@ describe('lockClassRowsOrdered', () => {
       prisma
         .$transaction((tx) => tx.$queryRaw(sql))
         .then(() => 'free' as const)
-        .catch((err: unknown) => String(err));
+        .catch((err: unknown) => pgErrorOf(err)?.sqlState ?? String(err));
 
     const entryProbe = await probe(
       Prisma.sql`SELECT id FROM "WaitlistEntry" WHERE id = ${entry.id} FOR UPDATE NOWAIT`,
@@ -609,7 +610,7 @@ describe('lockClassRowsOrdered', () => {
     await holder;
 
     expect(entryProbe).toBe('free');
-    expect(classProbe).toMatch(/55P03|could not obtain lock/);
+    expect(classProbe).toBe('55P03');
   });
 
   it('locks the CalendarEntry row when entries is true, and leaves it free when omitted', async () => {
@@ -622,7 +623,7 @@ describe('lockClassRowsOrdered', () => {
       prisma
         .$transaction((tx) => tx.$queryRaw(sql))
         .then(() => 'free' as const)
-        .catch((err: unknown) => String(err));
+        .catch((err: unknown) => pgErrorOf(err)?.sqlState ?? String(err));
 
     const heldWithEntries = async (entriesFlag: boolean) => {
       let release!: () => void;
@@ -657,7 +658,7 @@ describe('lockClassRowsOrdered', () => {
     };
 
     // entries: true locks the CalendarEntry row.
-    expect(await heldWithEntries(true)).toMatch(/55P03|could not obtain lock/);
+    expect(await heldWithEntries(true)).toBe('55P03');
     // entries omitted (default false) does NOT.
     expect(await heldWithEntries(false)).toBe('free');
   });
@@ -934,7 +935,7 @@ describe('the Teacher first lock (#758)', () => {
         )
         .then(
           () => 'acquired' as const,
-          (err: unknown) => String(err),
+          (err: unknown) => pgErrorOf(err)?.sqlState ?? String(err),
         );
     });
   }
@@ -964,13 +965,13 @@ describe('the Teacher first lock (#758)', () => {
   it('lockTeacherForNoKeyUpdate lets a foreign-key KEY SHARE through and refuses FOR SHARE', async () => {
     const hold = (tx: TransactionClientOnly) => lockTeacherForNoKeyUpdate(tx, liveId);
     expect(await probeWhileHeld(hold, 'FOR KEY SHARE')).toBe('acquired');
-    expect(await probeWhileHeld(hold, 'FOR SHARE')).toMatch(/55P03/);
-    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toMatch(/55P03/);
+    expect(await probeWhileHeld(hold, 'FOR SHARE')).toBe('55P03');
+    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toBe('55P03');
   });
 
   it('lockTeacherForShare shares with FOR SHARE and refuses FOR NO KEY UPDATE', async () => {
     const hold = (tx: TransactionClientOnly) => lockTeacherForShare(tx, liveId);
     expect(await probeWhileHeld(hold, 'FOR SHARE')).toBe('acquired');
-    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toMatch(/55P03/);
+    expect(await probeWhileHeld(hold, 'FOR NO KEY UPDATE')).toBe('55P03');
   });
 });

@@ -67,7 +67,16 @@ async function _templateForbiddenFieldsAreRejected(
   await updateClassTemplate(db, 'never-called', 'never-called', archivedRule);
 }
 import { createClassFixture, createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
+import { pgPoolTimeout } from '../../tests/adapter-errors';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createPrismaClient } from '@/lib/prisma-client';
+
+/** The injected failure for a transient-kind table row: a Known `P2028`, or pg-pool's wait timeout. */
+function injectedTransient(kind: TransientKind): Error {
+  return kind === 'pool_exhausted'
+    ? pgPoolTimeout()
+    : new Prisma.PrismaClientKnownRequestError('injected', { code: 'P2028', clientVersion: Prisma.prismaVersion.client });
+}
 
 const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
@@ -1794,7 +1803,7 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
         )
         .then(() => 'free' as const)
         .catch((err: unknown) => {
-          if (/55P03|could not obtain lock/.test(String(err))) return 'locked' as const;
+          if (pgErrorOf(err)?.sqlState === '55P03') return 'locked' as const;
           throw err;
         });
 
@@ -2901,24 +2910,21 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
 
   /**
    * The transient branch, by kind rather than by a bare boolean (#232): a
-   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
-   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * `P2028` (tx-budget contention) logs at `warn`, pg-pool's wait timeout
+   * (a drained pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
    * assigns each kind its level. `scheduleRule.updateMany` is the CAS this
    * transaction issues, the statement the fixture throws from.
    */
   it.each<[string, 'warn' | 'error', TransientKind]>([
     ['P2028', 'warn', 'tx_budget'],
-    ['P2024', 'error', 'pool_exhausted'],
+    ['pool timeout', 'error', 'pool_exhausted'],
   ])('a %s during archive answers busy and logs at %s with its kind', async (code, level, kind) => {
     const template = await makeTemplate(`Transient Archive ${code}`);
     const failing = prisma.$extends({
       query: {
         scheduleRule: {
           updateMany() {
-            throw new Prisma.PrismaClientKnownRequestError('injected', {
-              code,
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw injectedTransient(kind);
           },
         },
       },
@@ -3532,8 +3538,8 @@ describe('createClassTemplate (DB)', () => {
 
   /**
    * The transient branch, by kind rather than by a bare boolean (#232): a
-   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
-   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * `P2028` (tx-budget contention) logs at `warn`, pg-pool's wait timeout
+   * (a drained pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
    * assigns each kind its level. `scheduleRule.createManyAndReturn` is the
    * first statement this transaction issues (after `setLockTimeout`), so
    * throwing from it leaves nothing downstream to have run — the two
@@ -3541,7 +3547,7 @@ describe('createClassTemplate (DB)', () => {
    */
   it.each<[string, 'warn' | 'error', TransientKind]>([
     ['P2028', 'warn', 'tx_budget'],
-    ['P2024', 'error', 'pool_exhausted'],
+    ['pool timeout', 'error', 'pool_exhausted'],
   ])('a %s during create answers busy and logs at %s with its kind', async (code, level, kind) => {
     const input: CreateClassTemplateInput = {
       teacherRoomId,
@@ -3559,10 +3565,7 @@ describe('createClassTemplate (DB)', () => {
       query: {
         scheduleRule: {
           createManyAndReturn() {
-            throw new Prisma.PrismaClientKnownRequestError('injected', {
-              code,
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw injectedTransient(kind);
           },
         },
       },
@@ -3654,8 +3657,8 @@ describe('updateClassTemplate (DB) — transient failures', () => {
 
   /**
    * The transient branch, by kind rather than by a bare boolean (#232): a
-   * `P2028` (tx-budget contention) logs at `warn`, a `P2024` (a drained
-   * pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
+   * `P2028` (tx-budget contention) logs at `warn`, pg-pool's wait timeout
+   * (a drained pool) at `error` — `TRANSIENT_KIND_LEVEL` (`api-errors.ts`) is what
    * assigns each kind its level, not a hard-coded `log.warn` here.
    * `classTemplate.update` is the statement `updateRule`'s transaction
    * issues that this fixture can throw from — `updateChild` runs it
@@ -3665,17 +3668,14 @@ describe('updateClassTemplate (DB) — transient failures', () => {
    */
   it.each<[string, 'warn' | 'error', TransientKind]>([
     ['P2028', 'warn', 'tx_budget'],
-    ['P2024', 'error', 'pool_exhausted'],
+    ['pool timeout', 'error', 'pool_exhausted'],
   ])('a %s during edit answers busy and logs at %s with its kind', async (code, level, kind) => {
     const template = await makeTemplate(`Transient Edit ${code}`);
     const failing = prisma.$extends({
       query: {
         classTemplate: {
           update() {
-            throw new Prisma.PrismaClientKnownRequestError('injected', {
-              code,
-              clientVersion: Prisma.prismaVersion.client,
-            });
+            throw injectedTransient(kind);
           },
         },
       },

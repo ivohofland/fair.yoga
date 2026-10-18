@@ -8,6 +8,7 @@ import {
   reapExpiredNotifications,
 } from './notification-retention';
 import { scopeSweep } from '../../tests/scoped-sweep';
+import { driverAdapterError, pgCause } from '../../tests/adapter-errors';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -199,7 +200,7 @@ describe('reapExpiredNotifications', () => {
 
   it('logs a transient period failure at warn, and the summary still at error', async () => {
     const yearly = await seed('class_cancelled', daysAgo(400));
-    const deadlock = new Error('ConnectorError { code: "40P01", message: "deadlock detected" }');
+    const deadlock = driverAdapterError(pgCause('40P01', 'deadlock detected'));
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     try {

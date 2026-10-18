@@ -38,6 +38,7 @@ import { POST as postStudioClass } from '@/app/api/studio-classes/route';
 import { POST as postClassTemplate } from '@/app/api/class-templates/route';
 import { POST as postStudioClassTemplate } from '@/app/api/studio-class-templates/route';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { isLockTimeout } from '@/lib/api-errors';
 
 const prisma = createPrismaClient();
 const fx = fixtureRun('curswl');
@@ -366,7 +367,7 @@ describe('a create under no existing template against a switch holding the teach
       // While the create is still parked on the room, before the holder lets go.
       const probe = await prisma
         .$transaction((tx) => tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${f.teacherId} FOR NO KEY UPDATE NOWAIT`)
-        .then(() => 'free', (err: unknown) => (String(err).includes('55P03') ? 'held' : `error: ${String(err)}`));
+        .then(() => 'free', (err: unknown) => (isLockTimeout(err) ? 'held' : `error: ${String(err)}`));
 
       release.open();
       await holding;

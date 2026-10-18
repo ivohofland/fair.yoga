@@ -42,6 +42,7 @@ import { switchToSharedRoom } from './room-switch';
 import { claimTemplateForGeneration, generateInstancesForTemplate } from './class-generator';
 import type { GenerationResult } from '@/lib/generation';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 const prisma = createPrismaClient();
 const fx = fixtureRun('rswl');
@@ -193,7 +194,8 @@ describe('switchToSharedRoom — lock order (issue 259)', () => {
           await tx.$queryRaw`SELECT id FROM "TeacherRoom" WHERE id = ${f.linkId} FOR UPDATE`;
           return 'link was free';
         })).resolves.toBe('link was free');
-        await expect(switching).rejects.toThrow(/55P03|lock timeout/i);
+        const err = await switching.then(() => null, (e: unknown) => e);
+        expect(transientDbFailure(err)?.kind, String(err)).toBe('lock_timeout');
       }, { release: 'after-body' });
     } finally {
       await prober.$disconnect();

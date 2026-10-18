@@ -41,6 +41,8 @@ import { FORCED_PLAN_SETTINGS } from '../../tests/forced-plan-settings';
 import { joinOrThrow } from '../../tests/lock-order-teardown';
 import { expectErased } from '../../tests/erasure-assertions';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure, type TransientKind } from '@/lib/api-errors';
+import { pgErrorOf } from '@/lib/pg-error';
 
 type TransactionOptions = NonNullable<Parameters<PrismaClient['$transaction']>[1]>;
 
@@ -788,7 +790,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
     const teacherErasure = expectErased(deleteTeacherAccount(teacherRacing, teacherId))
       .then(() => 'teacher-ok' as const)
-      .catch((err: unknown) => ({ error: String(err) }) as const);
+      .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }) as const);
 
     // From here on, a thrown handshake timeout must not leave `holderHigh`/
     // `holderLow` abandoned. Each is a real transaction under its own
@@ -800,7 +802,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
     // idempotent (a second `resolve()` is a no-op), so calling them again in
     // the finally below costs nothing on the happy path, where they already
     // ran inline.
-    let studentErasure!: Promise<'student-ok' | { readonly error: string }>;
+    let studentErasure!: Promise<'student-ok' | { readonly error: string; readonly kind?: TransientKind }>;
     try {
       // Start the student erasure once the teacher's pre-lock is in flight, so
       // both statements are running against the holders before either releases.
@@ -810,7 +812,7 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
 
       studentErasure = expectErased(deleteStudentAccount(studentRacing, studentId))
         .then(() => 'student-ok' as const)
-        .catch((err: unknown) => ({ error: String(err) }) as const);
+        .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }) as const);
 
       // Both pre-locks are now in flight. Wait for the student's to be issued
       // too, then give it time to reach and block on its first row. Then:
@@ -857,8 +859,8 @@ describe('the two erasures take multiple Class rows in one order (#174)', () => 
       ['student erasure', studentOutcome],
     ] as const) {
       if (typeof outcome !== 'string') {
-        expect(`${label}: ${outcome.error}`).not.toMatch(/40P01|deadlock detected/);
-        expect(`${label}: ${outcome.error}`).not.toMatch(/55P03|lock timeout/);
+        expect(outcome.kind, `${label}: ${outcome.error}`).not.toBe('deadlock');
+        expect(outcome.kind, `${label}: ${outcome.error}`).not.toBe('lock_timeout');
         throw new Error(`${label} rejected unexpectedly: ${outcome.error}`);
       }
     }
@@ -1328,13 +1330,13 @@ it('bounds its wait even when the student is waiting in no classes at all', asyn
 
     const outcome = await deleteStudentAccount(prisma, fixtureStudentId)
       .then(() => 'returned' as const)
-      .catch((err: unknown) => ({ error: String(err) }) as const);
+      .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }) as const);
     await holder;
 
     // Unbounded (pre-hoist) this is `'returned'`: the erasure waits out the
     // full 4s hold and succeeds.
     expect(outcome).not.toBe('returned');
-    expect(typeof outcome === 'object' ? outcome.error : '').toMatch(/55P03|lock timeout/);
+    expect(typeof outcome === 'object' ? outcome.kind : outcome).toBe('lock_timeout');
 
     // And the abort is atomic — nothing half-applied, which is what makes
     // the route's retry advice sound.
@@ -1418,13 +1420,13 @@ it('aborts atomically when a Class row it must lock is held past the timeout', a
 
     const outcome = await deleteTeacherAccount(prisma, teacherId)
       .then(() => 'returned' as const)
-      .catch((err: unknown) => ({ error: String(err), holderReleased }) as const);
+      .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind, holderReleased }) as const);
     await holder;
 
     // Unbounded, this is `'returned'`: the erasure waits out the full 4s
     // hold and succeeds.
     expect(outcome).not.toBe('returned');
-    expect(typeof outcome === 'object' ? outcome.error : '').toMatch(/55P03|lock timeout/);
+    expect(typeof outcome === 'object' ? outcome.kind : outcome).toBe('lock_timeout');
     expect(typeof outcome === 'object' ? outcome.holderReleased : true).toBe(false);
 
     // And the abort is atomic — nothing half-applied.
@@ -1612,7 +1614,7 @@ it('does not deadlock against a transaction that locks the class first and then 
         { timeout: 10_000 },
       )
       .then(() => 'other-ok' as const)
-      .catch((err: unknown) => ({ error: String(err) }) as const);
+      .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }) as const);
 
     // Small settle so `other`'s `FOR UPDATE` is in place before the
     // erasure starts — mirrors the settle in the wait test above.
@@ -1620,7 +1622,7 @@ it('does not deadlock against a transaction that locks the class first and then 
 
     const erasing = expectErased(deleteStudentAccount(prisma, fixtureStudentId))
       .then(() => 'returned' as const)
-      .catch((err: unknown) => ({ error: String(err) }) as const);
+      .catch((err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }) as const);
 
     const [otherOutcome, erasureOutcome] = await Promise.all([other, erasing]);
 
@@ -2452,7 +2454,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         )
         .then(
           () => 'held' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
 
       let preLockSawRelease: boolean | undefined;
@@ -2465,12 +2467,12 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       });
       onTestFinished(() => spy.mockRestore());
 
-      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let erasing: Promise<'erased' | { error: string; kind?: TransientKind }> | undefined;
       try {
         await awaitHandshake(isParked, 'Student FOR SHARE holder');
         erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
         await waitUntilBlockedBy(holderPid);
       } finally {
@@ -2572,7 +2574,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
       const hasInserted = new Promise<void>((r) => { inserted = r; });
       let releaseWriter!: () => void;
       const writerHeld = new Promise<void>((r) => { releaseWriter = r; });
-      let writing: Promise<'written' | { error: string }> | undefined;
+      let writing: Promise<'written' | { error: string; kind?: TransientKind }> | undefined;
       try {
         await awaitHandshake(atPreLock, 'student erasure pre-lock');
         writing = prisma
@@ -2589,7 +2591,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
           )
           .then(
             () => 'written' as const,
-            (err: unknown) => ({ error: String(err) }),
+            (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
           );
         await awaitHandshake(hasInserted, 'uncommitted waitlist insert');
         releaseErasure();
@@ -2643,14 +2645,14 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
 
       const promoting = promoteNext(prisma, fx.classId).then(
         (entry) => ({ promoted: entry?.studentId ?? null }),
-        (err: unknown) => ({ error: String(err) }),
+        (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
       );
-      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let erasing: Promise<'erased' | { error: string; kind?: TransientKind }> | undefined;
       try {
         await awaitHandshake(promoterHolds, 'promoteNext class lock');
         erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
         // The erasure holds the subject's row and waits on the class the
         // promoter holds. Released promptly: if the erasure's `Student` lock
@@ -2670,8 +2672,8 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         ['erasure', eraseOutcome],
       ] as const) {
         if (typeof outcome === 'object' && outcome !== null && 'error' in outcome) {
-          expect(`${label}: ${outcome.error}`).not.toMatch(/40P01|deadlock detected/);
-          expect(`${label}: ${outcome.error}`).not.toMatch(/55P03|lock timeout/);
+          expect(outcome.kind, `${label}: ${outcome.error}`).not.toBe('deadlock');
+          expect(outcome.kind, `${label}: ${outcome.error}`).not.toBe('lock_timeout');
           throw new Error(`${label} rejected unexpectedly: ${outcome.error}`);
         }
       }
@@ -2727,7 +2729,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
 
       const erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
         () => 'erased' as const,
-        (err: unknown) => ({ error: String(err) }),
+        (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
       );
       let joining: Promise<unknown> | undefined;
       try {
@@ -2815,14 +2817,14 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
 
       const joining = addToWaitlist(prisma, fx.otherClassId, fx.studentId).then(
         (entry) => ({ position: entry.position }),
-        (err: unknown) => ({ error: String(err) }),
+        (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
       );
-      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let erasing: Promise<'erased' | { error: string; kind?: TransientKind }> | undefined;
       try {
         await awaitHandshake(gateHeld, 'join Student lock');
         erasing = expectErased(deleteStudentAccount(prisma, fx.studentId)).then(
           () => 'erased' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
         await waitUntilBlockedBy(joinPid);
       } finally {
@@ -2874,7 +2876,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         )
         .then(
           () => 'held' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
 
       let joining: Promise<unknown> | undefined;
@@ -2896,7 +2898,7 @@ describe('the erasure takes the Student row before any Class row (#183)', () => 
         joinOutcome instanceof Error
           ? String(joinOutcome)
           : `join resolved: ${JSON.stringify(joinOutcome)}`;
-      expect(joinText).toMatch(/55P03|lock timeout/);
+      expect(transientDbFailure(joinOutcome)?.kind, joinText).toBe('lock_timeout');
       expect(joinOutcome).not.toBeInstanceOf(WaitlistJoinError);
       expect(await holder).toBe('held');
       expect(
@@ -3055,16 +3057,16 @@ describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
         )
         .then(
           () => 'held' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
 
-      let erasing: Promise<'erased' | { error: string }> | undefined;
-      let probe: 'free' | { error: string } | undefined;
+      let erasing: Promise<'erased' | { error: string; kind?: TransientKind }> | undefined;
+      let probe: 'free' | { error: string; kind?: TransientKind } | undefined;
       try {
         await awaitHandshake(isParked, 'Teacher FOR SHARE holder');
         erasing = expectErased(deleteTeacherAccount(prisma, fx.teacherId)).then(
           () => 'erased' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
         await waitUntilBlockedBy(holderPid);
         // `NOWAIT`: is the template row held right now, by anyone?
@@ -3074,7 +3076,7 @@ describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
           })
           .then(
             () => 'free' as const,
-            (err: unknown) => ({ error: String(err) }),
+            (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
           );
       } finally {
         release();
@@ -3127,15 +3129,15 @@ describe('deleteTeacherAccount takes the Teacher row first (#758)', () => {
         )
         .then(
           () => 'generated' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
 
-      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let erasing: Promise<'erased' | { error: string; kind?: TransientKind }> | undefined;
       try {
         await awaitHandshake(isClaimed, 'template claim');
         erasing = expectErased(deleteTeacherAccount(prisma, fx.teacherId)).then(
           () => 'erased' as const,
-          (err: unknown) => ({ error: String(err) }),
+          (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
         );
         // The erasure is parked on the template row, holding its teacher lock.
         await waitUntilBlockedBy(holderPid);
@@ -3346,7 +3348,7 @@ describe('the archive escape against a student erasure ends in an abort, not an 
 
   type Staged = {
     archived: Awaited<ReturnType<typeof archiveOrUnarchiveTemplate>>;
-    erased: { erased: true } | { error: string };
+    erased: { erased: true } | { error: string; kind?: TransientKind };
     deleteError: unknown;
   };
 
@@ -3418,7 +3420,7 @@ describe('the archive escape against a student erasure ends in an abort, not an 
 
       erasing = deleteStudentAccount(prisma, fx.subject.id).then(
         () => ({ erased: true as const }),
-        (err: unknown) => ({ error: String(err) }),
+        (err: unknown) => ({ error: String(err), kind: transientDbFailure(err)?.kind }),
       );
       const erasureWait = await pollFor(
         'the erasure waiting in its Class pre-lock',
@@ -3442,9 +3444,9 @@ describe('the archive escape against a student erasure ends in an abort, not an 
         })
         .then(
           () => 'free' as const,
-          (err: unknown) => String(err),
+          (err: unknown) => pgErrorOf(err)?.sqlState ?? String(err),
         );
-      expect(probe).toMatch(/55P03|could not obtain lock/);
+      expect(probe).toBe('55P03');
 
       if (releaseAfterMs > 0) await new Promise((r) => setTimeout(r, releaseAfterMs));
       release();
@@ -3469,8 +3471,8 @@ describe('the archive escape against a student erasure ends in an abort, not an 
   }
 
   /** The erasure lost and nothing of it stands; the archive then deleted the class. */
-  async function expectErasureAborted(fx: Fixture, staged: Staged, code: RegExp): Promise<void> {
-    expect('error' in staged.erased ? staged.erased.error : 'erased').toMatch(code);
+  async function expectErasureAborted(fx: Fixture, staged: Staged, kind: TransientKind): Promise<void> {
+    expect('error' in staged.erased ? staged.erased.kind : 'erased', JSON.stringify(staged.erased)).toBe(kind);
     expect(staged.deleteError).toBeUndefined();
     expect(staged.archived).toMatchObject({ ok: true, action: 'archived', deleted: 1 });
     // Gone — after the erasure's rollback released it, since until then the
@@ -3497,7 +3499,7 @@ describe('the archive escape against a student erasure ends in an abort, not an 
       // Released at once: the delete is waiting well before the erasure's
       // deadlock check runs, 1s into its wait.
       const staged = await stage(fx, 0, 800);
-      await expectErasureAborted(fx, staged, /40P01|deadlock/);
+      await expectErasureAborted(fx, staged, 'deadlock');
     } finally {
       await cleanup(fx);
     }
@@ -3510,7 +3512,7 @@ describe('the archive escape against a student erasure ends in an abort, not an 
       // no cycle, and its lock_timeout (at 2s) fires before the delete's own
       // check (1s into the delete's wait, so at 2.4s or later).
       const staged = await stage(fx, 1_400, 500);
-      await expectErasureAborted(fx, staged, /55P03|lock timeout/);
+      await expectErasureAborted(fx, staged, 'lock_timeout');
     } finally {
       await cleanup(fx);
     }

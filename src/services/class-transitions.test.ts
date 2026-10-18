@@ -17,6 +17,7 @@ import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { transientDbFailure } from '@/lib/api-errors';
 
 // ===========================================================================
 // Automated class transitions (DB) — timezone-aware lifecycle sweeps.
@@ -972,14 +973,14 @@ describe('class transitions (DB, timezone-aware)', () => {
       //
       // The SQLSTATE, not `not.toBeNull()`. That weaker assertion accepted
       // any throw at all: a `P2028` from an unrelated transaction budget, a
-      // `P2024` from an exhausted pool, a unique-constraint violation from a
+      // pool timeout from an exhausted pool, a unique-constraint violation from a
       // fixture collision would each have satisfied it while proving nothing
       // about the lock — the exact "green for the wrong cause" failure this
       // branch cites elsewhere as its reason for shape-keying every hook.
       // `55P03` is what a `SET LOCAL lock_timeout` expiry actually is;
       // `invitations-lock-order.test.ts` already asserts `40P01` this way for
       // the same reason.
-      expect(String(competingWriteError)).toMatch(/55P03|lock timeout/);
+      expect(transientDbFailure(competingWriteError)?.kind, String(competingWriteError)).toBe('lock_timeout');
 
       const updated = await prisma.class.findUniqueOrThrow({ where: { id: cls.id }, include: { calendarEntry: true } });
       expect(updated.calendarEntry.cancelledAt).not.toBeNull();

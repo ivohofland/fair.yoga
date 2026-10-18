@@ -1098,9 +1098,10 @@ export async function createClassTemplate(
   } catch (err) {
     // BEFORE any conflict check (`api-errors.ts`: `transientDbFailure` is
     // checked ahead of every other branch precisely so a non-matching check
-    // placed first cannot swallow a `P2028`/`P2024` — both are
-    // `PrismaClientKnownRequestError`s too, and a conflict check that matches
-    // only one specific code would rethrow them straight past `busy`). An
+    // placed first cannot swallow a `P2028` — a
+    // `PrismaClientKnownRequestError` too — or pool exhaustion
+    // (`pool_exhausted`), and a conflict check that matches only one specific
+    // code would rethrow them straight past `busy`). An
     // error that escapes this branch still reaches a 503 —
     // `classifyApiError`'s own transient-error net (`api-errors.ts`) — but
     // loses this service's `TEMPLATE_BUSY` code and its create-specific
