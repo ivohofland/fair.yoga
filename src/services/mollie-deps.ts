@@ -23,3 +23,9 @@ export function mollieDeps(): MollieDeps | null {
   cached = { client: createMollieClient(d.config), config: d.config };
   return cached;
 }
+
+/** The server's Mollie mode, or null when Mollie is not configured: what `payGuidanceForTeacher` reads. */
+export function configuredMollieMode(): { testmode: boolean } | null {
+  const deps = mollieDeps();
+  return deps === null ? null : { testmode: deps.config.testmode };
+}

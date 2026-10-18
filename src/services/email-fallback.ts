@@ -26,6 +26,7 @@ import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
 import { payGuidanceForTeacher, teacherPaymentSelect, type PayGuidance } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 
 /**
  * What the teacher of the class a student payment notification is about lets
@@ -47,7 +48,7 @@ async function studentPaymentEmailGuidance(
     },
   });
   if (cls === null) return undefined;
-  return payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
+  return payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency, configuredMollieMode());
 }
 
 /**

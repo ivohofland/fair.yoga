@@ -8,6 +8,7 @@ import {
   teacherPaymentSelect,
   type BankAccountData,
 } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 import { studentNameSelect, teacherVisibleName } from '@/lib/student-visibility';
@@ -352,7 +353,7 @@ export async function resumePayments(
     if (unclaimedOwed.length > 0) {
       const notifications: CreateNotificationInput[] = unclaimedOwed.map((p) => {
         const cls = p.registration.class;
-        const guidance = payGuidanceForTeacher(resumed, cls.currency);
+        const guidance = payGuidanceForTeacher(resumed, cls.currency, configuredMollieMode());
         return {
           recipientType: 'student',
           recipientId: p.registration.studentId,

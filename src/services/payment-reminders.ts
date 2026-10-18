@@ -16,6 +16,7 @@ import type { PrismaClient } from '@/lib/prisma-client';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 import { readInPages } from '@/lib/read-in-pages';
 
 export const OVERDUE_AFTER_DAYS = 7;
@@ -133,7 +134,7 @@ export async function sendPaymentReminders(
   let reminded = 0;
   for (const payment of due) {
     const cls = payment.registration.class;
-    const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
+    const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency, configuredMollieMode());
     // Stamp + notify in ONE transaction. The conditional stamp keeps two
     // overlapping cron runs from double-sending; the transaction keeps a
     // failed notification from stamping a reminder that never went out

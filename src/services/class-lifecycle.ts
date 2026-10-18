@@ -36,6 +36,7 @@ import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
 import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { log } from '@/lib/log';
 import { redecideAfterMove, stampIfPastCancelCheck } from './auto-cancel-decision';
@@ -890,7 +891,7 @@ export async function completeClass(
     // Payments exist — now tell people about them, in the same transaction.
     // In the Level 1 model this notification IS the payment request.
     // A paused teacher's students still get the request, told to hold off.
-    const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
+    const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency, configuredMollieMode());
     const notifications: CreateNotificationInput[] = billed.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {

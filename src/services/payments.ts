@@ -18,6 +18,7 @@ import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { inProgressFirst } from '@/lib/payment-claim';
 import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 import { TEACHER_ATTEMPT_SELECT, type TeacherAttempt } from '@/lib/processor-attempt-view';
 import { ATTEMPT_GRANT_SELECT, canRefundThroughGrant } from '@/lib/processor-liveness';
 import { lockTeacherStudentLink } from './roster-link';
@@ -578,7 +579,7 @@ function remindInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
       },
     });
 
-    const guidance = payGuidanceForTeacher(registration.class.calendarEntry.teacher, registration.class.currency);
+    const guidance = payGuidanceForTeacher(registration.class.calendarEntry.teacher, registration.class.currency, configuredMollieMode());
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
 
     await createBulkNotifications(tx, [
@@ -780,7 +781,7 @@ function rejectInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
     });
 
     const { calendarEntry, currency } = registration.class;
-    const guidance = payGuidanceForTeacher(calendarEntry.teacher, currency);
+    const guidance = payGuidanceForTeacher(calendarEntry.teacher, currency, configuredMollieMode());
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED_NOT_RECEIVED);
 
     await createBulkNotifications(tx, [
