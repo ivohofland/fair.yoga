@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { ProcessorRefundStatus } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { attemptRefundState, type AttemptRefundState, type AttemptView } from '@/lib/processor-attempt-view';
 import { mollieMethodLabel } from '@/lib/processor-methods';
@@ -17,17 +18,49 @@ interface AttemptRefundProps {
   classContext: string | null;
 }
 
+/** What the row shows for a refund this control just requested, from the status Mollie answered. */
+function requestedState(status: ProcessorRefundStatus): AttemptRefundState | null {
+  switch (status) {
+    case 'queued':
+    case 'pending':
+    case 'processing':
+      return 'pending';
+    case 'refunded':
+      return 'refunded';
+    case 'failed':
+      return 'failed';
+    case 'canceled':
+      return null;
+    default: {
+      const unhandled: never = status;
+      throw new Error(`unhandled refund status: ${String(unhandled)}`);
+    }
+  }
+}
+
 /**
  * One Mollie attempt's refund control on a teacher's payment row: Refund
  * while it can be refunded (after a failed refund too, saying so), and the
  * refund's state once one stands. Nothing for an attempt `attemptRefundState`
- * answers `none` for. A refund accepted here shows as pending, or refunded,
- * until the refreshed row says the same.
+ * answers `none` for. A refund requested here shows the state Mollie's
+ * answer gives it, with focus on that line, until the attempt's refunds from
+ * the server change.
  */
 export function AttemptRefund({ paymentId, attempt, settles, studentName, classContext }: AttemptRefundProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [requested, setRequested] = useState<AttemptRefundState | null>(null);
+  const refundsSeen = attempt.refunds.map((r) => r.status).join(',');
+  const [seen, setSeen] = useState(refundsSeen);
+  if (seen !== refundsSeen) {
+    setSeen(refundsSeen);
+    setRequested(null);
+  }
+  const status = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (requested !== null) status.current?.focus();
+  }, [requested]);
+
   const state = requested ?? attemptRefundState(attempt);
   const paid = `${mollieMethodLabel(attempt.method)} ${formatMoney(attempt.amount, attempt.currency)}`;
 
@@ -35,14 +68,18 @@ export function AttemptRefund({ paymentId, attempt, settles, studentName, classC
     case 'none':
       return null;
     case 'pending':
-      return <span className="type-caption">Refund pending</span>;
+      return <span ref={status} tabIndex={-1} className="type-caption focus:outline-none">Refund pending</span>;
     case 'refunded':
-      return <span className="type-caption">Refunded</span>;
+      return <span ref={status} tabIndex={-1} className="type-caption focus:outline-none">Refunded</span>;
     case 'refundable':
     case 'failed':
       return (
         <span className="inline-flex items-center gap-2">
-          {state === 'failed' && <span className="type-caption text-danger">Refund failed</span>}
+          {state === 'failed' && (
+            <span ref={status} tabIndex={-1} className="type-caption text-danger focus:outline-none">
+              Refund failed
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -60,9 +97,9 @@ export function AttemptRefund({ paymentId, attempt, settles, studentName, classC
               studentName={studentName}
               settles={settles}
               onClose={() => setOpen(false)}
-              onRequested={(status) => {
+              onRequested={(answered) => {
                 setOpen(false);
-                setRequested(status === 'refunded' ? 'refunded' : 'pending');
+                setRequested(requestedState(answered));
                 router.refresh();
               }}
             />

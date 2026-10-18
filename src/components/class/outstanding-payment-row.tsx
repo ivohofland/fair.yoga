@@ -9,6 +9,8 @@ import { usePaymentActions } from '@/lib/use-payment-actions';
 import { isOutstanding } from '@/lib/payment-status';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 import { PaymentClaimLine } from '@/components/class/payment-claim-line';
+import { OtherAttempts } from '@/components/payments/attempt-refund';
+import type { AttemptView } from '@/lib/processor-attempt-view';
 
 interface OutstandingPaymentRowProps {
   paymentId: string;
@@ -23,6 +25,8 @@ interface OutstandingPaymentRowProps {
   reminderSentAt: Date | null;
   /** The day the student marked it sent (`claimDay`); shown while the claim stands. */
   studentReportedOn: Date | null;
+  /** The payment's Mollie attempts (`TEACHER_ATTEMPT_SELECT`). */
+  processorAttempts: AttemptView[];
 }
 
 /**
@@ -47,6 +51,7 @@ export function OutstandingPaymentRow({
   status,
   reminderSentAt,
   studentReportedOn,
+  processorAttempts,
 }: OutstandingPaymentRowProps) {
   const router = useRouter();
   const { paymentState, justMarked, updating, error, markPaid, markNotCharged, undo, notReceived, standingClaim } =
@@ -84,6 +89,7 @@ export function OutstandingPaymentRow({
           </p>
           {claimedOn && <PaymentClaimLine overdue={current === 'overdue'} reportedOn={claimedOn} />}
           {remindedAt && <p className="type-caption">Reminded {timeAgo(remindedAt)}</p>}
+          <OtherAttempts paymentId={paymentId} attempts={processorAttempts} studentName={studentName} classContext={classContext} />
           {outstanding && (
             <p className="type-caption mt-1 flex items-center gap-2">
               {claimedOn && (

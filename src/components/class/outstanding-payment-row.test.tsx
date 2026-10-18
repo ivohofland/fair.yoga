@@ -61,6 +61,7 @@ describe('OutstandingPaymentRow', () => {
     status: 'pending' as const,
     reminderSentAt: null,
     studentReportedOn: null,
+    processorAttempts: [],
   };
 
   const fetchMock = vi.fn();
@@ -107,6 +108,7 @@ describe('OutstandingPaymentRow', () => {
     status: 'pending' as const,
     reminderSentAt: null,
     studentReportedOn: null,
+    processorAttempts: [],
   };
 
   function renderRow(overrides: Partial<Parameters<typeof OutstandingPaymentRow>[0]> = {}) {
@@ -745,5 +747,16 @@ describe('OutstandingPaymentRow', () => {
       fireEvent.click(await screen.findByRole('button', { name: /^Undo marking Anna Smith as paid/ }));
       expect(await screen.findByText('Says paid · 12 Sep')).toBeInTheDocument();
     });
+  });
+
+  it('shows a refunded Mollie payment of a payment owed again as refunded', () => {
+    renderRow({
+      processorAttempts: [{
+        id: 'att-1', method: 'ideal', status: 'paid', settledPayment: false, chargedBackAt: null, amount: 15, currency: 'EUR',
+        refunds: [{ status: 'refunded' }],
+      }],
+    });
+    expect(screen.getByText('Refunded')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
   });
 });

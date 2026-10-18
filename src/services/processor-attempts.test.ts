@@ -16,6 +16,7 @@ import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
 import { reopenPayment } from './payments';
 import { forgetOfferedMethods } from './processor-methods-offer';
+import { ADOPT_AFTER_MS } from './refund-adoption';
 import {
   createAttempt, decideRefundSync, decideSync, processorReturnUrl, processorWebhookUrl, syncAttempt,
   type CreateAttemptOutcome, type SyncDecision,
@@ -867,6 +868,44 @@ describe('syncAttempt', () => {
       expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
       expect(await notes('payment_refunded', await classOf(paymentId))).toHaveLength(0);
       expect(info).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, deferred: true, refundIds: [unseen] }), expect.any(String));
+    });
+
+    describe('adopting a refund into an intent that never stored its Mollie id', () => {
+      const old = () => new Date(Date.now() - ADOPT_AFTER_MS - 60_000);
+
+      it.each([
+        ['waived', 'not_charged'],
+        ['reopened', 'pending'],
+      ] as const)('adopts an old awaiting row with outcome %s and applies it, payment %s', async (outcome, paymentStatus) => {
+        const info = vi.spyOn(log, 'info');
+        onTestFinished(() => info.mockRestore());
+        const { paymentId, attempt } = await settledAttempt();
+        const awaiting = await prisma.processorRefund.create({
+          data: { attemptId: attempt.id, processorRefundId: null, amount: new Prisma.Decimal('10.00'), status: 'queued', outcome, requestedAt: old() },
+        });
+        const mollieRefundId = reId();
+        fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: mollieRefundId, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }] }));
+
+        await syncAttempt(prisma, deps, attempt.processorPaymentId);
+
+        expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: awaiting.id } })).toMatchObject({ processorRefundId: mollieRefundId, status: 'refunded' });
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe(paymentStatus);
+        expect(await notes('payment_refunded', await classOf(paymentId))).toHaveLength(1);
+        expect(info).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, refundId: awaiting.id, mollieRefundId }), expect.any(String));
+      });
+
+      it('ignores a refund whose amount no old awaiting row has', async () => {
+        const { paymentId, attempt } = await settledAttempt();
+        const awaiting = await prisma.processorRefund.create({
+          data: { attemptId: attempt.id, processorRefundId: null, amount: new Prisma.Decimal('10.00'), status: 'queued', outcome: 'waived', requestedAt: old() },
+        });
+        fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: reId(), status: 'refunded', amount: { value: '3.00', currency: 'EUR' } }] }));
+
+        expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+
+        expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: awaiting.id } })).toMatchObject({ processorRefundId: null, status: 'queued' });
+        expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+      });
     });
 
     it('stored between the pre-read and the lock, outcome reopened, defers rather than lock the link after the payment', async () => {

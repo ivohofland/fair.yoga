@@ -13,7 +13,7 @@ import { lockTeacherForNoKeyUpdate, setLockTimeout } from '@/lib/db-locks';
 import { logDegraded } from '@/lib/degradation';
 import { formatMoney } from '@/lib/format';
 import { log } from '@/lib/log';
-import { MollieUnavailable, type MolliePaymentView } from '@/lib/mollie/client';
+import { MollieUnavailable, type MollieAmount, type MolliePaymentView } from '@/lib/mollie/client';
 import { PAYMENTS_PAUSED_COPY, paymentReference } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
 import { livePayoutIdentity, takesMolliePayments } from '@/lib/processor-liveness';
@@ -24,6 +24,7 @@ import { getAccessToken } from './processor-token';
 import { createNotification } from './notifications';
 import { markPaymentPaid, reopenInTransaction } from './payments';
 import { lockTeacherStudentLink } from './roster-link';
+import { adoptionFor } from './refund-adoption';
 
 export type AttemptRefusal = Extract<
   CodedRefusal,
@@ -409,6 +410,18 @@ async function applyRefundOutcome(
   }
 }
 
+/** Tells the teacher a refund of a payment in this class did not go through. */
+export async function notifyRefundFailed(tx: Prisma.TransactionClient, { teacherId, classId }: { teacherId: string; classId: string }): Promise<void> {
+  await createNotification(tx, {
+    recipientType: 'teacher',
+    recipientId: teacherId,
+    type: 'refund_failed',
+    title: 'Refund failed',
+    body: 'A refund didn’t go through. Check your Mollie balance and try again from the payment.',
+    relatedClassId: classId,
+  });
+}
+
 const paymentStatusSchema = z.enum(ProcessorPaymentStatus);
 const refundStatusSchema = z.enum(ProcessorRefundStatus);
 
@@ -419,6 +432,7 @@ const SYNC_ATTEMPT_SELECT = {
   connectionId: true,
   profileId: true,
   testmode: true,
+  currency: true,
   payment: {
     select: {
       registration: {
@@ -441,12 +455,16 @@ const SYNC_ATTEMPT_SELECT = {
  * fetched with the token of the attempt's own connection, in the mode the
  * attempt was made in.
  *
+ * A refund no row holds is adopted into this attempt's refund intent still
+ * awaiting its Mollie id when `adoptionFor` says so, and then applied like
+ * any other row; one it says to `ignore` was made in Mollie's own dashboard.
+ *
  * The Mollie call runs before the transaction opens. The transaction locks
  * the payment's row (`FOR UPDATE`), and before it the `TeacherStudent` link
  * when a refund with outcome `reopened` may complete, decided from the
- * fetched view (`docs/lock-order.md`). A refund it cannot apply yet is left
- * unwritten and the sync answers `unavailable`, so Mollie retries; every
- * other write in the transaction commits.
+ * fetched view and the stored rows (`docs/lock-order.md`). A refund it cannot
+ * apply yet is left unwritten and the sync answers `unavailable`, so Mollie
+ * retries; every other write in the transaction commits.
  */
 export async function syncAttempt(
   db: PrismaClient,
@@ -492,21 +510,25 @@ export async function syncAttempt(
     return 'unknown';
   }
 
-  const refunds: { id: string; status: ProcessorRefundStatus }[] = [];
+  const refunds: { id: string; status: ProcessorRefundStatus; amount: MollieAmount }[] = [];
   for (const refund of view.refunds) {
     const status = refundStatusSchema.safeParse(refund.status);
-    if (status.success) refunds.push({ id: refund.id, status: status.data });
+    if (status.success) refunds.push({ id: refund.id, status: status.data, amount: refund.amount });
     else log.warn({ attemptId: attempt.id, refundId: refund.id, status: refund.status }, 'Mollie reported a refund status fair.yoga does not know');
   }
 
   // Whether a refund with outcome `reopened` may complete here, read from the
-  // stored rows before any lock: such a sync takes the link lock first.
+  // stored rows before any lock: such a sync takes the link lock first. A
+  // refund no row holds counts by the awaiting row it would be adopted into.
   const stored = await db.processorRefund.findMany({
     where: { attemptId: attempt.id },
-    select: { processorRefundId: true, status: true, outcome: true },
+    select: { id: true, processorRefundId: true, status: true, outcome: true, amount: true, requestedAt: true },
   });
+  const awaitingBefore = stored.filter((s) => s.processorRefundId === null);
   const takesLinkLock = refunds.some((r) => {
-    const row = stored.find((s) => s.processorRefundId === r.id);
+    const held = stored.find((s) => s.processorRefundId === r.id);
+    const adoption = held === undefined ? adoptionFor(awaitingBefore, r, attempt.currency, now) : null;
+    const row = held ?? (adoption?.kind === 'adopt' ? adoption.row : undefined);
     return row !== undefined && row.outcome === 'reopened' && completes(decideRefundSync({ storedStatus: row.status, mollieStatus: r.status }));
   });
 
@@ -586,37 +608,49 @@ export async function syncAttempt(
 
     const deferred: string[] = [];
     for (const refund of refunds) {
-      const row = await tx.processorRefund.findUnique({
+      const held = await tx.processorRefund.findUnique({
         where: { processorRefundId: refund.id },
         select: { id: true, attemptId: true, status: true, outcome: true },
       });
-      if (row === null || row.attemptId !== attempt.id) {
-        // No row of this attempt's: one still awaiting its Mollie id may be
-        // this refund; otherwise it was made in Mollie's own dashboard.
-        const awaiting = await tx.processorRefund.count({ where: { attemptId: attempt.id, processorRefundId: null } });
-        if (awaiting > 0) deferred.push(refund.id);
-        continue;
+      if (held !== null && held.attemptId !== attempt.id) continue;
+      let row = held;
+      let adopting = false;
+      if (row === null) {
+        // No row holds this refund: adopt it into an intent of this attempt's
+        // still awaiting its Mollie id, wait for that intent's own call, or,
+        // with neither, leave it as a refund made in Mollie's own dashboard.
+        const awaiting = await tx.processorRefund.findMany({
+          where: { attemptId: attempt.id, processorRefundId: null },
+          select: { id: true, attemptId: true, status: true, outcome: true, amount: true, requestedAt: true },
+        });
+        const adoption = adoptionFor(awaiting, refund, current.currency, now);
+        if (adoption.kind === 'ignore') continue;
+        if (adoption.kind === 'defer') {
+          deferred.push(refund.id);
+          continue;
+        }
+        row = adoption.row;
+        adopting = true;
       }
       const step = decideRefundSync({ storedStatus: row.status, mollieStatus: refund.status });
-      if (step.kind === 'unchanged') continue;
-      if (step.complete && row.outcome === 'reopened' && !takesLinkLock) {
+      if (step.kind === 'status' && step.complete && row.outcome === 'reopened' && !takesLinkLock) {
         // Completing it would take the link lock after the payment's.
         deferred.push(refund.id);
         continue;
       }
+      if (adopting) {
+        const claimed = await tx.processorRefund.updateMany({
+          where: { id: row.id, processorRefundId: null },
+          data: { processorRefundId: refund.id },
+        });
+        if (claimed.count === 0) continue;
+        log.info({ attemptId: attempt.id, refundId: row.id, mollieRefundId: refund.id }, 'a Mollie refund was adopted into the intent that never stored its id');
+      }
+      if (step.kind === 'unchanged') continue;
       const moved = await tx.processorRefund.updateMany({ where: { id: row.id, status: row.status }, data: { status: step.status } });
       if (moved.count === 0) continue;
       if (step.complete) await completeRefund(tx, { paymentId: attempt.paymentId, attemptId: attempt.id, outcome: row.outcome, now });
-      if (step.notifyFailed) {
-        await createNotification(tx, {
-          recipientType: 'teacher',
-          recipientId: teacherId,
-          type: 'refund_failed',
-          title: 'Refund failed',
-          body: 'A refund didn’t go through. Check your Mollie balance and try again from the payment.',
-          relatedClassId: registration.classId,
-        });
-      }
+      if (step.notifyFailed) await notifyRefundFailed(tx, { teacherId, classId: registration.classId });
     }
     return { result, deferred };
   });

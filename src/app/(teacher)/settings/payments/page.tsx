@@ -100,6 +100,7 @@ export default async function PaymentsOverviewPage() {
               status={p.status}
               reminderSentAt={p.reminderSentAt}
               studentReportedOn={claimDay(p.studentReportedAt, session.defaultTimezone)}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))
         )}

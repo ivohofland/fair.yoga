@@ -5,46 +5,54 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 interface SheetProps {
   title: string;
   onClose: () => void;
+  /** Whether Escape and a tap on the backdrop close the sheet. */
+  dismissible?: boolean;
   children: ReactNode;
 }
 
 /**
  * A bottom sheet on a phone and a centred modal from `sm` up: the vendored
  * design system's Sheet (`docs/design_handoff_fairyoga/components/feedback/Sheet.jsx`),
- * with its ink-40% scrim and the one shadow the system allows. Escape and a
- * tap on the scrim close it. Focus moves into the sheet when it mounts and
- * back to the element that held it when it unmounts.
+ * with its ink-40% scrim and the one shadow the system allows. A native
+ * `<dialog>` opened with `showModal()`, so the browser traps focus, makes the
+ * page behind it inert and turns Escape into `cancel`. While `dismissible`,
+ * Escape and a tap on the backdrop close it. The page does not scroll while
+ * it is open. Focus returns on close to the element that held it, when that
+ * element is still in the document.
  */
-export function Sheet({ title, onClose, children }: SheetProps) {
+export function Sheet({ title, onClose, dismissible = true, children }: SheetProps) {
   const titleId = useId();
-  const panel = useRef<HTMLDivElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
+    const node = dialog.current;
+    if (node === null) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    panel.current?.focus();
-    return () => previous?.focus();
+    if (!node.open) node.showModal();
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = overflow;
+      if (node.open) node.close();
+      if (previous?.isConnected) previous.focus();
+    };
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-scrim sm:items-center"
-      onClick={onClose}
+    <dialog
+      ref={dialog}
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (dismissible) onClose();
+      }}
+      onClick={(e) => {
+        // The panel fills the dialog, so a click on the dialog itself is on its backdrop.
+        if (e.target === e.currentTarget && dismissible) onClose();
+      }}
+      className="m-0 mt-auto w-full max-w-full max-h-[85vh] overflow-y-auto p-0 bg-cream text-brown rounded-t-sheet shadow-sheet backdrop:bg-scrim sm:m-auto sm:w-[min(480px,calc(100%-48px))] sm:rounded-card"
     >
-      <div
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
-        className="w-full max-h-[85vh] overflow-y-auto bg-cream rounded-t-sheet shadow-sheet px-5 pb-5 focus:outline-none sm:w-[min(480px,calc(100%-48px))] sm:rounded-card"
-      >
+      <div className="px-5 pb-[max(20px,env(safe-area-inset-bottom))]">
         <div className="flex justify-center pt-2.5 pb-1 sm:hidden" aria-hidden="true">
           <div className="h-1 w-9 rounded-sm bg-border" />
         </div>
@@ -53,6 +61,6 @@ export function Sheet({ title, onClose, children }: SheetProps) {
         </h2>
         {children}
       </div>
-    </div>
+    </dialog>
   );
 }
