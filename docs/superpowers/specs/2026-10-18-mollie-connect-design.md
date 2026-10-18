@@ -86,6 +86,16 @@ the numbering here is this spec's.
     methods that exist for that payment, and nothing in the schema, the code's
     types or any copy names a level. A teacher reads "Mollie connected", never
     "Level 2".
+17. **A payment Mollie settled cannot be reopened; a refund is how it leaves
+    `paid`.** The webhook proved the money arrived, so "Mark unpaid" would make
+    the record say unpaid while the money sits in the teacher's balance, and
+    chase a student who paid. `reopenPayment` refuses (409
+    `PAYMENT_SETTLED_BY_PROCESSOR`, "Mollie confirmed this payment. Refund it
+    instead.") while an attempt with `settledPayment` exists, and the teacher's
+    row offers **Refund** in its place. The exception is a chargeback: once
+    Mollie reports `amountChargedBack > 0` on the settling attempt, the attempt
+    records `chargedBackAt`, stops settling the payment, the teacher is told,
+    and "Mark unpaid" returns. A charged-back attempt cannot be refunded.
 
 ## The premise, as measured (`main` at `31498958`)
 
@@ -131,13 +141,15 @@ is what Mollie's server-side POST is.
   Cascade, connectionId → ProcessorConnection, processorPaymentId @unique,
   method String, status ProcessorPaymentStatus, amount Decimal, currency
   Currency, checkoutUrl String?, expiresAt DateTime?, paidAt DateTime?,
-  settledPayment Boolean, createdAt, updatedAt }`. `ProcessorPaymentStatus`
+  settledPayment Boolean, chargedBackAt DateTime?, createdAt, updatedAt }`. `ProcessorPaymentStatus`
   is Mollie's own set: `open`, `pending`, `authorized`, `paid`, `canceled`,
   `expired`, `failed`. `settledPayment` is true on at most one attempt per
   `Payment` (partial unique index `WHERE settled_payment`): the one whose
-  webhook moved the `Payment` to `paid`. Every writer that moves a `Payment`
-  out of `paid` (`reopenPayment`, a refund's outcome) clears it in the same
-  transaction, or a later settle would collide with the index. `currency` is a snapshot in the
+  webhook moved the `Payment` to `paid`. While it is set, `reopenPayment`
+  refuses (Decision 17). It is cleared by a refund's outcome, in the
+  transaction that applies the outcome, and by a chargeback, which also
+  stamps `chargedBackAt` (§5); once cleared, a later settle cannot collide
+  with the index. `currency` is a snapshot in the
   `docs/data-model.md` sense: what Mollie charged, which no later currency
   switch may relabel. `method` is a string, not the allowlist type, because
   a stored row must stay readable after its method leaves the allowlist.
@@ -153,16 +165,22 @@ is what Mollie's server-side POST is.
   — sha256 (`hashToken`) of 32 random bytes, 10-minute TTL, deleted on use;
   the daily auth cleanup deletes expired rows.
 - **`PayoutChangeKind`** gains `processor_connected`, `processor_changed`,
-  `processor_disconnected`. `before`/`after` carry the masked organization id
-  (`org_…` plus its last four characters) and the organization's name.
-  `processor_changed` is a reconnect landing on a different organization.
-  Mollie links each balance to a profile, and each balance has its own bank
-  account and payout settings, so a payment lands in the balance of the profile
-  it was created under. Choosing between an organization's profiles can
-  therefore change where a teacher's money is paid out.
+  `processor_disconnected`. Mollie links each balance to a profile, and each
+  balance has its own bank account and payout settings, so a payment lands in
+  the balance of the profile it was created under. The payout identity is
+  therefore the live connection's **(organization, profile) pair**, and an
+  event is written whenever the live identity becomes a new pair, at the
+  moment it becomes live: by the OAuth callback (§1) or by choosing a profile.
+  The kind is `processor_connected` when the row had no live identity just
+  before the write, `processor_changed` otherwise. `before`/`after` carry the
+  masked organization id (`org_…` plus its last four characters) and the
+  profile's name (`org_…1234 · Studio Anna`); `before` is null for
+  `processor_connected`, including one written by choosing a profile after a
+  reconnect cleared it. A previous profile whose name the fetched profile list
+  no longer holds is shown by its masked id (`pfl_…` plus its last four).
 - **`NotificationType`** gains `processor_disconnected`,
-  `payment_paid_twice` and `refund_failed` (teacher) and `payment_refunded`
-  (student). Every
+  `payment_paid_twice`, `payment_charged_back` and `refund_failed` (teacher)
+  and `payment_refunded` (student). Every
   `satisfies Record<NotificationType, …>` map (push policy, retention) then
   fails to compile until each has its row.
 - **Dropped:** `Teacher.paymentLevel`, `Teacher.processorType`,
@@ -193,7 +211,7 @@ dropped and is the teacher's "not shown" list (§3).
 
 Every writer that changes a connection takes `lockTeacherForNoKeyUpdate`
 first, as the payout writers do (`docs/lock-order.md`, "The `Teacher` row is
-the first lock"), because each writes a `PayoutChangeEvent` and the resume
+the first lock"), because each can write a `PayoutChangeEvent` and the resume
 fingerprint must read a stable set.
 
 Payment writers keep their CAS shape. The webhook's settle and the refund's
@@ -220,11 +238,25 @@ re-reads and uses the winner's token.
   reconnect). The browser navigates there.
 - **Return:** `GET /api/processor/mollie/callback?code&state` — the session
   must be the one the state was bound to; the code (30-second lifetime) is
-  exchanged immediately; `/v2/organizations/me` and `/v2/profiles` are read;
-  one profile is chosen automatically, several send the teacher to a picker on
-  the settings section. Under the teacher lock: rewrite the connection, write
-  the `PayoutChangeEvent`, then after commit `deliverPayoutChangedNotice`
+  exchanged immediately; `/v2/organizations/me` and `/v2/profiles` are read.
+  Under the teacher lock the connection is rewritten, and its `profileId` is
+  decided against the row's live identity read before the write:
+  - **One usable profile:** it is chosen. When the (organization, profile)
+    pair differs from the row's live identity, the `PayoutChangeEvent` is
+    written (Data); the same pair writes none (a re-authorization for new
+    scopes).
+  - **Several:** when the organization is unchanged and the row's previous
+    live profile is still in the list, that `profileId` is kept: the row stays
+    live and no event is written. Otherwise `profileId` is set null — the row is
+    not live, so no money can flow — no event is written, and the teacher is
+    sent to a picker on the settings section.
+  After commit, an event that was written gets `deliverPayoutChangedNotice`
   (#786's alert and *This wasn't me* link, unchanged).
+- **Choosing a profile:** `PUT /api/teachers/[id]/processor/profile` sets the
+  row's `profileId` from the picker, or switches it on a live row from the
+  settings section. Under the teacher lock; a profile different from the row's
+  current one writes the event (Data) and, after commit,
+  `deliverPayoutChangedNotice`.
 - **Refused** (409, registered codes): an unknown or expired state, a state
   from another session. A grant
   missing a requested scope is stored and the section says "reconnect to
@@ -239,7 +271,8 @@ re-reads and uses the winner's token.
   `revokedAt`; one with no open attempts is revoked fire-and-forget right after
   the disconnect commits, and the sweep is its retry.
 - **The pause (#786)** covers the connection: `payoutFingerprint` gains the
-  live connection's `organizationId`, so a reconnect during a pause
+  live connection's `organizationId` and `profileId` (a row that is not live
+  contributes null), so a reconnect or a profile switch during a pause
   changes what resume confirms. While paused the pay page already answers
   `paused` instead of every method, Mollie rows included; the attempt route
   refuses `PAYMENTS_PAUSED`.
@@ -325,6 +358,7 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 
 | Mollie says | `Payment` is | Then |
 |---|---|---|
+| `paid` with `amountChargedBack > 0`, attempt not yet charged back | any | attempt `chargedBackAt`, `settledPayment = false`, `Payment` untouched (a settled one stays `paid`); teacher gets `payment_charged_back` ("<student> disputed <amount> with their bank and it was taken back. You can mark the payment unpaid to ask again."; for an attempt that did not settle the payment, the first sentence alone). Repeat → `unchanged`. Any amount above zero is a chargeback, a partial one included. This row is checked before the others |
 | `paid` | `pending`/`overdue` | attempt `paid`, `settledPayment = true`, `markPaymentPaid(…, 'mollie')`; no notification, as for a manual mark-paid (nothing writes `payment_received` today) |
 | `paid` | `paid` by this attempt | `unchanged` |
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
@@ -343,7 +377,8 @@ settled the payment and refused when it did not. Order, chosen because the
 money is the irreversible part:
 
 1. In a transaction: lock the payment and attempt; refuse (409) an attempt not
-   `paid`, one with a non-failed refund, a payment no longer `paid` by it when
+   `paid`, one charged back (`chargedBackAt`; the bank already took the money
+   back), one with a non-failed refund, a payment no longer `paid` by it when
    `outcome` is given; insert `ProcessorRefund` as `queued` with no Mollie id
    yet (the partial unique index stops a double click here).
 2. `POST /v2/payments/{id}/refunds` for the full amount.
@@ -351,11 +386,20 @@ money is the irreversible part:
    map to a registered code with copy). Mollie accepts: store its id and
    status, and in the same transaction apply `outcome` — `paid →
    not_charged` (Decision 9) or `paid → pending` (`reopenPayment`'s columns) —
-   CAS on `status = 'paid'`. A CAS miss (the teacher reopened it meanwhile)
-   leaves the state the teacher chose and says so; the money has gone back
-   either way.
+   CAS on `status = 'paid'`. "Ask again" reopens through `reopenPayment`'s
+   body with the refunded attempt named, which is the one reopen Decision 17
+   allows, and clears that attempt's `settledPayment`. A CAS miss (the
+   payment left `paid` meanwhile — a chargeback cleared the attempt and the
+   teacher marked it unpaid) leaves the state the teacher chose and says so;
+   the money has gone back either way.
 4. The student gets `payment_refunded`. A `queued` refund (low balance) is
    shown as queued on the payment row until a webhook moves it.
+
+On a payment an attempt settled, the teacher's row shows **Refund** where
+"Mark unpaid" would be (Decision 17). A chargeback is not a refund and is not
+made here: §5 records it on the attempt, the teacher is told, and the row
+then offers "Mark unpaid" and no Refund for that attempt. A partial
+chargeback counts as a chargeback: any `amountChargedBack` above zero.
 
 ## 7 · Erasure and export
 
@@ -379,12 +423,13 @@ money is the irreversible part:
   `PROCESSOR_TOKEN_KEY` replace `MOLLIE_API_KEY`); `Payment` Level 2 retry
   note.
 - `docs/data-model.md`: the three tables, the dropped columns, the narrowed
-  #47 rule.
+  #47 rule, and Decision 17's reopen rule with its chargeback exception.
 - `docs/lock-order.md`: the connection writers under the teacher lock; the
   payment-then-attempt order.
 - `docs/degradation-sites.md`: the new codes.
-- CLAUDE.md *Payment Model*: Level 2's line and the grace-policy sentence on
-  `paid → not_charged`.
+- CLAUDE.md *Payment Model*: Level 2's line, the grace-policy sentence on
+  `paid → not_charged`, and that a Mollie-settled payment leaves `paid` only
+  by refund until a chargeback (Decision 17).
 
 ## To verify against Mollie before the plan
 
@@ -459,9 +504,9 @@ Checked against docs.mollie.com on 2026-10-18; each line is the fact as found.
 
 ## Out of scope
 
-Stripe; recurring, mandates and Mollie customers; partial refunds; chargebacks
-(an attempt's chargeback is recorded as its Mollie status and nothing more —
-the teacher reopens by hand if they want to chase it); a retry policy
+Stripe; recurring, mandates and Mollie customers; partial refunds; a
+chargeback's reversal (the classic webhook is documented only for a received
+chargeback, so an attempt keeps `chargedBackAt` once stamped); a retry policy
 (CLAUDE.md, *Open Questions*); key rotation beyond the version byte.
 
 ## Testing
@@ -477,11 +522,14 @@ the teacher reopens by hand if they want to chase it); a retry policy
     request shapes, timeouts, `invalid_grant` and 422 classification.
   - *Services*, unit tier against the real test database with the client
     injected (as `dispatchPushes(db, { send })` takes its sender): connect
-    with one and several profiles; state reuse and cross-session state
-    refused; the overlap with a pay-later id enabled; unsupported currency
+    with one and several profiles (a kept previous profile and a cleared one
+    both write no event); choosing a profile writes the event; state reuse
+    and cross-session state refused; the overlap with a pay-later id enabled; unsupported currency
     and Mollie down answer the Level 1 rows; attempt reuse; each webhook row;
-    a repeat webhook `unchanged`; double payment; refund with each outcome
-    and as a duplicate; double-click refund; `invalid_grant` disconnects and
+    a repeat webhook `unchanged`; double payment; a chargeback and its
+    repeat; reopen of a Mollie-settled payment refused, and allowed after a
+    chargeback; refund with each outcome and as a duplicate; a charged-back
+    attempt refused; double-click refund; `invalid_grant` disconnects and
     notifies; pause refuses the attempt.
   - *Routes*, unit-tier `route.test.ts` with services mocked.
   - *Integration*, only paths that make no outbound call: with no live
@@ -493,5 +541,6 @@ the teacher reopens by hand if they want to chase it); a retry policy
   the allowlist (absent from the offered methods); drop the session binding on the state
   (the cross-session test fails); remove the partial unique index (the
   double-click test fails); make `markPaymentNotCharged` accept `paid` (its
+  refusal test fails); remove `reopenPayment`'s settled-by-Mollie refusal (its
   refusal test fails).
 - **Manual, before merge:** one real connect against Mollie test mode.

@@ -67,7 +67,7 @@ git commit -m "docs: verify the Mollie facts the spec assumed (#896)"
 - Test: `src/services/processor-schema.test.ts` (unit tier, real test DB)
 
 **Interfaces:**
-- Produces: Prisma models `ProcessorConnection`, `ProcessorPayment`, `ProcessorRefund`, `OAuthState`; enums `ProcessorPaymentStatus`, `ProcessorRefundStatus`, `RefundOutcome`; new members on `PayoutChangeKind` (`processor_connected`, `processor_changed`, `processor_disconnected`) and `NotificationType` (`processor_disconnected`, `payment_paid_twice`, `refund_failed`, `payment_refunded`); `TeacherNotificationType` gains the three teacher ones.
+- Produces: Prisma models `ProcessorConnection`, `ProcessorPayment`, `ProcessorRefund`, `OAuthState`; enums `ProcessorPaymentStatus`, `ProcessorRefundStatus`, `RefundOutcome`; new members on `PayoutChangeKind` (`processor_connected`, `processor_changed`, `processor_disconnected`) and `NotificationType` (`processor_disconnected`, `payment_paid_twice`, `payment_charged_back`, `refund_failed`, `payment_refunded`); `TeacherNotificationType` gains the teacher ones (every new member but `payment_refunded`).
 - Removes: `Teacher.paymentLevel`, `Teacher.processorType`, `Teacher.processorAccountId`, `Payment.processorRef`, enum `PaymentLevel`.
 
 - [ ] **Step 1: Write the failing constraint test**
@@ -196,7 +196,8 @@ model ProcessorConnection {
 }
 
 /// One charge attempt at the processor for a `Payment`. `currency` is what the
-/// processor charged and is never relabelled. Hand-written in the migration:
+/// processor charged and is never relabelled. `chargedBackAt` is when the
+/// processor first reported a chargeback on it. Hand-written in the migration:
 /// `ProcessorPayment_one_settling_per_payment` (partial unique on `paymentId`
 /// where `settledPayment`).
 model ProcessorPayment {
@@ -212,6 +213,7 @@ model ProcessorPayment {
   expiresAt          DateTime?
   paidAt             DateTime?
   settledPayment     Boolean                @default(false)
+  chargedBackAt      DateTime?
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
 
@@ -291,13 +293,13 @@ Run: `pnpm exec tsc --noEmit`. Fix each error:
 - `src/services/gdpr.ts`: delete the two processor lines from the teacher erasure `updateMany` (Task 10 adds the connection's own erasure).
 - `shared.test.ts`: drop `processorRef` from the fixture and from the "never exposes" assertion list if present.
 - Notification maps — classify each new member:
-  - `STUDENT_PUSH_GROUP`: `payment_refunded` → the group `payment_request` uses; the three teacher types → `'never'`.
-  - `RETENTION`: all four → `STANDARD_RETENTION_DAYS`.
+  - `STUDENT_PUSH_GROUP`: `payment_refunded` → the group `payment_request` uses; each teacher type → `'never'`.
+  - `RETENTION`: every new type → `STANDARD_RETENTION_DAYS`.
   - `STUDENT_INTROS` (exhaustive over `NotificationType`): one sentence each, e.g. `payment_refunded: 'Your teacher refunded a payment.'`, teacher types get the same wording style as the existing teacher entries there.
-  - `TeacherNotificationType`: add `'processor_disconnected' | 'payment_paid_twice' | 'refund_failed'`.
-  - `TEACHER_EMAIL_POLICY`: all three `() => true` (money; always email, as `class_cancelled`).
-  - `TEACHER_UNSUBSCRIBE`: all three `null`.
-  - `TEACHER_PUSH_GROUP`: the group `payment_request` uses for teachers.
+  - `TeacherNotificationType`: add `'processor_disconnected' | 'payment_paid_twice' | 'payment_charged_back' | 'refund_failed'`.
+  - `TEACHER_EMAIL_POLICY`: each new teacher type `() => true` (money; always email, as `class_cancelled`).
+  - `TEACHER_UNSUBSCRIBE`: each new teacher type `null`.
+  - `TEACHER_PUSH_GROUP`: each new teacher type → the group `payment_request` uses for teachers.
   - `ESSENTIAL_NOTIFICATION_TYPES` (a Set, not compiler-checked): add `payment_refunded`.
 - Anything switching on `PayoutChangeKind` (the alert email copy): add the three processor kinds with copy "Mollie connected" / "Mollie account changed" / "Mollie disconnected".
 
@@ -542,7 +544,8 @@ export type MethodsAnswer = { kind: 'methods'; ids: string[] } | { kind: 'unsupp
 export type MollieRefundView = { id: string; status: string; amount: MollieAmount };
 export type MolliePaymentView = {
   id: string; status: string; method: string | null; amount: MollieAmount;
-  checkoutUrl: string | null; expiresAt: string | null; paidAt: string | null; refunds: MollieRefundView[];
+  checkoutUrl: string | null; expiresAt: string | null; paidAt: string | null;
+  amountChargedBack: MollieAmount | null; refunds: MollieRefundView[];
 };
 export type CreatePaymentInput = {
   amount: MollieAmount; description: string; method: string; redirectUrl: string;
@@ -681,6 +684,14 @@ describe('getPayment', () => {
     expect(view?.refunds).toEqual([{ id: 're_1', status: 'queued', amount: { value: '10.00', currency: 'EUR' } }]);
     expect(new URL(String(fetchImpl.mock.calls[0]![0])).searchParams.get('embed')).toBe('refunds');
   });
+  it('reads amountChargedBack, and null when Mollie omits it', async () => {
+    const { mollie } = client([
+      json(200, { id: 'tr_1', status: 'paid', method: 'ideal', amount: { value: '10.00', currency: 'EUR' }, amountChargedBack: { value: '4.00', currency: 'EUR' }, _links: {} }),
+      json(200, { id: 'tr_2', status: 'paid', method: 'ideal', amount: { value: '10.00', currency: 'EUR' }, _links: {} }),
+    ]);
+    expect((await mollie.getPayment('tok', 'tr_1', { testmode: false }))?.amountChargedBack).toEqual({ value: '4.00', currency: 'EUR' });
+    expect((await mollie.getPayment('tok', 'tr_2', { testmode: false }))?.amountChargedBack).toBeNull();
+  });
   it('answers null for a 404', async () => {
     const { mollie } = client([json(404, { status: 404 })]);
     expect(await mollie.getPayment('tok', 'tr_x', { testmode: false })).toBeNull();
@@ -744,6 +755,7 @@ const refundSchema = z.object({ id: z.string(), status: z.string(), amount: amou
 const paymentSchema = z.object({
   id: z.string(), status: z.string(), method: z.string().nullable().optional(), amount: amountSchema,
   expiresAt: z.string().nullable().optional(), paidAt: z.string().nullable().optional(),
+  amountChargedBack: amountSchema.optional(),
   _embedded: z.object({ refunds: z.array(refundSchema).optional() }).optional(),
   _links: z.object({ checkout: z.object({ href: z.string() }).optional() }).optional(),
 });
@@ -757,7 +769,7 @@ function toView(p: z.infer<typeof paymentSchema>): MolliePaymentView {
   return {
     id: p.id, status: p.status, method: p.method ?? null, amount: p.amount,
     checkoutUrl: p._links?.checkout?.href ?? null, expiresAt: p.expiresAt ?? null, paidAt: p.paidAt ?? null,
-    refunds: p._embedded?.refunds ?? [],
+    amountChargedBack: p.amountChargedBack ?? null, refunds: p._embedded?.refunds ?? [],
   };
 }
 ```
@@ -843,6 +855,9 @@ describe('the allowlist', () => {
     expect(isAllowedMollieMethod('banktransfer')).toBe(false);
     expect(isAllowedMollieMethod('googlepay')).toBe(false);
   });
+  it('holds no PayPal, whose checkout can offer pay-later (Decision 3)', () => {
+    expect(isAllowedMollieMethod('paypal')).toBe(false);
+  });
   it('lists iDEAL and Wero as separate rows', () => {
     expect(MOLLIE_METHODS.ideal.label).toBe('iDEAL');
     expect(MOLLIE_METHODS.wero.label).toBe('Wero');
@@ -868,12 +883,10 @@ describe('exclusionReason', () => {
   });
 });
 
-it('the longest expiry is PayPal\'s six hours', () => {
-  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(360);
+it('the longest expiry is an hour', () => {
+  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(60);
 });
 ```
-
-(If Task 0 removed PayPal, the order and longest-expiry expectations follow the constant as it stands.)
 
 - [ ] **Step 2: Run, see them fail.** `pnpm exec vitest run --project unit src/lib/processor-methods.test.ts` → FAIL, module not found.
 
@@ -1287,7 +1300,7 @@ git commit -m "feat: processor access tokens with refresh and disconnect on inva
 - Modify: `src/lib/schemas.ts` (`processorProfileSchema`)
 
 **Interfaces:**
-- Consumes: `MollieDeps`, `sealGrant`, `forgetOfferedMethods`, `hashToken` (`src/lib/auth/magic-link.ts`), `lockTeacherForNoKeyUpdate` (`src/lib/db-locks.ts`), `deliverPayoutChangedNotice` (`src/services/payout-notice.ts`).
+- Consumes: `MollieDeps`, `sealGrant`, `getAccessToken` (Task 5), `forgetOfferedMethods`, `hashToken` (`src/lib/auth/magic-link.ts`), `lockTeacherForNoKeyUpdate` (`src/lib/db-locks.ts`), `deliverPayoutChangedNotice` (`src/services/payout-notice.ts`).
 - Produces:
 
 ```ts
@@ -1297,11 +1310,11 @@ export function mollieRedirectUri(appUrl: string): string; // `${appUrl}/api/pro
 export function startConnect(db, deps, input: { teacherId: string; sessionId: string; now?: Date }): Promise<{ authorizeUrl: string }>;
 export type CompleteConnectOutcome =
   | { kind: 'connected'; teacherId: string; eventId: string | null }
-  | { kind: 'choose_profile'; teacherId: string; eventId: string | null }
+  | { kind: 'choose_profile'; teacherId: string }
   | { kind: 'refused'; refusal: Extract<CodedRefusal, { code: 'OAUTH_STATE_INVALID' }> }
   | { kind: 'unavailable' };
 export function completeConnect(db, deps, input: { state: string; code: string; sessionId: string; now?: Date }): Promise<CompleteConnectOutcome>;
-export type ChooseProfileOutcome = { kind: 'chosen' } | { kind: 'unchanged' } | { kind: 'not_connected' } | { kind: 'unknown_profile' } | { kind: 'unavailable' };
+export type ChooseProfileOutcome = { kind: 'chosen'; eventId: string } | { kind: 'unchanged' } | { kind: 'not_connected' } | { kind: 'unknown_profile' } | { kind: 'unavailable' };
 export function chooseProfile(db, deps, input: { teacherId: string; profileId: string }): Promise<ChooseProfileOutcome>;
 export type DisconnectOutcome =
   | { kind: 'disconnected'; eventId: string; connectionId: string; revokeNow: boolean }
@@ -1309,6 +1322,10 @@ export type DisconnectOutcome =
 export function disconnect(db, input: { teacherId: string; now?: Date }): Promise<DisconnectOutcome>;
 export function revokeConnection(db, deps, connectionId: string): FireAndForget;
 export function maskOrganizationId(id: string): string; // 'org_…' + last four
+export function maskProfileId(id: string): string; // 'pfl_…' + last four
+export type LiveIdentity = { organizationId: string; profileId: string };
+// `${maskOrganizationId(organizationId)} · ${the profile's name in profiles, else maskProfileId(profileId)}`
+export function payoutIdentityLabel(identity: LiveIdentity, profiles: readonly { id: string; name: string }[]): string;
 export type ConnectionView =
   | { kind: 'none' }
   | { kind: 'choose_profile'; profiles: { id: string; name: string }[] }
@@ -1317,25 +1334,30 @@ export type ConnectionView =
 export function readConnectionView(db, deps, teacherId: string): Promise<ConnectionView>;
 ```
 
-Event rule (spec, Data): at `completeConnect`, compare the new `organizationId` with the row's previous *live* identity (the previous row, if it was not disconnected). No previous live identity → `processor_connected`; a different organization → `processor_changed`; the same organization → no event (`eventId: null`, e.g. a re-authorization for new scopes). `chooseProfile` writes no event.
+Event rule (spec, Data and §1): the payout identity is the live row's `(organizationId, profileId)` pair (live = `disconnectedAt IS NULL AND profileId IS NOT NULL`). An event is written whenever the live identity becomes a new pair, at the moment it becomes live, and never when the row is left without a profile.
+- `completeConnect`, one usable profile: compare `(org.id, that profile)` with the row's live identity read before the write. No live identity → `processor_connected`; a different pair → `processor_changed`; the same pair → no event (`eventId: null`, e.g. a re-authorization for new scopes).
+- `completeConnect`, several profiles: the organization unchanged and the previous live profile in the new list → that `profileId` is kept, the row stays live, no event (`connected`, `eventId: null`). Otherwise `profileId` null, no event (`choose_profile`).
+- `chooseProfile` (the picker, or a switch on a live row): a profile different from the row's current `profileId` writes the event — `processor_connected` when the row had no live identity (`profileId` null), else `processor_changed`.
+- `before` is `payoutIdentityLabel(previous identity, fetched profiles)` for `processor_changed` and null for `processor_connected`; `after` is `payoutIdentityLabel(new identity, fetched profiles)`.
 
 - [ ] **Step 1: Write the failing service tests** (unit tier, real DB, fake client)
 
 Cases, each its own `it`:
 1. `startConnect` stores one `OAuthState` with `stateHash = hashToken(state)` and `expiresAt = now + 10 min`, and the authorize URL carries `state` and every `MOLLIE_SCOPES` member (space-joined in `scope`).
 2. `completeConnect` with one profile → `connected`, the row has `organizationId`, `profileId`, sealed tokens, `scopes`, `testmode` from config; one `PayoutChangeEvent` `processor_connected` with `after = 'org_…' + last four + ' · ' + name`; the state row is gone.
-3. Same with two profiles → `choose_profile`, `profileId` null, event written (organization chosen).
+3. Same with two profiles and no previous live identity → `choose_profile`, `profileId` null, **no** event; the same with a previous live profile that is not in the new list (or a different organization) → `choose_profile`, `profileId` null, no event, and the row is no longer live.
+3a. Reconnect to the same organization with two profiles, the previous live profile among them → `connected`, `eventId: null`, `profileId` still the previous one, the row still live.
 4. Unknown state, expired state, and a state bound to another session → `refused` `OAUTH_STATE_INVALID`, no Mollie call (`fake.exchangeCode` not called), and the state row of the other-session case **still exists** (a stranger cannot burn the teacher's state).
 5. A state is single-use: a second `completeConnect` with the same state → `refused`.
 6. Reconnect to the same organization while live → `connected`, `eventId: null`.
 7. Reconnect to a different organization → `processor_changed`, `before` names the old org.
 8. Reconnect after a disconnect → `processor_connected`; `disconnectedAt`, `revokeAfter`, `revokedAt` cleared.
 9. `exchangeCode` answering `invalid_grant` (expired code) → `refused` `OAUTH_STATE_INVALID`; `MollieUnavailable` → `unavailable`; neither writes a connection.
-10. `chooseProfile` with an id from the fetched list → `chosen`, row has it, no event; an id not in the list → `unknown_profile`; same id again → `unchanged`.
+10. `chooseProfile` with an id from the fetched list on a row whose `profileId` is null → `chosen` with an `eventId`, row has it, one event `processor_connected` with `before: null` and `after = payoutIdentityLabel(…)`; on a live row with another profile → `chosen`, event `processor_changed` whose `before` names the previous profile; an id not in the list → `unknown_profile`, no event; same id again → `unchanged`, no event; a disconnected row → `not_connected`.
 11. `disconnect` with no open attempts → `revokeNow: true`, `disconnectedAt` set, `revokeAfter = now`, event `processor_disconnected`; a second call → `unchanged`.
 12. `disconnect` with an open attempt expiring at T → `revokeNow: false`, `revokeAfter = T`; tokens still present.
 13. `revokeConnection` calls `fake.revoke(refreshPlain)` and then nulls the tokens and stamps `revokedAt`; when `revoke` throws, the row is unchanged (the daily sweep retries, Task 10).
-14. Fingerprint: `payoutFingerprint` differs between a teacher with no connection and one with a live connection, and between two organizations, and is equal for two profiles of one organization.
+14. Fingerprint: `payoutFingerprint` differs between a teacher with no connection and one with a live connection, between two organizations, and between two profiles of one organization; a row without a profile, and a disconnected row, digest as no connection.
 
 - [ ] **Step 2: Run, see them fail.**
 
@@ -1357,58 +1379,126 @@ export async function completeConnect(db: PrismaClient, deps: MollieDeps, input:
     if (answer.kind === 'invalid_grant') return refused;
     grant = answer.grant;
     org = await deps.client.organization(grant.accessToken);
-    profiles = (await deps.client.profiles(grant.accessToken)).filter((p) => p.mode === (deps.config.testmode ? 'test' : 'live') || deps.config.testmode);
+    profiles = usableProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
   } catch (err) {
     if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
     throw err;
   }
-  const profileId = profiles.length === 1 ? profiles[0]!.id : null;
 
-  return db.$transaction(async (tx) => {
+  return db.$transaction(async (tx): Promise<CompleteConnectOutcome> => {
     if (!(await lockTeacherForNoKeyUpdate(tx, state.teacherId))) return refused;
-    const previous = await tx.processorConnection.findUnique({ where: { teacherId: state.teacherId }, select: { id: true, organizationId: true, disconnectedAt: true } });
+    const previous = await tx.processorConnection.findUnique({ where: { teacherId: state.teacherId }, select: { organizationId: true, profileId: true, disconnectedAt: true } });
+    const previousLive = liveIdentity(previous);
+    const profile = initialProfile(profiles, org.id, previousLive);
     const data = {
-      processor: 'mollie' as const, organizationId: org.id, profileId, scopes: grant.scopes, testmode: deps.config.testmode,
+      processor: 'mollie' as const, organizationId: org.id, profileId: profile?.id ?? null, scopes: grant.scopes, testmode: deps.config.testmode,
       ...sealGrant(grant, deps.config.tokenKey, now), connectedAt: now, disconnectedAt: null, revokeAfter: null, revokedAt: null,
     };
     const row = await tx.processorConnection.upsert({ where: { teacherId: state.teacherId }, create: { teacherId: state.teacherId, ...data }, update: data, select: { id: true } });
     forgetOfferedMethods(row.id);
-    const previousLive = previous !== null && previous.disconnectedAt === null ? previous.organizationId : null;
-    let eventId: string | null = null;
-    if (previousLive !== org.id) {
-      const event = await tx.payoutChangeEvent.create({
-        data: {
-          teacherId: state.teacherId,
-          kind: previousLive === null ? 'processor_connected' : 'processor_changed',
-          before: previousLive === null ? null : maskOrganizationId(previousLive),
-          after: `${maskOrganizationId(org.id)} · ${org.name}`,
-          identifierChanged: previousLive === null ? null : true,
-        },
-        select: { id: true },
-      });
-      eventId = event.id;
-    }
-    return profileId === null ? { kind: 'choose_profile', teacherId: state.teacherId, eventId } : { kind: 'connected', teacherId: state.teacherId, eventId };
+    if (profile === null) return { kind: 'choose_profile', teacherId: state.teacherId };
+    const next: LiveIdentity = { organizationId: org.id, profileId: profile.id };
+    const eventId = sameIdentity(previousLive, next) ? null : await writeIdentityEvent(tx, state.teacherId, previousLive, next, profiles);
+    return { kind: 'connected', teacherId: state.teacherId, eventId };
+  });
+}
+
+/** The row's live payout identity, or null when it has none (no row, disconnected, or no profile). */
+function liveIdentity(row: { organizationId: string; profileId: string | null; disconnectedAt: Date | null } | null): LiveIdentity | null {
+  return row !== null && row.disconnectedAt === null && row.profileId !== null
+    ? { organizationId: row.organizationId, profileId: row.profileId }
+    : null;
+}
+
+/** Live mode offers live profiles only; test mode offers every profile. */
+function usableProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
+  return profiles.filter((p) => testmode || p.mode === 'live');
+}
+
+function sameIdentity(a: LiveIdentity | null, b: LiveIdentity): boolean {
+  return a !== null && a.organizationId === b.organizationId && a.profileId === b.profileId;
+}
+
+/** The profile a callback lands on: the only one, or the previous live one when the organization is unchanged and still lists it. */
+function initialProfile(profiles: readonly MollieProfile[], organizationId: string, previousLive: LiveIdentity | null): MollieProfile | null {
+  if (profiles.length === 1) return profiles[0] ?? null;
+  if (previousLive === null || previousLive.organizationId !== organizationId) return null;
+  return profiles.find((p) => p.id === previousLive.profileId) ?? null;
+}
+
+/** Writes the event for a live identity that has just become `next`. */
+async function writeIdentityEvent(
+  tx: Prisma.TransactionClient,
+  teacherId: string,
+  previousLive: LiveIdentity | null,
+  next: LiveIdentity,
+  profiles: readonly MollieProfile[],
+): Promise<string> {
+  const event = await tx.payoutChangeEvent.create({
+    data: {
+      teacherId,
+      kind: previousLive === null ? 'processor_connected' : 'processor_changed',
+      before: previousLive === null ? null : payoutIdentityLabel(previousLive, profiles),
+      after: payoutIdentityLabel(next, profiles),
+      identifierChanged: previousLive === null ? null : true,
+    },
+    select: { id: true },
+  });
+  return event.id;
+}
+```
+
+`chooseProfile` reuses the last two helpers:
+
+```ts
+export async function chooseProfile(db: PrismaClient, deps: MollieDeps, input: { teacherId: string; profileId: string }): Promise<ChooseProfileOutcome> {
+  const row = await db.processorConnection.findUnique({ where: { teacherId: input.teacherId }, select: { id: true, disconnectedAt: true } });
+  if (row === null || row.disconnectedAt !== null) return { kind: 'not_connected' };
+  // The list is fetched outside the transaction: no lock is held across a Mollie call.
+  const token = await getAccessToken(db, deps, row.id);
+  if (token.kind === 'disconnected') return { kind: 'not_connected' };
+  if (token.kind === 'unavailable') return { kind: 'unavailable' };
+  let profiles: MollieProfile[];
+  try {
+    profiles = usableProfiles(await deps.client.profiles(token.accessToken), deps.config.testmode);
+  } catch (err) {
+    if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
+    throw err;
+  }
+  if (!profiles.some((p) => p.id === input.profileId)) return { kind: 'unknown_profile' };
+
+  return db.$transaction(async (tx): Promise<ChooseProfileOutcome> => {
+    if (!(await lockTeacherForNoKeyUpdate(tx, input.teacherId))) return { kind: 'not_connected' };
+    const current = await tx.processorConnection.findUnique({ where: { teacherId: input.teacherId }, select: { id: true, organizationId: true, profileId: true, disconnectedAt: true } });
+    if (current === null || current.disconnectedAt !== null || current.id !== row.id) return { kind: 'not_connected' };
+    if (current.profileId === input.profileId) return { kind: 'unchanged' };
+    await tx.processorConnection.update({ where: { id: current.id }, data: { profileId: input.profileId } });
+    forgetOfferedMethods(current.id);
+    const next: LiveIdentity = { organizationId: current.organizationId, profileId: input.profileId };
+    return { kind: 'chosen', eventId: await writeIdentityEvent(tx, input.teacherId, liveIdentity(current), next, profiles) };
   });
 }
 ```
+
+(The `current.id !== row.id` check refuses a choice that raced a disconnect-and-reconnect, whose profile list may differ from the one fetched.)
 
 (The profile filter keeps live-mode profiles in live mode; refine per Task 0. A teacher with zero usable profiles gets `choose_profile` with an empty list; the section says "Create a website profile in Mollie first".)
 
 `disconnect`: in a transaction, `lockTeacherForNoKeyUpdate` first (`teacher_gone` when null); read the connection; none or already disconnected → `unchanged`; `revokeAfter` = max `expiresAt` over its attempts with status in `open | pending | authorized` and `expiresAt > now`, else `now`; update `disconnectedAt = now, revokeAfter`; event `processor_disconnected` with `before = masked org`; answer `revokeNow = revokeAfter <= now`. After commit (in the route): `deliverPayoutChangedNotice`, `forgetOfferedMethods`, and `revokeConnection` when `revokeNow`.
 
-`payoutFingerprint` / `readPayoutDetails`: add `processorOrganizationId: string | null` — the live connection's `organizationId` (`disconnectedAt IS NULL`; a mid-connect row without a profile still counts, because the organization is chosen) — to the digested array, after the bank accounts. Update the docblock to name the connection's organization as a payout detail.
+`payoutFingerprint` / `readPayoutDetails`: add `processorIdentity: LiveIdentity | null` — the live connection's `organizationId` and `profileId` (`disconnectedAt IS NULL AND profileId IS NOT NULL`; any other row contributes null, since no money can flow to it) — to the digested array, after the bank accounts, as `[organizationId, profileId]` or `null`. `readPayoutDetails` selects `processorConnection: { select: { organizationId, profileId, disconnectedAt } }` and maps it with the same liveness rule (import `LiveIdentity` as a type; keep the rule in one exported helper rather than two spellings). Update the docblock to name the connection's organization and profile as payout details.
 
 - [ ] **Step 4: Routes.** Follow `src/app/api/teachers/[id]/payment-link/route.ts` (authorise, `withErrorHandler`, exhaustive switch). Each route calls `mollieDeps()` and answers 503 `PROCESSOR_UNAVAILABLE` ("Mollie isn't available right now.") when it is null, except `DELETE` which needs no Mollie call (pass `deps` only to `revokeConnection`, skipped when null).
 - `POST …/processor/connect` → `respondOk({ authorizeUrl })`.
-- `GET /api/processor/mollie/callback?code&state` — session via `requireTeacher`; no session → redirect to sign-in with a return path back to `/settings/profile`; Mollie's `error` param (teacher pressed cancel) → redirect `/settings/profile?mollie=cancelled`; `connected` → `deliverPayoutChangedNotice` when `eventId` set, redirect `/settings/profile?mollie=connected`; `choose_profile` → same notice, redirect `/settings/profile?mollie=choose`; `refused` → redirect `/settings/profile?mollie=expired`; `unavailable` → `/settings/profile?mollie=unavailable`. A GET that writes is acceptable here only because the state is single-use and bound to the session; say so in the route's docblock.
-- `PUT …/processor/profile` `{ profileId }` (`processorProfileSchema`: `z.object({ profileId: z.string().regex(/^pfl_[A-Za-z0-9]+$/) }).strict()`) → `chosen` 200, `unchanged` `respondUnchanged`, `not_connected` 409 `PROCESSOR_NOT_CONNECTED`, `unknown_profile` 400, `unavailable` 503.
+- `GET /api/processor/mollie/callback?code&state` — session via `requireTeacher`; no session → redirect to sign-in with a return path back to `/settings/profile`; Mollie's `error` param (teacher pressed cancel) → redirect `/settings/profile?mollie=cancelled`; `connected` → `deliverPayoutChangedNotice` when `eventId` set, redirect `/settings/profile?mollie=connected`; `choose_profile` → no notice (nothing became live), redirect `/settings/profile?mollie=choose`; `refused` → redirect `/settings/profile?mollie=expired`; `unavailable` → `/settings/profile?mollie=unavailable`. A GET that writes is acceptable here only because the state is single-use and bound to the session; say so in the route's docblock.
+- `PUT …/processor/profile` `{ profileId }` (`processorProfileSchema`: `z.object({ profileId: z.string().regex(/^pfl_[A-Za-z0-9]+$/) }).strict()`) → `chosen` → `deliverPayoutChangedNotice` with its `eventId`, then 200; `unchanged` `respondUnchanged`, `not_connected` 409 `PROCESSOR_NOT_CONNECTED`, `unknown_profile` 400, `unavailable` 503.
 - `DELETE …/processor` → `disconnected` 200, `unchanged` `respondUnchanged`, `teacher_gone` 404.
-Each route gets a `route.test.ts` in the payment-link route test's style: services mocked, one test per outcome asserting status, code, and (for `connected`/`disconnected`) that `deliverPayoutChangedNotice` was called with the event id.
+Each route gets a `route.test.ts` in the payment-link route test's style: services mocked, one test per outcome asserting status, code, and (for `connected`, `chosen` and `disconnected`) that `deliverPayoutChangedNotice` was called with the event id; for `choose_profile`, that it was not called.
 
 - [ ] **Step 5: The settings section.** `MollieConnectionSection` (client component) takes a `ConnectionView` plus `mollieConfigured: boolean`, renders nothing when not configured, and per kind:
   - `none`: one sentence ("Let students pay you by iDEAL, card and more through your own Mollie account. Money goes straight to you; Mollie charges you its fees.") and a **Connect Mollie** button that POSTs `connect` and navigates to `authorizeUrl`.
   - `choose_profile`: a radio list of profiles and **Use this profile** (PUT profile).
+  - `connected` with more than one profile in the organization: a **Change profile** control with the same list (PUT profile); one sentence that payments then go to that profile's Mollie balance.
   - `connected`: "Mollie connected — <organization> · <profile>" (+ "Test mode" when `testmode`), the methods students see (labels from `MOLLIE_METHODS`), the excluded ones each with `EXCLUSION_COPY[exclusionReason(id)]`, the Wero chargeback note when `offered` includes `wero` ("Wero payments can be disputed for up to 120 days."), the fees line ("Mollie deducts its fees from each payment; you see the net amount in Mollie."), and **Disconnect**.
   - `connected` with `missingScopes` non-empty (a grant narrower than `MOLLIE_SCOPES`): "Reconnect Mollie to enable payments" and a Reconnect button (the same connect POST); `pay-page-methods` and `createAttempt` treat such a connection as not live, and the section shows no method list.
   - `unavailable`: "Mollie can't be reached right now." and Disconnect.
@@ -1417,7 +1507,7 @@ Each route gets a `route.test.ts` in the payment-link route test's style: servic
 
 - [ ] **Step 6: Run everything touched.** `pnpm exec vitest run --project unit src/services/processor-connection.test.ts src/lib/payout-fingerprint.test.ts src/services/payout-resume.test.ts src/app/api/teachers src/app/api/processor` and `pnpm exec vitest run --project components src/components/settings/mollie-connection-section.test.tsx` → PASS.
 
-- [ ] **Step 7: Prove the guards bite.** (a) Remove `state.sessionId !== input.sessionId` *and* the `sessionId` in `deleteMany`'s where; rerun; case 4's other-session test fails — record; restore. (b) Remove the connection from `payoutFingerprint`; case 14 fails — record; restore. (c) In the profile filter, keep test profiles in live mode; add a case if none caught it.
+- [ ] **Step 7: Prove the guards bite.** (a) Remove `state.sessionId !== input.sessionId` *and* the `sessionId` in `deleteMany`'s where; rerun; case 4's other-session test fails — record; restore. (b) Remove the connection from `payoutFingerprint`; case 14 fails — record; restore. Then digest only `organizationId`; case 14's two-profiles assertion fails — record; restore. (c) In the profile filter, keep test profiles in live mode; add a case if none caught it.
 
 - [ ] **Step 8: Commit**
 
@@ -1512,7 +1602,8 @@ git commit -m "feat: Mollie rows on the pay page and the attempt route (#896)"
 **Files:**
 - Modify: `src/services/processor-attempts.ts` (add `syncAttempt`, `decideSync`)
 - Modify: `src/services/processor-attempts.test.ts`
-- Modify: `src/services/payments.ts` (`PaidMethod`, `markPaymentPaid` takes a transaction client, `reopenPayment` → `reopenInTransaction` + clears `settledPayment`)
+- Modify: `src/services/payments.ts` (`PaidMethod`, `markPaymentPaid` takes a transaction client, `reopenPayment` → `reopenInTransaction`, which refuses a Mollie-settled payment unless a refund names its attempt; `PaymentRefusal` gains `PAYMENT_SETTLED_BY_PROCESSOR`)
+- Modify: `src/lib/api-error-codes.ts` (`PAYMENT_SETTLED_BY_PROCESSOR: 409`)
 - Modify: `src/lib/schemas.ts` (`markPaidSchema.method` → `z.literal('manual')`)
 - Modify: `tests/integration/payments-api.test.ts` (requests that send `method: 'cash'`/`'bank_transfer'` send `'manual'`; the different-method refusal moves to a unit test with `'mollie'`)
 - Create: `src/app/api/webhooks/mollie/route.ts` and `route.test.ts`; delete `src/app/api/webhooks/.gitkeep`
@@ -1528,20 +1619,25 @@ git commit -m "feat: Mollie rows on the pay page and the attempt route (#896)"
 ```ts
 export type PaidMethod = 'manual' | 'mollie';
 export function markPaymentPaid(db: PrismaClient | Prisma.TransactionClient, paymentId: string, method: PaidMethod): Promise<PaymentOutcome>;
-export function reopenInTransaction(tx: Prisma.TransactionClient, paymentId: string): Promise<PaymentOutcome>;
+export function reopenInTransaction(tx: Prisma.TransactionClient, paymentId: string, opts?: { refundAttemptId?: string }): Promise<PaymentOutcome>;
 
-export type SyncResult = 'settled' | 'unchanged' | 'paid_twice' | 'status_only' | 'unknown';
+export type SyncResult = 'settled' | 'unchanged' | 'paid_twice' | 'charged_back' | 'status_only' | 'unknown';
 export function syncAttempt(db: PrismaClient, deps: MollieDeps | null, processorPaymentId: string): Promise<SyncResult | 'unavailable'>;
 // pure, for the table test:
-export type SyncDecision = { attemptStatus: ProcessorPaymentStatus; settle: boolean; notifyPaidTwice: boolean; result: SyncResult };
-export function decideSync(input: { mollieStatus: ProcessorPaymentStatus; previousStatus: ProcessorPaymentStatus; paymentStatus: PaymentStatus; settledByThis: boolean }): SyncDecision;
+export type SyncDecision = { attemptStatus: ProcessorPaymentStatus; settle: boolean; notifyPaidTwice: boolean; recordChargeback: boolean; result: SyncResult };
+export function decideSync(input: {
+  mollieStatus: ProcessorPaymentStatus; previousStatus: ProcessorPaymentStatus; paymentStatus: PaymentStatus;
+  settledByThis: boolean; chargedBack: boolean; alreadyChargedBack: boolean;
+}): SyncDecision;
 export function inProgress(payment: { studentReportedAt: Date | null; processorAttempts: readonly { status: ProcessorPaymentStatus }[] }): boolean;
 ```
 
 - [ ] **Step 1: Write the failing tests**
 
-`decideSync` table (pure): one `it.each` row per spec §5 row —
-- paid / was open / payment pending → `{ attemptStatus: 'paid', settle: true, notifyPaidTwice: false, result: 'settled' }`; same with overdue.
+`decideSync` table (pure): one `it.each` row per spec §5 row (`chargedBack` and `alreadyChargedBack` false and `recordChargeback: false` unless the row says otherwise) —
+- paid, `chargedBack`, not `alreadyChargedBack` / was paid / payment paid / settledByThis → `{ attemptStatus: 'paid', settle: false, notifyPaidTwice: false, recordChargeback: true, result: 'charged_back' }`; the same not settledByThis (a duplicate), and the same with payment `pending` and was open (the first webhook arrives after the chargeback: no settle).
+- paid, `chargedBack`, `alreadyChargedBack` → `unchanged`, `recordChargeback: false`.
+- paid / was open / payment pending → `{ attemptStatus: 'paid', settle: true, notifyPaidTwice: false, recordChargeback: false, result: 'settled' }`; same with overdue.
 - paid / was paid / payment paid / settledByThis → `unchanged`.
 - paid / was open / payment paid, not by this → `paid_twice` with `notifyPaidTwice: true`; with payment `not_charged` likewise.
 - paid / was paid / payment paid, not by this → `unchanged` (already notified).
@@ -1556,8 +1652,12 @@ export function inProgress(payment: { studentReportedAt: Date | null; processorA
 6. `getPayment` null → `unknown`; `MollieUnavailable` → `unavailable`; `deps` null with a known attempt → `unavailable`.
 7. Refunds: a fair.yoga `ProcessorRefund` with `processorRefundId: 're_1'` and status `queued`, Mollie says `refunded` → row `refunded`; Mollie says `failed` → row `failed` and one `refund_failed` teacher notification; a Mollie refund id with no row → no row created.
 8. Review Focus 5: settle via the return route's call first, then the webhook's → second is `unchanged`.
+9. Chargeback: a settled attempt, Mollie answers `paid` with `amountChargedBack: { value: '4.00', … }` (partial) → `charged_back`: attempt `chargedBackAt` set, `settledPayment: false`; `Payment` still `paid`; one `payment_charged_back` teacher notification whose body ends "You can mark the payment unpaid to ask again."; the same webhook again → `unchanged`, still one notification. A duplicate attempt charged back → `charged_back`, notification without that sentence.
 
-`reopenPayment` (extend its existing test): reopening a Mollie-settled payment clears that attempt's `settledPayment`, and a second Mollie attempt can then settle it.
+`reopenPayment` (extend its existing test):
+- (a) reopening a Mollie-settled payment is refused `PAYMENT_SETTLED_BY_PROCESSOR`; the payment stays `paid` and the attempt keeps `settledPayment`.
+- (b) after a chargeback (attempt `chargedBackAt` set, `settledPayment: false`), the reopen succeeds, and a second Mollie attempt can then settle the payment.
+- (c) `reopenInTransaction(tx, paymentId, { refundAttemptId })` on a Mollie-settled payment reopens it and clears that attempt's `settledPayment` (the refund's ask-again path).
 
 `markPaymentPaid` unit test: paid with `manual`, then `mollie` → refused `PAYMENT_ALREADY_PAID`.
 
@@ -1571,8 +1671,8 @@ Webhook `route.test.ts` (services mocked): form body `id=tr_x` → calls `syncAt
 
 - [ ] **Step 3: Implement.**
 - `markPaymentPaid`: widen `db` to `PrismaClient | Prisma.TransactionClient`, type `method: PaidMethod`; update the docblock's example values to `'manual'`/`'mollie'`. `markPaidSchema`: `method: z.literal('manual')`.
-- `reopenPayment`: move its transaction body into exported `reopenInTransaction(tx, paymentId)` (the link lock stays its first statement), add `await tx.processorPayment.updateMany({ where: { paymentId, settledPayment: true }, data: { settledPayment: false } })` after the CAS succeeds; `reopenPayment` becomes `db.$transaction((tx) => reopenInTransaction(tx, paymentId))` plus its existing refusal handling.
-- `syncAttempt`: find the attempt by `processorPaymentId` (select id, paymentId, connectionId, status, `connection.testmode`, `payment.registration.class.calendarEntry.teacherId`); unknown or `connectionId` null → `unknown`; `deps` null → `unavailable`; token (`disconnected` → `log.warn` and `unknown`; `unavailable` → `unavailable`); `getPayment` (null → `unknown`; `MollieUnavailable` → `logDegraded('MOLLIE_UNAVAILABLE', …)` and `unavailable`); map Mollie's status string with a `z.enum` of `ProcessorPaymentStatus` (an unparseable status → `log.warn`, `unknown`). Then one transaction: `SELECT … FROM "Payment" WHERE id = … FOR UPDATE` via `$queryRaw`, re-read the attempt and the payment status inside it, `decideSync`, then write: attempt `status`, `method` (Mollie's if present), `paidAt`; if `settle`, `markPaymentPaid(tx, paymentId, 'mollie')` and — only when it answers `applied` — `settledPayment: true` (an answer other than `applied` downgrades the result to `paid_twice` and notifies); if `notifyPaidTwice`, `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_paid_twice', title: 'Paid twice', body: '<student first name> also paid <amount> by <method label>. You can refund it from the payment.', relatedClassId })`. Refunds: for each `view.refunds`, `updateMany({ where: { processorRefundId: r.id }, data: { status } })` and, on a transition to `failed`, a `refund_failed` notification ("A refund didn't go through. Check your Mollie balance and try again from the payment.").
+- `reopenPayment`: move its transaction body into exported `reopenInTransaction(tx, paymentId, opts?: { refundAttemptId?: string })` (the link lock stays its first statement, unchanged). After the link lock, when `opts?.refundAttemptId` is absent: `if (await tx.processorPayment.count({ where: { paymentId, settledPayment: true } }) > 0)` answer `{ kind: 'refused', refusal: codedRefusal('PAYMENT_SETTLED_BY_PROCESSOR', 'Mollie confirmed this payment. Refund it instead.') }` (Decision 17). When `refundAttemptId` is given, after the CAS succeeds: `await tx.processorPayment.updateMany({ where: { id: opts.refundAttemptId, paymentId }, data: { settledPayment: false } })`. Add `'PAYMENT_SETTLED_BY_PROCESSOR'` to `PaymentRefusal`'s codes and register it in `api-error-codes.ts`. `reopenPayment` becomes `db.$transaction((tx) => reopenInTransaction(tx, paymentId))` plus its existing refusal handling; its route already answers a refusal with `respondRefusal`, so the 409 needs no route change.
+- `syncAttempt`: find the attempt by `processorPaymentId` (select id, paymentId, connectionId, status, `connection.testmode`, `payment.registration.class.calendarEntry.teacherId`); unknown or `connectionId` null → `unknown`; `deps` null → `unavailable`; token (`disconnected` → `log.warn` and `unknown`; `unavailable` → `unavailable`); `getPayment` (null → `unknown`; `MollieUnavailable` → `logDegraded('MOLLIE_UNAVAILABLE', …)` and `unavailable`); map Mollie's status string with a `z.enum` of `ProcessorPaymentStatus` (an unparseable status → `log.warn`, `unknown`). Then one transaction: `SELECT … FROM "Payment" WHERE id = … FOR UPDATE` via `$queryRaw`, re-read the attempt and the payment status inside it, `decideSync`, with `chargedBack = view.amountChargedBack !== null && new Prisma.Decimal(view.amountChargedBack.value).greaterThan(0)` and `alreadyChargedBack = attempt.chargedBackAt !== null` (re-read inside the transaction with `settledPayment`), then write: attempt `status`, `method` (Mollie's if present), `paidAt`; if `recordChargeback`, attempt `chargedBackAt: now, settledPayment: false` and `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_charged_back', title: 'Payment disputed', body: '<student first name> disputed <amount> with their bank and it was taken back.' + (settledByThis ? ' You can mark the payment unpaid to ask again.' : ''), relatedClassId })`; if `settle`, `markPaymentPaid(tx, paymentId, 'mollie')` and — only when it answers `applied` — `settledPayment: true` (an answer other than `applied` downgrades the result to `paid_twice` and notifies); if `notifyPaidTwice`, `createNotification(tx, { recipientType: 'teacher', recipientId: teacherId, type: 'payment_paid_twice', title: 'Paid twice', body: '<student first name> also paid <amount> by <method label>. You can refund it from the payment.', relatedClassId })`. Refunds: for each `view.refunds`, `updateMany({ where: { processorRefundId: r.id }, data: { status } })` and, on a transition to `failed`, a `refund_failed` notification ("A refund didn't go through. Check your Mollie balance and try again from the payment.").
 - Webhook route: `export const POST = withErrorHandler(async (request) => { … })`. Read the body with `request.text()` and `new URLSearchParams(text).get('id')` (avoids a throwing `formData()` on a wrong content type). Answer `new NextResponse(null, { status })`. Its docblock states why it is unauthenticated and unthrottled (spec §5) in one paragraph.
 - Return route `GET /api/payments/[id]/processor-return?attempt=…`: `requireStudent`; look up the attempt where `id = attempt AND paymentId = id AND payment.registration.studentId = session.studentId`; if found, `await syncAttempt(…)`; always `NextResponse.redirect(new URL(`/bookings/${classId}/pay?attempt=${attemptId}`, request.url), 303)` (class id from the payment; when the payment is not the student's, redirect to `/bookings`).
 - Pay page: read `searchParams.attempt`; when it names an attempt of this payment, show above the rows: status `paid` → "Paid — thank you." (and the page's own paid state already applies); `pending`/`authorized` → "Processing — we'll let you know."; `canceled`/`expired`/`failed` → "That payment didn't go through. You can try again below."; `open` → nothing. Independently, when `inProgress(payment)` and no claim is standing, show the same "processing" state the #898 claim shows.
@@ -1580,7 +1680,7 @@ Webhook `route.test.ts` (services mocked): form body `id=tr_x` → calls `syncAt
 
 - [ ] **Step 4: Run, see them pass.** Unit for the touched files; `pnpm exec vitest run --project integration tests/integration/mollie-webhook.test.ts tests/integration/payments-api.test.ts` (curl `/api/webhooks/mollie` once first to warm it).
 
-- [ ] **Step 5: Prove the guards bite.** (a) Remove the `settledPayment` clearing from `reopenInTransaction`; the reopen-then-resettle test fails with P2002 — record; restore. (b) Make the webhook trust a `status` field in the body instead of fetching; add the test "a body claiming paid does not settle" if not already present, see it fail, restore. (c) Remove the `FOR UPDATE`; no test is expected to catch a race deterministically — say so in the PR body rather than claiming coverage.
+- [ ] **Step 5: Prove the guards bite.** (a) Remove the `PAYMENT_SETTLED_BY_PROCESSOR` refusal from `reopenInTransaction`; reopen test (a) fails — record; restore. Then remove the `settledPayment: false` from the chargeback write; reopen test (b) fails with P2002 on the second settle — record; restore. (b) Make the webhook trust a `status` field in the body instead of fetching; add the test "a body claiming paid does not settle" if not already present, see it fail, restore. (c) Remove the `FOR UPDATE`; no test is expected to catch a race deterministically — say so in the PR body rather than claiming coverage.
 
 - [ ] **Step 6: Commit**
 
@@ -1600,8 +1700,8 @@ git commit -m "feat: settle Mollie payments by webhook and on return (#896)"
 - Create: `src/services/processor-refunds.ts`, `src/services/processor-refunds.test.ts`
 - Create: `src/app/api/payments/[id]/refund/route.ts` and `route.test.ts`
 - Create: `src/components/payments/refund-dialog.tsx` (+ `.test.tsx`)
-- Modify: the teacher payment row component(s) — find them with `grep -rln "usePaymentActions\|use-payment-actions" src/components src/app` — to show **Refund** on a row with a `paid` attempt that has no live refund, and the refund's status ("Refund queued", "Refunded", "Refund failed") otherwise
-- Modify: `TeacherPaymentRow` (`src/services/payments.ts`) and its loaders to carry `processorAttempts: { id, method, status, settledPayment, amount, refunds: { status }[] }[]`
+- Modify: the teacher payment row component(s) — find them with `grep -rln "usePaymentActions\|use-payment-actions" src/components src/app`; the received row renders `MarkUnpaidButton` (`src/components/class/mark-unpaid-button.tsx`) — to show **Refund** on a row with a `paid` attempt that has no live refund and no `chargedBackAt`, and the refund's status ("Refund queued", "Refunded", "Refund failed") otherwise; and to hide "Mark unpaid" while an attempt with `settledPayment` exists (Decision 17), Refund standing in its place. Component test in the row's existing test file: a Mollie-settled row shows Refund and no "Mark unpaid"; a row whose settling attempt was charged back shows "Mark unpaid" and no Refund; a manually paid row is unchanged.
+- Modify: `TeacherPaymentRow` (`src/services/payments.ts`) and its loaders to carry `processorAttempts: { id, method, status, settledPayment, chargedBackAt, amount, refunds: { status }[] }[]`
 - Modify: `src/lib/api-error-codes.ts` (`REFUND_NOT_ALLOWED: 409`, `REFUND_ALREADY_REQUESTED: 409`, `REFUND_REFUSED: 409`)
 - Modify: `src/lib/schemas.ts` (`refundSchema`)
 
@@ -1622,13 +1722,13 @@ export function refundAttempt(db: PrismaClient, deps: MollieDeps | null, input: 
 
 - [ ] **Step 1: Write the failing tests** (unit, real DB, fake client)
 1. Settling attempt, `waive` → Mollie `createRefund` called with the attempt's amount and currency; refund row `outcome: 'waived'`, `processorRefundId` stored; `Payment` `not_charged`, `notChargedAt` set, `studentReportedAt` null; attempt `settledPayment: false`; one `payment_refunded` student notification; result `outcomeApplied: true`.
-2. Settling attempt, `ask_again` → `Payment` `pending`, `method`/`paidAt` null (reopen's columns), `settledPayment: false`, `outcome: 'reopened'`.
+2. Settling attempt, `ask_again` → `Payment` `pending`, `method`/`paidAt` null (reopen's columns), `settledPayment: false`, `outcome: 'reopened'` — through `reopenInTransaction`'s `refundAttemptId`, so `PAYMENT_SETTLED_BY_PROCESSOR` does not refuse it.
 3. Duplicate attempt (`settledPayment: false`), `choice: null` → refund created, `Payment` untouched, `outcome: null`.
 4. `choice` required: settling attempt with `null` → `invalid`; duplicate with `waive` → `invalid`; no Mollie call either way.
-5. `REFUND_NOT_ALLOWED`: attempt `open`/`failed`; attempt of another payment → `NOT_FOUND`.
+5. `REFUND_NOT_ALLOWED`: attempt `open`/`failed`; an attempt with `chargedBackAt` set (no Mollie call); attempt of another payment → `NOT_FOUND`.
 6. `REFUND_ALREADY_REQUESTED`: two concurrent calls → exactly one `createRefund` call; the other refused (the partial unique index turns the second insert into P2002 — catch `Prisma.PrismaClientKnownRequestError` with code `P2002` only).
 7. Mollie refuses (`{ kind: 'refused', detail: 'Insufficient balance' }`) → `REFUND_REFUSED` with a message naming the balance, the queued row deleted, `Payment` untouched; `MollieUnavailable` → `unavailable`, row deleted.
-8. CAS miss: between steps 1 and 3 the teacher reopened the payment (simulate in `createRefund`'s mock by updating the payment to `pending`) → `refunded` with `outcomeApplied: false`, payment left `pending`, refund row stored.
+8. CAS miss: between steps 1 and 3 the payment left `paid` (in production, a chargeback cleared the attempt and the teacher marked it unpaid; simulate in `createRefund`'s mock by updating the payment to `pending`) → `refunded` with `outcomeApplied: false`, payment left `pending`, refund row stored.
 9. Guard: `markPaymentNotCharged` on a `paid` payment is still refused `PAYMENT_ALREADY_PAID` (Decision 9's narrowing — the refund service is the only writer of `paid → not_charged`).
 
 Route test: teacher ownership via `loadOwnedPayment` (another teacher → 403/404 as that helper answers), each `RefundResult` mapped (`refunded` 200 with the row, `invalid` 400, `refused` `respondRefusal`, `unavailable` 503 `PROCESSOR_UNAVAILABLE`); body `refundSchema` = `z.object({ attemptId: z.string().uuid(), choice: z.enum(['waive', 'ask_again']).nullable() }).strict()`.
@@ -1647,10 +1747,11 @@ export async function refundAttempt(db: PrismaClient, deps: MollieDeps | null, i
     await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${input.paymentId} FOR UPDATE`;
     const attempt = await tx.processorPayment.findFirst({
       where: { id: input.attemptId, paymentId: input.paymentId },
-      select: { id: true, status: true, settledPayment: true, amount: true, currency: true, processorPaymentId: true, connectionId: true, connection: { select: { testmode: true } }, payment: { select: { status: true } } },
+      select: { id: true, status: true, settledPayment: true, chargedBackAt: true, amount: true, currency: true, processorPaymentId: true, connectionId: true, connection: { select: { testmode: true } }, payment: { select: { status: true } } },
     });
     if (!attempt) return { kind: 'refused', refusal: codedRefusal('NOT_FOUND', 'This payment no longer exists.') } as const;
     if (attempt.status !== 'paid') return { kind: 'refused', refusal: codedRefusal('REFUND_NOT_ALLOWED', 'Only a completed Mollie payment can be refunded.') } as const;
+    if (attempt.chargedBackAt !== null) return { kind: 'refused', refusal: codedRefusal('REFUND_NOT_ALLOWED', 'The student’s bank already took this payment back.') } as const;
     if (attempt.connectionId === null) return { kind: 'refused', refusal: codedRefusal('PROCESSOR_NOT_CONNECTED', 'Mollie is no longer connected.') } as const;
     const settles = attempt.settledPayment && attempt.payment.status === 'paid';
     if (settles !== (input.choice !== null)) {
@@ -1676,7 +1777,7 @@ export async function refundAttempt(db: PrismaClient, deps: MollieDeps | null, i
 }
 ```
 
-Steps 2–3 as the spec says: `deps` null or token not `token` → delete the row, `unavailable`. `createRefund` → `refused`: delete the row, `REFUND_REFUSED` with `detail` mapped to copy (a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn't accept this refund: <detail>"). `MollieUnavailable`: delete the row, `unavailable`. `created`: one transaction — for `ask_again`, `reopenInTransaction(tx, paymentId)` **first** (it takes the link lock first, the order `reopenPayment` uses); for `waive`, `tx.payment.updateMany({ where: { id, status: 'paid' }, data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null } })` and clear `settledPayment`; then update the refund row with `processorRefundId` and the mapped status; then the `payment_refunded` student notification ("<teacher first name> refunded <amount>. It goes back the way you paid."). `outcomeApplied` = whether the CAS / reopen answered `applied`.
+Steps 2–3 as the spec says: `deps` null or token not `token` → delete the row, `unavailable`. `createRefund` → `refused`: delete the row, `REFUND_REFUSED` with `detail` mapped to copy (a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn't accept this refund: <detail>"). `MollieUnavailable`: delete the row, `unavailable`. `created`: one transaction — for `ask_again`, `reopenInTransaction(tx, paymentId, { refundAttemptId: attempt.id })` **first** (it takes the link lock first, the order `reopenPayment` uses, and clears that attempt's `settledPayment`); for `waive`, `tx.payment.updateMany({ where: { id, status: 'paid' }, data: { status: 'not_charged', notChargedAt: now, studentReportedAt: null } })` and clear `settledPayment`; then update the refund row with `processorRefundId` and the mapped status; then the `payment_refunded` student notification ("<teacher first name> refunded <amount>. It goes back the way you paid."). `outcomeApplied` = whether the CAS / reopen answered `applied`.
 
 Update `markPaymentNotCharged`'s docblock sentence "a paid one is refused, because waiving it would be a refund" to state what is true now: a paid one is refused here; waiving after a real refund is `refundAttempt`'s, in the transaction that records the refund.
 
@@ -1739,9 +1840,9 @@ git commit -m "feat: revoke Mollie access on disconnect and erasure; export atte
 **Files:**
 - Modify: `docs/product-concept.md` (§7 Level 2: `:243`, and `:244` against `:256`)
 - Modify: `docs/technical-architecture.md` (stack row `:13`; *Unauthenticated API routes* table and its counts, re-derived with the section's own command; the token cipher under *The Services Layer*; the env block; the Level 2 retry note)
-- Modify: `docs/data-model.md` (the four tables; the dropped columns at `:172-176` and `:962`; the Payment section's `processor_ref` mention at `:973`; the narrowed #47 rule)
+- Modify: `docs/data-model.md` (the four tables; the dropped columns at `:172-176` and `:962`; the Payment section's `processor_ref` mention at `:973`; the narrowed #47 rule; Decision 17's reopen rule and its chargeback exception)
 - Modify: `docs/lock-order.md` (connection writers under the teacher lock; payment-then-attempt; refund-ask-again takes reopen's order)
-- Modify: `CLAUDE.md` (*Payment Model*: Level 2's line describes the allowlist and refunds; the grace-policy sentence "never a refund (`paid → not_charged` is refused)" states the refund exception)
+- Modify: `CLAUDE.md` (*Payment Model*: Level 2's line describes the allowlist and refunds; the grace-policy sentence "never a refund (`paid → not_charged` is refused)" states the refund exception; a Mollie-settled payment leaves `paid` only by refund until a chargeback, Decision 17)
 
 - [ ] **Step 1:** Write each edit. Product concept §7: replace "iDEAL, credit card, and other payment methods supported by the processor" with the allowlist rule and its reasoning (the spec's Decision 1 and the issue's four bullets, condensed); replace "Automatic charging after class" with a sentence that v1 has no automatic charging and that recurring payments are a later concept decision (consent, notice, SEPA refund right), which makes `:256` consistent. Technical architecture's stack row: "Level 2 uses the Mollie Payments API with one method per payment — no card-on-file, no subscriptions."
 - [ ] **Step 2:** Re-derive the unauthenticated-routes counts with the doc's own loop and write the numbers it prints, with the arithmetic (`N routes, M unguarded, K rate-limited`), adding rows for `webhooks/mollie` (why it is correct: unknown id costs one indexed read; a known id's status is only ever believed from an authenticated fetch) and `processor/mollie/callback` (session-bound single-use state).
