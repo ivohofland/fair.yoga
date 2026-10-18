@@ -115,13 +115,16 @@ is what Mollie's server-side POST is.
 - **`ProcessorConnection`** `{ id, teacherId @unique → Teacher onDelete
   Cascade, processor ProcessorType, organizationId, profileId String?,
   accessToken Bytes?, accessTokenExpiresAt DateTime?, refreshToken Bytes?,
-  scopes String[], testmode Boolean, connectedAt, disconnectedAt DateTime? }`.
-  One per teacher. `accessToken`/`refreshToken` are ciphertexts (Decision 10)
-  and are nulled when the connection is disconnected. **Live** is
-  `disconnectedAt IS NULL AND profileId IS NOT NULL`; a row with no profile
-  is mid-connect and offers nothing. A `CHECK` pins that a live row has both
-  tokens and a disconnected row neither. Reconnecting after a disconnect
-  rewrites the row rather than adding one.
+  scopes String[], testmode Boolean, connectedAt, disconnectedAt DateTime?,
+  revokeAfter DateTime?, revokedAt DateTime? }`.
+  One per teacher. `accessToken`/`refreshToken` are ciphertexts (Decision 10).
+  **Live** is `disconnectedAt IS NULL AND profileId IS NOT NULL`; a row with
+  no profile is mid-connect and offers nothing. Disconnecting and revoking are
+  separate moments: a disconnected row keeps its tokens until `revokedAt`,
+  because its open attempts' webhooks still need them (§1). `CHECK`s pin that
+  both tokens are present exactly when `revokedAt IS NULL`, and that
+  `revokedAt` and `revokeAfter` are set only on a disconnected row.
+  Reconnecting after a disconnect rewrites the row rather than adding one.
 - **`ProcessorPayment`** (the attempt) `{ id, paymentId → Payment onDelete
   Cascade, connectionId → ProcessorConnection, processorPaymentId @unique,
   method String, status ProcessorPaymentStatus, amount Decimal, currency
@@ -130,7 +133,9 @@ is what Mollie's server-side POST is.
   is Mollie's own set: `open`, `pending`, `authorized`, `paid`, `canceled`,
   `expired`, `failed`. `settledPayment` is true on at most one attempt per
   `Payment` (partial unique index `WHERE settled_payment`): the one whose
-  webhook moved the `Payment` to `paid`. `currency` is a snapshot in the
+  webhook moved the `Payment` to `paid`. Every writer that moves a `Payment`
+  out of `paid` (`reopenPayment`, a refund's outcome) clears it in the same
+  transaction, or a later settle would collide with the index. `currency` is a snapshot in the
   `docs/data-model.md` sense: what Mollie charged, which no later currency
   switch may relabel. `method` is a string, not the allowlist type, because
   a stored row must stay readable after its method leaves the allowlist.
@@ -147,10 +152,14 @@ is what Mollie's server-side POST is.
   the daily auth cleanup deletes expired rows.
 - **`PayoutChangeKind`** gains `processor_connected`, `processor_changed`,
   `processor_disconnected`. `before`/`after` carry the masked organization id
-  (`org_…` plus its last four characters) and the profile's name.
+  (`org_…` plus its last four characters) and the organization's name.
   `processor_changed` is a reconnect landing on a different organization.
-- **`NotificationType`** gains `processor_disconnected` (teacher),
-  `payment_paid_twice` (teacher) and `payment_refunded` (student). Every
+  The organization, not the profile, is the payout identity: Mollie pays a
+  balance out per organization, so choosing between an organization's
+  profiles writes no event.
+- **`NotificationType`** gains `processor_disconnected`,
+  `payment_paid_twice` and `refund_failed` (teacher) and `payment_refunded`
+  (student). Every
   `satisfies Record<NotificationType, …>` map (push policy, retention) then
   fails to compile until each has its row.
 - **Dropped:** `Teacher.paymentLevel`, `Teacher.processorType`,
@@ -188,7 +197,9 @@ Payment writers keep their CAS shape. The webhook's settle and the refund's
 outcome lock the `Payment` row (`FOR UPDATE`) and then its attempts, the
 order every writer here uses; `markPaymentPaid`'s own CAS is unchanged, so a
 manual mark-paid racing a webhook resolves by whichever `updateMany` lands
-first and the loser's re-read classifies it.
+first and the loser's re-read classifies it. "Refund and ask again" reuses
+`reopenPayment`'s transaction body, so it takes that function's order — the
+`TeacherStudent` link first, then the payment — rather than this one.
 
 No database lock is ever held across a Mollie call. Refresh races are settled
 by a single-flight promise per connection in process (one process, one VPS)
@@ -215,15 +226,17 @@ re-reads and uses the winner's token.
   from another session. A grant
   missing a requested scope is stored and the section says "reconnect to
   enable payments" rather than half-working.
-- **Disconnect:** `DELETE /api/teachers/[id]/processor` — revoke at Mollie
-  (`DELETE /oauth2/tokens`, fire-and-forget after commit), null the tokens,
-  stamp `disconnectedAt`, write `processor_disconnected` and alert. A
-  disconnect while attempts are open leaves them to finish: their webhooks
-  still need a token to fetch, so revocation runs only after the longest
-  method expiry (6 h) has passed for the newest open attempt, via the daily
-  auth cleanup.
+- **Disconnect:** `DELETE /api/teachers/[id]/processor` — stamp
+  `disconnectedAt` (the pay page offers no Mollie rows from then on), write
+  `processor_disconnected` and alert, and set `revokeAfter` to the latest
+  `expiresAt` among the connection's attempts still `open`, `pending` or
+  `authorized`, or now when there are none. Open attempts finish: their
+  webhooks still need a token. The daily auth cleanup revokes every row past
+  `revokeAfter` (`DELETE /oauth2/tokens`), nulls its tokens and stamps
+  `revokedAt`; one with no open attempts is revoked fire-and-forget right after
+  the disconnect commits, and the sweep is its retry.
 - **The pause (#786)** covers the connection: `payoutFingerprint` gains the
-  connection's `organizationId` and `profileId`, so a reconnect during a pause
+  live connection's `organizationId`, so a reconnect during a pause
   changes what resume confirms. While paused the pay page already answers
   `paused` instead of every method, Mollie rows included; the attempt route
   refuses `PAYMENTS_PAUSED`.
@@ -235,14 +248,16 @@ re-reads and uses the winner's token.
 `[version][iv][tag][ciphertext]`, key from `PROCESSOR_TOKEN_KEY` (base64, 32
 bytes). Unset key: Mollie is off, the connect section is not rendered, and
 the config diagnosis follows `src/lib/push/config.ts`'s `{ ok: false, reason }`
-shape. A wrong-length key is a startup error in production. Rotation: a new
+shape and its consumer's logging: `unset` warns once, any other reason is a
+`log.error` once, and Mollie stays off. Rotation: a new
 version byte reads both keys and writes with the new one; out of scope beyond
 leaving the byte.
 
 `getAccessToken(db, connectionId)` answers a live token or a typed
 `disconnected` result — refresh when within 5 minutes of expiry, single-flight
-per connection; `invalid_grant` runs Decision 14 in one transaction (null
-tokens, stamp `disconnectedAt`, `processor_disconnected` notification), then
+per connection; `invalid_grant` runs Decision 14 in one transaction (the
+grant is already dead, so: null tokens, stamp `disconnectedAt` and
+`revokedAt`, `processor_disconnected` notification), then
 `logDegraded`. A network failure is not `invalid_grant`: it degrades that one
 call and leaves the connection alone.
 
@@ -283,11 +298,14 @@ call and leaves the connection alone.
   `checkoutUrl`; the page navigates. The Mollie call is not in a transaction;
   the insert after it is, and a crash between them leaves a Mollie payment no
   row names — its webhook then answers 200 for an unknown id and it expires.
-- **Return page** `/bookings/[classId]/pay/return?attempt=…` fetches the
+- **Return** `GET /api/payments/[id]/processor-return?attempt=…` fetches the
   attempt's status from Mollie (the student came back from Mollie; the webhook
-  may not have arrived) and applies it exactly as the webhook would, then shows
-  *Paid*, *Processing — we'll let you know*, or *Didn't go through* with the
-  pay page's rows below it.
+  may not have arrived), applies it exactly as the webhook would, and
+  redirects to the pay page with `?attempt=…`. The pay page then shows
+  *Paid*, *Processing — we'll let you know*, or *Didn't go through* above its
+  rows. `redirectUrl` points at this route; `webhookUrl` is omitted when the
+  app URL's host is `localhost`, where Mollie cannot reach it, so development
+  settles through the return alone.
 - **"In progress":** an attempt in `pending` or `authorized` shows the same
   display state as #898's `studentReportedAt` claim, at both levels: the
   money is moving. An `open` attempt does not — a tap is not a payment.
@@ -304,12 +322,12 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 
 | Mollie says | `Payment` is | Then |
 |---|---|---|
-| `paid` | `pending`/`overdue` | attempt `paid`, `settledPayment = true`, `markPaymentPaid(…, 'mollie')`; student and teacher told as for any paid payment |
+| `paid` | `pending`/`overdue` | attempt `paid`, `settledPayment = true`, `markPaymentPaid(…, 'mollie')`; no notification, as for a manual mark-paid (nothing writes `payment_received` today) |
 | `paid` | `paid` by this attempt | `unchanged` |
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
 | `pending`/`authorized` | any | attempt status only |
 | `canceled`/`expired`/`failed` | any | attempt status only |
-| refunds changed | any | `ProcessorRefund` rows updated; a `failed` refund tells the teacher |
+| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id; a newly `failed` one sends the teacher `refund_failed`. A refund made in Mollie's own dashboard has no row and is not created here. |
 
 Every branch answers 200. Only a failure to reach Mollie or the database
 answers 500, so Mollie retries (10 times over 26 h).
@@ -375,6 +393,9 @@ them and the spec is corrected where one fails.
 - The Methods API's answer for an unsupported currency is a 422 (§3).
 - `DELETE /oauth2/tokens` revokes, and `approval_prompt=force` re-prompts (§1).
 - BLIK's default expiry (Decision 6).
+- Mollie pays balances out per organization, not per profile (Data).
+- Mollie refuses a `localhost` `webhookUrl` (§4), and which scope `embed=refunds`
+  needs (`refunds.read` is requested in case).
 - Whether refresh tokens rotate (§2 handles either; the conditional write
   matters only if they do).
 - The PayPal pay-later check (Decision 3).
@@ -391,17 +412,28 @@ the teacher reopens by hand if they want to chase it); a retry policy
 - **Unit:** the cipher (round trip, tamper → throws, wrong version → throws);
   `isAllowedMollieMethod` and overlap ordering; `applyAttemptStatus`'s table,
   row by row.
-- **Integration**, against an in-process fake Mollie (a route handler the
-  test points `MOLLIE_API_BASE` at; CI never calls Mollie): connect with one
-  and several profiles; state reuse and cross-session state refused; the
-  overlap with a pay-later id enabled; unsupported currency renders Level 1
-  only; Mollie down renders Level 1 only and logs once; attempt reuse; each
-  webhook row; a repeat webhook `unchanged`; double payment; refund with each
-  outcome and as a duplicate; double-click refund; `invalid_grant` disconnects
-  and notifies; pause hides the rows and refuses the attempt.
+- **No test reaches Mollie, and no integration test sees the wire.**
+  Integration tests run against a live dev server that a test cannot re-env
+  (`docs/technical-architecture.md`, Testing conventions), so they follow the
+  repo's provider pattern (email's dry-run, push's unconfigured retire):
+  - *Adapter* (`src/lib/mollie/client.ts`), unit tier with a stubbed `fetch`:
+    request shapes, timeouts, `invalid_grant` and 422 classification.
+  - *Services*, unit tier against the real test database with the client
+    injected (as `dispatchPushes(db, { send })` takes its sender): connect
+    with one and several profiles; state reuse and cross-session state
+    refused; the overlap with a pay-later id enabled; unsupported currency
+    and Mollie down answer the Level 1 rows; attempt reuse; each webhook row;
+    a repeat webhook `unchanged`; double payment; refund with each outcome
+    and as a duplicate; double-click refund; `invalid_grant` disconnects and
+    notifies; pause refuses the attempt.
+  - *Routes*, unit-tier `route.test.ts` with services mocked.
+  - *Integration*, only paths that make no outbound call: with no live
+    connection the pay page renders exactly today's rows; the webhook answers
+    200 for an unknown id; the attempt route refuses a teacher without a
+    connection; the connect section is absent when Mollie is unconfigured.
 - **Guards to break and record** (plan step per guard): remove an allowlist
-  label (compile error expected); add an id to the Mollie fake that is not on
-  the allowlist (absent from the page); drop the session binding on the state
+  label (compile error expected); make the injected client return an id not on
+  the allowlist (absent from the offered methods); drop the session binding on the state
   (the cross-session test fails); remove the partial unique index (the
   double-click test fails); make `markPaymentNotCharged` accept `paid` (its
   refusal test fails).
