@@ -57,7 +57,7 @@ export const POST = withErrorHandler(async (
       return respondError('Mollie can’t be reached right now. Try the refund again in a moment.', 503, 'PROCESSOR_UNAVAILABLE');
     case 'unconfirmed':
       return respondError(
-        'Mollie didn’t confirm the refund. fair.yoga will check again; don’t refund in Mollie meanwhile.',
+        'Mollie didn’t confirm the refund. fair.yoga records it when Mollie reports it. Don’t refund it in Mollie meanwhile.',
         503,
         'PROCESSOR_UNAVAILABLE',
       );

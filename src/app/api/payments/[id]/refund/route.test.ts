@@ -101,7 +101,7 @@ describe('POST /api/payments/[id]/refund', () => {
     expect(await res.json()).toEqual({
       error: {
         code: 'PROCESSOR_UNAVAILABLE',
-        message: 'Mollie didn’t confirm the refund. fair.yoga will check again; don’t refund in Mollie meanwhile.',
+        message: 'Mollie didn’t confirm the refund. fair.yoga records it when Mollie reports it. Don’t refund it in Mollie meanwhile.',
       },
     });
   });
