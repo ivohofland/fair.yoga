@@ -18,7 +18,7 @@ describe('diagnoseMollieConfig', () => {
   it('needs the app URL for redirect and webhook URLs', () => {
     expect(diagnoseMollieConfig({ ...full, NEXT_PUBLIC_APP_URL: undefined })).toEqual({ ok: false, reason: 'app-url' });
   });
-  it('refuses an app URL that is not a string URL', () => {
+  it('refuses an app URL that does not parse', () => {
     expect(diagnoseMollieConfig({ ...full, NEXT_PUBLIC_APP_URL: 'not a url' })).toEqual({ ok: false, reason: 'app-url' });
   });
   it('refuses an app URL whose protocol is not http or https', () => {

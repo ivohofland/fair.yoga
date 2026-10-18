@@ -9,11 +9,11 @@ const KEY_BYTES = 32;
 
 export class TokenCipherError extends Error {}
 
-/** AES-256-GCM, laid out `[version][iv][tag][ciphertext]`; the version byte is authenticated. */
 function assertKey(key: Buffer): void {
   if (key.length !== KEY_BYTES) throw new TokenCipherError(`token key must be ${KEY_BYTES} bytes`);
 }
 
+/** AES-256-GCM, laid out `[version][iv][tag][ciphertext]`; the version byte is authenticated. */
 export function sealToken(plaintext: string, key: Buffer): Buffer {
   assertKey(key);
   const version = Buffer.from([TOKEN_CIPHER_VERSION]);
