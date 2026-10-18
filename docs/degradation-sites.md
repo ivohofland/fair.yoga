@@ -654,7 +654,12 @@ and `status` the HTTP status, when there was one.
 A failed `revoke` comes from one of two places in
 `src/services/processor-connection.ts`. `revokeDueConnection` leaves its
 disconnected row unrevoked, `revokedAt` still null, so a later revoke of that
-row can try again. A grant the OAuth callback dropped is a grant no row holds:
+row can try again. Once its disconnect is more than 30 days old it stops
+retrying: the tokens are nulled and `revokedAt` stamped although the grant
+may stay authorized at Mollie. It does not record a 400 here: Mollie then
+holds no grant for the token, so the row is revoked and the revoke logged at
+warn. Nor a 401 or 403, which is fair.yoga's own client credentials failing:
+that is logged at error and the row stays due, whatever its age. A grant the OAuth callback dropped is a grant no row holds:
 one it exchanged and then did not store (Mollie failed reading the
 organization or profiles, or the teacher was erased meanwhile; no
 `connectionId`), or the one a reconnect replaced (`connectionId` is the row

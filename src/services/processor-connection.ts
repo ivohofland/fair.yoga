@@ -5,6 +5,7 @@ import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { MollieUnavailable, type MollieProfile, type TokenGrant } from '@/lib/mollie/client';
 import { livePayoutIdentity, missingMollieScopes, MOLLIE_SCOPES, type LiveIdentity } from '@/lib/processor-liveness';
+import { LIVE_REFUND_STATUSES } from '@/lib/processor-refund-status';
 import type { AllowedMollieMethod } from '@/lib/processor-methods';
 import { openToken, TokenCipherError } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
@@ -21,6 +22,41 @@ export const OAUTH_STATE_TTL_MS = 10 * 60_000;
 
 /** The attempt statuses whose webhooks may still arrive, so whose connection keeps its token. */
 const UNFINISHED_ATTEMPT_STATUSES = ['open', 'pending', 'authorized'] as const;
+
+/** How long a revoke deferred for live work waits before the sweep asks again. */
+export const REVOKE_RETRY_MS = 24 * 60 * 60_000;
+
+/** How long after a disconnect live work may defer the revoke; past it the grant is revoked regardless. */
+export const REVOKE_DEFER_CAP_MS = 30 * 24 * 60 * 60_000;
+
+/** What Mollie still owes a connection's webhook: attempts not yet finished, and refunds still live. */
+export type LiveWork = { attempts: number; refunds: number };
+
+/**
+ * The connection's attempts in an unfinished status, whatever their
+ * `expiresAt` (a `pending` payment may outlast its checkout's expiry), and
+ * its attempts' refunds that `refundIsLive` holds for. While either count is
+ * above zero the grant is still needed for a webhook.
+ */
+async function liveWorkOf(db: PrismaClient | Prisma.TransactionClient, connectionId: string): Promise<LiveWork> {
+  const [attempts, refunds] = await Promise.all([
+    db.processorPayment.count({ where: { connectionId, status: { in: [...UNFINISHED_ATTEMPT_STATUSES] } } }),
+    db.processorRefund.count({ where: { attempt: { connectionId }, status: { in: [...LIVE_REFUND_STATUSES] } } }),
+  ]);
+  return { attempts, refunds };
+}
+
+/** The same condition as `liveWorkOf`, as a filter a guarded write on the connection can carry. */
+const NO_LIVE_WORK = {
+  attempts: {
+    none: {
+      OR: [
+        { status: { in: [...UNFINISHED_ATTEMPT_STATUSES] } },
+        { refunds: { some: { status: { in: [...LIVE_REFUND_STATUSES] } } } },
+      ],
+    },
+  },
+} as const satisfies Prisma.ProcessorConnectionWhereInput;
 
 /** The amount the settings section asks Mollie's methods for. */
 const VIEW_AMOUNT = new Prisma.Decimal('10.00');
@@ -208,7 +244,9 @@ function unrevokedRefresh(row: { id: string; refreshToken: Uint8Array | null; re
 export function revokeDroppedGrant(deps: MollieDeps, refreshToken: string, connectionId: string | null): FireAndForget {
   void (async () => {
     try {
-      await deps.client.revoke(refreshToken);
+      if ((await deps.client.revoke(refreshToken)) === 'invalid_token') {
+        log.warn({ connectionId }, 'Mollie answered 400 to revoking a dropped grant: it holds none for this token');
+      }
     } catch (err) {
       if (!(err instanceof MollieUnavailable)) throw err;
       logDegraded(
@@ -318,8 +356,10 @@ export type DisconnectOutcome =
  * Stamps `disconnectedAt`, so the connection stops being live
  * (`livePayoutIdentity`), and records it. The grant is not revoked here: an
  * attempt that may still hear from its webhook needs a token, so `revokeAfter`
- * is the latest expiry among those, or now when there are none, and
- * `revokeNow` says the caller may revoke straight after commit.
+ * is the latest expiry among those not yet expired, or now when there are
+ * none. `revokeNow` says the caller may revoke straight after commit: the
+ * window has passed and nothing at Mollie still owes a webhook
+ * (`liveWorkOf`). Either way `revokeDueConnection` checks again when it runs.
  */
 export async function disconnect(db: PrismaClient, input: { teacherId: string; now?: Date }): Promise<DisconnectOutcome> {
   const now = input.now ?? new Date();
@@ -335,25 +375,40 @@ export async function disconnect(db: PrismaClient, input: { teacherId: string; n
       _max: { expiresAt: true },
     });
     const revokeAfter = unfinished._max.expiresAt ?? now;
+    const live = await liveWorkOf(tx, row.id);
     await tx.processorConnection.update({ where: { id: row.id }, data: { disconnectedAt: now, revokeAfter } });
     const event = await tx.payoutChangeEvent.create({
       data: { teacherId: input.teacherId, kind: 'processor_disconnected', before: maskOrganizationId(row.organizationId), after: null },
       select: { id: true },
     });
-    return { kind: 'disconnected', eventId: event.id, connectionId: row.id, revokeNow: revokeAfter <= now };
+    const revokeNow = revokeAfter <= now && live.attempts === 0 && live.refunds === 0;
+    return { kind: 'disconnected', eventId: event.id, connectionId: row.id, revokeNow };
   });
 }
 
-export type RevokeOutcome = 'revoked' | 'skipped' | 'unavailable';
+export type RevokeOutcome = 'revoked' | 'deferred' | 'skipped' | 'unavailable';
 
 /**
  * Revokes a disconnected connection's grant at Mollie once `revokeAfter` has
- * passed, then nulls its tokens and stamps `revokedAt`. The write lands only
- * while the row still holds the refresh token that was revoked and is still
- * disconnected, so a reconnect that rewrote the row while Mollie was being
- * called keeps its new grant (`skipped`). No transaction is open across the
- * call. A failure leaves the row as it was (`unavailable`), still due for a
- * later revoke.
+ * passed, then nulls its tokens and stamps `revokedAt`.
+ *
+ * While Mollie still owes the connection a webhook (`liveWorkOf`: an
+ * unfinished attempt, or a live refund, which may have been requested after
+ * the disconnect) the revoke is `deferred`: `revokeAfter` moves
+ * `REVOKE_RETRY_MS` on and the sweep asks again. Once `disconnectedAt` is
+ * more than `REVOKE_DEFER_CAP_MS` old the grant is revoked regardless, and
+ * what was still live is logged at warn.
+ *
+ * The final write lands only while the row still holds the refresh token
+ * that was revoked and is still disconnected, so a reconnect that rewrote the
+ * row while Mollie was being called keeps its new grant (`skipped`); under the
+ * cap it also lands only while nothing became live meanwhile (`NO_LIVE_WORK`),
+ * so such a row is `deferred` with its tokens kept. No transaction is open
+ * across the call. Mollie answering 400 means it holds no grant for the token,
+ * so the row is revoked with a warning. A 401 or 403 is fair.yoga's own client
+ * credentials failing: logged at error, the row stays due (`unavailable`).
+ * Any other failure leaves the row due too, until the cap: past it the
+ * tokens are forgotten anyway, so no row is retried for ever.
  */
 export async function revokeDueConnection(
   db: PrismaClient,
@@ -363,10 +418,16 @@ export async function revokeDueConnection(
 ): Promise<RevokeOutcome> {
   const row = await db.processorConnection.findFirst({
     where: { id: connectionId, revokedAt: null, disconnectedAt: { not: null }, revokeAfter: { lte: now } },
-    select: { refreshToken: true },
+    select: { refreshToken: true, disconnectedAt: true },
   });
-  if (row === null || row.refreshToken === null) return 'skipped';
+  if (row === null || row.refreshToken === null || row.disconnectedAt === null) return 'skipped';
   const sealedRefresh = row.refreshToken;
+  const capped = now.getTime() - row.disconnectedAt.getTime() > REVOKE_DEFER_CAP_MS;
+  const live = await liveWorkOf(db, connectionId);
+  if (live.attempts > 0 || live.refunds > 0) {
+    if (!capped) return deferRevoke(db, connectionId, sealedRefresh, now);
+    log.warn({ connectionId, ...live }, 'revoking a Mollie grant past the deferral cap while Mollie may still report on it');
+  }
   let refresh: string;
   try {
     refresh = openToken(sealedRefresh, deps.config.tokenKey);
@@ -376,22 +437,47 @@ export async function revokeDueConnection(
     return 'unavailable';
   }
   try {
-    await deps.client.revoke(refresh);
+    if ((await deps.client.revoke(refresh)) === 'invalid_token') {
+      log.warn({ connectionId }, 'Mollie answered 400 to a revoke: it holds no grant for this token, so the row is revoked');
+    }
   } catch (err) {
     if (!(err instanceof MollieUnavailable)) throw err;
+    if (err.status === 401 || err.status === 403) {
+      log.error({ connectionId, status: err.status }, 'Mollie refused fair.yoga’s client credentials on a revoke; the row stays due');
+      return 'unavailable';
+    }
     logDegraded(
       'MOLLIE_UNAVAILABLE',
       { connectionId, operation: 'revoke', ...(err.status === null ? {} : { status: err.status }) },
-      'Mollie could not revoke a disconnected grant; the row stays due for a later revoke',
+      capped
+        ? 'Mollie could not revoke a grant past the deferral cap; fair.yoga forgets its tokens and retries no more'
+        : 'Mollie could not revoke a disconnected grant; the row stays due for a later revoke',
       err,
     );
-    return 'unavailable';
+    if (!capped) return 'unavailable';
   }
   const { count } = await db.processorConnection.updateMany({
-    where: { id: connectionId, revokedAt: null, disconnectedAt: { not: null }, refreshToken: sealedRefresh },
+    where: {
+      id: connectionId, revokedAt: null, disconnectedAt: { not: null }, refreshToken: sealedRefresh,
+      ...(capped ? {} : NO_LIVE_WORK),
+    },
     data: { accessToken: null, refreshToken: null, accessTokenExpiresAt: null, revokedAt: now },
   });
-  return count === 1 ? 'revoked' : 'skipped';
+  if (count === 1) return 'revoked';
+  if (capped) return 'skipped';
+  const after = await liveWorkOf(db, connectionId);
+  if (after.attempts === 0 && after.refunds === 0) return 'skipped';
+  log.warn({ connectionId, ...after }, 'work at Mollie became live while its grant was being revoked; the row keeps its tokens and stays due');
+  return deferRevoke(db, connectionId, sealedRefresh, now);
+}
+
+/** Moves a still-held grant's `revokeAfter` `REVOKE_RETRY_MS` on, under the same guard as the revoke's own write. */
+async function deferRevoke(db: PrismaClient, connectionId: string, sealedRefresh: Uint8Array<ArrayBuffer>, now: Date): Promise<RevokeOutcome> {
+  const { count } = await db.processorConnection.updateMany({
+    where: { id: connectionId, revokedAt: null, disconnectedAt: { not: null }, refreshToken: sealedRefresh },
+    data: { revokeAfter: new Date(now.getTime() + REVOKE_RETRY_MS) },
+  });
+  return count === 1 ? 'deferred' : 'skipped';
 }
 
 /** `revokeDueConnection`, started and not awaited: the disconnect's response does not wait on Mollie. */

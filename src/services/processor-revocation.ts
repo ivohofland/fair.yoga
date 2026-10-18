@@ -31,8 +31,10 @@ export class RevocationFailedError extends Error {
  * token could not be opened, or the row raised something unexpected (logged
  * here, and it does not stop the rows after it). `skipped` rows were due when
  * read and not revoked: all of them when Mollie is not configured (`deps` is
- * null), otherwise the ones a reconnect or another revoke took first. When
- * every due row failed it throws `RevocationFailedError` instead of returning.
+ * null), otherwise the ones a reconnect or another revoke took first and the
+ * ones `revokeDueConnection` deferred because Mollie still owes them a
+ * webhook. When every due row failed it throws `RevocationFailedError`
+ * instead of returning.
  */
 export async function revokeDueConnections(
   db: PrismaClient,
@@ -59,6 +61,7 @@ export async function revokeDueConnections(
         case 'unavailable':
           report.failed += 1;
           break;
+        case 'deferred':
         case 'skipped':
           report.skipped += 1;
           break;

@@ -2535,18 +2535,22 @@ The sites:
   the teacher's `OAuthState` rows there. No Mollie call is made inside the
   transaction; the grant is revoked after commit.
 
-Two more statements write the row outside any transaction, each a single
+Three more statements write the row outside any transaction, each a single
 `updateMany` that locks only the row it matches: the refresh's conditional
-write in `getAccessToken`, and the post-revoke write in `revokeDueConnection`
-(`processor-connection.ts`), which nulls the tokens only while the row still
-holds the refresh token Mollie was asked to revoke and is still disconnected.
-The daily sweep (`revokeDueConnections`, `processor-revocation.ts`) writes only
-through `revokeDueConnection`, one row per call, so it adds no statement.
+write in `getAccessToken`, and two in `revokeDueConnection`
+(`processor-connection.ts`): the post-revoke write, which nulls the tokens
+only while the row still holds the refresh token Mollie was asked to revoke,
+is still disconnected and, under the deferral cap, still has no live attempt
+or refund (a subquery on `ProcessorPayment` and `ProcessorRefund`, which
+reads and locks neither); and the deferral's write of `revokeAfter`, under
+the same refresh-token guard. The daily sweep (`revokeDueConnections`,
+`processor-revocation.ts`) writes only through `revokeDueConnection`, one row
+per call, so it adds no statement.
 
 Every transaction that takes the row takes `Teacher` first, so those six sites
 queue on `Teacher` before they reach it. None takes another lockable row of this
 file after the connection except the erasure's `SET NULL` writes of attempt
-rows, argued above. The two single-statement writes hold only the row they
+rows, argued above. The three single-statement writes hold only the row they
 match while they wait, so they close no cycle either. A new site that locks
 this row together with any row other than `Teacher` before it has to be placed
 in the order here first. The six sites are the transactional

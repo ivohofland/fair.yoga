@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi, onTestFinished } from 'vitest';
 import { randomBytes } from 'node:crypto';
 
 vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
@@ -13,6 +13,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { MollieUnavailable, createMollieClient, type MollieClient, type MollieProfile, type TokenGrant } from '@/lib/mollie/client';
 import { openToken } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
+import { log } from '@/lib/log';
 import { forgetOfferedMethods } from './processor-methods-cache';
 import { sealGrant } from './processor-token';
 import { uniqueSuffix } from '../../tests/helpers';
@@ -21,6 +22,8 @@ import type { MollieDeps } from './mollie-deps';
 import {
   MOLLIE_SCOPES,
   OAUTH_STATE_TTL_MS,
+  REVOKE_DEFER_CAP_MS,
+  REVOKE_RETRY_MS,
   chooseProfile,
   completeConnect,
   disconnect,
@@ -32,6 +35,8 @@ import {
   revokeDueConnection,
   startConnect,
 } from './processor-connection';
+import { revokeDueConnections } from './processor-revocation';
+import { scopeSweep } from '../../tests/scoped-sweep';
 
 const prisma = createPrismaClient();
 const key = randomBytes(32);
@@ -136,7 +141,7 @@ async function seedDisconnected(teacherId: string, revokeAfter: Date) {
 let seededClasses = 0;
 
 /** One `ProcessorPayment` on the teacher's connection, with the status and expiry given, each on its own day's class. */
-async function seedAttempt(teacherId: string, connectionId: string, status: 'open' | 'paid', expiresAt: Date) {
+async function seedAttempt(teacherId: string, connectionId: string, status: 'open' | 'pending' | 'paid', expiresAt: Date) {
   const s = uniqueSuffix();
   const studentEmail = `proc-conn-stu-${s}@test.local`;
   const student = await prisma.student.create({
@@ -157,11 +162,19 @@ async function seedAttempt(teacherId: string, connectionId: string, status: 'ope
   });
   const registration = await prisma.registration.create({ data: { classId: cls.id, studentId: student.id, status: 'attended', tierAtBooking: 3 } });
   const payment = await prisma.payment.create({ data: { registrationId: registration.id, amount: 10, status: 'pending' } });
-  await prisma.processorPayment.create({
+  return prisma.processorPayment.create({
     data: {
       paymentId: payment.id, connectionId, processorPaymentId: `tr_${s}`.replace(/-/g, ''), profileId: P1.id, testmode: false, method: 'ideal', status,
       amount: new Prisma.Decimal('10.00'), currency: 'EUR', expiresAt,
     },
+  });
+}
+
+/** A paid attempt on the connection with one refund in `status`. */
+async function seedRefund(teacherId: string, connectionId: string, status: 'pending' | 'processing' | 'refunded') {
+  const attempt = await seedAttempt(teacherId, connectionId, 'paid', later(-60 * 60_000));
+  return prisma.processorRefund.create({
+    data: { attemptId: attempt.id, processorRefundId: `re_${uniqueSuffix()}`.replace(/-/g, ''), amount: new Prisma.Decimal('10.00'), status },
   });
 }
 
@@ -564,6 +577,22 @@ describe('disconnect', () => {
     expect(row.refreshToken).not.toBeNull();
   });
 
+  it('with a refund still live at Mollie does not offer to revoke at once', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    await seedRefund(t.teacherId, (await connectionOf(t.teacherId)).id, 'pending');
+    expect(await disconnect(prisma, { teacherId: t.teacherId, now })).toMatchObject({ kind: 'disconnected', revokeNow: false });
+  });
+
+  it('with a pending attempt past its expiry does not offer to revoke at once', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    await seedAttempt(t.teacherId, (await connectionOf(t.teacherId)).id, 'pending', later(-60 * 60_000));
+    const outcome = await disconnect(prisma, { teacherId: t.teacherId, now });
+    expect(outcome).toMatchObject({ kind: 'disconnected', revokeNow: false });
+    expect((await connectionOf(t.teacherId)).revokeAfter).toEqual(now);
+  });
+
   it('answers unchanged for a teacher with no connection, and teacher_gone for an erased one', async () => {
     const t = await freshTeacher();
     expect(await disconnect(prisma, { teacherId: t.teacherId, now })).toEqual({ kind: 'unchanged' });
@@ -633,6 +662,111 @@ describe('revokeDueConnection', () => {
     expect(await revokeDueConnection(prisma, liveDeps, liveRow.id, now)).toBe('skipped');
     expect(await revokeDueConnection(prisma, liveDeps, notDueRow.id, now)).toBe('skipped');
     expect(fake.revoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('revokeDueConnection while Mollie still owes a webhook', () => {
+  async function disconnectedWith(arrange: (teacherId: string, connectionId: string) => Promise<unknown>, disconnectedAt = later(-60_000)) {
+    const t = await freshTeacher();
+    const c = await seedDisconnected(t.teacherId, now);
+    await prisma.processorConnection.update({ where: { id: c.id }, data: { disconnectedAt } });
+    await arrange(t.teacherId, c.id);
+    return { t, c };
+  }
+
+  it.each(['pending', 'processing'] as const)('defers for a %s refund: no Mollie call, tokens kept, asked again a day on', async (status) => {
+    const { t, c } = await disconnectedWith((teacherId, id) => seedRefund(teacherId, id, status));
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('deferred');
+    expect(fake.revoke).not.toHaveBeenCalled();
+    const row = await connectionOf(t.teacherId);
+    expect(row.revokedAt).toBeNull();
+    expect(openToken(row.refreshToken!, key)).toBe('refresh_old');
+    expect(row.revokeAfter).toEqual(new Date(now.getTime() + REVOKE_RETRY_MS));
+  });
+
+  it('defers for a pending attempt past its expiry', async () => {
+    const { c } = await disconnectedWith((teacherId, id) => seedAttempt(teacherId, id, 'pending', later(-60 * 60_000)));
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('deferred');
+    expect(fake.revoke).not.toHaveBeenCalled();
+  });
+
+  it('revokes once the refund has finished', async () => {
+    let refundId = '';
+    const { t, c } = await disconnectedWith(async (teacherId, id) => {
+      refundId = (await seedRefund(teacherId, id, 'pending')).id;
+    });
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('deferred');
+    await prisma.processorRefund.update({ where: { id: refundId }, data: { status: 'refunded' } });
+    fake.revoke.mockResolvedValue('revoked');
+    const dayOn = new Date(now.getTime() + REVOKE_RETRY_MS);
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, dayOn)).toBe('revoked');
+    expect((await connectionOf(t.teacherId)).revokedAt).toEqual(dayOn);
+  });
+
+  it('revokes regardless past the 30-day cap, and logs what was still live', async () => {
+    const warn = vi.spyOn(log, 'warn');
+    onTestFinished(() => warn.mockRestore());
+    const { t, c } = await disconnectedWith(
+      (teacherId, id) => seedRefund(teacherId, id, 'processing'),
+      new Date(now.getTime() - REVOKE_DEFER_CAP_MS - 60_000),
+    );
+    fake.revoke.mockResolvedValue('revoked');
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('revoked');
+    expect((await connectionOf(t.teacherId)).revokedAt).toEqual(now);
+    expect(warn).toHaveBeenCalledWith({ connectionId: c.id, attempts: 0, refunds: 1 }, expect.any(String));
+  });
+
+  it('keeps the tokens and defers when a refund turns live while Mollie is called', async () => {
+    const t = await freshTeacher();
+    const c = await seedDisconnected(t.teacherId, now);
+    fake.revoke.mockImplementation(async () => {
+      await seedRefund(t.teacherId, c.id, 'pending');
+      return 'revoked';
+    });
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('deferred');
+    const row = await connectionOf(t.teacherId);
+    expect(row.revokedAt).toBeNull();
+    expect(row.refreshToken).not.toBeNull();
+  });
+
+  it('counts a deferral as skipped in the sweep, which then does not throw', async () => {
+    const { c } = await disconnectedWith((teacherId, id) => seedRefund(teacherId, id, 'pending'));
+    const s = scopeSweep(prisma, { ProcessorConnection: { id: { in: [c.id] } } });
+    expect(await revokeDueConnections(s.db, now, liveDeps)).toEqual({ revoked: 0, failed: 0, skipped: 1 });
+  });
+});
+
+describe('revokeDueConnection when Mollie answers 4xx', () => {
+  it('counts a 400 (Mollie holds no grant for the token) as revoked, with a warning', async () => {
+    const warn = vi.spyOn(log, 'warn');
+    onTestFinished(() => warn.mockRestore());
+    const t = await freshTeacher();
+    const c = await seedDisconnected(t.teacherId, now);
+    fake.revoke.mockResolvedValue('invalid_token');
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('revoked');
+    expect((await connectionOf(t.teacherId)).revokedAt).toEqual(now);
+    expect(warn).toHaveBeenCalledWith({ connectionId: c.id }, expect.any(String));
+  });
+
+  it('past the 30-day cap forgets the tokens of a grant Mollie cannot revoke', async () => {
+    const t = await freshTeacher();
+    const c = await seedDisconnected(t.teacherId, now);
+    await prisma.processorConnection.update({ where: { id: c.id }, data: { disconnectedAt: new Date(now.getTime() - REVOKE_DEFER_CAP_MS - 60_000) } });
+    fake.revoke.mockRejectedValue(new MollieUnavailable('down', 503));
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('revoked');
+    expect(await connectionOf(t.teacherId)).toMatchObject({ refreshToken: null, revokedAt: now });
+  });
+
+  it.each([401, 403])('leaves the row due and logs at error for a %i (fair.yoga’s client credentials)', async (status) => {
+    const error = vi.spyOn(log, 'error');
+    onTestFinished(() => error.mockRestore());
+    const t = await freshTeacher();
+    const c = await seedDisconnected(t.teacherId, now);
+    fake.revoke.mockRejectedValue(new MollieUnavailable(`Mollie answered ${status}`, status));
+    expect(await revokeDueConnection(prisma, liveDeps, c.id, now)).toBe('unavailable');
+    expect((await connectionOf(t.teacherId)).revokedAt).toBeNull();
+    expect(error).toHaveBeenCalledWith({ connectionId: c.id, status }, expect.any(String));
+    expect(logDegraded).not.toHaveBeenCalled();
   });
 });
 
