@@ -4,14 +4,13 @@ import { orderOffered, type AllowedMollieMethod } from '@/lib/processor-methods'
 import { logDegraded } from '@/lib/degradation';
 import type { MollieDeps } from './mollie-deps';
 import { getAccessToken } from './processor-token';
-import { offerCache, type CachedOffer } from './processor-methods-cache';
-export { forgetOfferedMethods } from './processor-methods-cache';
+import { METHODS_CACHE_MS, offerCache, putOffer, type CachedOffer } from './processor-methods-cache';
+export { forgetOfferedMethods, METHODS_CACHE_MS } from './processor-methods-cache';
 
 export type OfferedMethods =
   | { kind: 'methods'; offered: AllowedMollieMethod[]; excluded: string[] }
   | { kind: 'unavailable' };
 
-export const METHODS_CACHE_MS = 60_000;
 const MIN_AMOUNT = new Prisma.Decimal('0.01');
 const EMPTY: CachedOffer = { kind: 'methods', offered: [], excluded: [] };
 
@@ -41,9 +40,9 @@ export async function listOfferedMethods(
     value = answer.kind === 'unsupported' ? EMPTY : { kind: 'methods', ...orderOffered(answer.ids) };
   } catch (err) {
     if (!(err instanceof MollieUnavailable)) throw err;
-    logDegraded('MOLLIE_UNAVAILABLE', { connectionId: connection.id, operation: 'listMethods', status: err.status ?? 0 }, 'Mollie methods unavailable; pay page shows the other rows', err);
+    logDegraded('MOLLIE_UNAVAILABLE', { connectionId: connection.id, operation: 'listMethods', ...(err.status === null ? {} : { status: err.status }) }, 'Mollie methods unavailable; pay page shows the other rows', err);
     return { kind: 'unavailable' };
   }
-  offerCache.set(key, { at: now, value });
+  putOffer(key, value, now);
   return value;
 }
