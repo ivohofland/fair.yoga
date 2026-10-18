@@ -12,6 +12,7 @@ import { CURRENCY_INFO } from '@/lib/currency';
 import type { BankAccountData } from '@/lib/payment-methods';
 import { startOfLocalDay } from '@/lib/timezone';
 import { readResumeReview, type ReviewPayment } from '@/services/payout-resume';
+import { payoutIdentityLabel } from '@/services/processor-connection';
 import { isClaimStanding } from '@/lib/payment-claim';
 import { claimDay } from '@/lib/payment-claim.server';
 import { PaymentClaimLine } from '@/components/class/payment-claim-line';
@@ -198,6 +199,13 @@ export default async function ResumePaymentsPage() {
             <h3 className="type-label mb-2">Payment link</h3>
             <p className="type-body break-all">{details.paymentLink ?? 'None'}</p>
           </div>
+          {details.processorIdentity !== null && (
+            <div className="bg-sand-soft border border-border rounded-card p-5">
+              <h3 className="type-label mb-2">Mollie</h3>
+              {/* No profile list is fetched here, so the profile shows by its masked id. */}
+              <p className="type-body break-all">{payoutIdentityLabel(details.processorIdentity, [])}</p>
+            </div>
+          )}
         </div>
         {details.bankAccounts.length === 0 && <p className="type-body mt-3">No bank accounts.</p>}
         <p className="type-caption mt-3">
