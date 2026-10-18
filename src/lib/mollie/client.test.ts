@@ -93,6 +93,14 @@ describe('createPayment', () => {
   });
 });
 
+describe('the checkout link', () => {
+  it.each(['javascript:alert(1)', 'http://www.mollie.com/checkout/x', 'not a url'])('reads %s as no checkout link', async (href) => {
+    const { mollie } = client([json(201, { id: 'tr_3', status: 'open', method: 'ideal', amount: { value: '1.00', currency: 'EUR' }, _links: { checkout: { href } } })]);
+    const view = await mollie.createPayment('tok', { amount: { value: '1.00', currency: 'EUR' }, description: 'd', method: 'ideal', redirectUrl: 'https://fair.yoga/r', webhookUrl: null, profileId: 'p', metadata: { paymentId: 'a', attemptId: 'b' }, testmode: false });
+    expect(view.checkoutUrl).toBeNull();
+  });
+});
+
 describe('getPayment', () => {
   it('embeds refunds', async () => {
     const { fetchImpl, mollie } = client([json(200, {

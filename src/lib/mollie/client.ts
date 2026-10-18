@@ -94,13 +94,19 @@ const profilesSchema = z.object({
   }),
 });
 
+/** `href` when it parses as an https URL, else null. */
+function httpsUrlOrNull(href: string | null | undefined): string | null {
+  if (href === null || href === undefined || !URL.canParse(href)) return null;
+  return new URL(href).protocol === 'https:' ? href : null;
+}
+
 function toView(p: z.infer<typeof paymentSchema>): MolliePaymentView {
   return {
     id: p.id,
     status: p.status,
     method: p.method ?? null,
     amount: p.amount,
-    checkoutUrl: p._links?.checkout?.href ?? null,
+    checkoutUrl: httpsUrlOrNull(p._links?.checkout?.href),
     expiresAt: p.expiresAt ?? null,
     paidAt: p.paidAt ?? null,
     amountChargedBack: p.amountChargedBack ?? null,
