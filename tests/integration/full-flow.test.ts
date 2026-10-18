@@ -327,12 +327,12 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
   // Step 16: Mark payment as paid
   // -----------------------------------------------------------------------
   it('Step 16: marks the payment as paid', async () => {
-    const result = await markPaymentPaid(prisma, paymentId, 'bank_transfer');
+    const result = await markPaymentPaid(prisma, paymentId, 'manual');
 
     expect(result.kind).toBe('applied');
     if (result.kind === 'applied') {
       expect(result.payment.status).toBe('paid');
-      expect(result.payment.method).toBe('bank_transfer');
+      expect(result.payment.method).toBe('manual');
       expect(result.payment.paidAt).not.toBeNull();
     }
   });
@@ -347,7 +347,7 @@ describe('Full flow: teacher signup -> room -> class -> student registers -> com
 
     expect(payment).not.toBeNull();
     expect(payment!.status).toBe('paid');
-    expect(payment!.method).toBe('bank_transfer');
+    expect(payment!.method).toBe('manual');
     expect(Number(payment!.amount)).toBe(50);
   });
 

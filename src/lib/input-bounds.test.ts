@@ -42,7 +42,6 @@ describe('limit values', () => {
       EQUIPMENT_ITEM_MAX: 60,
       EQUIPMENT_ITEMS_MAX: 30,
       LONG_TEXT_MAX: 2000,
-      PAYMENT_METHOD_MAX: 64,
       EMAIL_MAX: 254,
       PAGE_SLUG_MAX: 60,
       BANK_FIELD_MAX: 64,

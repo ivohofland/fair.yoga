@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, onTestFinished } from 'vitest';
 import { randomBytes } from 'node:crypto';
 
 vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
 
-import { createPrismaClient, Prisma } from '@/lib/prisma-client';
+import { createPrismaClient, Prisma, type PaymentStatus, type PrismaClient, type ProcessorPaymentStatus, type ProcessorRefundStatus, type RefundOutcome } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
+import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { MollieUnavailable, type CreatePaymentInput, type MollieClient, type MolliePaymentView } from '@/lib/mollie/client';
 import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
@@ -14,14 +15,17 @@ import { uniqueSuffix } from '../../tests/helpers';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
 import { forgetOfferedMethods } from './processor-methods-offer';
-import { createAttempt, processorReturnUrl, processorWebhookUrl, type CreateAttemptOutcome } from './processor-attempts';
+import {
+  createAttempt, decideRefundSync, decideSync, processorReturnUrl, processorWebhookUrl, syncAttempt,
+  type CreateAttemptOutcome, type SyncDecision,
+} from './processor-attempts';
 
 const prisma = createPrismaClient();
 const key = randomBytes(32);
 const MINUTE = 60_000;
 
 type Fake = { [K in keyof MollieClient]: ReturnType<typeof vi.fn> };
-const fake = { refresh: vi.fn(), listMethods: vi.fn(), createPayment: vi.fn() } as unknown as Fake;
+const fake = { refresh: vi.fn(), listMethods: vi.fn(), createPayment: vi.fn(), getPayment: vi.fn() } as unknown as Fake;
 const deps: MollieDeps = {
   client: fake as unknown as MollieClient,
   config: { clientId: 'client', clientSecret: 'secret', tokenKey: key, testmode: true, appUrl: 'https://fair.yoga' },
@@ -51,7 +55,12 @@ async function makeStudent(tag: string): Promise<string> {
   return student.id;
 }
 
-async function seedConnection(overrides: Partial<{ disconnectedAt: Date | null; revokeAfter: Date | null; scopes: string[] }> = {}) {
+async function seedConnection(
+  overrides: Partial<{
+    disconnectedAt: Date | null; revokeAfter: Date | null; revokedAt: Date | null; scopes: string[]; testmode: boolean;
+    accessToken: Uint8Array<ArrayBuffer> | null; refreshToken: Uint8Array<ArrayBuffer> | null; accessTokenExpiresAt: Date | null;
+  }> = {},
+) {
   await prisma.processorPayment.deleteMany({ where: { connection: { teacherId } } });
   await prisma.processorConnection.deleteMany({ where: { teacherId } });
   const row = await prisma.processorConnection.create({
@@ -153,6 +162,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  await prisma.notification.deleteMany({ where: { recipientId: { in: [...teacherIds, ...studentIds] } } });
   await prisma.processorPayment.deleteMany({ where: { connection: { teacherId: { in: teacherIds } } } });
   await prisma.processorConnection.deleteMany({ where: { teacherId: { in: teacherIds } } });
   await prisma.payment.deleteMany({ where: { registration: { studentId: { in: studentIds } } } });
@@ -422,3 +432,463 @@ describe('processor URLs', () => {
     expect(processorWebhookUrl('https://fair.yoga')).toBe('https://fair.yoga/api/webhooks/mollie');
   });
 });
+
+describe('decideSync', () => {
+  const quiet = (attemptStatus: ProcessorPaymentStatus): SyncDecision => ({
+    attemptStatus, settle: false, notifyPaidTwice: false, recordChargeback: false, result: 'unchanged',
+  });
+  const statusOnly = (attemptStatus: ProcessorPaymentStatus): SyncDecision => ({
+    attemptStatus, settle: false, notifyPaidTwice: false, recordChargeback: false, result: 'status_only',
+  });
+  const chargedBack: SyncDecision = { attemptStatus: 'paid', settle: false, notifyPaidTwice: false, recordChargeback: true, result: 'charged_back' };
+  const settled: SyncDecision = { attemptStatus: 'paid', settle: true, notifyPaidTwice: false, recordChargeback: false, result: 'settled' };
+  const paidTwice: SyncDecision = { attemptStatus: 'paid', settle: false, notifyPaidTwice: true, recordChargeback: false, result: 'paid_twice' };
+
+  type Input = Parameters<typeof decideSync>[0];
+  const row = (over: Partial<Input> & Pick<Input, 'mollieStatus' | 'previousStatus' | 'paymentStatus'>): Input => ({
+    settledByThis: false, chargedBack: false, alreadyChargedBack: false, ...over,
+  });
+
+  it.each<[string, Input, SyncDecision]>([
+    ['a chargeback on the settling attempt', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'paid', settledByThis: true, chargedBack: true }), chargedBack],
+    ['a chargeback on a duplicate', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'paid', chargedBack: true }), chargedBack],
+    ['a chargeback the first webhook reports, without settling', row({ mollieStatus: 'paid', previousStatus: 'open', paymentStatus: 'pending', chargedBack: true }), chargedBack],
+    ['a chargeback already recorded', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'paid', chargedBack: true, alreadyChargedBack: true }), quiet('paid')],
+    ['paid on a pending payment', row({ mollieStatus: 'paid', previousStatus: 'open', paymentStatus: 'pending' }), settled],
+    ['paid on an overdue payment', row({ mollieStatus: 'paid', previousStatus: 'open', paymentStatus: 'overdue' }), settled],
+    ['paid again by the attempt that settled it', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'paid', settledByThis: true }), quiet('paid')],
+    ['paid on a payment settled otherwise', row({ mollieStatus: 'paid', previousStatus: 'open', paymentStatus: 'paid' }), paidTwice],
+    ['paid on a waived payment', row({ mollieStatus: 'paid', previousStatus: 'open', paymentStatus: 'not_charged' }), paidTwice],
+    ['paid twice, already told', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'paid' }), quiet('paid')],
+    ['paid again by an attempt a refund released, on a payment asked again', row({ mollieStatus: 'paid', previousStatus: 'paid', paymentStatus: 'pending' }), quiet('paid')],
+    ['an earlier status reported for a paid attempt', row({ mollieStatus: 'pending', previousStatus: 'paid', paymentStatus: 'paid', settledByThis: true }), quiet('paid')],
+  ])('%s', (_label, input, expected) => {
+    expect(decideSync(input)).toEqual(expected);
+  });
+
+  it.each<ProcessorPaymentStatus>(['pending', 'authorized', 'canceled', 'expired', 'failed'])('%s records the status only, on any payment', (status) => {
+    for (const paymentStatus of ['pending', 'overdue', 'paid', 'not_charged'] satisfies PaymentStatus[]) {
+      expect(decideSync(row({ mollieStatus: status, previousStatus: 'open', paymentStatus }))).toEqual(statusOnly(status));
+      expect(decideSync(row({ mollieStatus: status, previousStatus: status, paymentStatus }))).toEqual(quiet(status));
+    }
+  });
+});
+
+describe('decideRefundSync', () => {
+  const ALL: ProcessorRefundStatus[] = ['queued', 'pending', 'processing', 'refunded', 'failed', 'canceled'];
+  const OPEN: ProcessorRefundStatus[] = ['queued', 'pending', 'processing', 'canceled'];
+
+  it.each(ALL)('%s reported again is unchanged', (status) => {
+    expect(decideRefundSync({ storedStatus: status, mollieStatus: status })).toEqual({ kind: 'unchanged' });
+  });
+
+  it.each(OPEN)('a %s row reported refunded completes', (storedStatus) => {
+    expect(decideRefundSync({ storedStatus, mollieStatus: 'refunded' })).toEqual({ kind: 'status', status: 'refunded', complete: true, notifyFailed: false });
+  });
+
+  it.each(OPEN)('a %s row reported failed tells the teacher', (storedStatus) => {
+    expect(decideRefundSync({ storedStatus, mollieStatus: 'failed' })).toEqual({ kind: 'status', status: 'failed', complete: false, notifyFailed: true });
+  });
+
+  it.each(OPEN.flatMap((from) => OPEN.filter((to) => to !== from).map((to) => [from, to] as const)))('%s → %s records the status only', (storedStatus, mollieStatus) => {
+    expect(decideRefundSync({ storedStatus, mollieStatus })).toEqual({ kind: 'status', status: mollieStatus, complete: false, notifyFailed: false });
+  });
+
+  it.each((['refunded', 'failed'] as const).flatMap((from) => ALL.map((to) => [from, to] as const)))('a %s row is never moved (to %s)', (storedStatus, mollieStatus) => {
+    expect(decideRefundSync({ storedStatus, mollieStatus })).toEqual({ kind: 'unchanged' });
+  });
+});
+
+describe('syncAttempt', () => {
+  const trId = () => `tr_${uniqueSuffix().replace(/-/g, '')}`;
+  const reId = () => `re_${uniqueSuffix().replace(/-/g, '')}`;
+
+  /** A payment of 10.00 and one Mollie attempt on it. */
+  async function attemptOn(
+    paymentStatus: 'pending' | 'overdue' | 'paid' | 'not_charged',
+    attempt: Partial<{ status: ProcessorPaymentStatus; settledPayment: boolean; chargedBackAt: Date | null; testmode: boolean; connectionId: string | null; method: string }> = {},
+    paymentMethod: 'manual' | 'mollie' | null = null,
+  ) {
+    const { paymentId } = await freshPayment(paymentStatus);
+    if (paymentMethod !== null) await prisma.payment.update({ where: { id: paymentId }, data: { method: paymentMethod } });
+    const row = await prisma.processorPayment.create({
+      data: {
+        paymentId, connectionId, processorPaymentId: trId(), profileId: 'pfl_attempt', testmode: true, method: 'ideal', status: 'open',
+        amount: new Prisma.Decimal('10.00'), currency: 'EUR', checkoutUrl: 'https://www.mollie.com/checkout/seeded',
+        expiresAt: new Date(Date.now() + 10 * MINUTE),
+        ...(attempt.status === 'paid' ? { paidAt: new Date() } : {}),
+        ...attempt,
+      },
+    });
+    return { paymentId, attempt: row };
+  }
+
+  /** A payment Mollie settled through one attempt. */
+  function settledAttempt(over: Partial<{ chargedBackAt: Date | null; settledPayment: boolean }> = {}) {
+    return attemptOn('paid', { status: 'paid', settledPayment: true, ...over }, 'mollie');
+  }
+
+  function view(processorPaymentId: string, over: Partial<MolliePaymentView> = {}): MolliePaymentView {
+    return molliePayment({ id: processorPaymentId, status: 'paid', paidAt: new Date().toISOString(), checkoutUrl: null, ...over });
+  }
+
+  function refundRow(attemptId: string, over: Partial<{ processorRefundId: string | null; status: ProcessorRefundStatus; outcome: RefundOutcome | null }> = {}) {
+    return prisma.processorRefund.create({
+      data: { attemptId, processorRefundId: reId(), amount: new Prisma.Decimal('10.00'), status: 'queued', outcome: null, ...over },
+    });
+  }
+
+  function notes(type: 'payment_paid_twice' | 'payment_charged_back' | 'refund_failed' | 'payment_refunded', classId?: string) {
+    return prisma.notification.findMany({
+      where: { type, recipientId: { in: [teacherId, studentId] }, ...(classId ? { relatedClassId: classId } : {}) },
+    });
+  }
+
+  async function classOf(paymentId: string): Promise<string> {
+    return (await prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, select: { registration: { select: { classId: true } } } })).registration.classId;
+  }
+
+  it('answers unknown for an id no attempt has, without calling Mollie', async () => {
+    expect(await syncAttempt(prisma, deps, trId())).toBe('unknown');
+    expect(fake.getPayment).not.toHaveBeenCalled();
+  });
+
+  it('answers unknown for an attempt whose connection is gone, without calling Mollie (Review Focus 4)', async () => {
+    const { attempt } = await attemptOn('pending', { connectionId: null });
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
+    expect(fake.getPayment).not.toHaveBeenCalled();
+  });
+
+  it("settles a pending payment Mollie reports paid, and records Mollie's method", async () => {
+    const { paymentId, attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { method: 'creditcard' }));
+
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('settled');
+
+    expect(fake.getPayment).toHaveBeenCalledWith('access_plain', attempt.processorPaymentId, { testmode: true });
+    const row = await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } });
+    expect(row).toMatchObject({ status: 'paid', settledPayment: true, method: 'creditcard' });
+    expect(row.paidAt).not.toBeNull();
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(payment).toMatchObject({ status: 'paid', method: 'mollie' });
+    expect(payment.paidAt).not.toBeNull();
+  });
+
+  it('writes nothing for the same webhook again', async () => {
+    const { paymentId, attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId));
+    await syncAttempt(prisma, deps, attempt.processorPaymentId);
+    const before = await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } });
+    const paymentBefore = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+
+    expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).updatedAt).toEqual(before.updatedAt);
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).updatedAt).toEqual(paymentBefore.updatedAt);
+  });
+
+  it("answers the webhook unchanged after the student's return settled it (Review Focus 5)", async () => {
+    const { attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId));
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('settled'); // the return route's call
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged'); // the webhook's
+  });
+
+  it('records a payment already paid by hand as paid twice and tells the teacher once', async () => {
+    const { paymentId, attempt } = await attemptOn('paid', {}, 'manual');
+    const paymentBefore = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId));
+
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('paid_twice');
+
+    expect(await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).toMatchObject({ status: 'paid', settledPayment: false });
+    const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+    expect(payment.method).toBe('manual');
+    expect(payment.updatedAt).toEqual(paymentBefore.updatedAt);
+    const classId = await classOf(paymentId);
+    const sent = await notes('payment_paid_twice', classId);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ recipientType: 'teacher', recipientId: teacherId, title: 'Paid twice' });
+    expect(sent[0]!.body).toBe('Stu also paid €10.00 by iDEAL. You can refund it from the payment.');
+
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+    expect(await notes('payment_paid_twice', classId)).toHaveLength(1);
+  });
+
+  it('answers unknown, and logs it, when Mollie no longer knows an attempt we hold', async () => {
+    const warn = vi.spyOn(log, 'warn');
+    onTestFinished(() => warn.mockRestore());
+    const { attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(null);
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
+    expect(warn).toHaveBeenCalledWith(
+      { attemptId: attempt.id, processorPaymentId: attempt.processorPaymentId, profileId: 'pfl_attempt' },
+      expect.any(String),
+    );
+  });
+
+  it('answers unavailable and logs MOLLIE_UNAVAILABLE when Mollie cannot be reached', async () => {
+    const { paymentId, attempt } = await attemptOn('pending');
+    fake.getPayment.mockRejectedValue(new MollieUnavailable('down', 503));
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unavailable');
+    expect(vi.mocked(logDegraded)).toHaveBeenCalledWith(
+      'MOLLIE_UNAVAILABLE',
+      { connectionId, operation: 'getPayment', status: 503 },
+      expect.any(String),
+      expect.any(MollieUnavailable),
+    );
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('pending');
+  });
+
+  it('answers unavailable for a known attempt when Mollie is not configured', async () => {
+    const { attempt } = await attemptOn('pending');
+    expect(await syncAttempt(prisma, null, attempt.processorPaymentId)).toBe('unavailable');
+  });
+
+  it('answers unknown, and logs it, when the connection was revoked', async () => {
+    const warn = vi.spyOn(log, 'warn');
+    onTestFinished(() => warn.mockRestore());
+    const at = new Date();
+    await seedConnection({ disconnectedAt: at, revokedAt: at, accessToken: null, refreshToken: null, accessTokenExpiresAt: null });
+    const { attempt } = await attemptOn('pending');
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
+    expect(fake.getPayment).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, connectionId }), expect.any(String));
+  });
+
+  it('answers unknown, and logs it, for a status Mollie does not document', async () => {
+    const warn = vi.spyOn(log, 'warn');
+    onTestFinished(() => warn.mockRestore());
+    const { paymentId, attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { status: 'settled' }));
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, status: 'settled' }), expect.any(String));
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('pending');
+  });
+
+  it('fetches in the mode the attempt was made in, not the connection’s current one', async () => {
+    await seedConnection({ testmode: false });
+    const { attempt } = await attemptOn('pending', { testmode: true });
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { status: 'open' }));
+    await syncAttempt(prisma, deps, attempt.processorPaymentId);
+    expect(fake.getPayment).toHaveBeenCalledWith('access_plain', attempt.processorPaymentId, { testmode: true });
+  });
+
+  it.each<ProcessorPaymentStatus>(['pending', 'authorized', 'canceled', 'expired', 'failed'])('records %s on the attempt only', async (status) => {
+    const { paymentId, attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { status, paidAt: null }));
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('status_only');
+    const row = await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } });
+    expect(row).toMatchObject({ status, settledPayment: false, paidAt: null });
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('pending');
+  });
+
+  describe('a chargeback', () => {
+    it('releases the settling attempt, leaves the payment paid, and tells the teacher once', async () => {
+      const { paymentId, attempt } = await settledAttempt();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '4.00', currency: 'EUR' } }));
+
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
+
+      const row = await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } });
+      expect(row.chargedBackAt).not.toBeNull();
+      expect(row.settledPayment).toBe(false);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+      const classId = await classOf(paymentId);
+      const sent = await notes('payment_charged_back', classId);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ recipientType: 'teacher', recipientId: teacherId, title: 'Payment disputed' });
+      expect(sent[0]!.body).toBe('Stu disputed €10.00 with their bank and it was taken back. You can mark the payment unpaid to ask again.');
+
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+      expect(await notes('payment_charged_back', classId)).toHaveLength(1);
+    });
+
+    it('on a duplicate attempt tells the teacher without offering to ask again', async () => {
+      const { paymentId, attempt } = await attemptOn('paid', { status: 'paid' }, 'manual');
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '10.00', currency: 'EUR' } }));
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
+      const [sent] = await notes('payment_charged_back', await classOf(paymentId));
+      expect(sent!.body).toBe('Stu disputed €10.00 with their bank and it was taken back.');
+    });
+
+    it('of zero is not a chargeback', async () => {
+      const { attempt } = await settledAttempt();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '0.00', currency: 'EUR' } }));
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(true);
+    });
+  });
+
+  describe('refunds', () => {
+    async function refundCase(outcome: RefundOutcome | null, refundStatus: ProcessorRefundStatus) {
+      const settled = outcome === null ? await attemptOn('paid', { status: 'paid' }, 'manual') : await settledAttempt();
+      const refund = await refundRow(settled.attempt.id, { outcome });
+      fake.getPayment.mockResolvedValue(
+        view(settled.attempt.processorPaymentId, { refunds: [{ id: refund.processorRefundId!, status: refundStatus, amount: { value: '10.00', currency: 'EUR' } }] }),
+      );
+      return { ...settled, refund, classId: await classOf(settled.paymentId) };
+    }
+
+    it('of a duplicate completes without touching the payment, telling the student once', async () => {
+      const c = await refundCase(null, 'refunded');
+      const before = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: c.refund.id } })).status).toBe('refunded');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).updatedAt).toEqual(before.updatedAt);
+      const sent = await notes('payment_refunded', c.classId);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ recipientType: 'student', recipientId: studentId, title: 'Payment refunded' });
+      expect(sent[0]!.body).toBe('Att refunded €10.00. It goes back the way you paid.');
+
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+    });
+
+    it('with outcome waived marks the payment not charged and releases the attempt', async () => {
+      const c = await refundCase('waived', 'refunded');
+      await prisma.payment.update({ where: { id: c.paymentId }, data: { studentReportedAt: new Date() } });
+
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+      expect(payment.status).toBe('not_charged');
+      expect(payment.notChargedAt).not.toBeNull();
+      expect(payment.studentReportedAt).toBeNull();
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(false);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+    });
+
+    it('with outcome reopened asks again, taking the link lock before the payment', async () => {
+      const c = await refundCase('reopened', 'refunded');
+      const statements: string[] = [];
+      const recording = withTransaction(async (fn) =>
+        prisma.$transaction((tx) => fn(recordRaw(tx, statements))),
+      );
+
+      await syncAttempt(recording, deps, c.attempt.processorPaymentId);
+
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+      expect(payment).toMatchObject({ status: 'pending', method: null, paidAt: null });
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(false);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+      const link = statements.findIndex((s) => s.includes('"TeacherStudent"'));
+      const paymentLock = statements.findIndex((s) => s.includes('"Payment"') && s.includes('FOR UPDATE'));
+      expect(link).toBeGreaterThanOrEqual(0);
+      expect(link).toBeLessThan(paymentLock);
+    });
+
+    it('still processing changes no payment and tells no one', async () => {
+      const c = await refundCase('reopened', 'processing');
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: c.refund.id } })).status).toBe('processing');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('paid');
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(true);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(0);
+    });
+
+    it('that failed leaves the payment paid and tells the teacher', async () => {
+      const c = await refundCase('waived', 'failed');
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: c.refund.id } })).status).toBe('failed');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('paid');
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(true);
+      const sent = await notes('refund_failed', c.classId);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ recipientType: 'teacher', recipientId: teacherId });
+      expect(sent[0]!.body).toBe('A refund didn’t go through. Check your Mollie balance and try again from the payment.');
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(0);
+    });
+
+    it('whose payment is no longer paid applies nothing, logs it, and still tells the student', async () => {
+      const warn = vi.spyOn(log, 'warn');
+      onTestFinished(() => warn.mockRestore());
+      const c = await refundCase('waived', 'refunded');
+      await prisma.payment.update({ where: { id: c.paymentId }, data: { status: 'pending', method: null, paidAt: null } });
+
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: c.refund.id } })).status).toBe('refunded');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('pending');
+      expect(warn).toHaveBeenCalledWith({ paymentId: c.paymentId, attemptId: c.attempt.id, outcome: 'waived' }, expect.any(String));
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+    });
+
+    it("made in Mollie's dashboard is ignored", async () => {
+      const { paymentId, attempt } = await settledAttempt();
+      const dashboard = reId();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: dashboard, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }] }));
+
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+
+      expect(await prisma.processorRefund.count({ where: { processorRefundId: dashboard } })).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+    });
+
+    it('with no row while a fair.yoga refund awaits its Mollie id answers unavailable and writes nothing for it', async () => {
+      const info = vi.spyOn(log, 'warn');
+      onTestFinished(() => info.mockRestore());
+      const { paymentId, attempt } = await settledAttempt();
+      const awaiting = await refundRow(attempt.id, { processorRefundId: null, outcome: 'waived' });
+      const unseen = reId();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: unseen, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }] }));
+
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unavailable');
+
+      expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: awaiting.id } })).toMatchObject({ status: 'queued', processorRefundId: null });
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+      expect(await notes('payment_refunded', await classOf(paymentId))).toHaveLength(0);
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, deferred: true, refundIds: [unseen] }), expect.any(String));
+    });
+
+    it('stored between the pre-read and the lock, outcome reopened, defers rather than lock the link after the payment', async () => {
+      const { paymentId, attempt } = await settledAttempt();
+      const refund = await refundRow(attempt.id, { processorRefundId: null, outcome: 'reopened' });
+      const mollieRefundId = reId();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { refunds: [{ id: mollieRefundId, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }] }));
+      const storing = withTransaction(async (fn) => {
+        await prisma.processorRefund.update({ where: { id: refund.id }, data: { processorRefundId: mollieRefundId, status: 'queued' } });
+        return prisma.$transaction(fn);
+      });
+
+      expect(await syncAttempt(storing, deps, attempt.processorPaymentId)).toBe('unavailable');
+
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe('queued');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('paid');
+      expect(await notes('payment_refunded', await classOf(paymentId))).toHaveLength(0);
+
+      await syncAttempt(prisma, deps, attempt.processorPaymentId);
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: refund.id } })).status).toBe('refunded');
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('pending');
+    });
+  });
+});
+
+type TransactionFn = (tx: Prisma.TransactionClient) => Promise<unknown>;
+
+/** `prisma` with only `$transaction` replaced; every other member is the real client's. */
+function withTransaction(run: (fn: TransactionFn) => Promise<unknown>): PrismaClient {
+  return new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === '$transaction') return (fn: TransactionFn) => run(fn);
+      return Reflect.get(target, prop, receiver) as unknown;
+    },
+  });
+}
+
+/** `tx` with its raw queries recorded, in order, into `into`. */
+function recordRaw(tx: Prisma.TransactionClient, into: string[]): Prisma.TransactionClient {
+  return new Proxy(tx, {
+    get(target, prop, receiver) {
+      if (prop === '$queryRaw') {
+        return (strings: TemplateStringsArray, ...values: unknown[]) => {
+          into.push(strings.join('?'));
+          return target.$queryRaw(strings, ...values);
+        };
+      }
+      return Reflect.get(target, prop, receiver) as unknown;
+    },
+  });
+}
