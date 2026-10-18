@@ -3518,3 +3518,131 @@ describe('the archive escape against a student erasure ends in an abort, not an 
     }
   }, 20_000);
 });
+
+describe('deleteTeacherAccount deletes the ProcessorConnection after the TeacherStudent links (#896)', () => {
+  const prisma = createPrismaClient();
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  /** A teacher with a student link and a Mollie attempt on that student's completed class. */
+  async function makeTeacherWithAttempt() {
+    const suffix = `gdpr-conn-last-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Conn', lastName: 'Last', email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } }, bio: '', pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Link', lastName: 'Held', email: `${suffix}-s@test.local` },
+      select: { id: true },
+    });
+    const link = await prisma.teacherStudent.create({ data: { teacherId: teacher.id, studentId: student.id }, select: { id: true } });
+    const room = await prisma.room.create({
+      data: { venueName: 'Last Studio', address: `${suffix} St`, city: 'Amsterdam', postcode: '1234CL', floor: '1', roomName: 'Main', maxCapacity: 20, createdById: teacher.id },
+      select: { id: true },
+    });
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const cls = await createClassFixture(prisma, {
+      teacherId: teacher.id, teacherRoomId: teacherRoom.id, classType: 'Conn last', date: new Date('2026-06-01'),
+      startTime: hhmmToTime('09:00'), durationMinutes: 60, roomCost: 20, minRate: 10, targetRate: 20, minStudents: 1, maxStudents: 10,
+      status: 'completed', effectiveTeacherRate: 10, totalStudents: 1, totalRevenue: 30, vatTotal: 0,
+    });
+    const registration = await prisma.registration.create({
+      data: { classId: cls.id, studentId: student.id, status: 'attended', tierAtBooking: 3 },
+      select: { id: true },
+    });
+    const payment = await prisma.payment.create({ data: { registrationId: registration.id, amount: 10, status: 'pending' }, select: { id: true } });
+    const connection = await prisma.processorConnection.create({
+      data: {
+        teacherId: teacher.id, processor: 'mollie', organizationId: 'org_aaaa1111', profileId: 'pfl_one11111', scopes: [], testmode: false,
+        accessToken: Buffer.from('a'), refreshToken: Buffer.from('r'), accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+      },
+      select: { id: true },
+    });
+    const attempt = await prisma.processorPayment.create({
+      data: {
+        paymentId: payment.id, connectionId: connection.id, processorPaymentId: `tr_${suffix}`.replace(/-/g, ''), profileId: 'pfl_one11111',
+        testmode: false, method: 'ideal', status: 'paid', amount: new Prisma.Decimal('10.00'), currency: 'EUR',
+      },
+      select: { id: true },
+    });
+    return { teacherId: teacher.id, accountId: teacher.accountId, studentId: student.id, roomId: room.id, linkId: link.id, connectionId: connection.id, attemptId: attempt.id };
+  }
+
+  it('waits on a held TeacherStudent link while it has touched neither the attempt nor the connection', async () => {
+    const fx = await makeTeacherWithAttempt();
+    try {
+      let holderPid = 0;
+      let parked!: () => void;
+      const isParked = new Promise<void>((r) => { parked = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const holder = prisma
+        .$transaction(
+          async (tx) => {
+            const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+            holderPid = row!.pid;
+            await tx.$queryRaw`SELECT id FROM "TeacherStudent" WHERE id = ${fx.linkId} FOR UPDATE`;
+            parked();
+            await released;
+          },
+          { timeout: 10_000 },
+        )
+        .then(() => 'held' as const, (err: unknown) => ({ error: String(err) }));
+
+      let erasing: Promise<'erased' | { error: string }> | undefined;
+      let attemptProbe: 'free' | { error: string } | undefined;
+      let connectionProbe: 'free' | { error: string } | undefined;
+      const probe = (table: 'ProcessorPayment' | 'ProcessorConnection', id: string) =>
+        prisma
+          .$transaction(async (tx) => {
+            await tx.$queryRawUnsafe(`SELECT id FROM "${table}" WHERE id = $1 FOR UPDATE NOWAIT`, id);
+          })
+          .then(() => 'free' as const, (err: unknown) => ({ error: String(err) }));
+      try {
+        await awaitHandshake(isParked, 'TeacherStudent FOR UPDATE holder');
+        erasing = expectErased(deleteTeacherAccount(prisma, fx.teacherId, null)).then(
+          () => 'erased' as const,
+          (err: unknown) => ({ error: String(err) }),
+        );
+        // The erasure is queued behind the holder's link before the probes run.
+        const deadline = Date.now() + 1_500;
+        for (;;) {
+          const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND ${holderPid} = ANY(pg_blocking_pids(pid))`;
+          if ((row?.n ?? 0) > 0) break;
+          if (Date.now() > deadline) throw new Error(`nothing waited behind backend ${holderPid} within 1500ms`);
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        attemptProbe = await probe('ProcessorPayment', fx.attemptId);
+        connectionProbe = await probe('ProcessorConnection', fx.connectionId);
+      } finally {
+        release();
+        await Promise.all([holder, erasing]);
+      }
+
+      expect(attemptProbe).toBe('free');
+      expect(connectionProbe).toBe('free');
+      expect(await holder).toBe('held');
+      expect(await erasing).toBe('erased');
+      expect(await prisma.processorConnection.count({ where: { teacherId: fx.teacherId } })).toBe(0);
+    } finally {
+      await prisma.payment.deleteMany({ where: { registration: { studentId: fx.studentId } } });
+      await prisma.registration.deleteMany({ where: { studentId: fx.studentId } });
+      await prisma.calendarEntry.deleteMany({ where: { teacherId: fx.teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId: fx.teacherId } });
+      await prisma.room.deleteMany({ where: { id: fx.roomId } });
+      await prisma.student.deleteMany({ where: { id: fx.studentId } });
+      await prisma.teacher.deleteMany({ where: { id: fx.teacherId } });
+      await prisma.account.deleteMany({ where: { id: fx.accountId } });
+    }
+  }, 20_000);
+});

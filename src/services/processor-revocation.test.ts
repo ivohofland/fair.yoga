@@ -12,7 +12,7 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 import { uniqueSuffix } from '../../tests/helpers';
 import type { MollieDeps } from './mollie-deps';
 import { sealGrant } from './processor-token';
-import { revokeDueConnections } from './processor-revocation';
+import { RevocationFailedError, revokeDueConnections } from './processor-revocation';
 
 const prisma = createPrismaClient();
 const key = randomBytes(32);
@@ -130,10 +130,21 @@ describe('revokeDueConnections', () => {
 
   it('counts a row whose token cannot be opened as failed and says so', async () => {
     const unreadable = await seed({ sealKey: randomBytes(32) });
-    expect(await revokeDueConnections(scoped(unreadable).db, now, deps)).toEqual({ revoked: 0, failed: 1, skipped: 0 });
+    await expect(revokeDueConnections(scoped(unreadable).db, now, deps)).rejects.toBeInstanceOf(RevocationFailedError);
     expect(fake.revoke).not.toHaveBeenCalled();
     expect(vi.mocked(logDegraded).mock.calls.map(([code]) => code)).toContain('PROCESSOR_TOKEN_UNREADABLE');
     expect((await rowOf(unreadable.id)).revokedAt).toBeNull();
+  });
+
+  it('throws, carrying the report, when every due row failed, so the job reports the failure', async () => {
+    const a = await seed({ refresh: 'refresh_a' });
+    const b = await seed({ refresh: 'refresh_b' });
+    fake.revoke.mockRejectedValue(new MollieUnavailable('down', 503));
+    const err: unknown = await revokeDueConnections(scoped(a, b).db, now, deps).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RevocationFailedError);
+    expect((err as RevocationFailedError).report).toEqual({ revoked: 0, failed: 2, skipped: 0 });
+    expect((err as RevocationFailedError).message).toContain('every one failed');
+    expect((await rowOf(a.id)).revokedAt).toBeNull();
   });
 
   it('counts an unexpected error on one row as failed and carries on with the next', async () => {

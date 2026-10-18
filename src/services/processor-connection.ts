@@ -190,7 +190,7 @@ type ConnectWrite = { outcome: CompleteConnectOutcome; connectionId: string | nu
  * The plaintext refresh token of a row whose grant has not been revoked, or
  * null when it is revoked or its token cannot be opened (logged).
  */
-export function unrevokedRefresh(row: { id: string; refreshToken: Uint8Array | null; revokedAt: Date | null }, deps: MollieDeps): string | null {
+function unrevokedRefresh(row: { id: string; refreshToken: Uint8Array | null; revokedAt: Date | null }, deps: MollieDeps): string | null {
   if (row.revokedAt !== null || row.refreshToken === null) return null;
   try {
     return openToken(row.refreshToken, deps.config.tokenKey);

@@ -6,6 +6,21 @@ import { revokeDueConnection } from './processor-connection';
 export type RevocationReport = { revoked: number; failed: number; skipped: number };
 
 /**
+ * Thrown by `revokeDueConnections` when it found due rows and every one failed,
+ * so the job's verdict reports a sweep that revoked nothing. It carries the
+ * report. Rows that did get revoked, or were skipped, keep a run quiet.
+ */
+export class RevocationFailedError extends Error {
+  readonly report: RevocationReport;
+
+  constructor(report: RevocationReport) {
+    super(`processor revocation attempted ${report.failed} connection(s) and every one failed`);
+    this.name = 'RevocationFailedError';
+    this.report = report;
+  }
+}
+
+/**
  * The daily sweep behind `disconnect`'s `revokeAfter`: revokes at Mollie every
  * disconnected connection whose window has passed and that still holds its
  * grant, one row at a time through `revokeDueConnection`, which owns the
@@ -16,7 +31,8 @@ export type RevocationReport = { revoked: number; failed: number; skipped: numbe
  * token could not be opened, or the row raised something unexpected (logged
  * here, and it does not stop the rows after it). `skipped` rows were due when
  * read and not revoked: all of them when Mollie is not configured (`deps` is
- * null), otherwise the ones a reconnect or another revoke took first.
+ * null), otherwise the ones a reconnect or another revoke took first. When
+ * every due row failed it throws `RevocationFailedError` instead of returning.
  */
 export async function revokeDueConnections(
   db: PrismaClient,
@@ -36,13 +52,26 @@ export async function revokeDueConnections(
   for (const { id } of due) {
     try {
       const outcome = await revokeDueConnection(db, deps, id, now);
-      if (outcome === 'revoked') report.revoked += 1;
-      else if (outcome === 'unavailable') report.failed += 1;
-      else report.skipped += 1;
+      switch (outcome) {
+        case 'revoked':
+          report.revoked += 1;
+          break;
+        case 'unavailable':
+          report.failed += 1;
+          break;
+        case 'skipped':
+          report.skipped += 1;
+          break;
+        default: {
+          const unreachable: never = outcome;
+          throw new Error(`unhandled revoke outcome ${String(unreachable)}`);
+        }
+      }
     } catch (err) {
       log.error({ err, connectionId: id }, 'processor revoke sweep: a connection failed unexpectedly');
       report.failed += 1;
     }
   }
+  if (report.failed > 0 && report.revoked === 0 && report.skipped === 0) throw new RevocationFailedError(report);
   return report;
 }
