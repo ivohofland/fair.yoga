@@ -4,7 +4,7 @@ import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
 import { formatDayHeader } from '@/lib/format';
 import { MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
-import { takesMolliePayments } from '@/lib/processor-liveness';
+import { takesMolliePayments, takesMolliePaymentsIn } from '@/lib/processor-liveness';
 
 /** The one currency an EPC QR can carry. */
 export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
@@ -151,7 +151,7 @@ export const teacherPaymentSelect = {
   paymentLink: true,
   paymentsPausedAt: true,
   bankAccounts: { select: bankAccountSelect },
-  processorConnection: { select: { organizationId: true, profileId: true, disconnectedAt: true, scopes: true } },
+  processorConnection: { select: { organizationId: true, profileId: true, disconnectedAt: true, scopes: true, testmode: true } },
 } as const satisfies Prisma.TeacherSelect;
 
 export type TeacherPaymentSources = Prisma.TeacherGetPayload<{ select: typeof teacherPaymentSelect }>;
@@ -212,10 +212,22 @@ export function payGuidanceFor(answer: PaymentMethodsAnswer): PayGuidance {
  * `payGuidanceFor` their manual methods in `currency`, except that a teacher
  * with none whose Mollie connection takes payments answers `methods`, so the
  * copy names no "pay directly" instruction. Paused still answers `hold_off`.
+ *
+ * `mollie` is the server's Mollie mode, or null when Mollie is not configured.
+ * With a mode, the connection must take payments in it
+ * (`takesMolliePaymentsIn`), as the pay page requires before it offers a
+ * Mollie row; without one, the mode is not read.
  */
-export function payGuidanceForTeacher(teacher: TeacherPaymentSources, currency: Currency): PayGuidance {
+export function payGuidanceForTeacher(
+  teacher: TeacherPaymentSources,
+  currency: Currency,
+  mollie: { testmode: boolean } | null,
+): PayGuidance {
   const guidance = payGuidanceFor(paymentMethodsForTeacher(teacher, currency));
-  return guidance === 'directly' && takesMolliePayments(teacher.processorConnection) ? 'methods' : guidance;
+  if (guidance !== 'directly') return guidance;
+  const connection = teacher.processorConnection;
+  const takesPayments = mollie === null ? takesMolliePayments(connection) : takesMolliePaymentsIn(connection, mollie);
+  return takesPayments ? 'methods' : guidance;
 }
 
 /** Onboarding's `bank` step: an account in the current currency, or a link. */

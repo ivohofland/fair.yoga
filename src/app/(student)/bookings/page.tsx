@@ -24,6 +24,7 @@ import {
   teacherPaymentSelect,
   type PayGuidance,
 } from '@/lib/payment-methods';
+import { configuredMollieMode } from '@/services/mollie-deps';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
 import { isOutstanding } from '@/lib/payment-status';
 import { isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
@@ -374,7 +375,7 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
-            const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
+            const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency, configuredMollieMode());
             // While paused the pay page shows only the hold-off copy, so a
             // claim links there only when it can show the claim and its Undo.
             const claimLinked = payment ? isClaimStanding(payment) && guidance !== 'hold_off' : false;
