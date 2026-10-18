@@ -16,7 +16,7 @@ import { formatDayHeader, formatMoney } from '@/lib/format';
 import { attemptProcessing, isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
-import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
+import { markedPaidLine, offersSentClaim, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
 import {
   PAYMENTS_PAUSED_COPY,
   PAYMENT_METHOD_COPY,
@@ -236,6 +236,7 @@ export default async function PayPage({
         teacherFirstName={teacher.firstName}
         paymentId={payment.id}
         paidAt={payment.paidAt}
+        paidMethod={payment.method}
         reportedAt={payment.studentReportedAt}
         timeZone={teacher.defaultTimezone}
       />
@@ -255,6 +256,7 @@ function PayBody({
   teacherFirstName,
   paymentId,
   paidAt,
+  paidMethod,
   reportedAt,
   timeZone,
 }: {
@@ -266,6 +268,7 @@ function PayBody({
   teacherFirstName: string;
   paymentId: string;
   paidAt: Date | null;
+  paidMethod: string | null;
   reportedAt: Date | null;
   timeZone: string;
 }) {
@@ -277,7 +280,7 @@ function PayBody({
   );
   switch (status) {
     case 'paid':
-      return <p className="type-body mb-6">{markedPaidLine(paidAt, timeZone, paymentId)}</p>;
+      return <p className="type-body mb-6">{markedPaidLine(paidAt, paidMethod, timeZone, paymentId)}</p>;
     case 'not_charged':
       return <p className="type-body mb-6">{`${teacherFirstName} isn’t charging for this class.`}</p>;
     case 'pending':
@@ -320,7 +323,7 @@ function PayBody({
               ))}
             </div>
           </section>
-          {sentControl}
+          {offersSentClaim(methods.methods, reportedAt) && sentControl}
         </>
       );
     default: {

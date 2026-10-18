@@ -3,21 +3,54 @@ import { logDegraded } from '@/lib/degradation';
 import { formatInstantInZone, startOfLocalDay } from '@/lib/timezone';
 import { formatDateShort } from '@/lib/format';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import type { PaidMethod } from '@/services/payments';
+import type { PaymentMethod } from '@/lib/payment-methods';
 
 /**
- * The pay page's line for a paid payment. A `paid` payment always has its
- * `paidAt`, since marking it paid writes both; one without is recorded as
+ * How the pay page names a payment's settling: "Paid" when Mollie confirmed
+ * it (nobody marked anything), "Marked paid" when the teacher did, or when
+ * the column holds no `PaidMethod`.
+ */
+function paidVerb(method: string | null): string {
+  if (method !== 'manual' && method !== 'mollie') return 'Marked paid';
+  const paidBy: PaidMethod = method;
+  switch (paidBy) {
+    case 'manual':
+      return 'Marked paid';
+    case 'mollie':
+      return 'Paid';
+    default: {
+      const unhandled: never = paidBy;
+      throw new Error(`unhandled paid method: ${String(unhandled)}`);
+    }
+  }
+}
+
+/**
+ * The pay page's line for a paid payment, worded by `Payment.method`
+ * (`paidVerb`). A `paid` payment always has its `paidAt`, since marking it
+ * paid writes both; one without is recorded as
  * `PAYMENT_PAID_WITHOUT_TIMESTAMP` (`docs/degradation-sites.md`) and named
  * without a date.
  */
-export function markedPaidLine(paidAt: Date | null, timeZone: string, paymentId: string): string {
-  if (paidAt !== null) return `Marked paid ${formatInstantInZone(paidAt, timeZone)}.`;
+export function markedPaidLine(paidAt: Date | null, method: string | null, timeZone: string, paymentId: string): string {
+  const verb = paidVerb(method);
+  if (paidAt !== null) return `${verb} ${formatInstantInZone(paidAt, timeZone)}.`;
   logDegraded(
     'PAYMENT_PAID_WITHOUT_TIMESTAMP',
     { paymentId },
     'paid payment has no paidAt; the pay page names no date',
   );
-  return 'Marked paid.';
+  return `${verb}.`;
+}
+
+/**
+ * Whether the pay page offers "I've sent it": some row is paid outside
+ * Mollie, which the teacher then confirms by hand, or a claim already stands
+ * and the student may withdraw it. A Mollie row settles itself.
+ */
+export function offersSentClaim(methods: readonly PaymentMethod[], reportedAt: Date | null): boolean {
+  return reportedAt !== null || methods.some((m) => m.kind !== 'processor');
 }
 
 /**

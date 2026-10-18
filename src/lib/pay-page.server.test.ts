@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
 import { formatInstantInZone } from '@/lib/timezone';
-import { markedPaidLine, reportMissingPayment, sentClaimLine } from './pay-page.server';
+import { markedPaidLine, offersSentClaim, reportMissingPayment, sentClaimLine } from './pay-page.server';
 
 describe('markedPaidLine', () => {
   afterEach(() => {
@@ -11,17 +11,41 @@ describe('markedPaidLine', () => {
   it('names when the payment was marked paid, and reports nothing', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const paidAt = new Date('2026-06-05T10:00:00.000Z');
-    expect(markedPaidLine(paidAt, 'UTC', 'pay-1')).toBe(`Marked paid ${formatInstantInZone(paidAt, 'UTC')}.`);
+    expect(markedPaidLine(paidAt, 'manual', 'UTC', 'pay-1')).toBe(`Marked paid ${formatInstantInZone(paidAt, 'UTC')}.`);
+    expect(markedPaidLine(paidAt, null, 'UTC', 'pay-1')).toBe(`Marked paid ${formatInstantInZone(paidAt, 'UTC')}.`);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('says "Paid <date>." for a payment Mollie settled, since nobody marked it', () => {
+    const paidAt = new Date('2026-06-05T10:00:00.000Z');
+    expect(markedPaidLine(paidAt, 'mollie', 'UTC', 'pay-1')).toBe(`Paid ${formatInstantInZone(paidAt, 'UTC')}.`);
   });
 
   it('says only "Marked paid." without a timestamp, and reports PAYMENT_PAID_WITHOUT_TIMESTAMP', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    expect(markedPaidLine(null, 'UTC', 'pay-1')).toBe('Marked paid.');
+    expect(markedPaidLine(null, 'manual', 'UTC', 'pay-1')).toBe('Marked paid.');
+    expect(markedPaidLine(null, 'mollie', 'UTC', 'pay-2')).toBe('Paid.');
     expect(warn).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'PAYMENT_PAID_WITHOUT_TIMESTAMP', paymentId: 'pay-1' }),
       'paid payment has no paidAt; the pay page names no date',
     );
+  });
+});
+
+describe('offersSentClaim', () => {
+  const ideal = { kind: 'processor', method: 'ideal' } as const;
+  const link = { kind: 'payment_link', url: 'https://pay.example/anna', host: 'pay.example' } as const;
+
+  it('offers it beside a row paid outside Mollie', () => {
+    expect(offersSentClaim([ideal, link], null)).toBe(true);
+  });
+
+  it('does not offer it when every row is Mollie, which settles itself', () => {
+    expect(offersSentClaim([ideal], null)).toBe(false);
+  });
+
+  it('still shows a claim that stands, so it can be withdrawn', () => {
+    expect(offersSentClaim([ideal], new Date())).toBe(true);
   });
 });
 
