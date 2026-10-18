@@ -2195,21 +2195,17 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   written.
 - The student's Mollie payment (`createAttempt`,
   `src/services/processor-attempts.ts`, behind
-  `POST /api/payments/[id]/processor-attempt`): every Mollie call
-  (`listOfferedMethods`, `getAccessToken`, `createPayment`) happens before the
-  transaction opens; then `lockTeacherForNoKeyUpdate` as its first statement
-  (#896); under it, a plain re-read of the payment's status, the teacher's
-  `paymentsPausedAt` and the connection row, the `ProcessorPayment` insert,
-  and, only when the connection was disconnected while Mollie was called, an
-  `UPDATE` of the connection's `revokeAfter` to at least the attempt's expiry.
-  Taking the disconnect's own lock is what keeps the disconnect's read of the
-  open attempts complete: a disconnect either committed before the re-read,
-  which then sees `disconnectedAt` and raises `revokeAfter` past the attempt,
-  or waits on the lock and counts the committed attempt when it sets
-  `revokeAfter`. A payment settled, a pause begun or a connection revoked
-  meanwhile is refused with nothing written, as is an erased teacher
-  (`PROCESSOR_NOT_CONNECTED`). Its entry is in "The `ProcessorConnection` row
-  is a leaf lock" below.
+  `POST /api/payments/[id]/processor-attempt`): every Mollie call happens
+  before the transaction opens; then `lockTeacherForNoKeyUpdate` as its first
+  statement (#896), a plain re-read of the payment's status, the teacher's
+  `paymentsPausedAt` and the connection row, and one write, the
+  `ProcessorPayment` insert. A connection that no longer takes payments, a
+  payment settled, a pause begun or an erased teacher is refused with nothing
+  written. Taking the disconnect's own lock is what keeps the disconnect's
+  read of open attempts complete: a disconnect either committed before the
+  re-read, which then refuses, or waits on the lock and counts the committed
+  attempt when it sets `revokeAfter`. Its entry is in "The
+  `ProcessorConnection` row is a leaf lock" below.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2467,21 +2463,12 @@ The sites:
   while this one waits on it, and another holds the teacher's row and asserts
   this one waits on `Teacher`.
 - `createAttempt` (`src/services/processor-attempts.ts`) takes
-  `lockTeacherForNoKeyUpdate` first (its entry in "The `Teacher` row is the
-  first lock" above), re-reads the connection unlocked, and inserts the
-  `ProcessorPayment`, whose foreign-key checks take `FOR KEY SHARE` on its
-  `Payment` row and on the connection row. On a connection disconnected while
-  Mollie was called it then takes the connection's row lock through the
-  `revokeAfter` `UPDATE`, which raises nothing it would conflict with: the
-  same transaction holds the key share. Its order is therefore
-  `Teacher → Payment → ProcessorConnection`, with the `Payment` row held only
-  `FOR KEY SHARE`, which conflicts with nothing but a `FOR UPDATE` holder. No
-  site that holds a `Payment` row waits on `Teacher` or on this row: the
-  `Payment` writers in "Where `Payment` sits" take neither, and the resume
-  takes `Teacher` before its `Payment` rows, the same way round as this.
-  `processor-attempts.test.ts` disconnects the row while `createPayment` is
-  answering and asserts the attempt is recorded with `revokeAfter` at or past
-  its expiry.
+  `lockTeacherForNoKeyUpdate` first and writes only the `ProcessorPayment`
+  insert, whose foreign-key checks take `FOR KEY SHARE` on its `Payment` row
+  and on the connection row. It writes the connection row not at all. The key
+  shares conflict only with a `FOR UPDATE` holder of either row, and no site
+  holding the `Payment` row waits on `Teacher` or on this row (the `Payment`
+  writers in "Where `Payment` sits" take neither).
 
 Two more statements write the row outside any transaction, each a single
 `updateMany` that locks only the row it matches: the refresh's conditional
@@ -2491,11 +2478,18 @@ holds the refresh token Mollie was asked to revoke and is still disconnected.
 
 No site takes `Teacher`, or any other row in this file, after the
 `ProcessorConnection` row, and every transaction that takes the row takes
-`Teacher` first, so those sites queue on `Teacher` before they reach
+`Teacher` first, so those five sites queue on `Teacher` before they reach
 it. The two single-statement writes hold only the row they match while they
 wait, so they close no cycle either. A new site that locks this row together
 with any row other than `Teacher` before it has to be placed in the order
-here first.
+here first. The five sites are the transactional `lockTeacherForNoKeyUpdate(`
+calls in the processor services, re-derived on 2026-10-18 with
+
+    git grep -n 'lockTeacherForNoKeyUpdate(' -- 'src/services/processor-*.ts' ':!*.test.ts'
+
+which returned 5 lines = 3 in `processor-connection.ts` (`completeConnect`,
+`chooseProfile`, `disconnect`) + 1 in `processor-token.ts` (`invalid_grant`)
++ 1 in `processor-attempts.ts` (`createAttempt`).
 
 The `invalid_grant` lock is plain `FOR UPDATE` with no `OF`, so it does not
 appear in the `FOR UPDATE OF` census of `Class` locks above.
