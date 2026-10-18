@@ -18,6 +18,7 @@ import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
 import { inProgressFirst } from '@/lib/payment-claim';
 import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { TEACHER_ATTEMPT_SELECT, type TeacherAttempt } from '@/lib/processor-attempt-view';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -131,6 +132,7 @@ export type TeacherPaymentRow = Payment & {
     student: TeacherVisibleStudent;
     class: { classType: string; date: Date };
   };
+  processorAttempts: TeacherAttempt[];
 };
 
 // ---------------------------------------------------------------------------
@@ -376,7 +378,9 @@ function logUnlinked(paymentId: string, reopened: Reopened): void {
  * state like `paid` — no longer outstanding, never dunned — that differs from
  * it in the one respect that matters to the money: nothing arrived.
  * `reopenPayment` is the reversal. A payment already not charged is
- * `unchanged`; a paid one is refused, because waiving it would be a refund.
+ * `unchanged`; a paid one is refused here. Waiving after a real refund is
+ * `completeRefund`'s, in the transaction that records the refund as
+ * `refunded`.
  *
  * `reminderSentAt` is deliberately left alone. A reminder that was sent was
  * sent, and the row's history stays true. A standing claim
@@ -812,7 +816,7 @@ export async function countOutstandingPaymentsForStudent(
  *
  * Follows the relation chain: Payment → Registration → Class → Teacher.
  * Includes registration with the teacher-visible student projection and
- * class type/date. The attempts the order reads are not returned.
+ * class type/date, and the payment's Mollie attempts (`TEACHER_ATTEMPT_SELECT`).
  */
 export async function getOutstandingPayments(
   db: PrismaClient,
@@ -836,11 +840,11 @@ export async function getOutstandingPayments(
           class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
-      processorAttempts: { select: { status: true } },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
     },
   });
 
-  return inProgressFirst(rows, (row) => row).map(({ processorAttempts: _attempts, ...row }) => ({
+  return inProgressFirst(rows, (row) => row).map((row) => ({
     ...row,
     registration: {
       ...row.registration,
@@ -864,9 +868,9 @@ export async function getOutstandingPayments(
  * under the *caller's* privacy flags, which is more misleading than a raw
  * leak, not safer.
  *
- * Includes registration with the teacher-visible student projection and the
- * class's type/date — the previous version selected no `class` fields at
- * all.
+ * Includes registration with the teacher-visible student projection, the
+ * class's type/date, and the payment's Mollie attempts
+ * (`TEACHER_ATTEMPT_SELECT`).
  */
 export async function getPaymentsForClass(
   db: PrismaClient,
@@ -888,6 +892,7 @@ export async function getPaymentsForClass(
           class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
     },
   });
 

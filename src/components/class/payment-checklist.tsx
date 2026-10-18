@@ -8,6 +8,8 @@ import { isOutstanding } from '@/lib/payment-status';
 import { usePaymentActions } from '@/lib/use-payment-actions';
 import { SendReminderButton } from '@/components/class/send-reminder-button';
 import { PaymentClaimLine } from '@/components/class/payment-claim-line';
+import { AttemptRefund, OtherAttempts } from '@/components/payments/attempt-refund';
+import { settlingAttempt, type AttemptView } from '@/lib/processor-attempt-view';
 import { ListRow } from '@/components/ui/list-row';
 
 export interface PaymentItem {
@@ -19,6 +21,8 @@ export interface PaymentItem {
   reminderSentAt: Date | null;
   /** The day the student marked it sent (`claimDay`); shown while the claim stands. */
   studentReportedOn: Date | null;
+  /** The payment's Mollie attempts (`TEACHER_ATTEMPT_SELECT`). */
+  processorAttempts: AttemptView[];
 }
 
 interface PaymentChecklistProps {
@@ -74,6 +78,7 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
           const reminded = remindedAt[item.paymentId];
           const stateText = paymentStateText(status);
           const claimedOn = standingClaim({ paymentId: item.paymentId, status, studentReportedOn: item.studentReportedOn });
+          const settling = settlingAttempt(item.processorAttempts);
 
           return (
             <ListRow
@@ -109,6 +114,12 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
                   </button>
                 )}
                 {reminded && <span className="type-caption">Reminded {timeAgo(reminded)}</span>}
+                <OtherAttempts
+                  paymentId={item.paymentId}
+                  attempts={item.processorAttempts.filter((a) => a !== settling)}
+                  studentName={item.studentName}
+                  classContext={null}
+                />
               </div>
 
               <div className="flex items-center gap-3 shrink-0">
@@ -143,6 +154,15 @@ export function PaymentChecklist({ items, currency }: PaymentChecklistProps) {
                   >
                     Mark paid
                   </button>
+                )}
+                {isPaid && settling && (
+                  <AttemptRefund
+                    paymentId={item.paymentId}
+                    attempt={settling}
+                    settles
+                    studentName={item.studentName}
+                    classContext={null}
+                  />
                 )}
                 {isPaid && justMarked.has(item.paymentId) && (
                   <button

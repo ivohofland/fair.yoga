@@ -28,6 +28,11 @@ export function isAllowedMollieMethod(id: string): id is AllowedMollieMethod {
   return Object.hasOwn(MOLLIE_METHODS, id);
 }
 
+/** A Mollie method id as the teacher reads it: its allowlist label, or "Mollie" for one off the list. */
+export function mollieMethodLabel(id: string): string {
+  return isAllowedMollieMethod(id) ? MOLLIE_METHODS[id].label : 'Mollie';
+}
+
 /** The ids fair.yoga offers, in allowlist order, and the ones it does not. */
 export function orderOffered(ids: readonly string[]): { offered: AllowedMollieMethod[]; excluded: string[] } {
   const unique = [...new Set(ids)];
