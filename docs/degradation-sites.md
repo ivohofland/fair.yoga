@@ -791,9 +791,10 @@ access from their Mollie dashboard.
 for `connectionId` (`getAccessToken`, `src/services/processor-token.ts`). The
 connection was revoked in the same transaction: both tokens nulled, `revokedAt`
 set. Only when the connection was not already disconnected, the teacher got
-a `processor_disconnected` notification and a `processor_disconnected`
-`PayoutChangeEvent` was written, so a resume after a pause shows why Mollie
-left the payout details. Students see the teacher's other
+a `processor_disconnected` notification, and, when it had a live payout
+identity (a profile chosen), a `processor_disconnected` `PayoutChangeEvent`
+was written, so a resume after a pause shows why Mollie left the payout
+details. Students see the teacher's other
 payment options until the teacher reconnects.
 
 **Where the bad value lives.** Mollie's side: the teacher revoked this app's

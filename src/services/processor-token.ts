@@ -3,7 +3,7 @@ import { MollieUnavailable, type TokenAnswer, type TokenGrant } from '@/lib/moll
 import { openToken, sealToken, TokenCipherError } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
-import { maskOrganizationId } from '@/lib/processor-liveness';
+import { livePayoutIdentity, maskOrganizationId } from '@/lib/processor-liveness';
 import { createNotification } from './notifications';
 import { forgetOfferedMethods } from './processor-methods-cache';
 import type { MollieDeps } from './mollie-deps';
@@ -112,8 +112,8 @@ async function refreshOnce(
       // The row is locked before `disconnectedAt` is read, so a disconnect
       // that commits while this waits is seen; the refresh token it still
       // holds is the one Mollie refused, or a newer grant has won.
-      const [first] = await tx.$queryRaw<{ wasDisconnected: boolean; organizationId: string }[]>`
-        SELECT ("disconnectedAt" IS NOT NULL) AS "wasDisconnected", "organizationId"
+      const [first] = await tx.$queryRaw<{ disconnectedAt: Date | null; organizationId: string; profileId: string | null }[]>`
+        SELECT "disconnectedAt", "organizationId", "profileId"
           FROM "ProcessorConnection"
          WHERE id = ${connectionId} AND "revokedAt" IS NULL AND "refreshToken" = ${sealedRefresh}
            FOR UPDATE`;
@@ -124,12 +124,15 @@ async function refreshOnce(
                "disconnectedAt" = COALESCE("disconnectedAt", ${now}),
                "revokeAfter" = NULL, "revokedAt" = ${now}
          WHERE id = ${connectionId}`;
-      if (!first.wasDisconnected) {
-        // Recorded as a disconnect writes it. No payout notice: the
-        // notification below already tells the teacher.
-        await tx.payoutChangeEvent.create({
-          data: { teacherId, kind: 'processor_disconnected', before: maskOrganizationId(first.organizationId), after: null },
-        });
+      if (first.disconnectedAt === null) {
+        // The payout event only for a row that had a live payout identity
+        // before this write; a row still awaiting its profile lost none. No
+        // payout notice: the notification below already tells the teacher.
+        if (livePayoutIdentity(first) !== null) {
+          await tx.payoutChangeEvent.create({
+            data: { teacherId, kind: 'processor_disconnected', before: maskOrganizationId(first.organizationId), after: null },
+          });
+        }
         await createNotification(tx, {
           recipientType: 'teacher',
           recipientId: teacherId,

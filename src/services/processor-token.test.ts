@@ -58,7 +58,7 @@ async function blockedByHolder(holderPid: number, opts: { queryLike?: string; wa
   return false;
 }
 
-async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revoked?: boolean; disconnectedAt?: Date }) {
+async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revoked?: boolean; disconnectedAt?: Date; profileId?: string | null }) {
   await prisma.processorConnection.deleteMany({ where: { teacherId } });
   const sealKey = opts.sealWith ?? key;
   return prisma.processorConnection.create({
@@ -68,7 +68,7 @@ async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revok
           teacherId,
           processor: 'mollie',
           organizationId: 'org_test',
-          profileId: 'pfl_test',
+          profileId: opts.profileId === undefined ? 'pfl_test' : opts.profileId,
           accessToken: new Uint8Array(sealToken('access_plain', sealKey)),
           refreshToken: new Uint8Array(sealToken('refresh_plain', sealKey)),
           accessTokenExpiresAt: opts.expiresAt,
@@ -140,6 +140,15 @@ describe('getAccessToken', () => {
     expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
     const events = await prisma.payoutChangeEvent.findMany({ where: { teacherId }, select: { kind: true, before: true, after: true } });
     expect(events).toEqual([{ kind: 'processor_disconnected', before: 'org_…test', after: null }]);
+  });
+  it('writes no payout event on invalid_grant for a connection still awaiting its profile, as a disconnect writes none', async () => {
+    await prisma.payoutChangeEvent.deleteMany({ where: { teacherId } });
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1), profileId: null });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
+    expect(await prisma.payoutChangeEvent.count({ where: { teacherId } })).toBe(0);
+    expect(await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } })).toMatchObject({ refreshToken: null, revokedAt: now });
+    expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(1);
   });
   it('answers unavailable and leaves the connection alone when Mollie is down', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
