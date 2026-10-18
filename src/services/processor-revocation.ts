@@ -1,0 +1,48 @@
+import type { PrismaClient } from '@/lib/prisma-client';
+import { log } from '@/lib/log';
+import { mollieDeps, type MollieDeps } from './mollie-deps';
+import { revokeDueConnection } from './processor-connection';
+
+export type RevocationReport = { revoked: number; failed: number; skipped: number };
+
+/**
+ * The daily sweep behind `disconnect`'s `revokeAfter`: revokes at Mollie every
+ * disconnected connection whose window has passed and that still holds its
+ * grant, one row at a time through `revokeDueConnection`, which owns the
+ * guarded write that keeps a reconnect's new grant.
+ *
+ * `revoked` rows had their tokens nulled and `revokedAt` stamped. `failed`
+ * rows stay due for the next run: Mollie could not be reached, the stored
+ * token could not be opened, or the row raised something unexpected (logged
+ * here, and it does not stop the rows after it). `skipped` rows were due when
+ * read and not revoked: all of them when Mollie is not configured (`deps` is
+ * null), otherwise the ones a reconnect or another revoke took first.
+ */
+export async function revokeDueConnections(
+  db: PrismaClient,
+  now: Date = new Date(),
+  deps: MollieDeps | null = mollieDeps(),
+): Promise<RevocationReport> {
+  const due = await db.processorConnection.findMany({
+    where: { disconnectedAt: { not: null }, revokedAt: null, revokeAfter: { lte: now } },
+    select: { id: true },
+    orderBy: { revokeAfter: 'asc' },
+  });
+  const report: RevocationReport = { revoked: 0, failed: 0, skipped: 0 };
+  if (deps === null) {
+    report.skipped = due.length;
+    return report;
+  }
+  for (const { id } of due) {
+    try {
+      const outcome = await revokeDueConnection(db, deps, id, now);
+      if (outcome === 'revoked') report.revoked += 1;
+      else if (outcome === 'unavailable') report.failed += 1;
+      else report.skipped += 1;
+    } catch (err) {
+      log.error({ err, connectionId: id }, 'processor revoke sweep: a connection failed unexpectedly');
+      report.failed += 1;
+    }
+  }
+  return report;
+}

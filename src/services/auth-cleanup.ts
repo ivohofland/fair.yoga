@@ -1,8 +1,8 @@
 /**
  * Auth-table hygiene: expired sessions, magic-link tokens, payout pause
- * tokens and passkey revoke tokens serve no purpose after their expiry, and a
- * handoff budget serves none once its window has ended. A daily sweep keeps
- * them bounded.
+ * tokens, passkey revoke tokens and OAuth sign-in states serve no purpose
+ * after their expiry, and a handoff budget serves none once its window has
+ * ended. A daily sweep keeps them bounded.
  */
 
 import type { PrismaClient } from '@/lib/prisma-client';
@@ -17,8 +17,9 @@ export async function cleanupExpiredAuth(
   handoffAttemptBudgets: number;
   payoutPauseTokens: number;
   passkeyRevokeTokens: number;
+  oauthStates: number;
 }> {
-  const [sessions, tokens, budgets, pauseTokens, revokeTokens] = await Promise.all([
+  const [sessions, tokens, budgets, pauseTokens, revokeTokens, oauthStates] = await Promise.all([
     db.session.deleteMany({ where: { expiresAt: { lt: now } } }),
     db.magicLinkToken.deleteMany({ where: { expiresAt: { lt: now } } }),
     db.handoffAttemptBudget.deleteMany({
@@ -26,6 +27,7 @@ export async function cleanupExpiredAuth(
     }),
     db.payoutPauseToken.deleteMany({ where: { expiresAt: { lt: now } } }),
     db.passkeyRevokeToken.deleteMany({ where: { expiresAt: { lt: now } } }),
+    db.oAuthState.deleteMany({ where: { expiresAt: { lt: now } } }),
   ]);
   return {
     sessions: sessions.count,
@@ -33,5 +35,6 @@ export async function cleanupExpiredAuth(
     handoffAttemptBudgets: budgets.count,
     payoutPauseTokens: pauseTokens.count,
     passkeyRevokeTokens: revokeTokens.count,
+    oauthStates: oauthStates.count,
   };
 }

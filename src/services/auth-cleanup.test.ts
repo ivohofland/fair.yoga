@@ -16,6 +16,8 @@ const livePauseHash = crypto.randomBytes(32).toString('hex');
 const deadPauseHash = crypto.randomBytes(32).toString('hex');
 const liveRevokeHash = crypto.randomBytes(32).toString('hex');
 const deadRevokeHash = crypto.randomBytes(32).toString('hex');
+const liveStateHash = crypto.randomBytes(32).toString('hex');
+const deadStateHash = crypto.randomBytes(32).toString('hex');
 const staleBudgetEmail = `cleanup-budget-stale-${uniqueSuffix}@test.local`;
 const freshBudgetEmail = `cleanup-budget-fresh-${uniqueSuffix}@test.local`;
 // Fixed, and passed to the sweep, so every fixture sits a known distance from
@@ -68,6 +70,13 @@ describe('cleanupExpiredAuth', () => {
         },
       ],
     });
+    await prisma.oAuthState.createMany({
+      data: [
+        { stateHash: liveStateHash, teacherId: teacher.id, sessionId: liveSessionId, expiresAt: new Date(now.getTime() + 600000) },
+        { stateHash: deadStateHash, teacherId: teacher.id, sessionId: liveSessionId, expiresAt: new Date(now.getTime() - 1000) },
+      ],
+    });
+
     await prisma.magicLinkToken.createMany({
       data: [
         {
@@ -119,6 +128,7 @@ describe('cleanupExpiredAuth', () => {
       MagicLinkToken: { tokenHash: { in: [liveTokenHash, deadTokenHash] } },
       PayoutPauseToken: { tokenHash: { in: [livePauseHash, deadPauseHash] } },
       PasskeyRevokeToken: { tokenHash: { in: [liveRevokeHash, deadRevokeHash] } },
+      OAuthState: { stateHash: { in: [liveStateHash, deadStateHash] } },
       HandoffAttemptBudget: { email: { in: [staleBudgetEmail, freshBudgetEmail] } },
     });
     const result = await cleanupExpiredAuth(scoped.db, now);
@@ -129,6 +139,9 @@ describe('cleanupExpiredAuth', () => {
     expect(result.handoffAttemptBudgets).toBe(1);
     expect(result.payoutPauseTokens).toBe(1);
     expect(result.passkeyRevokeTokens).toBe(1);
+    expect(result.oauthStates).toBe(1);
+    expect(await prisma.oAuthState.findUnique({ where: { stateHash: liveStateHash } })).not.toBeNull();
+    expect(await prisma.oAuthState.findUnique({ where: { stateHash: deadStateHash } })).toBeNull();
     expect(await prisma.passkeyRevokeToken.findUnique({ where: { tokenHash: liveRevokeHash } })).not.toBeNull();
     expect(await prisma.passkeyRevokeToken.findUnique({ where: { tokenHash: deadRevokeHash } })).toBeNull();
 
