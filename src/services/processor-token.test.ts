@@ -37,6 +37,27 @@ function degradations(): { code: string }[] {
   return vi.mocked(logDegraded).mock.calls.map(([code]) => ({ code }));
 }
 
+const BLOCK_DEADLINE_MS = 10_000;
+
+// True once some backend is blocked BY the holder's own pid (and, when given, its
+// statement text and wait event match); false at the deadline.
+async function blockedByHolder(holderPid: number, opts: { queryLike?: string; waitEvents?: string[] } = {}): Promise<boolean> {
+  const deadline = Date.now() + BLOCK_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    const rows = await prisma.$queryRaw<{ wait_event: string | null; query: string }[]>`
+      SELECT wait_event, query FROM pg_stat_activity
+       WHERE ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+    const hit = rows.some(
+      (r) =>
+        (opts.queryLike === undefined || r.query.includes(opts.queryLike)) &&
+        (opts.waitEvents === undefined || (r.wait_event !== null && opts.waitEvents.includes(r.wait_event))),
+    );
+    if (hit) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
 async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revoked?: boolean; disconnectedAt?: Date }) {
   await prisma.processorConnection.deleteMany({ where: { teacherId } });
   const sealKey = opts.sealWith ?? key;
@@ -203,27 +224,28 @@ describe('getAccessToken', () => {
     const lockedP = new Promise<void>((r) => (locked = r));
     let release!: () => void;
     const releaseP = new Promise<void>((r) => (release = r));
+    let holderPid = 0;
     const holder = prisma.$transaction(async (tx) => {
       await tx.processorConnection.update({ where: { id: c.id }, data: { disconnectedAt: earlier, revokeAfter: earlier } });
+      holderPid = (await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]!.pid;
       locked();
       await releaseP;
-    });
+    }, { timeout: 30_000 });
     await lockedP;
     const lookup = getAccessToken(prisma, deps, c.id, now);
-    for (let i = 0; i < 100; i++) {
-      const waiting = await prisma.$queryRaw<{ n: number }[]>`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-         WHERE wait_event_type = 'Lock' AND query LIKE '%ProcessorConnection%' AND pid <> pg_backend_pid()`;
-      if ((waiting[0]?.n ?? 0) > 0) break;
-      await new Promise((r) => setTimeout(r, 50));
+    let blocked = false;
+    try {
+      blocked = await blockedByHolder(holderPid);
+    } finally {
+      release();
+      await holder;
     }
-    release();
-    await holder;
+    if (!blocked) throw new Error('lookup never blocked on the holder');
     expect(await lookup).toEqual({ kind: 'disconnected' });
     const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
     expect(row).toMatchObject({ disconnectedAt: earlier, revokedAt: now });
     expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
-  });
+  }, 20_000);
 
   it('writes nothing and answers disconnected on invalid_grant when the teacher was erased', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
@@ -247,24 +269,24 @@ describe('getAccessToken', () => {
     const lockedP = new Promise<void>((r) => (locked = r));
     let release!: () => void;
     const releaseP = new Promise<void>((r) => (release = r));
+    let holderPid = 0;
     const holder = prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
+      holderPid = (await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]!.pid;
       locked();
       await releaseP;
-    });
+    }, { timeout: 30_000 });
     await lockedP;
     const lookup = getAccessToken(prisma, deps, c.id, now);
     let waitedOnTeacher = false;
-    for (let i = 0; i < 60 && !waitedOnTeacher; i++) {
-      const waiting = await prisma.$queryRaw<{ n: number }[]>`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-         WHERE wait_event_type = 'Lock' AND query LIKE '%"Teacher"%' AND pid <> pg_backend_pid()`;
-      waitedOnTeacher = (waiting[0]?.n ?? 0) > 0;
-      if (!waitedOnTeacher) await new Promise((r) => setTimeout(r, 50));
+    try {
+      waitedOnTeacher = await blockedByHolder(holderPid, { queryLike: '"Teacher"', waitEvents: ['transactionid', 'tuple'] });
+    } finally {
+      release();
+      await holder;
     }
-    release();
-    await holder;
+    if (!waitedOnTeacher) throw new Error('lookup never blocked on the holder');
     expect(waitedOnTeacher).toBe(true);
     expect(await lookup).toEqual({ kind: 'disconnected' });
-  });
+  }, 20_000);
 });
