@@ -269,7 +269,7 @@ client embeds), which is not in git; read past it.
 - `src/services/processor-token.ts:113`, `getAccessToken`'s `invalid_grant`
   lock on one `ProcessorConnection` row (#896) — "The `ProcessorConnection`
   row is a leaf lock" below;
-- `src/services/processor-attempts.ts:541` and `src/services/payments.ts:330`,
+- `src/services/processor-attempts.ts:542` and `src/services/payments.ts:330`,
   `syncAttempt`'s and `reopenInTransaction`'s lock on one `Payment` row (#896)
   — "The `Payment` row is a Mollie sync's gate" below;
 - two lines in `src/services/processor-refunds.ts`, `refundAttempt`'s lock on
