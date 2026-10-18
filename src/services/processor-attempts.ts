@@ -462,8 +462,12 @@ const SYNC_ATTEMPT_SELECT = {
  * `unknown` without a log for an id no attempt holds. `unknown` logged as
  * `PROCESSOR_PAYMENT_UNCONFIRMED` for an attempt fair.yoga holds but cannot
  * read: its connection is gone (an erased teacher) or revoked, Mollie no
- * longer knows it, or Mollie reports a status fair.yoga does not know.
- * `unavailable` when Mollie is not configured or cannot be reached.
+ * longer knows it, Mollie reports a status fair.yoga does not know, or its
+ * attempt or payment row is gone by the time the sync locks the payment.
+ * Otherwise `unavailable`: Mollie not configured, no token to be had, Mollie
+ * failing, or a refund that cannot apply yet. A refund whose status
+ * fair.yoga does not know is skipped and logged as
+ * `PROCESSOR_REFUND_UNRECORDED`.
  *
  * A refund no row holds is adopted into this attempt's refund intent still
  * awaiting its Mollie id when `adoptionFor` says so, and then applied like
@@ -544,7 +548,13 @@ export async function syncAttempt(
   for (const refund of view.refunds) {
     const status = refund.status;
     if (isRefundStatus(status)) refunds.push({ id: refund.id, status, amount: refund.amount });
-    else log.warn({ attemptId: attempt.id, refundId: refund.id, status: refund.status }, 'Mollie reported a refund status fair.yoga does not know');
+    else {
+      logDegraded(
+        'PROCESSOR_REFUND_UNRECORDED',
+        { attemptId: attempt.id, processorRefundId: refund.id, reason: 'status_unknown', mollieStatus: refund.status },
+        'Mollie reported a refund status fair.yoga does not know; the sync skipped that refund',
+      );
+    }
   }
 
   // Whether a refund with outcome `reopened` may complete here, read from the
@@ -576,7 +586,14 @@ export async function syncAttempt(
       select: { status: true, method: true, paidAt: true, settledPayment: true, chargedBackAt: true, amount: true, currency: true },
     });
     const payment = await tx.payment.findUnique({ where: { id: attempt.paymentId }, select: { status: true } });
-    if (current === null || payment === null) return { result: 'unknown', deferred: [] };
+    if (current === null || payment === null) {
+      logDegraded(
+        'PROCESSOR_PAYMENT_UNCONFIRMED',
+        { attemptId: attempt.id, connectionId, processorPaymentId, reason: 'row_gone' },
+        'a Mollie attempt could not be synced: its attempt or payment row was gone by the time the sync locked it',
+      );
+      return { result: 'unknown', deferred: [] };
+    }
 
     const decision = decideSync({
       mollieStatus: mollieStatus.data,
@@ -736,7 +753,11 @@ function completes(decision: RefundSyncDecision): boolean {
 function chargedBackLine(chargedBack: MollieAmount | null, currency: Currency, attemptAmount: string, attemptId: string): string {
   if (chargedBack === null) return attemptAmount;
   if (chargedBack.currency !== currency) {
-    log.warn({ attemptId, currency, chargedBackCurrency: chargedBack.currency }, 'Mollie reported a chargeback in another currency; the notice names the attempt’s amount');
+    logDegraded(
+      'PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH',
+      { attemptId, currency, chargedBackCurrency: chargedBack.currency },
+      'Mollie reported a chargeback in another currency; the notice names the attempt’s amount',
+    );
     return attemptAmount;
   }
   return formatMoney(new Prisma.Decimal(chargedBack.value), currency);

@@ -342,13 +342,19 @@ async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: str
  * first when an ask-again completes here): its outcome applies when Mollie
  * says `refunded`, and the teacher is told when it says `failed`. A row that
  * gained a Mollie id meanwhile, through a sync's adoption, is left as that
- * sync wrote it. A failure is logged with Mollie's refund id and thrown as
- * `RefundNotRecorded`.
+ * sync wrote it. A refund status fair.yoga does not know is stored as
+ * `queued`. That, an intent row gone, and a failure (then thrown as
+ * `RefundNotRecorded`) are each logged as `PROCESSOR_REFUND_UNRECORDED` with
+ * Mollie's refund id.
  */
 async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundView): Promise<RefundResult> {
   const { attempt, refundId, outcome, paymentId, now } = intent;
   if (!isRefundStatus(mollie.status)) {
-    log.warn({ attemptId: attempt.id, refundId: mollie.id, status: mollie.status }, 'Mollie reported a refund status fair.yoga does not know');
+    logDegraded(
+      'PROCESSOR_REFUND_UNRECORDED',
+      { attemptId: attempt.id, refundId, processorRefundId: mollie.id, reason: 'status_unknown', mollieStatus: mollie.status },
+      'Mollie reported a refund status fair.yoga does not know; it is recorded as queued',
+    );
   }
   const refundStatus: ProcessorRefundStatus = isRefundStatus(mollie.status) ? mollie.status : 'queued';
   const { registration } = attempt.payment;
@@ -363,8 +369,9 @@ async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundV
       await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${paymentId} FOR UPDATE`;
       const row = await tx.processorRefund.findUnique({ where: { id: refundId }, select: { processorRefundId: true, status: true } });
       if (row === null) {
-        log.error(
-          { attemptId: attempt.id, refundId, mollieRefundId: mollie.id, refundStatus },
+        logDegraded(
+          'PROCESSOR_REFUND_UNRECORDED',
+          { attemptId: attempt.id, refundId, processorRefundId: mollie.id, reason: 'intent_gone', refundStatus },
           'Mollie took a refund whose intent is gone; the teacher must reconcile its payment',
         );
         return { kind: 'requested', refundStatus, outcomeApplied: false };
@@ -377,9 +384,11 @@ async function storeAnswer(db: PrismaClient, intent: Held, mollie: MollieRefundV
       return { kind: 'requested', refundStatus, outcomeApplied: applied };
     });
   } catch (err) {
-    log.error(
-      { attemptId: attempt.id, refundId, mollieRefundId: mollie.id, refundStatus, err },
+    logDegraded(
+      'PROCESSOR_REFUND_UNRECORDED',
+      { attemptId: attempt.id, refundId, processorRefundId: mollie.id, reason: 'store_failed', refundStatus },
       'Mollie took a refund fair.yoga could not record; a sync adopts it once the intent is old enough',
+      err,
     );
     throw new RefundNotRecorded(err);
   }

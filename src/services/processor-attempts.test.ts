@@ -632,6 +632,38 @@ describe('syncAttempt', () => {
     ]]);
   });
 
+  it('answers unknown and logs PROCESSOR_PAYMENT_UNCONFIRMED when the attempt is gone by the time the sync locks it', async () => {
+    const { attempt } = await attemptOn('pending');
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId));
+    const racing = withTransaction(async (fn) => {
+      await prisma.processorPayment.delete({ where: { id: attempt.id } });
+      return prisma.$transaction(fn);
+    });
+
+    expect(await syncAttempt(racing, deps, attempt.processorPaymentId)).toBe('unknown');
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId: attempt.processorPaymentId, reason: 'row_gone' },
+      expect.any(String),
+    ]]);
+  });
+
+  it('skips a refund whose status Mollie does not document and logs PROCESSOR_REFUND_UNRECORDED', async () => {
+    const { attempt } = await settledAttempt();
+    const held = await refundRow(attempt.id, { status: 'pending' });
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, {
+      refunds: [{ id: held.processorRefundId!, status: 'reversed', amount: { value: '10.00', currency: 'EUR' } }],
+    }));
+
+    expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
+    expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: held.id } })).status).toBe('pending');
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_REFUND_UNRECORDED',
+      { attemptId: attempt.id, processorRefundId: held.processorRefundId, reason: 'status_unknown', mollieStatus: 'reversed' },
+      expect.any(String),
+    ]]);
+  });
+
   it("settles a pending payment Mollie reports paid, and records Mollie's method", async () => {
     const { paymentId, attempt } = await attemptOn('pending');
     fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { method: 'creditcard' }));
@@ -780,15 +812,17 @@ describe('syncAttempt', () => {
       expect(await notes('payment_charged_back', classId)).toHaveLength(1);
     });
 
-    it('names the attempt’s amount, and logs, when Mollie reports the chargeback in another currency', async () => {
-      const warn = vi.spyOn(log, 'warn');
-      onTestFinished(() => warn.mockRestore());
+    it('names the attempt’s amount, and logs PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH, when Mollie reports the chargeback in another currency', async () => {
       const { paymentId, attempt } = await settledAttempt();
       fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '4.00', currency: 'USD' } }));
       expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
       const [sent] = await notes('payment_charged_back', await classOf(paymentId));
       expect(sent!.body).toBe('Stu disputed €10.00 with their bank and it was taken back. You can mark the payment unpaid to ask again.');
-      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, chargedBackCurrency: 'USD' }), expect.any(String));
+      expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+        'PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH',
+        { attemptId: attempt.id, currency: 'EUR', chargedBackCurrency: 'USD' },
+        expect.any(String),
+      ]]);
     });
 
     it('on a duplicate attempt tells the teacher without offering to ask again', async () => {

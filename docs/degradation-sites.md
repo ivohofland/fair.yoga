@@ -67,25 +67,23 @@ Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
-| `log.warn(` lines | 113 |
-| `log.error(` lines | 95 |
-| surface (`log.warn(` or `log.error(`) | **113 + 95 = 208** |
+| `log.warn(` lines | 110 |
+| `log.error(` lines | 93 |
+| surface (`log.warn(` or `log.error(`) | **110 + 93 = 203** |
 | split `.warn(` / `.error(` continuation lines | 0 |
 | `log[…](` lines | 17 |
-| `logDegraded(` call lines | 34 |
+| `logDegraded(` call lines | 40 |
 
-One of the 208 is not a call: `src/lib/log.ts` carries a usage example inside
+One of the 203 is not a call: `src/lib/log.ts` carries a usage example inside
 its docblock. One of the 17 is not a site: `src/lib/degradation.ts`
-(`logDegraded`) is the line `logDegraded` itself emits. That leaves 207 static
-calls and 16 computed-level calls. Every one of the 34 `logDegraded` calls has
+(`logDegraded`) is the line `logDegraded` itself emits. That leaves 202 static
+calls and 16 computed-level calls. Every one of the 40 `logDegraded` calls has
 a row under *Degradations* below, and so does every computed-level call. The
-surface table has 160 rows: the docblock line and 159 calls — 157 the earlier
-audit classified, each remapped to where its call now sits, and two
-unreachable `never` branches added since. That is 159 of the 207 static calls; the other
-207 − 159 = 48 were added after that audit — the Mollie work (#896) among
-them — and have no row yet, which is what the next audit owes. Per file, the
-calls without a row are the first command's lines a file has beyond its rows
-here.
+surface table has 178 rows: the docblock line and 177 calls. The other
+202 − 177 = 25 static calls have no row yet, which is what the next audit
+owes; every one of them is also on `main` at the merge base of the Mollie
+work (#896), whose own calls all have rows. Per file, the calls without a row
+are the first command's lines a file has beyond its rows here.
 
 Each row names its file and the function its call sits in, not a line number,
 so an edit elsewhere in the file does not move it; a function with several
@@ -161,6 +159,33 @@ The sites where the verdict took judgment, and why each landed where it did.
   "no holder row" outcome (the rule was archived meanwhile) silent and apart
   from that branch.
 
+- **`processor-refunds.ts` (`storeAnswer`) — a refund Mollie took that
+  fair.yoga could not store.** The cause is usually an outage (a lock timeout,
+  the database), which the reading above calls a failure, not a degradation.
+  Ruled a *degradation* (`PROCESSOR_REFUND_UNRECORDED`, `store_failed`) all
+  the same: money has moved at Mollie, fair.yoga holds no record of it until
+  a sync adopts the refund, and the teacher's 503 cannot tell the operator. The
+  `intent_gone` branch is the same record withheld, with the intent row
+  deleted under it, and answers the teacher as if the refund were requested.
+- **The unknown refund status** — `storeAnswer` and `syncAttempt`. Mollie
+  answering a refund status the client does not name is a value that should
+  be impossible; `storeAnswer` substitutes `queued`, which the teacher sees as
+  "Refund pending", and `syncAttempt` withholds that refund's update. Ruled a
+  *degradation* (`PROCESSOR_REFUND_UNRECORDED`, `status_unknown`), as the
+  payment's own unknown status is.
+- **`processor-refunds.ts` (`unheldRefund`, `reconcileStale`) — Mollie
+  cannot be asked which refunds a payment has.** Ruled *routine*: an outage,
+  answered to the teacher as `unavailable` ("try again in a moment"), or as
+  `unconfirmed` with `MOLLIE_UNAVAILABLE` recorded by `requestRefund`. A
+  `getPayment` answering null (Mollie no longer knows a payment fair.yoga
+  holds) is impossible data, but here it too surfaces as that error; the sync
+  that meets it records `PROCESSOR_PAYMENT_UNCONFIRMED`.
+- **`processor-attempts.ts` (`completeRefund`) — a completed refund whose
+  payment is no longer `paid`.** Its outcome is not applied. Ruled *routine*:
+  the payment can only have left `paid` through the teacher's own edit, a
+  state the teacher made rather than impossible data,
+  and the student is still told their money is on its way back.
+
 ## Classification
 
 ### Degradations
@@ -191,6 +216,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`getPayment`) |
 | `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`mollie_unknown`) |
 | `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`status_unknown`) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | error | degradation | `PROCESSOR_REFUND_UNRECORDED` (`status_unknown`: the refund is skipped) |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | degradation | `PROCESSOR_PAYMENT_UNCONFIRMED` (`row_gone`) |
+| `src/services/processor-attempts.ts` (`chargedBackLine`) | warn | degradation | `PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH` |
 | `src/services/processor-connection.ts` (`unrevokedRefresh`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` (the grant a reconnect replaced) |
 | `src/services/processor-connection.ts` (`revokeDroppedGrant`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`revoke`) |
 | `src/services/processor-connection.ts` (`mollieUnavailable`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`exchangeCode`, `organization`, `profiles`), for `completeConnect`, `chooseProfile` and `readConnectionView` |
@@ -199,6 +227,9 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/processor-methods-offer.ts` (`listOfferedMethods`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`listMethods`) |
 | `src/services/processor-refunds.ts` (`requestRefund`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createRefund` failed) |
 | `src/services/processor-refunds.ts` (`requestRefund`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`createRefund` unconfirmed: the refund may exist) |
+| `src/services/processor-refunds.ts` (`storeAnswer`) | error | degradation | `PROCESSOR_REFUND_UNRECORDED` (`status_unknown`: recorded as `queued`) |
+| `src/services/processor-refunds.ts` (`storeAnswer`) | error | degradation | `PROCESSOR_REFUND_UNRECORDED` (`intent_gone`) |
+| `src/services/processor-refunds.ts` (`storeAnswer`) | error | degradation | `PROCESSOR_REFUND_UNRECORDED` (`store_failed`) |
 | `src/services/processor-token.ts` (`getAccessToken`) | error | degradation | `PROCESSOR_TOKEN_UNREADABLE` |
 | `src/services/processor-token.ts` (`refreshOnce`) | warn | degradation | `MOLLIE_UNAVAILABLE` (`refresh`) |
 | `src/services/processor-token.ts` (`refreshOnce`) | warn | degradation | `PROCESSOR_DISCONNECTED` |
@@ -247,6 +278,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/health/route.ts` (`GET`) | error | routine | failure (an exception or outage), not impossible data; the count is omitted and `db` stays up |
 | `src/app/api/invitations/[id]/resend/route.ts` (`POST`) | warn | routine | rate-limit throttle |
 | `src/app/api/invitations/[id]/route.ts` (`casMatchedNothing`) | warn | routine | failure (an exception or outage), not impossible data; answered as a 409 |
+| `src/app/api/payments/[id]/processor-return/route.ts` (`GET`) | error | routine | failure (an exception or outage), not impossible data; the student is sent on to the pay page and the webhook settles the attempt |
 | `src/app/api/registrations/[id]/route.ts` (`notifyCancellation`) | error | routine | failure (an exception or outage), not impossible data; the cancellation itself succeeded |
 | `src/app/api/registrations/[id]/route.ts` (`notifyCancellation`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
 | `src/app/api/registrations/[id]/route.ts` (`promoteAfterCancel`) | warn | routine | failure (an exception or outage), not impossible data |
@@ -263,6 +295,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/teacher-rooms/[id]/route.ts` (`DELETE`) | warn | routine | documented race; the loser is refused or retried (FK backstop, 409) |
 | `src/app/api/teacher-rooms/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/teachers/[id]/photo/route.ts` (`POST`) | warn | routine | bad upload (400); input, not stored data |
+| `src/components/settings/mollie-connection-panel.tsx` (`MollieConnectionPanel`) | error | routine | failure (an exception or outage), not impossible data; the section shows Mollie as unavailable (`readConnectionView` answers a Mollie failure itself, as `MOLLIE_UNAVAILABLE`) |
 | `src/lib/api-utils.ts` (`parseBody`) | warn | routine | refusal (4xx); nothing substituted (415, body not sent as JSON) |
 | `src/lib/api-utils.ts` (`withErrorHandler`) | warn | routine | refusal (4xx); nothing substituted (403 `CROSS_ORIGIN`); a misconfigured proxy shows here, a configuration fault like `rate-limit.ts`'s unresolved IP |
 | `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
@@ -323,6 +356,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/entry-generation.ts` (`probeFirstEffectiveWeek`) | warn | routine | failure (an exception or outage), not impossible data; the edit saved, the confirmation names no week |
 | `src/services/entry-generation.ts` (`probeFirstEffectiveWeek`) | warn | routine | a defect in that function, not a stored value; see close calls |
 | `src/services/gdpr.ts` (`deleteStudentAccount`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
+| `src/services/gdpr.ts` (`deleteTeacherAccount`) | warn | routine | configuration (Mollie unset); the erased teacher's grant is not revoked |
 | `src/services/gdpr.ts` (`deleteTeacherAccount`) | warn | routine | documented race; the loser is refused or retried (erasure CAS) |
 | `src/services/gdpr.ts` (`deleteTeacherAccount`) | error | routine | failure (an exception or outage), not impossible data (the logger itself threw) |
 | `src/services/generation-contention.ts` (`recordSweepContention`) | error | routine | lock contention (`isLockTimeout`) (streak escalation) |
@@ -331,11 +365,26 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data (delivery failed) |
 | `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data |
+| `src/services/mollie-deps.ts` (`mollieDeps`) | warn | routine | configuration (Mollie unset), logged once per process |
+| `src/services/mollie-deps.ts` (`mollieDeps`) | error | routine | configuration (Mollie misconfigured), logged once per process |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | lock contention (`isLockTimeout`) |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | operational state, reported through job health (per-run cap) |
 | `src/services/notifications.ts` (`emitToBus`) | error | routine | failure (an exception or outage), not impossible data (event bus) |
+| `src/services/processor-attempts.ts` (`completeRefund`) | warn | routine | the payment left `paid` before its refund completed (a teacher's own edit); nothing substituted, see close calls |
+| `src/services/processor-attempts.ts` (`syncAttempt`) | warn | routine | documented race; the loser is refused or retried (a refund that cannot apply yet; the webhook is answered 503 and Mollie retries) |
+| `src/services/processor-connection.ts` (`revokeDroppedGrant`) | warn | routine | refusal; nothing substituted (Mollie answered 400: it holds no grant for the token) |
+| `src/services/processor-connection.ts` (`revokeDroppedGrant`) | error | routine | failure (an exception or outage), not impossible data; nothing awaits it |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | warn | routine | policy (the deferral cap); the grant is revoked while Mollie may still report on it |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | warn | routine | refusal; nothing substituted (Mollie answered 400: it holds no grant for the token, so the row is revoked) |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | error | routine | configuration fault (Mollie refused fair.yoga's client credentials), not data; the row stays due |
+| `src/services/processor-connection.ts` (`revokeDueConnection`) | warn | routine | documented race; the loser is refused or retried (work became live during the revoke; deferred) |
+| `src/services/processor-connection.ts` (`revokeConnection`) | error | routine | failure (an exception or outage), not impossible data; nothing awaits it |
+| `src/services/processor-refunds.ts` (`requestRefund`) | warn | routine | failure (an exception or outage), not impossible data; Mollie is then asked which refunds the payment has |
+| `src/services/processor-refunds.ts` (`reconcileStale`) | error | routine | failure, surfaced as an error (`unavailable`) |
+| `src/services/processor-refunds.ts` (`unheldRefund`) | error | routine | failure, surfaced as an error (`unavailable`, or `unconfirmed` beside `MOLLIE_UNAVAILABLE`); see close calls |
+| `src/services/processor-revocation.ts` (`revokeDueConnections`) | error | routine | operational state, reported through job health |
 | `src/services/push-dispatch.ts` (`reportUnconfigured`) | warn | routine | configuration (`VAPID_*` unset), logged once per process |
 | `src/services/push-dispatch.ts` (`reportUnconfigured`) | error | routine | configuration (`VAPID_*` misconfigured), logged once per process |
 | `src/services/push-dispatch.ts` (`sendTo`) | warn | routine | failure (an exception or outage), not impossible data (push service refused the send; not retried) |
@@ -781,6 +830,8 @@ nothing was written. `reason` says why:
 - `mollie_unknown` — Mollie answered 404 for a payment fair.yoga holds.
 - `status_unknown` — Mollie reported a status (`mollieStatus`) that
   `ProcessorPaymentStatus` does not name.
+- `row_gone` — the attempt or its payment was deleted between the sync's
+  first read and its lock on the payment.
 
 A Mollie id that no attempt holds is not fair.yoga's and is not logged.
 
@@ -788,7 +839,8 @@ A Mollie id that no attempt holds is not fair.yoga's and is not logged.
 payment's money, if the student paid, went to the teacher's Mollie account and
 fair.yoga cannot see it. For `mollie_unknown`, the attempt row points at a
 payment Mollie no longer has (another mode or organization, or Mollie
-removed it). For `status_unknown`, Mollie changed its API.
+removed it). For `status_unknown`, Mollie changed its API. For `row_gone`,
+an erasure or a deletion of the payment ran during the sync.
 
 **Confirm.**
 
@@ -803,7 +855,76 @@ SELECT a.id, a."paymentId", a."connectionId", a.testmode, a.status, a."processor
 the payment in their Mollie dashboard and marks the payment paid by hand if
 the money arrived. For `teacher_erased`, nothing in fair.yoga can be
 corrected: the erased teacher's Mollie account holds the money. A repeating
-`status_unknown` means the client's status list needs the new value.
+`status_unknown` means the client's status list needs the new value. For
+`row_gone`, the confirm query finds no row; Mollie's next webhook for the
+payment answers `unknown` silently, as for any id no attempt holds.
+
+### `PROCESSOR_REFUND_UNRECORDED`
+
+**What happened.** A refund Mollie reported (`processorRefundId`, on the
+attempt `attemptId`) was not recorded as Mollie reported it. `reason` says
+how:
+
+- `store_failed` — `storeAnswer` (`src/services/processor-refunds.ts`) could
+  not write Mollie's answer to a refund request (the error is in the log
+  line). The intent row (`refundId`) is kept with no Mollie id, the teacher
+  was answered 503 ("Mollie accepted the refund"), and nothing was applied.
+- `intent_gone` — `storeAnswer` found the intent row deleted when it came to
+  store Mollie's answer. The teacher was answered as if the refund were
+  requested; nothing was applied and no row holds the refund.
+- `status_unknown` — Mollie gave a refund a status (`mollieStatus`) that
+  `ProcessorRefundStatus` does not name. `storeAnswer` recorded it as
+  `queued`; `syncAttempt` (`src/services/processor-attempts.ts`) skipped
+  that refund and left its row as it was.
+
+**Where the bad value lives.** For `store_failed`, nowhere yet: the database
+refused the write. For `intent_gone`, the intent row was deleted while
+Mollie was being called. For `status_unknown`, Mollie changed its API.
+
+**Confirm.**
+
+```sql
+SELECT r.id, r."processorRefundId", r.status, r.outcome, r."requestedAt",
+       a."processorPaymentId", a."settledPayment", p.status AS payment_status
+  FROM "ProcessorRefund" r
+  JOIN "ProcessorPayment" a ON a.id = r."attemptId"
+  JOIN "Payment" p ON p.id = a."paymentId"
+ WHERE r."attemptId" = '<attemptId>';
+```
+
+**Correct.** For `store_failed`, nothing once a webhook has arrived: the sync
+adopts the refund into the kept intent once it is two minutes old (a row
+whose `processorRefundId` is now set shows it did). For `intent_gone`, the
+refund is held by no row, so a sync treats it as one made in Mollie's
+dashboard: a full refund releases the attempt and the teacher can mark the
+payment unpaid, but its waive or ask-again outcome is never applied; the
+teacher settles the payment by hand. A repeating `status_unknown` means the
+client's refund status list needs the new value.
+
+### `PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH`
+
+**What happened.** `syncAttempt` (`src/services/processor-attempts.ts`, in
+`chargedBackLine`) read a chargeback on the attempt `attemptId` in
+`chargedBackCurrency`, not the attempt's `currency`. The chargeback was
+recorded as usual, and the teacher's "Payment disputed" notice named the
+attempt's whole amount instead of the amount taken back.
+
+**Where the bad value lives.** Mollie's answer: Mollie charges back in the
+payment's own currency, so this is an API change or a defect at Mollie.
+
+**Confirm.**
+
+```sql
+SELECT id, "paymentId", amount, currency, "chargedBackAt", "processorPaymentId"
+  FROM "ProcessorPayment" WHERE id = '<attemptId>';
+```
+
+Then look the payment up in the teacher's Mollie dashboard for the amount
+actually charged back.
+
+**Correct.** Nothing in the data: the chargeback is recorded correctly. If
+the amount differs, tell the teacher the real figure. Repeated samples mean
+the client's handling of `amountChargedBack` needs revisiting.
 
 ### `PROCESSOR_TOKEN_UNREADABLE`
 

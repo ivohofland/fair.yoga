@@ -87,8 +87,20 @@ export const DEGRADATION_CODES = {
   PROCESSOR_PAYMENT_UNCONFIRMED: {
     level: 'warn',
     description:
-      'A Mollie payment fair.yoga holds could not be read back: its teacher was erased, its connection was revoked, Mollie no longer knew it, or Mollie reported a status fair.yoga does not know. Nothing was applied and the webhook was answered 200, so Mollie does not retry; money Mollie took may be unrecorded here.',
+      'A Mollie payment fair.yoga holds could not be read back: its teacher was erased, its connection was revoked, Mollie no longer knew it, Mollie reported a status fair.yoga does not know, or its attempt or payment row was gone by the time the sync locked it. Nothing was applied and the webhook was answered 200, so Mollie does not retry; money Mollie took may be unrecorded here.',
     contextKeys: ['attemptId', 'connectionId', 'processorPaymentId', 'reason', 'mollieStatus'],
+  },
+  PROCESSOR_REFUND_UNRECORDED: {
+    level: 'error',
+    description:
+      'A refund Mollie reported was not recorded as Mollie reported it: its intent row was gone, storing it failed, or Mollie gave it a status fair.yoga does not know. Money Mollie returned may be missing from the payment, or the refund shown pending when it is not.',
+    contextKeys: ['attemptId', 'refundId', 'processorRefundId', 'reason', 'refundStatus', 'mollieStatus'],
+  },
+  PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH: {
+    level: 'warn',
+    description:
+      'Mollie reported a chargeback in a currency other than its payment’s. The teacher’s notice named the attempt’s whole amount instead of the amount taken back.',
+    contextKeys: ['attemptId', 'currency', 'chargedBackCurrency'],
   },
   PROCESSOR_TOKEN_UNREADABLE: {
     level: 'error',
