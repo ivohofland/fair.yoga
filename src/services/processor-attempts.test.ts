@@ -578,10 +578,20 @@ describe('syncAttempt', () => {
     expect(fake.getPayment).not.toHaveBeenCalled();
   });
 
-  it('answers unknown for an attempt whose connection is gone, without calling Mollie (Review Focus 4)', async () => {
+  it('answers unknown for an id no attempt has without logging it, since it is not fair.yoga’s', async () => {
+    expect(await syncAttempt(prisma, deps, trId())).toBe('unknown');
+    expect(logDegraded).not.toHaveBeenCalled();
+  });
+
+  it('answers unknown and logs PROCESSOR_PAYMENT_UNCONFIRMED for an attempt whose connection is gone, without calling Mollie (Review Focus 4)', async () => {
     const { attempt } = await attemptOn('pending', { connectionId: null });
     expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
     expect(fake.getPayment).not.toHaveBeenCalled();
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, processorPaymentId: attempt.processorPaymentId, reason: 'teacher_erased' },
+      expect.any(String),
+    ]]);
   });
 
   it("settles a pending payment Mollie reports paid, and records Mollie's method", async () => {
@@ -640,16 +650,15 @@ describe('syncAttempt', () => {
     expect(await notes('payment_paid_twice', classId)).toHaveLength(1);
   });
 
-  it('answers unknown, and logs it, when Mollie no longer knows an attempt we hold', async () => {
-    const warn = vi.spyOn(log, 'warn');
-    onTestFinished(() => warn.mockRestore());
+  it('answers unknown and logs PROCESSOR_PAYMENT_UNCONFIRMED when Mollie no longer knows an attempt we hold', async () => {
     const { attempt } = await attemptOn('pending');
     fake.getPayment.mockResolvedValue(null);
     expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
-    expect(warn).toHaveBeenCalledWith(
-      { attemptId: attempt.id, processorPaymentId: attempt.processorPaymentId, profileId: 'pfl_attempt' },
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId: attempt.processorPaymentId, reason: 'mollie_unknown' },
       expect.any(String),
-    );
+    ]]);
   });
 
   it('answers unavailable and logs MOLLIE_UNAVAILABLE when Mollie cannot be reached', async () => {
@@ -670,24 +679,28 @@ describe('syncAttempt', () => {
     expect(await syncAttempt(prisma, null, attempt.processorPaymentId)).toBe('unavailable');
   });
 
-  it('answers unknown, and logs it, when the connection was revoked', async () => {
-    const warn = vi.spyOn(log, 'warn');
-    onTestFinished(() => warn.mockRestore());
+  it('answers unknown and logs PROCESSOR_PAYMENT_UNCONFIRMED when the connection was revoked', async () => {
     const at = new Date();
     await seedConnection({ disconnectedAt: at, revokedAt: at, accessToken: null, refreshToken: null, accessTokenExpiresAt: null });
     const { attempt } = await attemptOn('pending');
     expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
     expect(fake.getPayment).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, connectionId }), expect.any(String));
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId: attempt.processorPaymentId, reason: 'connection_revoked' },
+      expect.any(String),
+    ]]);
   });
 
-  it('answers unknown, and logs it, for a status Mollie does not document', async () => {
-    const warn = vi.spyOn(log, 'warn');
-    onTestFinished(() => warn.mockRestore());
+  it('answers unknown and logs PROCESSOR_PAYMENT_UNCONFIRMED for a status Mollie does not document', async () => {
     const { paymentId, attempt } = await attemptOn('pending');
     fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { status: 'settled' }));
     expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unknown');
-    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ attemptId: attempt.id, status: 'settled' }), expect.any(String));
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId: attempt.processorPaymentId, reason: 'status_unknown', mollieStatus: 'settled' },
+      expect.any(String),
+    ]]);
     expect((await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).status).toBe('pending');
   });
 

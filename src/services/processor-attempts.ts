@@ -436,7 +436,6 @@ const SYNC_ATTEMPT_SELECT = {
   id: true,
   paymentId: true,
   connectionId: true,
-  profileId: true,
   testmode: true,
   currency: true,
   payment: {
@@ -456,10 +455,15 @@ const SYNC_ATTEMPT_SELECT = {
 /**
  * Fetches one attempt from Mollie and applies what Mollie says, as spec §5
  * describes: the attempt's status, a settle, a double payment, a chargeback,
- * and every refund on it fair.yoga made. `processorPaymentId` is Mollie's id
- * for the attempt. Mollie's answer is the only thing believed, and it is
- * fetched with the token of the attempt's own connection, in the mode the
- * attempt was made in.
+ * and every refund on it fair.yoga made. Mollie's answer is the only thing
+ * believed, and it is fetched with the token of the attempt's own connection,
+ * in the mode the attempt was made in.
+ *
+ * `unknown` without a log for an id no attempt holds. `unknown` logged as
+ * `PROCESSOR_PAYMENT_UNCONFIRMED` for an attempt fair.yoga holds but cannot
+ * read: its connection is gone (an erased teacher) or revoked, Mollie no
+ * longer knows it, or Mollie reports a status fair.yoga does not know.
+ * `unavailable` when Mollie is not configured or cannot be reached.
  *
  * A refund no row holds is adopted into this attempt's refund intent still
  * awaiting its Mollie id when `adoptionFor` says so, and then applied like
@@ -480,14 +484,27 @@ export async function syncAttempt(
   processorPaymentId: string,
 ): Promise<SyncResult | 'unavailable'> {
   const attempt = await db.processorPayment.findUnique({ where: { processorPaymentId }, select: SYNC_ATTEMPT_SELECT });
-  if (attempt === null || attempt.connectionId === null) return 'unknown';
+  // An id no attempt holds is not fair.yoga's, so it is not logged.
+  if (attempt === null) return 'unknown';
+  if (attempt.connectionId === null) {
+    logDegraded(
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, processorPaymentId, reason: 'teacher_erased' },
+      'a Mollie attempt could not be synced: its teacher was erased, so no token is left to read it with',
+    );
+    return 'unknown';
+  }
   if (deps === null) return 'unavailable';
   const connectionId = attempt.connectionId;
   const now = new Date();
 
   const token = await getAccessToken(db, deps, connectionId, now);
   if (token.kind === 'disconnected') {
-    log.warn({ attemptId: attempt.id, connectionId }, 'a Mollie attempt could not be synced: its connection was revoked');
+    logDegraded(
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId, reason: 'connection_revoked' },
+      'a Mollie attempt could not be synced: its connection was revoked',
+    );
     return 'unknown';
   }
   if (token.kind === 'unavailable') return 'unavailable';
@@ -506,15 +523,20 @@ export async function syncAttempt(
     return 'unavailable';
   }
   if (view === null) {
-    log.warn(
-      { attemptId: attempt.id, processorPaymentId, profileId: attempt.profileId },
+    logDegraded(
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId, reason: 'mollie_unknown' },
       'Mollie no longer knows an attempt fair.yoga holds; the teacher must reconcile its payment',
     );
     return 'unknown';
   }
   const mollieStatus = paymentStatusSchema.safeParse(view.status);
   if (!mollieStatus.success) {
-    log.warn({ attemptId: attempt.id, status: view.status }, 'Mollie reported a payment status fair.yoga does not know');
+    logDegraded(
+      'PROCESSOR_PAYMENT_UNCONFIRMED',
+      { attemptId: attempt.id, connectionId, processorPaymentId, reason: 'status_unknown', mollieStatus: view.status },
+      'Mollie reported a payment status fair.yoga does not know',
+    );
     return 'unknown';
   }
 

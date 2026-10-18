@@ -84,6 +84,12 @@ export const DEGRADATION_CODES = {
       'Mollie refused a teacher’s refresh token. The connection was disconnected, the teacher told, and students see their other payment options.',
     contextKeys: ['connectionId'],
   },
+  PROCESSOR_PAYMENT_UNCONFIRMED: {
+    level: 'warn',
+    description:
+      'A Mollie payment fair.yoga holds could not be read back: its teacher was erased, its connection was revoked, Mollie no longer knew it, or Mollie reported a status fair.yoga does not know. Nothing was applied and the webhook was answered 200, so Mollie does not retry; money Mollie took may be unrecorded here.',
+    contextKeys: ['attemptId', 'connectionId', 'processorPaymentId', 'reason', 'mollieStatus'],
+  },
   PROCESSOR_TOKEN_UNREADABLE: {
     level: 'error',
     description:
