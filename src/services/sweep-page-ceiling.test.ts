@@ -849,9 +849,15 @@ describe('bind-parameter limit', () => {
     const ids = await seedClassesBySql(prisma, teachers, BIND_LIMIT_PARENTS + 1);
     expect(ids).toHaveLength(BIND_LIMIT_PARENTS + 1);
     await analyzeSeed(prisma);
-    const load = (n: number) =>
-      prisma.class.findMany({ where: { id: { in: ids.slice(0, n) } }, include: { calendarEntry: true } });
+    const load = (n: number, client: PrismaClient = prisma) =>
+      client.class.findMany({ where: { id: { in: ids.slice(0, n) } }, include: { calendarEntry: true } });
     await expect(load(BIND_LIMIT_PARENTS)).resolves.toHaveLength(BIND_LIMIT_PARENTS);
+    const low = await lowStackClient();
+    try {
+      await expect(load(BIND_LIMIT_PARENTS, low)).resolves.toHaveLength(BIND_LIMIT_PARENTS);
+    } finally {
+      await low.$disconnect();
+    }
     const err: unknown = await load(BIND_LIMIT_PARENTS + 1).then(
       () => 'resolved',
       (e: unknown) => e,
