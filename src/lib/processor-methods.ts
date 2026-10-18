@@ -30,10 +30,11 @@ export function isAllowedMollieMethod(id: string): id is AllowedMollieMethod {
 
 /** The ids fair.yoga offers, in allowlist order, and the ones it does not. */
 export function orderOffered(ids: readonly string[]): { offered: AllowedMollieMethod[]; excluded: string[] } {
-  const present = new Set(ids);
+  const unique = [...new Set(ids)];
+  const present = new Set(unique);
   return {
     offered: ORDER.filter((m) => present.has(m)),
-    excluded: ids.filter((id) => !isAllowedMollieMethod(id)),
+    excluded: unique.filter((id) => !isAllowedMollieMethod(id)),
   };
 }
 

@@ -32,7 +32,21 @@ describe('orderOffered', () => {
   });
 });
 
+describe('orderOffered duplicates', () => {
+  it('reports a repeated id once on both sides', () => {
+    expect(orderOffered(['ideal', 'ideal', 'newmethod', 'newmethod'])).toEqual({
+      offered: ['ideal'], excluded: ['newmethod'],
+    });
+  });
+});
+
 describe('exclusionReason', () => {
+  it.each(['klarna', 'klarnapaylater', 'klarnasliceit', 'klarnapaynow', 'in3', 'riverty', 'billie', 'billink', 'alma'])(
+    'names %s as pay-later',
+    (id) => {
+      expect(exclusionReason(id)).toBe('pay_later');
+    },
+  );
   it('names pay-later for credit products and not-offered for the rest', () => {
     expect(exclusionReason('klarna')).toBe('pay_later');
     expect(exclusionReason('banktransfer')).toBe('not_offered');
