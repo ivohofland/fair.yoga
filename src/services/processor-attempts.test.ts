@@ -927,6 +927,25 @@ describe('syncAttempt', () => {
       expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
     });
 
+    it('with outcome reopened, whose payment is already pending, applies nothing, logs it, and still tells the student', async () => {
+      const warn = vi.spyOn(log, 'warn');
+      onTestFinished(() => warn.mockRestore());
+      const c = await refundCase('reopened', 'refunded');
+      await prisma.payment.update({ where: { id: c.paymentId }, data: { status: 'pending', method: null, paidAt: null } });
+      const before = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+
+      await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+
+      expect((await prisma.processorRefund.findUniqueOrThrow({ where: { id: c.refund.id } })).status).toBe('refunded');
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+      expect(payment.status).toBe('pending');
+      expect(payment.updatedAt).toEqual(before.updatedAt);
+      // A miss leaves the attempt as it was, as the waived miss does.
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(true);
+      expect(warn).toHaveBeenCalledWith({ paymentId: c.paymentId, attemptId: c.attempt.id, outcome: 'reopened' }, expect.any(String));
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+    });
+
     describe("made in Mollie's dashboard", () => {
       const eur = (value: string) => ({ value, currency: 'EUR' });
 
