@@ -2187,6 +2187,12 @@ and the same raise in a currency-switching save that also changes `pageSlug`
   erasure waits on the lock, finds the row erased and writes no connection
   or event: the callback answers its refusal (its state already consumed),
   the choice `not_connected`, the disconnect `teacher_gone`.
+- `getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`),
+  reached from any caller that needs a Mollie token: `lockTeacherForNoKeyUpdate`
+  first, then the connection row `FOR UPDATE`, its `UPDATE` and a
+  `Notification` insert. Its entry is in "The `ProcessorConnection` row is a
+  leaf lock" below. An erased teacher answers `disconnected` with nothing
+  written.
 
 A generated row needs no `Teacher` lock: the generator holds its template row
 `FOR UPDATE` across the insert and reads the teacher's currency under that
@@ -2208,9 +2214,10 @@ printed `classes/route.ts`,
 `teacher-photo.ts`, `bank-accounts.ts` (its save and its removal),
 `payment-link.ts` (its save and its removal), `payout-pause.ts`,
 `payout-resume.ts`, `passkey-credentials.ts` (the helper's own lock and
-`deletePasskey`'s call of it), `passkey-revoke.ts` and
+`deletePasskey`'s call of it), `passkey-revoke.ts`,
 `processor-connection.ts` (`completeConnect`, `chooseProfile` and
-`disconnect`), each a site with an entry above.
+`disconnect`) and `processor-token.ts` (`getAccessToken`'s `invalid_grant`
+branch), each a site with an entry above.
 Re-derive the list rather than trusting it.
 
 ### Why `FOR NO KEY UPDATE` and not `FOR UPDATE`
@@ -2429,15 +2436,19 @@ The sites:
   takes the same `FOR KEY SHARE` for the connection's own foreign key, with
   the same result.
 - `getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`)
-  takes the row alone: `FOR UPDATE` on it, a read of whether `disconnectedAt`
-  was already set, the row's `UPDATE`, and the teacher's `Notification`
-  insert. The lock exists so that a disconnect committing while this waits is
+  takes `lockTeacherForNoKeyUpdate` first, on the `teacherId` it read before
+  the transaction (a connection's `teacherId` never changes), and answers
+  `disconnected` with nothing written when the teacher is erased. Then
+  `FOR UPDATE` on the connection row, a read of whether `disconnectedAt` was
+  already set, the row's `UPDATE`, and the teacher's `Notification` insert.
+  The row lock exists so that a disconnect committing while this waits is
   seen: an unlocked read under READ COMMITTED would report the older
   `disconnectedAt` and send a notification the teacher's own disconnect makes
-  redundant. The `Notification` insert locks no other row, and the update
-  leaves `teacherId` alone, so it takes no key lock on the `Teacher` parent.
-  The statement is held in place by the test that disconnects the row from a
-  second transaction while this one waits on it (`processor-token.test.ts`).
+  redundant. The `Notification` insert sets no `relatedClassId`, its only
+  foreign key, so it locks no other row. `processor-token.test.ts` holds both
+  locks in place: one test disconnects the row from a second transaction
+  while this one waits on it, and another holds the teacher's row and asserts
+  this one waits on `Teacher`.
 
 Two more statements write the row outside any transaction, each a single
 `updateMany` that locks only the row it matches: the refresh's conditional
@@ -2446,11 +2457,12 @@ write in `getAccessToken`, and the post-revoke write in `revokeDueConnection`
 holds the refresh token Mollie was asked to revoke and is still disconnected.
 
 No site takes `Teacher`, or any other row in this file, after the
-`ProcessorConnection` row, so the four sites cannot form a cycle between
-them: the three teacher-first writers queue on `Teacher` before they reach
-the row, and `invalid_grant` holds the row while waiting on nothing. A new
-site that locks this row together with any row other than `Teacher` before
-it has to be placed in the order here first.
+`ProcessorConnection` row, and every transaction that takes the row takes
+`Teacher` first, so those four sites queue on `Teacher` before they reach
+it. The two single-statement writes hold only the row they match while they
+wait, so they close no cycle either. A new site that locks this row together
+with any row other than `Teacher` before it has to be placed in the order
+here first.
 
 The `invalid_grant` lock is plain `FOR UPDATE` with no `OF`, so it does not
 appear in the `FOR UPDATE OF` census of `Class` locks above.

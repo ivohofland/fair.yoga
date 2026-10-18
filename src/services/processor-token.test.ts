@@ -224,4 +224,47 @@ describe('getAccessToken', () => {
     expect(row).toMatchObject({ disconnectedAt: earlier, revokedAt: now });
     expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
   });
+
+  it('writes nothing and answers disconnected on invalid_grant when the teacher was erased', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: now } });
+    try {
+      expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
+    } finally {
+      await prisma.teacher.update({ where: { id: teacherId }, data: { deletedAt: null } });
+    }
+    const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
+    expect(row.revokedAt).toBeNull();
+    expect(openToken(row.refreshToken!, key)).toBe('refresh_plain');
+    expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
+  });
+
+  it('takes the teacher lock before the connection row on invalid_grant', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    let locked!: () => void;
+    const lockedP = new Promise<void>((r) => (locked = r));
+    let release!: () => void;
+    const releaseP = new Promise<void>((r) => (release = r));
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Teacher" WHERE id = ${teacherId} FOR NO KEY UPDATE`;
+      locked();
+      await releaseP;
+    });
+    await lockedP;
+    const lookup = getAccessToken(prisma, deps, c.id, now);
+    let waitedOnTeacher = false;
+    for (let i = 0; i < 60 && !waitedOnTeacher; i++) {
+      const waiting = await prisma.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND query LIKE '%"Teacher"%' AND pid <> pg_backend_pid()`;
+      waitedOnTeacher = (waiting[0]?.n ?? 0) > 0;
+      if (!waitedOnTeacher) await new Promise((r) => setTimeout(r, 50));
+    }
+    release();
+    await holder;
+    expect(waitedOnTeacher).toBe(true);
+    expect(await lookup).toEqual({ kind: 'disconnected' });
+  });
 });
