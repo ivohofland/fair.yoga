@@ -1705,13 +1705,12 @@ export async function deleteTeacherAccount(
       await tx.payoutPauseToken.deleteMany({ where: { teacherId } });
       await tx.payoutChangeEvent.deleteMany({ where: { teacherId } });
 
-      // The Mollie connection goes last, and its place is held by a test.
-      // Deleting it nulls `connectionId` on the teacher's attempts, and a sync
-      // or refund that completes a reopened refund writes an attempt while it
-      // holds a `TeacherStudent` link, which this transaction has already
-      // deleted by here. Earlier, the delete would hold the attempts and then
-      // wait on that link. `docs/lock-order.md`, "The `ProcessorConnection`
-      // row is a leaf lock (#896)".
+      // The Mollie connection goes last, after the `TeacherStudent` delete
+      // above, and its place is held by a test. Deleting it nulls
+      // `connectionId` on the teacher's attempts; placed before the
+      // `TeacherStudent` delete, it would hold those attempts and then wait
+      // on a link. Why that wait could close a cycle: `docs/lock-order.md`,
+      // "The `ProcessorConnection` row is a leaf lock (#896)".
       //
       // Read and removed in one statement, so the sealed refresh token
       // returned is the one deleted. Nothing is sent to Mollie in this

@@ -246,10 +246,11 @@ export async function markPaymentOverdue(
  * A payment a Mollie attempt settled (`settledPayment`) is refused
  * `PAYMENT_SETTLED_BY_PROCESSOR` while fair.yoga can still refund through
  * that attempt (`canRefundThroughGrant`): the money is in the teacher's
- * balance, so a refund is how it leaves `paid` (`reopenInTransaction`). Once
- * the attempt's grant is revoked, or its connection gone, this reopen applies
- * again. A chargeback, or a full refund made in Mollie's dashboard, clears
- * `settledPayment`, which lets it apply too.
+ * balance, so a refund is how it leaves `paid`. Once the attempt's grant is
+ * revoked, or its connection gone, or the attempt no longer has
+ * `settledPayment`, this reopen applies again; what releases an attempt is
+ * `docs/data-model.md`, "A payment Mollie settled cannot be reopened by
+ * hand".
  *
  * Reopening also un-archives the student's link with this teacher; that and
  * the lock order are `reopenInTransaction`'s.
@@ -324,9 +325,9 @@ async function reopenWithin(
     studentId: found.registration.studentId,
   };
   const link = await lockTeacherStudentLink(tx, pair);
-  // Locked before the count, so a webhook settling this payment has either
-  // committed its `settledPayment` before the count reads, or waits for this
-  // transaction.
+  // Locked before the count, so a `syncAttempt` settling this payment has
+  // either committed its `settledPayment` before the count reads, or waits
+  // for this transaction.
   await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${paymentId} FOR UPDATE`;
 
   const settlingOtherwise = await tx.processorPayment.findMany({
@@ -388,7 +389,7 @@ function logUnlinked(paymentId: string, reopened: Reopened): void {
  * it in the one respect that matters to the money: nothing arrived.
  * `reopenPayment` is the reversal. A payment already not charged is
  * `unchanged`; a paid one is refused here. Waiving after a real refund is
- * `completeRefund`'s, in the transaction that records the refund as
+ * `completeRefund`'s, called from a transaction that records the refund
  * `refunded`.
  *
  * `reminderSentAt` is deliberately left alone. A reminder that was sent was

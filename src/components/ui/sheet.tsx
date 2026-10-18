@@ -18,8 +18,9 @@ interface SheetProps {
  * page behind it inert and turns Escape into `cancel`. While `dismissible`,
  * Escape and a tap on the backdrop close it, and so does a close the browser
  * makes on its own; while not, such a close is undone by opening it again.
- * The page does not scroll while it is open. Focus returns on close to the element that held it, when that
- * element is still in the document.
+ * The page does not scroll while it is open. Focus returns to the element
+ * that held it when the sheet unmounts, if that element is still in the
+ * document.
  */
 export function Sheet({ title, onClose, dismissible = true, children }: SheetProps) {
   const titleId = useId();

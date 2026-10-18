@@ -421,12 +421,13 @@ export type RevokeOutcome = 'revoked' | 'deferred' | 'skipped' | 'unavailable';
  * that was revoked and is still disconnected, so a reconnect that rewrote the
  * row while Mollie was being called keeps its new grant (`skipped`); under the
  * cap it also lands only while nothing became live meanwhile (`NO_LIVE_WORK`),
- * so such a row is `deferred` with its tokens kept. No transaction is open
- * across the call. Mollie answering 400 means it holds no grant for the token,
- * so the row is revoked with a warning. A 401 or 403 is fair.yoga's own client
- * credentials failing: logged at error, the row stays due (`unavailable`).
- * Any other failure leaves the row due too, until the cap: past it the
- * tokens are forgotten anyway, so no row is retried for ever.
+ * so such a row is `deferred` with its tokens kept, or `skipped` when nothing
+ * is live on the re-check. No transaction is open across the call. Mollie
+ * answering 400 means it holds no grant for the token, so the row is revoked
+ * with a warning. Mollie being down or erroring leaves the row due until the
+ * cap, past which its tokens are forgotten. A 401 or 403 (fair.yoga's own
+ * client credentials) or a stored token that cannot be opened leaves it due
+ * whatever its age (`unavailable`), each logged.
  */
 export async function revokeDueConnection(
   db: PrismaClient,

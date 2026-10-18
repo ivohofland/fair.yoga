@@ -6,7 +6,8 @@ export type MollieMethodEntry = { label: string; expiresMinutes: number; recurri
  * processor adds is offered only once a reviewed change adds it here. The rule
  * for what may be added is the spec's Decision 1 (no deferred payment).
  * BLIK's expiry is one minute because Mollie's BLIK page gives a 55-second
- * session timeout and the expiry table has no row for it.
+ * session timeout and Mollie's payment-status docs' expiry table has no row
+ * for it.
  */
 export const MOLLIE_METHODS = {
   ideal: { label: 'iDEAL', expiresMinutes: 15, recurring: false },
