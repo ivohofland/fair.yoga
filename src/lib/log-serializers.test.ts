@@ -20,15 +20,24 @@ function expectNoPii(value: unknown): void {
 // Messages as Prisma 6.19.3 rendered them under NODE_ENV=production (spec, "measured").
 const VALIDATION_MSG =
   '\nInvalid `prisma.student.create()` invocation:\n\n{\n  data: {\n    firstName: "Alicepii",\n    lastName: "Surnamepii",\n    email: "pii.test@example.com",\n    bogus: 1,\n    ~~~~~\n  }\n}\n\nUnknown argument `bogus`. Available options are marked with ?.';
-const CHECK_MSG =
-  '\nInvalid `prisma.student.update()` invocation:\n\n\nError occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", message: "new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"", severity: "ERROR", detail: Some("Failing row contains (4ad7b519, Alicepii, Surnamepii, pii.test@example.com, 9)."), column: None, hint: None }), transient: false })';
+const known = (message: string, code: string, meta: Record<string, unknown>) =>
+  new Prisma.PrismaClientKnownRequestError(message, { ...V, code, meta });
+const QUERY_HEADER = '\nInvalid `prisma.class.update()` invocation:\n\n\n';
+// A withheld message carrying a failing row, for the tests about withholding
+// rather than about any one carrier.
+const ROW_MSG = 'new row for relation "Student" violates check constraint "Student_income_tier_check"\nFailing row contains (4ad7b519, Alicepii, Surnamepii, pii.test@example.com, 9).';
+const CHECK_SENTENCE = 'new row for relation "Student" violates check constraint "Student_income_tier_check"';
+/** A typed CHECK violation as the adapter throws it: the failing row is in `cause.detail`. */
+const checkViolation = (detail = 'Failing row contains (4ad7b519, Alicepii, Surnamepii, pii.test@example.com, 9).') =>
+  driverAdapterError(pgCause('23514', CHECK_SENTENCE, { detail }));
+/** A raw call's 22P02 as Prisma rethrows it: a Known P2010 carrying the adapter's error in `meta`. */
 const rawCast = (value: string) =>
   new Prisma.PrismaClientKnownRequestError(
-    `\nInvalid \`prisma.$queryRawUnsafe()\` invocation:\n\n\nRaw query failed. Code: \`22P02\`. Message: \`ERROR: invalid input syntax for type integer: "${value}"\``,
+    `\nInvalid \`prisma.$queryRawUnsafe()\` invocation:\n\n\nRaw query failed. Code: \`22P02\`. Message: \`invalid input syntax for type integer: "${value}"\``,
     {
       ...V,
       code: 'P2010',
-      meta: { type: 'Object', message: `ERROR: invalid input syntax for type integer: "${value}"`, stack: '', code: '22P02' },
+      meta: { driverAdapterError: { name: 'DriverAdapterError', cause: pgCause('22P02', `invalid input syntax for type integer: "${value}"`) } },
     },
   );
 
@@ -42,13 +51,14 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
   });
 
   it('a CHECK violation lifts its SQLSTATE and constraint, never the failing row', () => {
-    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(CHECK_MSG, V));
+    const out = serializeErr(checkViolation());
     expectNoPii(out);
     expect(out.sqlState).toBe('23514');
     expect(out.constraint).toBe('Student_income_tier_check');
+    expect(JSON.stringify(out)).not.toContain(CHECK_SENTENCE);
   });
 
-  it('a P2010 drops meta.message and lifts meta.code as its SQLSTATE', () => {
+  it('a P2010 drops the adapter error in meta and lifts its SQLSTATE', () => {
     const out = serializeErr(rawCast('Alicepii pii.test@example.com'));
     expectNoPii(out);
     expect(out.code).toBe('P2010');
@@ -77,58 +87,38 @@ describe('serializeErr: Prisma query errors withhold their message', () => {
     expect(out.constraint).toBeUndefined();
   });
 
-  it('a known request error keeps its code and identifier meta', () => {
+  it('a known request error keeps its code and identifier meta, and never the adapter error in it', () => {
     const out = serializeErr(
-      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.student.create()` invocation:\n\n\nUnique constraint failed on the fields: (`email`)', {
-        ...V,
-        code: 'P2002',
-        meta: { modelName: 'Student', target: ['email'], cause: 'Alicepii' },
+      knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Student_email_key"', { constraint: { fields: ['email'] } }), {
+        modelName: 'Student',
+        cause: 'Alicepii',
       }),
     );
     expectNoPii(out);
     expect(out.code).toBe('P2002');
-    expect(out.meta).toEqual({ modelName: 'Student', target: ['email'] });
+    expect(out.meta).toEqual({ modelName: 'Student' });
   });
 
-  it('meta.target shaped like a raw SQL expression is not an identifier', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.student.create()` invocation:\n\n\nUnique constraint failed', {
-        ...V,
-        code: 'P2002',
-        meta: { target: 'lower(TRIM(BOTH FROM Alicepii))' },
-      }),
-    );
+  it('an identifier meta value shaped like a raw SQL expression is not an identifier', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2002', { field_name: 'lower(TRIM(BOTH FROM Alicepii))' }));
     expectNoPii(out);
     expect(out.meta).toBeUndefined();
   });
 
-  it('meta.code shaped like a name, not a SQLSTATE, lifts no sqlState', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientKnownRequestError('\nInvalid `prisma.$queryRawUnsafe()` invocation:', {
-        ...V,
-        code: 'P2010',
-        meta: { code: 'Alicepii' },
-      }),
-    );
-    expectNoPii(out);
+  it('meta.code is never read for a SQLSTATE: only the adapter error carries one', () => {
+    const out = serializeErr(known('\nInvalid `prisma.$queryRawUnsafe()` invocation:', 'P2010', { code: '22P02' }));
     expect(out.sqlState).toBeUndefined();
   });
 
   it('a Prisma error class whose own name was left as "Error" is still withheld, by constructor name', () => {
     class PrismaClientUnknownRequestError extends Error {}
-    const out = serializeErr(new PrismaClientUnknownRequestError(CHECK_MSG));
+    const out = serializeErr(new PrismaClientUnknownRequestError(ROW_MSG));
     expectNoPii(out);
   });
 
-  it('a pool timeout keeps its numeric meta', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientKnownRequestError('Timed out fetching a new connection from the connection pool.', {
-        ...V,
-        code: 'P2024',
-        meta: { modelName: 'Class', connection_limit: 5, timeout: 10 },
-      }),
-    );
-    expect(out.meta).toEqual({ modelName: 'Class', connection_limit: 5, timeout: 10 });
+  it('target and connection_limit are not meta keys: no shape on this engine carries them', () => {
+    const out = serializeErr(known(QUERY_HEADER, 'P2002', { modelName: 'Class', target: ['email'], connection_limit: 5 }));
+    expect(out.meta).toEqual({ modelName: 'Class' });
   });
 
   it('parses the non-production header form, any receiver, and $-identifiers', () => {
@@ -326,13 +316,8 @@ describe('serializeErr: the shape', () => {
   });
 });
 
-const known = (message: string, code: string, meta: Record<string, unknown>) =>
-  new Prisma.PrismaClientKnownRequestError(message, { ...V, code, meta });
-const QUERY_HEADER = '\nInvalid `prisma.class.update()` invocation:\n\n\n';
-const pgError = (code: string, message: string) =>
-  `${QUERY_HEADER}Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "${message}", severity: "ERROR", detail: None, column: None, hint: None }), transient: false })`;
-const pgErrorWithDetail = (code: string, message: string, detail: string) =>
-  `${QUERY_HEADER}Error occurred during query execution:\nConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "${code}", message: "${message}", severity: "ERROR", detail: Some("${detail}"), column: None, hint: None }), transient: false })`;
+/** A typed refusal the adapter maps to no Prisma code: a DriverAdapterError, Postgres's fields on its cause. */
+const typed = (sqlState: string, message: string, extra: Record<string, unknown> = {}) => driverAdapterError(pgCause(sqlState, message, extra));
 
 /** Every position in `out`, a repeated node counted wherever it appears. */
 function entries(out: SerializedErr): number {
@@ -386,7 +371,7 @@ describe('serializeErr: fails closed on odd errors', () => {
 
   it('a withheld error keeps its own name only when it is a Prisma class name', () => {
     class PrismaClientUnknownRequestError extends Error {}
-    const e = new PrismaClientUnknownRequestError(CHECK_MSG);
+    const e = new PrismaClientUnknownRequestError(ROW_MSG);
     e.name = 'Alicepii';
     const out = serializeErr(e);
     expectNoPii(out);
@@ -401,24 +386,24 @@ describe('serializeErr: fails closed on odd errors', () => {
     expectNoPii(serializeErr(o));
   });
 
-  it('meta.target, aggregateErrors, and rowIds are frozen at every level, not just the top', () => {
+  it('identifier meta arrays, aggregateErrors, and rowIds are frozen at every level, not just the top', () => {
     const id = '824c3362-c21f-466e-a741-7301d469730f';
-    const err = new Prisma.PrismaClientUnknownRequestError(pgError('23514', `Row ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii`), V);
-    (err as unknown as { meta?: unknown }).meta = { target: ['email', 'phone'] };
+    const err = driverAdapterError(pgCause('23514', `Row ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii`));
+    (err as unknown as { meta?: unknown }).meta = { column: ['email', 'phone'] };
     (err as unknown as { errors?: unknown }).errors = [new Error('member')];
 
     const o = serializeErr(err);
     expectNoPii(o);
     expect(o.rowIds).toEqual([id]);
-    expect(o.meta).toEqual({ target: ['email', 'phone'] });
+    expect(o.meta).toEqual({ column: ['email', 'phone'] });
     expect(o.aggregateErrors).toHaveLength(1);
 
     const meta = o.meta as Mutable<SerializedPrismaMeta>;
     expect(() => {
-      meta.target = 'z';
+      meta.column = 'z';
     }).toThrow(TypeError);
     expect(() => {
-      (meta.target as string[]).push('z');
+      (meta.column as string[]).push('z');
     }).toThrow(TypeError);
     expect(() => {
       (o.aggregateErrors as SerializedErr[]).push(o);
@@ -438,63 +423,65 @@ describe('serializeErr: what a withheld error still says', () => {
     expect(p2003.meta).toEqual({ modelName: 'Class', field_name: 'Class_roomId_fkey' });
   });
 
-  it('lifts a constraint only for the SQLSTATEs whose message is the constraint sentence', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientUnknownRequestError(
-        pgError('23502', 'null value in column \\"x\\" violates not-null constraint; DETAIL violates check constraint \\"Alicepii\\"'),
-        V,
-      ),
-    );
+  it('lifts a constraint only for the SQLSTATEs that carry one', () => {
+    const out = serializeErr(typed('23502', 'null value in column "x" violates not-null constraint; DETAIL violates check constraint "Alicepii"'));
     expectNoPii(out);
     expect(out.sqlState).toBe('23502');
     expect(out.constraint).toBeUndefined();
   });
 
   it.each([
-    ['23505', 'duplicate key value violates unique constraint "X_key"', 'X_key'],
-    ['23503', 'insert or update on table "t" violates foreign key constraint "X_fkey"', 'X_fkey'],
-    ['23P01', 'conflicting key value violates exclusion constraint "X_excl"', 'X_excl'],
-  ] as const)('lifts the constraint name for %s', (sqlState, message, name) => {
-    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(pgError(sqlState, message), V));
+    ['a Known P2002', () => knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "X_key"')), '23505', 'X_key'],
+    [
+      'a Known P2003',
+      () => knownWithAdapterCause('P2003', pgCause('23503', 'insert or update on table "t" violates foreign key constraint "X_fkey"', { constraint: { index: 'X_fkey' } })),
+      '23503',
+      'X_fkey',
+    ],
+    ['a Known P2010 (raw 23P01)', () => knownWithAdapterCause('P2010', pgCause('23P01', 'conflicting key value violates exclusion constraint "X_excl"')), '23P01', 'X_excl'],
+    ['a typed 23514', () => typed('23514', 'new row for relation "t" violates check constraint "X_check"'), '23514', 'X_check'],
+    ['a typed 23P01', () => typed('23P01', 'conflicting key value violates exclusion constraint "X_excl"'), '23P01', 'X_excl'],
+  ] as const)('lifts the SQLSTATE and constraint from %s', (_label, make, sqlState, name) => {
+    const out = serializeErr(make());
     expect(out.sqlState).toBe(sqlState);
     expect(out.constraint).toBe(name);
+    expect(out.adapterKind).toBeUndefined();
   });
 
-  it('names a connector-level failure by its kind', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientUnknownRequestError(`${QUERY_HEADER}Error in PostgreSQL connection: Error { kind: Closed, cause: None }`, V),
-    );
-    expect(out.connectorKind).toBe('Closed');
+  it('a constraint name outside [A-Za-z0-9_] is not logged', () => {
+    const out = serializeErr(typed('23514', 'new row for relation "t" violates check constraint "Alice pii-x"'));
+    expect(out.sqlState).toBe('23514');
+    expect(out.constraint).toBeUndefined();
+    expect(JSON.stringify(out)).not.toContain('Alice pii');
+  });
+
+  it('names an adapter failure with no Postgres error by its kind', () => {
+    const out = serializeErr(knownWithAdapterCause('P2010', { kind: 'DatabaseNotReachable', host: 'db', port: 5432 }));
+    expect(out.adapterKind).toBe('DatabaseNotReachable');
     expect(out.sqlState).toBeUndefined();
+    expect(out.code).toBe('P2010');
   });
 
   it('a kind outside the closed set is not emitted', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientUnknownRequestError(`${QUERY_HEADER}Error in PostgreSQL connection: Error { kind: Alicepii, cause: None }`, V),
-    );
+    const out = serializeErr(knownWithAdapterCause('P2010', { kind: 'Alicepii' }));
     expectNoPii(out);
-    expect(out.connectorKind).toBeUndefined();
+    expect(out.adapterKind).toBeUndefined();
   });
 
-  it('a connector kind is read only from an Unknown request error', () => {
-    const out = serializeErr(
-      new Prisma.PrismaClientValidationError(`${QUERY_HEADER}Error { kind: Closed, cause: None }`, V),
-    );
-    expect(out.connectorKind).toBeUndefined();
+  it('no kind is emitted beside a SQLSTATE', () => {
+    const out = serializeErr(typed('55P03', 'canceling statement due to lock timeout'));
+    expect(out.sqlState).toBe('55P03');
+    expect(out.adapterKind).toBeUndefined();
   });
 
   it.each([
-    [
-      'Transaction already closed: A query cannot be executed on an expired transaction. The timeout for this transaction was 5000 ms, however 5012 ms passed since the start of the transaction. Alicepii',
-      'expired',
-    ],
-    ['Transaction already closed: Alicepii, 5012 ms passed', 'expired'],
-    ['Unable to start a transaction in the given time. Alicepii', 'start_timeout'],
-    ["Transaction not found. Transaction ID is invalid, refers to an old closed transaction Prisma doesn't have information about anymore. Alicepii", 'not_found'],
-    ['Transaction already closed: A commit cannot be executed on a committed transaction. Alicepii', 'closed'],
-    ['Something else entirely. Alicepii', 'other'],
-  ])('maps a P2028 meta.error to its kind, never its text: %s', (error, kind) => {
-    const out = serializeErr(known('Transaction API error: Alicepii', 'P2028', { error }));
+    [{ timeout: 100, timeTaken: 512 }, 'expired'],
+    [{}, 'other'],
+    [{ timeout: 100 }, 'other'],
+    [{ timeout: 100, timeTaken: 'Alicepii' }, 'other'],
+    [{ error: 'Transaction already closed: A query cannot be executed on an expired transaction. The timeout for this transaction was 5000 ms. Alicepii' }, 'other'],
+  ] as const)('maps a P2028 meta %j to its kind, never its text', (meta, kind) => {
+    const out = serializeErr(known('Transaction API error: Alicepii', 'P2028', meta));
     expectNoPii(out);
     expect(out.txError).toBe(kind);
   });
@@ -502,27 +489,29 @@ describe('serializeErr: what a withheld error still says', () => {
   it.each(Object.entries(TERMINAL_TRIGGER_TAILS))('a terminal trigger fire names its trigger and rows: %s', (trigger, tail) => {
     const id = '824c3362-c21f-466e-a741-7301d469730f';
     const other = '12345678-1234-1234-1234-123456789abc';
-    const out = serializeErr(
-      new Prisma.PrismaClientUnknownRequestError(pgError('23514', `Row ${id} of ${other}, ${id} is terminal; ${tail} Alicepii`), V),
-    );
+    const out = serializeErr(typed('23514', `Row ${id} of ${other}, ${id} is terminal; ${tail} Alicepii`));
     expectNoPii(out);
     expect(out.trigger).toBe(trigger);
     expect(out.rowIds).toEqual([id, other]);
   });
 
+  it('a raw terminal trigger fire (Known P2010) names its trigger and rows too', () => {
+    const id = '824c3362-c21f-466e-a741-7301d469730f';
+    const out = serializeErr(knownWithAdapterCause('P2010', pgCause('23514', `Class ${id} is completed, which is terminal; ${TERMINAL_TRIGGER_TAILS.status} open`)));
+    expect(out).toMatchObject({ sqlState: '23514', trigger: 'status', rowIds: [id] });
+  });
+
   it('a terminal trigger fire keeps at most three row ids', () => {
     const ids = ['a', 'b', 'c', 'd'].map((c) => `${c.repeat(8)}-0000-4000-8000-000000000000`);
-    const out = serializeErr(
-      new Prisma.PrismaClientUnknownRequestError(pgError('23514', `${ids.join(' ')} ${TERMINAL_TRIGGER_TAILS.status} open`), V),
-    );
+    const out = serializeErr(typed('23514', `${ids.join(' ')} ${TERMINAL_TRIGGER_TAILS.status} open`));
     expect(out.rowIds).toEqual(ids.slice(0, 3));
   });
 
   it('a CHECK violation is not a trigger fire, and its failing row lends no ids', () => {
-    // The second message gives the failing row a full UUID, so dropping the
+    // The second detail gives the failing row a full UUID, so dropping the
     // trigger condition on `rowIds` has an id to find.
-    for (const msg of [CHECK_MSG, CHECK_MSG.replace('4ad7b519', '4ad7b519-0000-4000-8000-000000000001')]) {
-      const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+    for (const err of [checkViolation(), checkViolation('Failing row contains (4ad7b519-0000-4000-8000-000000000001, Alicepii).')]) {
+      const out = serializeErr(err);
       expectNoPii(out);
       expect(out.trigger).toBeUndefined();
       expect(out.rowIds).toBeUndefined();
@@ -532,31 +521,21 @@ describe('serializeErr: what a withheld error still says', () => {
   it('a CHECK violation whose DETAIL carries a real trigger tail and row ids lifts neither', () => {
     const id = '824c3362-c21f-466e-a741-7301d469730f';
     const other = '12345678-1234-1234-1234-123456789abc';
-    const msg = pgErrorWithDetail(
-      '23514',
-      'new row for relation \\"Student\\" violates check constraint \\"Student_income_tier_check\\"',
-      `Failing row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.`,
-    );
-    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+    const out = serializeErr(checkViolation(`Failing row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.`));
     expectNoPii(out);
     expect(out.constraint).toBe('Student_income_tier_check');
     expect(out.trigger).toBeUndefined();
     expect(out.rowIds).toBeUndefined();
   });
 
-  it('a 23514 whose message field names no constraint and no trigger still lifts neither from DETAIL', () => {
-    // Unlike the test above, this message field never matches the `violates
-    // … constraint` sentence, so `constraint` stays undefined here too — the
-    // only thing standing between DETAIL's trigger tail and row ids and the
-    // output is the PostgresError `message` field restriction on its own.
+  it('a 23514 whose message names no constraint and no trigger still lifts neither from DETAIL', () => {
+    // Unlike the test above, this message never matches the check clause, so
+    // `constraint` stays undefined here too: the only thing standing between
+    // DETAIL's trigger tail and row ids and the output is that only the
+    // primary message is read.
     const id = '824c3362-c21f-466e-a741-7301d469730f';
     const other = '12345678-1234-1234-1234-123456789abc';
-    const msg = pgErrorWithDetail(
-      '23514',
-      'row check failed',
-      `Row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.`,
-    );
-    const out = serializeErr(new Prisma.PrismaClientUnknownRequestError(msg, V));
+    const out = serializeErr(typed('23514', 'row check failed', { detail: `Row ${id} of ${other}, ${id} is terminal; ${TERMINAL_TRIGGER_TAILS.status} Alicepii.` }));
     expectNoPii(out);
     expect(out.constraint).toBeUndefined();
     expect(out.trigger).toBeUndefined();
@@ -592,7 +571,7 @@ describe('serializeErr: anchors and guards', () => {
   });
 
   it('every element of an identifier array must be an identifier', () => {
-    const out = serializeErr(known(QUERY_HEADER, 'P2002', { target: ['email', 'lower(Alicepii)'] }));
+    const out = serializeErr(known(QUERY_HEADER, 'P2002', { column: ['email', 'lower(Alicepii)'] }));
     expectNoPii(out);
     expect(out.meta).toBeUndefined();
   });
@@ -604,13 +583,14 @@ describe('serializeErr: anchors and guards', () => {
   });
 
   it('numeric meta must be a number', () => {
-    const out = serializeErr(known(QUERY_HEADER, 'P2024', { timeout: 'Alicepii' }));
+    const out = serializeErr(known(QUERY_HEADER, 'P2028', { timeout: 'Alicepii' }));
     expectNoPii(out);
     expect(out.meta?.timeout).toBeUndefined();
   });
 
-  it('a SQLSTATE is the whole of meta.code, not a part of it', () => {
-    const out = serializeErr(known(QUERY_HEADER, 'P2010', { code: 'ALICE pii' }));
+  it('a SQLSTATE is the whole of originalCode, not a part of it', () => {
+    const out = serializeErr(knownWithAdapterCause('P2010', pgCause('ALICE pii', 'm')));
+    expectNoPii(out);
     expect(out.sqlState).toBeUndefined();
   });
 
@@ -634,7 +614,40 @@ describe('serializeErr: the pg driver adapter\'s errors', () => {
     const out = serializeErr(err);
     expect(out).toMatchObject({ type: 'Error', name: 'DriverAdapterError', message: 'Driver adapter error (detail withheld from the log)' });
     expect(out).not.toHaveProperty('cause');
+    expect(out).not.toHaveProperty('causeTruncated');
     expect(JSON.stringify(out)).not.toContain('7e2b7875');
+  });
+
+  describe("the adapter's plain cause object, met outside a withheld error", () => {
+    const id = '7e2b7875-c697-4dd0-bfdd-35a48d6fd186';
+    const postgres = () => pgCause('23514', `Class ${id} is completed, which is terminal`, { detail: 'Failing row contains (Alicepii).' });
+    // A 23505 cause has no `message` of its own, so it is not error-like.
+    const unique = () => pgCause('23505', 'duplicate key value violates unique constraint "Student_email_key"');
+
+    it.each([
+      ['a postgres-kind cause', postgres],
+      ['a cause with no message', unique],
+    ] as const)('withholds %s logged directly', (_label, make) => {
+      const out = serializeErr(make());
+      expectNoPii(out);
+      expect(out).toMatchObject({ message: 'Driver adapter error (detail withheld from the log)' });
+      expect(JSON.stringify(out)).not.toContain(id);
+      expect(JSON.stringify(out)).not.toContain('Student_email_key');
+    });
+
+    it('withholds it as the cause of an error that is not withheld', () => {
+      const out = serializeErr(new Error('booking failed', { cause: postgres() }));
+      expectNoPii(out);
+      expect(out.message).toBe('booking failed');
+      expect(out.cause).toMatchObject({ message: 'Driver adapter error (detail withheld from the log)' });
+      expect(JSON.stringify(out)).not.toContain(id);
+    });
+
+    it('an object with an originalCode but no originalMessage is withheld too', () => {
+      const out = serializeErr({ originalCode: '23514', message: `Class ${id} Alicepii` });
+      expectNoPii(out);
+      expect(JSON.stringify(out)).not.toContain(id);
+    });
   });
 
   it('still walks a real Error cause under a withheld error', () => {
