@@ -426,7 +426,7 @@ whole platform — paged through `readInPages`:
 | `autoCancelClasses` | `class-transitions.ts` | windowed (`cancelCandidateDates`); the page reads no registrations, the deciding count is taken per class under its row lock |
 | `autoTransitionToInProgress` | `class-transitions.ts` | |
 | `autoCompleteClasses` | `class-transitions.ts` | |
-| `reconcileWaitlists` | `waitlist-reconciliation.ts` | |
+| `reconcileWaitlists` | `waitlist-reconciliation.ts` | `readInSlices` over the grouped candidate ids, not `readInPages` |
 | `readGenerationCandidates` | `class-generator.ts` | |
 | `readStudioGenerationCandidates` | `studio-class-generator.ts` | |
 | `getUnreadForEmailFallback` | `notifications.ts` | keyset on `(createdAt, id)`, not `id` alone |
@@ -1728,8 +1728,22 @@ pooled connection outlives `connectionTimeoutMs`. That is a model call, a
 `$queryRaw`, a batch `$transaction([…])`, **and an interactive transaction**.
 Prisma's `maxWait` is not a deadline that fires while an interactive
 transaction waits at the pool; it is judged once the pool hands over a
-connection. So an interactive transaction behind a drained pool ends one of
-two ways:
+connection and the adapter's `BEGIN` has returned, and a transaction judged
+late is rolled back and refused even though it holds a connection.
+
+So `createPrismaClient` sets the client's default `maxWait` to the pool bound
+(`transactionOptionsFor`), and pg-pool's wait is the one bound a waiting
+interactive transaction meets. Under pool saturation its 503 arrives at the
+pool bound (10 s by default), as `pool_exhausted` at `error`, rather than at
+Prisma's own 2 s default `maxWait`; and a transaction that acquires its
+connection inside the bound proceeds instead of being refused after
+acquiring it. The one exception is a connection handed over so close to the
+bound that its `BEGIN` returns past it. `src/lib/prisma-client.test.ts`
+tests it: a connection freed at 2.5 s, past Prisma's default and inside a 4 s
+pool bound, is used.
+
+An explicit `maxWait` below the pool bound reopens the `P2028` arm, and
+`db-transient-shapes.test.ts` measures both outcomes with one:
 
 - the pool frees a connection within `connectionTimeoutMs` but after
   `maxWait` → `P2028` with `meta {}`, `tx_budget` at `warn` (measured:
@@ -1739,9 +1753,7 @@ two ways:
   `pool_exhausted` at `error`, whatever `maxWait` says (measured: `maxWait:
   100`, pool bound 200 ms).
 
-With the defaults (`maxWait` 2 s, pool bound 10 s) the same rule holds: a
-wait that ends between 2 s and 10 s is `tx_budget`, one that reaches 10 s is
-`pool_exhausted`. An expired transaction budget (`timeout`) is a different
+An expired transaction budget (`timeout`) is a different
 `P2028`, with `meta.timeout` and `meta.timeTaken`, also `tx_budget`.
 
 **`adapterKindOf(err)`** reads `cause.kind` from the same two paths, for the
@@ -1766,8 +1778,8 @@ readers above, never from text:
 - `adapterKind` is `adapterKindOf(err)`, emitted only where there is no
   `sqlState`;
 - `txError` on a `P2028` is `expired` when `meta.timeout` and
-  `meta.timeTaken` are both numbers and `other` otherwise, because nothing
-  structured tells a `maxWait` refusal apart from any other `P2028`.
+  `meta.timeTaken` are both finite numbers and `other` otherwise, because
+  nothing structured tells a `maxWait` refusal apart from any other `P2028`.
 
 A withheld error's `cause` is walked only when it is an `Error`, so the
 adapter's plain cause object under a `DriverAdapterError` is never reached

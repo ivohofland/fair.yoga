@@ -559,8 +559,9 @@ one of two ways: a wait that outlives the pool bound is pg-pool's timeout,
 `pool_exhausted` at `error`, whatever `maxWait` says; a connection freed
 within the pool bound but after `maxWait` is `P2028` with `meta {}`,
 `tx_budget` at `warn` (Task 8's measurement, `db-transient-shapes.test.ts`).
-With the defaults (`maxWait` 2 s, pool bound 10 s), a wait that ends between
-2 s and 10 s is `tx_budget` and one that reaches 10 s is `pool_exhausted`.
+`createPrismaClient` sets the client's default `maxWait` to the pool bound,
+so with the defaults a wait that reaches the pool bound (10 s) is
+`pool_exhausted`, and a connection freed inside it is used (§9 item 4 (g)).
 Stated in `docs/technical-architecture.md`, not left to a reader's assumption.
 
 Comments that assert the old pool arithmetic are rewritten to what is true,
@@ -1103,7 +1104,12 @@ The grep is a floor, not the whole set. The plan also reads the
    unreachable host takes up to 10 s to fail instead of 5 s (D4). (e) Idle
    connections live 300 s, as before. (f) The serializer drops `meta.target`,
    `connection_limit` and the three text-derived `txError` values, and
-   renames `connectorKind` to `adapterKind`.
+   renames `connectorKind` to `adapterKind`. (g) The client's default
+   `maxWait` equals the pool bound, so under pool saturation an interactive
+   transaction's 503 arrives at the pool bound (10 s by default) rather than
+   Prisma's former 2 s `maxWait`, and no transaction is refused after
+   acquiring a connection, save one whose connection arrives so close to the
+   bound that its `BEGIN` returns past it.
 5. **Performance and memory of the wasm query compiler** on the production
    box: measured in §6 item 7 and by the e2e suite's duration before and
    after. A regression large enough to matter blocks the "stays on in
