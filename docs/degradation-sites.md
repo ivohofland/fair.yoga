@@ -657,7 +657,8 @@ changing a response shape the client validates.
 **Confirm.**
 
 ```sql
-SELECT id, "teacherId", status, "updatedAt"
+SELECT id, "teacherId", testmode, "connectedAt", "disconnectedAt",
+       "revokeAfter", "revokedAt"
   FROM "ProcessorConnection" WHERE id = '<connectionId>';
 ```
 
@@ -667,6 +668,6 @@ Then check Mollie's status page, and whether the samples cluster on one
 **Correct.** A spread across connections needs nothing: the pay page recovers
 on the next request, because an unavailable answer is not cached, and Mollie
 retries webhooks. A single connection that keeps failing with 401 or 403 has a
-revoked grant; the teacher reconnects Mollie in settings. A repeating
-`status` of 422 or an unexpected shape means Mollie changed its API: fix the
+revoked grant (`revokedAt` or `disconnectedAt` set); the teacher reconnects
+Mollie in settings. A repeating `status` of 422 or an unexpected shape means Mollie changed its API: fix the
 client, since the pay page will keep hiding Mollie until it does.
