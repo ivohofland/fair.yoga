@@ -2385,6 +2385,28 @@ restored afterwards: `FOR KEY SHARE` in
 `assertAccountSignOutLockHeldBy` made the carried-lock case fail with
 `promise resolved "{ sessions: 2, pushSubscriptions: +0 }" instead of rejecting`.
 
+## The `ProcessorConnection` row is a leaf lock (#896)
+
+`getAccessToken`'s `invalid_grant` branch (`src/services/processor-token.ts`)
+takes `FOR UPDATE` on one `ProcessorConnection` row, reads whether
+`disconnectedAt` was already set, then updates the row and inserts the
+teacher's `Notification` in the same transaction. The lock exists so that a
+disconnect committing while this waits is seen: an unlocked read under
+READ COMMITTED would report the older `disconnectedAt` and send a notification
+the teacher's own disconnect makes redundant.
+
+It is a **leaf**: the transaction takes this one row and nothing else
+lockable after it. The `Notification` insert locks no other row, and the
+update leaves `teacherId` alone, so it takes no key lock on the `Teacher`
+parent. Nothing in the line at the top of this file precedes or follows it, and
+no site holds another listed row while taking it. A new site that locks this
+row together with any other row has to be placed in the order here first.
+
+The lock is plain `FOR UPDATE` with no `OF`, so it does not appear in the
+`FOR UPDATE OF` census of `Class` locks above. The statement is held in place
+by the test that disconnects the row from a second transaction while this one
+waits on it (`processor-token.test.ts`).
+
 ## The advisory lock, which is not a row in the line above (#196, #215)
 
 `lockAnnouncementSlot` (`src/services/announcements.ts`) is the first and so far only
