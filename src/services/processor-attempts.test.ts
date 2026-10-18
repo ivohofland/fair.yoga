@@ -248,6 +248,22 @@ describe('createAttempt', () => {
     expect(fake.createPayment).toHaveBeenCalledTimes(1);
   });
 
+  describe('refuses before reusing', () => {
+    it('a paused teacher with PAYMENTS_PAUSED, though a reusable attempt exists', async () => {
+      const { paymentId } = await freshPayment();
+      await seedAttempt(paymentId, 'ideal', new Date(Date.now() + 10 * MINUTE));
+      await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: new Date() } });
+      expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PAYMENTS_PAUSED');
+    });
+
+    it('a settled payment with PAYMENT_SETTLED, though a reusable attempt exists', async () => {
+      const { paymentId } = await freshPayment();
+      await seedAttempt(paymentId, 'ideal', new Date(Date.now() + 10 * MINUTE));
+      await prisma.payment.update({ where: { id: paymentId }, data: { status: 'paid', paidAt: new Date() } });
+      expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PAYMENT_SETTLED');
+    });
+  });
+
   describe('refuses', () => {
     it("another student's payment with NOT_FOUND", async () => {
       const { paymentId } = await freshPayment();
@@ -395,9 +411,14 @@ describe('processor URLs', () => {
   it('builds the return URL for a payment and attempt', () => {
     expect(processorReturnUrl('https://fair.yoga', 'pay-1', 'att-1')).toBe('https://fair.yoga/api/payments/pay-1/processor-return?attempt=att-1');
   });
+  it('encodes the ids it carries', () => {
+    expect(processorReturnUrl('https://fair.yoga', 'a/b', 'c&d=e')).toBe('https://fair.yoga/api/payments/a%2Fb/processor-return?attempt=c%26d%3De');
+  });
   it('omits the webhook on a host Mollie cannot reach', () => {
     expect(processorWebhookUrl('http://localhost:3000')).toBeNull();
     expect(processorWebhookUrl('http://127.0.0.1:3164')).toBeNull();
+    expect(processorWebhookUrl('http://[::1]:3000')).toBeNull();
+    expect(processorWebhookUrl('http://0.0.0.0:3000')).toBeNull();
     expect(processorWebhookUrl('https://fair.yoga')).toBe('https://fair.yoga/api/webhooks/mollie');
   });
 });

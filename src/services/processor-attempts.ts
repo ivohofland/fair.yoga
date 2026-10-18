@@ -44,13 +44,15 @@ function methodUnavailable(label: string): AttemptRefusal {
 
 /** Where Mollie sends the student back after checkout. */
 export function processorReturnUrl(appUrl: string, paymentId: string, attemptId: string): string {
-  return `${appUrl}/api/payments/${paymentId}/processor-return?attempt=${attemptId}`;
+  return `${appUrl}/api/payments/${encodeURIComponent(paymentId)}/processor-return?attempt=${encodeURIComponent(attemptId)}`;
 }
 
-/** Where Mollie reports a payment's status changes, or null on a host Mollie cannot reach. */
+/** The hosts that name this machine, which Mollie cannot reach. */
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]', '0.0.0.0']);
+
+/** Where Mollie reports a payment's status changes, or null on a host in `LOCAL_HOSTS`. */
 export function processorWebhookUrl(appUrl: string): string | null {
-  const host = new URL(appUrl).hostname;
-  return host === 'localhost' || host === '127.0.0.1' ? null : `${appUrl}/api/webhooks/mollie`;
+  return LOCAL_HOSTS.has(new URL(appUrl).hostname) ? null : `${appUrl}/api/webhooks/mollie`;
 }
 
 /** Mollie's expiry for the payment, or the method's own window from `now` when Mollie gave none. */
