@@ -15,8 +15,9 @@ the numbering here is this spec's.
    fine; pay-later credit is not. It is enforced by an allowlist, so no
    pay-later product needs naming: one Mollie adds tomorrow is excluded until a
    reviewed PR adds it.
-2. **The allowlist, first version:** `ideal`, `wero`, `creditcard`,
-   `applepay`, `bancontact`, `eps`, `blik`, `przelewy24`, `twint`, `paypal`.
+2. **The allowlist, first version:** `ideal`, `wero`, `bancontact`,
+   `creditcard`, `applepay`, `eps`, `blik`, `przelewy24`, `twint`, `paypal`,
+   in that order (Decision 12).
    iDEAL and Wero are separate rows labelled "iDEAL" and "Wero"; Mollie has
    both as method ids, and the teacher's enablement decides which a student
    sees. Mollie's `banktransfer` is **not** on it: it duplicates the Level 1
@@ -152,15 +153,18 @@ is what Mollie's server-side POST is.
   scopes String[], testmode Boolean, connectedAt, disconnectedAt DateTime?,
   revokeAfter DateTime?, revokedAt DateTime? }`.
   One per teacher. `accessToken`/`refreshToken` are ciphertexts (Decision 10).
-  **Live** is `disconnectedAt IS NULL AND profileId IS NOT NULL`; a row with
-  no profile is mid-connect and offers nothing. Disconnecting and revoking are
+  **Live** is `disconnectedAt IS NULL AND profileId IS NOT NULL`
+  (`livePayoutIdentity`); a row with no profile is mid-connect and offers
+  nothing. A live connection takes payments only while its grant also holds
+  every requested scope (`takesMolliePayments`, `src/lib/processor-liveness.ts`). Disconnecting and revoking are
   separate moments: a disconnected row keeps its tokens until `revokedAt`,
   because its open attempts' webhooks still need them (§1). `CHECK`s pin that
   both tokens are present exactly when `revokedAt IS NULL`, and that
   `revokedAt` and `revokeAfter` are set only on a disconnected row.
   Reconnecting after a disconnect rewrites the row rather than adding one.
 - **`ProcessorPayment`** (the attempt) `{ id, paymentId → Payment onDelete
-  Cascade, connectionId → ProcessorConnection, processorPaymentId @unique,
+  Cascade, connectionId String? → ProcessorConnection onDelete SetNull,
+  processorPaymentId @unique,
   profileId String, testmode Boolean, method String, status ProcessorPaymentStatus, amount Decimal, currency
   Currency, checkoutUrl String?, expiresAt DateTime?, paidAt DateTime?,
   settledPayment Boolean, chargedBackAt DateTime?, createdAt, updatedAt }`. `ProcessorPaymentStatus`
@@ -177,14 +181,15 @@ is what Mollie's server-side POST is.
   switch may relabel. `method` is a string, not the allowlist type, because
   a stored row must stay readable after its method leaves the allowlist.
 - **`ProcessorRefund`** `{ id, attemptId → ProcessorPayment, processorRefundId
-  @unique, amount Decimal, status ProcessorRefundStatus, outcome
+  String? @unique (null until Mollie answers, §6), amount Decimal, status ProcessorRefundStatus, outcome
   RefundOutcome?, requestedAt, updatedAt }`. Statuses are Mollie's
   (`queued`, `pending`, `processing`, `refunded`, `failed`, `canceled`).
   `RefundOutcome` is `waived | reopened` for a refund of the settling attempt
   and null for a duplicate; it is the teacher's choice, applied when the
-  refund reaches `refunded`. At most one non-failed refund per attempt (partial
-  unique index), so a second click cannot refund twice even before Mollie
-  would refuse an amount above the remainder.
+  refund reaches `refunded`. At most one live refund per attempt — neither
+  `failed` nor `canceled` (partial unique index
+  `ProcessorRefund_one_live_per_attempt`) — so a second click cannot refund
+  twice even before Mollie would refuse an amount above the remainder.
 - **`OAuthState`** `{ id, stateHash @unique, teacherId, sessionId, expiresAt }`
   — sha256 (`hashToken`) of 32 random bytes, 10-minute TTL, deleted on use;
   the daily auth cleanup deletes expired rows.
@@ -218,8 +223,8 @@ is what Mollie's server-side POST is.
 export const MOLLIE_METHODS = {
   ideal:      { label: 'iDEAL',       expiresMinutes: 15,  recurring: false },
   wero:       { label: 'Wero',        expiresMinutes: 10,  recurring: false },
-  creditcard: { label: 'Card',        expiresMinutes: 30,  recurring: false },
-  // …
+  bancontact: { label: 'Bancontact',  expiresMinutes: 60,  recurring: false },
+  // … creditcard, applepay, eps, blik, przelewy24, twint, paypal
 } as const satisfies Record<string, MollieMethodEntry>;
 export type AllowedMollieMethod = keyof typeof MOLLIE_METHODS;
 ```
@@ -293,8 +298,12 @@ re-reads and uses the winner's token.
   settings section. Under the teacher lock; a profile different from the row's
   current one writes the event (Data) and, after commit,
   `deliverPayoutChangedNotice`.
-- **Refused** (409, registered codes): an unknown or expired state, a state
-  from another session. A grant
+- **Refused:** an unknown or expired state, or a state from another session,
+  is `completeConnect`'s `OAUTH_STATE_INVALID` refusal, which never reaches
+  HTTP as a code: the callback redirects to `/settings/profile?mollie=expired`,
+  as it does for a missing `code` or `state`; Mollie's own `error` parameter
+  redirects with `cancelled`, and Mollie or its configuration being
+  unavailable with `unavailable`. A grant
   missing a requested scope is stored and the section says "reconnect to
   enable payments" rather than half-working.
 - **Disconnect:** `DELETE /api/teachers/[id]/processor` — stamp
@@ -333,8 +342,8 @@ re-reads and uses the winner's token.
 
 ## 2 · Tokens
 
-`src/lib/processor-token-cipher.ts`: `seal(plaintext): Buffer` and
-`open(sealed): string`, AES-256-GCM with a random 12-byte IV, layout
+`src/lib/processor-token-cipher.ts`: `sealToken(plaintext, key): Buffer` and
+`openToken(sealed, key): string`, AES-256-GCM with a random 12-byte IV, layout
 `[version][iv][tag][ciphertext]`, key from `PROCESSOR_TOKEN_KEY` (base64, 32
 bytes). Unset key: Mollie is off, the connect section is not rendered, and
 the config diagnosis follows `src/lib/push/config.ts`'s `{ ok: false, reason }`
@@ -343,8 +352,8 @@ shape and its consumer's logging: `unset` warns once, any other reason is a
 version byte reads both keys and writes with the new one; out of scope beyond
 leaving the byte.
 
-`getAccessToken(db, connectionId)` answers a live token or a typed
-`disconnected` result — refresh when within 5 minutes of expiry, single-flight
+`getAccessToken(db, deps, connectionId, now)` answers a live token, a typed
+`disconnected` or `unavailable` result — refresh when within 5 minutes of expiry, single-flight
 per connection; `invalid_grant` runs Decision 14 in one transaction (the
 grant is already dead, so: null tokens, stamp `revokedAt`, and stamp `disconnectedAt`
 only if it is not already set, all only while the row still holds the refresh token that
@@ -389,7 +398,7 @@ call and leaves the connection alone.
   current `profileId` and `testmode`, that has not passed `expiresAt`. Otherwise creates the Mollie payment: `amount` (the class's
   currency), `description` (class title and date), `method` (one value),
   `redirectUrl` (the return page), `webhookUrl`, `profileId`,
-  `metadata: { paymentId }`, no `applicationFee`. Records the attempt, answers
+  `metadata: { paymentId, attemptId }`, no `applicationFee`. Records the attempt, answers
   `checkoutUrl`; the page navigates. The Mollie call is not in a transaction;
   the insert after it is, and a crash between them leaves a Mollie payment no
   row names — its webhook then answers 200 for an unknown id and it expires.
@@ -423,7 +432,7 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
 | `pending`/`authorized` | any | attempt status only |
 | `canceled`/`expired`/`failed` | any | attempt status only |
-| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed`, so the attempt can be refunded again. A refund fair.yoga cannot apply yet is left unwritten and the sync answers 503, so Mollie retries: a newly `refunded` row with outcome `reopened` met by a sync that did not start with the link lock (the row changed between the fetch and the lock), or a Mollie refund id with no row while every one of this attempt's fair.yoga refunds still lacking its Mollie id is younger than two minutes (`ADOPT_AFTER_MS`: its refund request may still store the id). A refund id with no row is adopted into the oldest of this attempt's fair.yoga refunds that lacks a Mollie id, is at least two minutes old and has the same amount and currency: the row takes the Mollie id and is then applied like any other row, and the adoption is logged. A refund id with no row that neither waits nor is adopted was made in Mollie's own dashboard: no row is created for it, and when such refunds reported `refunded` add up to the attempt's whole amount (in its currency), the attempt's `settledPayment` is cleared, as a chargeback clears it, with the `Payment` left `paid` and the release logged at info, so "Mark unpaid" applies again (Decision 17). A partial dashboard refund changes nothing. |
+| refunds changed | any | `ProcessorRefund` rows fair.yoga created are updated by Mollie id. A row newly `refunded` completes the refund: its `outcome` applies — `waived` → CAS `paid → not_charged` and clear the attempt's `settledPayment`; `reopened` → `reopenPayment`'s body with the attempt named (link lock first, see *Locks*); null → no `Payment` change — and the student gets `payment_refunded`. A CAS miss (the payment is no longer `paid`) applies nothing and is logged at warn. A row newly `failed` changes no `Payment`, the attempt stays settling, and the teacher gets `refund_failed`; the live-refund index excludes `failed` and `canceled`, so the attempt can be refunded again. A refund fair.yoga cannot apply yet is left unwritten and the sync answers 503, so Mollie retries: a newly `refunded` row with outcome `reopened` met by a sync that did not start with the link lock (the row changed between the fetch and the lock), or a Mollie refund id with no row while every one of this attempt's fair.yoga refunds still lacking its Mollie id is younger than two minutes (`ADOPT_AFTER_MS`: its refund request may still store the id). A refund id with no row is adopted into the oldest of this attempt's fair.yoga refunds that lacks a Mollie id, is at least two minutes old and has the same amount and currency: the row takes the Mollie id and is then applied like any other row, and the adoption is logged. A refund id with no row that neither waits nor is adopted was made in Mollie's own dashboard: no row is created for it, and when such refunds reported `refunded` add up to the attempt's whole amount (in its currency), the attempt's `settledPayment` is cleared, as a chargeback clears it, with the `Payment` left `paid` and the release logged at info, so "Mark unpaid" applies again (Decision 17). A partial dashboard refund changes nothing. |
 
 Every branch answers 200, except that a failure to reach Mollie or the
 database, or a refund fair.yoga cannot apply yet, answers 503, so Mollie

@@ -174,7 +174,11 @@ and authenticates the version byte; `openToken` refuses an unknown version, a
 short buffer or a failed tag with `TokenCipherError`. The key is
 `PROCESSOR_TOKEN_KEY`, 32 bytes as base64; `diagnoseMollieConfig`
 (`src/lib/mollie/config.ts`) is the one reader and turns Mollie off, logging the
-reason once, when the key is the wrong length. Replacing the key makes every
+reason once, for any of its `MollieConfigProblem` reasons: none of the three
+Mollie variables set (`unset`, a warning), only some of them (`partial`), a key
+that does not decode to 32 bytes (`token-key-length`), or a
+`NEXT_PUBLIC_APP_URL` that is missing or not an http(s) URL (`app-url`). It
+drops the app URL's trailing slashes. Replacing the key makes every
 stored token unreadable, so a teacher reconnects; the version byte names the
 layout a later key rotation would read both of. Only server code imports the module
 (`server-only`), which `pnpm run build` is what checks.
@@ -2208,7 +2212,8 @@ EMAIL_REPLY_TO=             # Platform mail's Reply-To; default hello@fair.yoga
 OPERATOR_EMAIL=             # Receives the daily degradation digest
 EMAIL_FROM=                 # e.g. "noreply@ethicalyoga.app"
 
-# Mollie Connect: all three unset turns Mollie off; some set is a logged misconfiguration
+# Mollie Connect: all three unset turns Mollie off; some set is a logged misconfiguration.
+# It also needs NEXT_PUBLIC_APP_URL (below), an http(s) URL: Mollie's redirect, return and webhook URLs are built on it
 MOLLIE_CLIENT_ID=           # The Mollie app's client id (OAuth)
 MOLLIE_CLIENT_SECRET=
 PROCESSOR_TOKEN_KEY=        # 32 bytes, base64 (`openssl rand -base64 32`); encrypts stored tokens (Processor token cipher)

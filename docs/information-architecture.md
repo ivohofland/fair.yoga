@@ -209,8 +209,7 @@ Settings
 │
 ├── Payments
 │   ├── Payment overview (cross-class: Outstanding / Received, per-row reminders)
-│   ├── Payment processor (Level 2: connect Mollie/Stripe) — planned
-│   └── Payment level toggle — planned
+│   └── Payment processor: Mollie is connected from Settings → Profile (Stripe planned, #386)
 │
 ├── Notifications
 │   └── New booking: inbox and email / inbox only / off; class completed and invitations: email on/off; auto-cancel: emailed if missed, whatever the settings
