@@ -24,20 +24,16 @@ interface SheetProps {
 export function Sheet({ title, onClose, dismissible = true, children }: SheetProps) {
   const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
-  // Set while this mount closes the dialog itself on cleanup, so that close is not reported; each mount clears it.
-  const unmounting = useRef(false);
 
   useEffect(() => {
     const node = dialog.current;
     if (node === null) return;
-    unmounting.current = false;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!node.open) node.showModal();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = overflow;
-      unmounting.current = true;
       if (node.open) node.close();
       if (previous?.isConnected) previous.focus();
     };
@@ -52,9 +48,11 @@ export function Sheet({ title, onClose, dismissible = true, children }: SheetPro
         if (dismissible) onClose();
       }}
       onClose={() => {
-        if (unmounting.current) return;
+        // The event is queued, so one can arrive after the dialog opened again; a real close leaves it shut.
+        const node = dialog.current;
+        if (node === null || node.open) return;
         if (dismissible) onClose();
-        else dialog.current?.showModal();
+        else node.showModal();
       }}
       onClick={(e) => {
         // The panel fills the dialog, so a click on the dialog itself is on its backdrop.
