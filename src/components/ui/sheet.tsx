@@ -16,13 +16,16 @@ interface SheetProps {
  * with its ink-40% scrim and the one shadow the system allows. A native
  * `<dialog>` opened with `showModal()`, so the browser traps focus, makes the
  * page behind it inert and turns Escape into `cancel`. While `dismissible`,
- * Escape and a tap on the backdrop close it. The page does not scroll while
+ * Escape and a tap on the backdrop close it, and so does a close the browser
+ * makes on its own; while not, such a close is undone by opening it again. The page does not scroll while
  * it is open. Focus returns on close to the element that held it, when that
  * element is still in the document.
  */
 export function Sheet({ title, onClose, dismissible = true, children }: SheetProps) {
   const titleId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
+  // Set while this component closes the dialog itself on unmount, so that close is not reported.
+  const unmounting = useRef(false);
 
   useEffect(() => {
     const node = dialog.current;
@@ -33,6 +36,7 @@ export function Sheet({ title, onClose, dismissible = true, children }: SheetPro
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = overflow;
+      unmounting.current = true;
       if (node.open) node.close();
       if (previous?.isConnected) previous.focus();
     };
@@ -45,6 +49,11 @@ export function Sheet({ title, onClose, dismissible = true, children }: SheetPro
       onCancel={(e) => {
         e.preventDefault();
         if (dismissible) onClose();
+      }}
+      onClose={() => {
+        if (unmounting.current) return;
+        if (dismissible) onClose();
+        else dialog.current?.showModal();
       }}
       onClick={(e) => {
         // The panel fills the dialog, so a click on the dialog itself is on its backdrop.

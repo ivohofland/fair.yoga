@@ -483,6 +483,21 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect(error).not.toHaveBeenCalled();
     });
 
+    it('prefers a live refund to a failed one of the same amount', async () => {
+      const c = await settledAttempt();
+      const real = reId();
+      fake.createRefund.mockRejectedValue(new MollieUnavailable('timed out', null));
+      listed(c.attempt, [
+        { id: reId(), status: 'failed', amount },
+        { id: real, status: 'queued', amount },
+      ]);
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({
+        kind: 'requested', refundStatus: 'queued', outcomeApplied: false,
+      });
+      expect(await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } })).toMatchObject({ processorRefundId: real, status: 'queued' });
+    });
+
     it('withdraws when Mollie lists none, and answers unavailable', async () => {
       const c = await settledAttempt();
       fake.createRefund.mockRejectedValue(new MollieUnavailable('bad gateway', 502));
@@ -582,6 +597,15 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect(await prisma.processorRefund.count({ where: { id: stale.id } })).toBe(0);
       expect(await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } })).toMatchObject({ processorRefundId: mollieId, outcome: 'waived' });
       expect(fake.createRefund).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers unavailable, keeping a stale one, when getting a token throws', async () => {
+      const c = await settledAttempt();
+      const stale = await awaitingRow(c.attempt.id, ADOPT_AFTER_MS + 60_000);
+
+      expect(await refundAttempt(tokenThrows(), deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+      expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ processorRefundId: null });
+      expect(fake.getPayment).not.toHaveBeenCalled();
     });
 
     it('answers unavailable, keeping a stale one, when Mollie cannot say', async () => {
