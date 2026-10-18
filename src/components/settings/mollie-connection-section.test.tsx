@@ -17,7 +17,7 @@ afterEach(() => {
 const PROFILES = [{ id: 'pfl_one', name: 'Studio Anna' }, { id: 'pfl_two', name: 'Retreats' }];
 const CONNECTED: Extract<ConnectionView, { kind: 'connected' }> = {
   kind: 'connected', organizationName: 'Anna Yoga', profileId: 'pfl_one', profileName: 'Studio Anna', testmode: false,
-  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: ['klarna', 'paypal'], missingScopes: [],
+  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: ['klarna', 'giropay'], missingScopes: [],
 };
 
 function show(view: ConnectionView, opts: { status?: Parameters<typeof MollieConnectionSection>[0]['status'] } = {}) {

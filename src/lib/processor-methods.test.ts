@@ -11,8 +11,9 @@ describe('the allowlist', () => {
     expect(isAllowedMollieMethod('banktransfer')).toBe(false);
     expect(isAllowedMollieMethod('googlepay')).toBe(false);
   });
-  it('holds no PayPal, whose checkout can offer pay-later (Decision 3)', () => {
-    expect(isAllowedMollieMethod('paypal')).toBe(false);
+  it('holds PayPal, by decision, though its own checkout can show pay-later (Decision 3)', () => {
+    expect(isAllowedMollieMethod('paypal')).toBe(true);
+    expect(MOLLIE_METHODS.paypal.label).toBe('PayPal');
   });
   it('lists iDEAL and Wero as separate rows', () => {
     expect(MOLLIE_METHODS.ideal.label).toBe('iDEAL');
@@ -27,7 +28,7 @@ describe('the allowlist', () => {
 describe('orderOffered', () => {
   it('keeps allowlisted ids in allowlist order and reports the rest', () => {
     expect(orderOffered(['twint', 'klarna', 'ideal', 'paypal', 'newmethod'])).toEqual({
-      offered: ['ideal', 'twint'], excluded: ['klarna', 'paypal', 'newmethod'],
+      offered: ['ideal', 'twint', 'paypal'], excluded: ['klarna', 'newmethod'],
     });
   });
 });
@@ -53,8 +54,8 @@ describe('exclusionReason', () => {
   });
 });
 
-it('the longest expiry is an hour', () => {
-  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(60);
+it('the longest expiry is PayPal\'s six hours', () => {
+  expect(LONGEST_METHOD_EXPIRY_MINUTES).toBe(360);
 });
 
 describe('mollieMethodLabel', () => {

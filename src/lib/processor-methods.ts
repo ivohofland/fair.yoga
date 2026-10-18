@@ -18,6 +18,7 @@ export const MOLLIE_METHODS = {
   blik: { label: 'BLIK', expiresMinutes: 1, recurring: false },
   przelewy24: { label: 'Przelewy24', expiresMinutes: 60, recurring: false },
   twint: { label: 'TWINT', expiresMinutes: 45, recurring: false },
+  paypal: { label: 'PayPal', expiresMinutes: 360, recurring: false },
 } as const satisfies Record<string, MollieMethodEntry>;
 
 export type AllowedMollieMethod = keyof typeof MOLLIE_METHODS;
