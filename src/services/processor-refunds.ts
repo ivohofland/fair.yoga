@@ -248,7 +248,13 @@ async function requestRefund(db: PrismaClient, deps: MollieDeps | null, intent: 
 /** An intent older than `ADOPT_AFTER_MS` with no Mollie id: adopted, withdrawn so a new one can be recorded, or left while Mollie cannot say. */
 async function reconcileStale(db: PrismaClient, deps: MollieDeps | null, intent: Held): Promise<RefundResult | 'withdrawn'> {
   if (deps === null) return { kind: 'unavailable' };
-  const token = await getAccessToken(db, deps, intent.connectionId, intent.now);
+  let token: Awaited<ReturnType<typeof getAccessToken>>;
+  try {
+    token = await getAccessToken(db, deps, intent.connectionId, intent.now);
+  } catch (err) {
+    log.error({ attemptId: intent.attempt.id, refundId: intent.refundId, err }, 'a stale refund intent could not be checked: no token');
+    return { kind: 'unavailable' };
+  }
   if (token.kind !== 'token') return { kind: 'unavailable' };
   const found = await unheldRefund(db, deps, token.accessToken, intent);
   switch (found.kind) {
@@ -268,12 +274,17 @@ async function reconcileStale(db: PrismaClient, deps: MollieDeps | null, intent:
   }
 }
 
+/** Mollie refund statuses that mean no money moved. */
+const ENDED_AT_MOLLIE: ReadonlySet<string> = new Set<ProcessorRefundStatus>(['failed', 'canceled']);
+
 type Unheld = { kind: 'found'; refund: MollieRefundView } | { kind: 'none' } | { kind: 'failed' };
 
 /**
  * The refund Mollie lists on the attempt's payment that no `ProcessorRefund`
- * row holds, for the attempt's amount and currency. `failed`, logged with the
- * intent's ids, when Mollie cannot be asked.
+ * row holds, for the attempt's amount and currency — one not in
+ * `ENDED_AT_MOLLIE` when there is one, since an ended refund may be an
+ * earlier one made in Mollie's dashboard. `failed`, logged with the intent's
+ * ids, when Mollie cannot be asked.
  */
 async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: string, intent: Held): Promise<Unheld> {
   const { attempt } = intent;
@@ -294,7 +305,8 @@ async function unheldRefund(db: PrismaClient, deps: MollieDeps, accessToken: str
     select: { processorRefundId: true },
   });
   const heldIds = new Set(held.map((r) => r.processorRefundId));
-  const refund = refunds.find((r) => !heldIds.has(r.id) && refundMatches(r, attempt.amount, attempt.currency));
+  const matching = refunds.filter((r) => !heldIds.has(r.id) && refundMatches(r, attempt.amount, attempt.currency));
+  const refund = matching.find((r) => !ENDED_AT_MOLLIE.has(r.status)) ?? matching[0];
   return refund === undefined ? { kind: 'none' } : { kind: 'found', refund };
 }
 

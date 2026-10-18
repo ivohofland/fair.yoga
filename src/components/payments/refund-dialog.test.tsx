@@ -73,6 +73,25 @@ describe('RefundDialog', () => {
     expect(document.body.style.overflow).toBe('');
   });
 
+  it('reopens itself when the browser closes it while the refund is in flight', async () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    render(<RefundDialog {...base} settles={false} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Refund duplicate payment' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled());
+
+    const dialog = screen.getByRole('dialog') as HTMLDialogElement;
+    dialog.close();
+
+    expect(dialog).toHaveAttribute('open');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('reports a close by the browser as a dismissal when nothing is in flight', () => {
+    render(<RefundDialog {...base} settles />);
+    (screen.getByRole('dialog') as HTMLDialogElement).close();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('cannot be dismissed while the refund is in flight', async () => {
     fetchMock.mockReturnValue(new Promise(() => {}));
     render(<RefundDialog {...base} settles={false} />);
