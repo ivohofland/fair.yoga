@@ -555,9 +555,7 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
     });
   });
 
-  it('logs Mollie’s refund id and throws RefundNotRecorded when storing its answer fails, keeping the intent', async () => {
-    const error = vi.spyOn(log, 'error');
-    onTestFinished(() => error.mockRestore());
+  it('logs PROCESSOR_REFUND_UNRECORDED with Mollie’s refund id and throws RefundNotRecorded when storing its answer fails, keeping the intent', async () => {
     const c = await settledAttempt();
     const mollieId = reId();
     fake.createRefund.mockResolvedValue(created('queued', mollieId));
@@ -569,10 +567,29 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
 
     const kept = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
     expect(kept.processorRefundId).toBeNull();
-    expect(error).toHaveBeenCalledWith(
-      expect.objectContaining({ attemptId: c.attempt.id, refundId: kept.id, mollieRefundId: mollieId, refundStatus: 'queued' }),
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_REFUND_UNRECORDED',
+      { attemptId: c.attempt.id, refundId: kept.id, processorRefundId: mollieId, reason: 'store_failed', refundStatus: 'queued' },
       expect.any(String),
-    );
+      new Error('lock timeout'),
+    ]]);
+  });
+
+  it('records a refund status Mollie does not document as queued and logs PROCESSOR_REFUND_UNRECORDED', async () => {
+    const c = await settledAttempt();
+    const mollieId = reId();
+    fake.createRefund.mockResolvedValue({ kind: 'created', refund: { id: mollieId, status: 'reversed', amount: { value: '10.00', currency: 'EUR' } } });
+
+    expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({
+      kind: 'requested', refundStatus: 'queued', outcomeApplied: false,
+    });
+    const row = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
+    expect(row).toMatchObject({ processorRefundId: mollieId, status: 'queued' });
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+      'PROCESSOR_REFUND_UNRECORDED',
+      { attemptId: c.attempt.id, refundId: row.id, processorRefundId: mollieId, reason: 'status_unknown', mollieStatus: 'reversed' },
+      expect.any(String),
+    ]]);
   });
 
   describe('when the intent changes while Mollie is called', () => {
@@ -601,12 +618,12 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
     });
 
-    it('logs Mollie’s refund id and applies nothing when the intent row is gone', async () => {
-      const error = vi.spyOn(log, 'error');
-      onTestFinished(() => error.mockRestore());
+    it('logs PROCESSOR_REFUND_UNRECORDED with Mollie’s refund id and applies nothing when the intent row is gone', async () => {
       const c = await settledAttempt();
       const mollieId = reId();
+      let intentId: string | null = null;
       fake.createRefund.mockImplementation(async () => {
+        intentId = (await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } })).id;
         await prisma.processorRefund.deleteMany({ where: { attemptId: c.attempt.id } });
         return created('refunded', mollieId);
       });
@@ -620,7 +637,11 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect(payment.updatedAt).toEqual(before.updatedAt);
       expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(true);
       expect(await notes('payment_refunded', c.classId)).toHaveLength(0);
-      expect(error).toHaveBeenCalledWith(expect.objectContaining({ attemptId: c.attempt.id, mollieRefundId: mollieId }), expect.any(String));
+      expect(vi.mocked(logDegraded).mock.calls).toEqual([[
+        'PROCESSOR_REFUND_UNRECORDED',
+        { attemptId: c.attempt.id, refundId: intentId, processorRefundId: mollieId, reason: 'intent_gone', refundStatus: 'refunded' },
+        expect.any(String),
+      ]]);
     });
   });
 
