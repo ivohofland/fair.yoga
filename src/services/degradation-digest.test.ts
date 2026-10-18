@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterAll, onTestFinished } from '
 import { type PrismaClient, Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { pgCause } from '../../tests/adapter-errors';
 
 const sendEmail = vi.fn();
 vi.mock('@/lib/email', () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
@@ -179,7 +180,11 @@ describe('notifyOperatorOfDegradations', () => {
     sendEmail.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError(
         '\nInvalid `prisma.degradationEvent.updateMany()` invocation:\n\n\nRaw query failed. Message: `"Alicepii"`',
-        { clientVersion: '6.19.3', code: 'P2010', meta: { code: '22P02', message: 'Alicepii' } },
+        {
+          clientVersion: '6.19.3',
+          code: 'P2010',
+          meta: { driverAdapterError: { name: 'DriverAdapterError', cause: pgCause('22P02', 'invalid input syntax for type integer: "Alicepii"') } },
+        },
       ),
     );
 

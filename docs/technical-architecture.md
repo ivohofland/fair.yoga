@@ -1721,6 +1721,38 @@ Re-derive it with
 `sed -n '/^declare type MappedError = {/,/^};/p' node_modules/@prisma/client/runtime/client.d.ts | grep -oE "kind: '[A-Za-z]+'"`
 and drop `mysql`, `sqlite` and `mssql`. A kind outside the set is not logged.
 
+**What the log keeps of a database error.** `serializeErr`
+(`src/lib/log-serializers.ts`) withholds the message of every Prisma query
+error and of a `DriverAdapterError`, and lifts its facets through the two
+readers above, never from text:
+
+- `sqlState` is `pgErrorOf(err).sqlState`; `constraint` is its `constraint`
+  when the name is `[A-Za-z0-9_]+`;
+- `trigger` and `rowIds` come from the Postgres primary message
+  (`pgErrorOf(err).message`) of a `23514` that names no constraint, and never
+  from `detail`;
+- `adapterKind` is `adapterKindOf(err)`, emitted only where there is no
+  `sqlState`;
+- `txError` on a `P2028` is `expired` when `meta.timeout` and
+  `meta.timeTaken` are both numbers and `other` otherwise, because nothing
+  structured tells a `maxWait` refusal apart from any other `P2028`.
+
+A withheld error's `cause` is walked only when it is an `Error`, so the
+adapter's plain cause object under a `DriverAdapterError` is never reached
+that way. Something can still log that object directly, or as the `cause` of
+an error the serializer does not withhold (`new Error('…', { cause })`). Its
+`message` is Postgres's primary message, and its `detail` is
+`Failing row contains (…)`. So an object carrying a string `originalCode` or
+`originalMessage` is withheld too, as `Driver adapter error (detail withheld
+from the log)`, whether or not it has a `message` (a `23505` cause has none,
+and would otherwise be passed through unserialized).
+
+A produced `DriverAdapterError` is an instance of the adapter's own class
+(`constructor.name` and `name` both `DriverAdapterError`) with no own `code`.
+Its stack begins `DriverAdapterError: <primary message>` followed by frames,
+and the serializer keeps only those frames. `tests/integration/log-redaction.test.ts`
+pins this against the real database.
+
 ### PostgreSQL Configuration
 
 Single PostgreSQL instance alongside the Next.js application. For a donation-funded app serving independent yoga teachers, this handles significant load before needing to scale.

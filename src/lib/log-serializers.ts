@@ -5,21 +5,23 @@
  *
  * `serializeErr` builds a plain, frozen object from named fields only, so a
  * property nobody listed here never reaches its output. The message of a
- * Prisma query error (every `PrismaClient*Error` but the initialization one)
- * and of the pg driver adapter's `DriverAdapterError` is withheld outright:
- * Prisma renders the call's arguments and Postgres's `DETAIL` into the one,
- * the other is Postgres's primary message, and both can carry row values.
- * What survives of them is the operation and the identifiers lifted below. A
- * withheld error's cause is walked only when it is an `Error`. An error that
- * throws while being read becomes `UNSERIALIZABLE`; it is never returned raw.
+ * Prisma query error (every `PrismaClient*Error` but the initialization one),
+ * of the pg driver adapter's `DriverAdapterError`, and of the adapter's plain
+ * cause object met on its own is withheld outright: Prisma renders the call's
+ * arguments into the one, the others are Postgres's primary message, and all
+ * can carry row values. What survives of them is the operation and the facets
+ * lifted below, read through `pgErrorOf` / `adapterKindOf` (where those look:
+ * `docs/technical-architecture.md`, "Database errors"). A withheld error's
+ * cause is walked only when it is an `Error`. An error that throws while
+ * being read becomes `UNSERIALIZABLE`; it is never returned raw.
  */
 import { Prisma } from '@/lib/prisma-client';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
+import { adapterKindOf, pgErrorOf, type AdapterKind } from './pg-error';
 
 type Identifiers = string | readonly string[];
 
 export interface SerializedPrismaMeta {
-  readonly target?: Identifiers;
   readonly constraint?: Identifiers;
   readonly modelName?: Identifiers;
   readonly column?: Identifiers;
@@ -29,13 +31,12 @@ export interface SerializedPrismaMeta {
   readonly relation_name?: Identifiers;
   readonly model_a_name?: Identifiers;
   readonly model_b_name?: Identifiers;
-  readonly connection_limit?: number;
   readonly timeout?: number;
   readonly timeTaken?: number;
 }
 
-/** What a P2028's `meta.error` says, as a closed set; its text is never kept. */
-export type TxErrorKind = 'expired' | 'start_timeout' | 'not_found' | 'closed' | 'other';
+/** A P2028, told apart by its numeric `meta` only: `expired` carries `timeout` and `timeTaken`. */
+export type TxErrorKind = 'expired' | 'other';
 
 export type TerminalTrigger = keyof typeof TERMINAL_TRIGGER_TAILS;
 
@@ -48,7 +49,7 @@ export interface SerializedErr {
   readonly meta?: SerializedPrismaMeta;
   readonly sqlState?: string;
   readonly constraint?: string;
-  readonly connectorKind?: string;
+  readonly adapterKind?: AdapterKind;
   readonly txError?: TxErrorKind;
   readonly trigger?: TerminalTrigger;
   readonly rowIds?: readonly string[];
@@ -64,7 +65,6 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 /** Which `meta` keys survive, and as what. */
 const META_KEYS = {
-  target: 'identifiers',
   constraint: 'identifiers',
   modelName: 'identifiers',
   column: 'identifiers',
@@ -74,7 +74,6 @@ const META_KEYS = {
   relation_name: 'identifiers',
   model_a_name: 'identifiers',
   model_b_name: 'identifiers',
-  connection_limit: 'number',
   timeout: 'number',
   timeTaken: 'number',
 } as const satisfies Record<keyof SerializedPrismaMeta, 'identifiers' | 'number'>;
@@ -114,47 +113,15 @@ const MAX_ROW_IDS = 3;
 const WITHHELD = '(detail withheld from the log)';
 const PRISMA_ERROR_NAME = /^PrismaClient\w+Error$/;
 const IDENTIFIER = /^[\w.]+$/;
-const SQLSTATE = /^[0-9A-Z]{5}$/;
 // A Prisma code, or Node's errno / `ERR_*` shape: fixed identifiers, bounded
 // in length so an arbitrary string cannot pass for one.
 const WITHHELD_CODE = /^(?:P\d{4}|E[A-Z0-9_]{1,63})$/;
 const FRAME_LINE = /^\s+at /;
 // Anchored at the start: a value inside the message cannot be taken for it.
 const HEADER = /^\s*Invalid `([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\(\))` invocation/;
-const PG_CODE = /PostgresError \{ code: "([0-9A-Z]{5})"/;
-// Postgres writes this sentence before its DETAIL; on the Unknown path its
-// quotes arrive backslash-escaped.
-const CONSTRAINT = /violates (?:check|exclusion|foreign key|unique) constraint \\?"([A-Za-z0-9_]+)\\?"/;
-// The SQLSTATEs whose primary message is that sentence: unique, foreign key,
-// check, exclusion.
-const CONSTRAINT_SQLSTATES: ReadonlySet<string> = new Set(['23505', '23503', '23514', '23P01']);
-// A connector failure with no Postgres error in it, e.g. `Error { kind: Closed, cause: None }`.
-const CONNECTOR_KIND = /Error \{ kind: ([A-Za-z]+)/;
-// The connector error kinds `connectorKind` may report. A kind outside this
-// set is not emitted, so engine text cannot feed the field a value.
-const CONNECTOR_KINDS: ReadonlySet<string> = new Set([
-  'Io',
-  'Closed',
-  'Db',
-  'Tls',
-  'Authentication',
-  'Connect',
-  'Timeout',
-  'Parse',
-  'Encode',
-  'Config',
-  'RowCount',
-  'UnexpectedMessage',
-  'ToSql',
-  'FromSql',
-  'Column',
-]);
+// The charset a logged constraint name keeps, whatever Postgres quoted.
+const CONSTRAINT_NAME = /^[A-Za-z0-9_]+$/;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
-// The PostgresError struct's own `message` field: an escaped `\"` does not
-// close the capture, so only the real closing quote — immediately followed
-// by `, severity:` or `, detail:`, whichever field the engine places right
-// after it — ends it. Nothing past that point, including DETAIL, is in it.
-const PG_MESSAGE = /message: "((?:\\.|[^"\\])*)", (?:severity|detail):/;
 
 /**
  * Outputs of this module, keyed by themselves, so a second pass returns them
@@ -181,9 +148,19 @@ function isErrorLike(value: unknown): value is object {
   return typeof value === 'object' && value !== null && typeof (value as { message?: unknown }).message === 'string';
 }
 
-/** An `Error` instance whatever its `message`, or an error-like object. */
+/**
+ * The adapter's plain cause object (`{kind, originalCode, originalMessage, …}`),
+ * met where something logged it on its own. Not every kind carries a
+ * `message`, so it is matched by its own fields, not by `isErrorLike`.
+ */
+function isAdapterCause(value: unknown): value is object {
+  if (typeof value !== 'object' || value === null || value instanceof Error) return false;
+  return typeof field(value, 'originalCode') === 'string' || typeof field(value, 'originalMessage') === 'string';
+}
+
+/** An `Error` instance whatever its `message`, an error-like object, or the adapter's cause object. */
 function isSerializable(value: unknown): value is object {
-  return value instanceof Error || isErrorLike(value);
+  return value instanceof Error || isErrorLike(value) || isAdapterCause(value);
 }
 
 function field(source: object, key: string): unknown {
@@ -210,7 +187,8 @@ function withheldClass(err: object): string | null {
   const type = typeOf(err);
   if (PRISMA_ERROR_NAME.test(type)) return type;
   // By name only: the adapter's class is never imported here.
-  return field(err, 'name') === 'DriverAdapterError' ? 'DriverAdapterError' : null;
+  if (field(err, 'name') === 'DriverAdapterError') return 'DriverAdapterError';
+  return isAdapterCause(err) ? 'DriverAdapterCause' : null;
 }
 
 function identifiers(value: unknown): Identifiers | undefined {
@@ -249,31 +227,17 @@ function isFrameShape(remainder: string): boolean {
   return remainder.slice(1).split('\n').every((line) => FRAME_LINE.test(line));
 }
 
-function liftSqlState(cls: string, err: object, original: string): string | undefined {
-  if (cls === 'PrismaClientUnknownRequestError') return PG_CODE.exec(original)?.[1];
-  if (field(err, 'code') === 'P2010') {
-    const meta = field(err, 'meta');
-    const code = typeof meta === 'object' && meta !== null ? field(meta, 'code') : undefined;
-    return typeof code === 'string' && SQLSTATE.test(code) ? code : undefined;
-  }
-  return undefined;
-}
-
 function txErrorKind(meta: unknown): TxErrorKind {
-  const text = typeof meta === 'object' && meta !== null ? field(meta, 'error') : undefined;
-  if (typeof text !== 'string') return 'other';
-  const closed = text.includes('Transaction already closed');
-  if (closed && (text.includes('timeout') || text.includes('ms passed'))) return 'expired';
-  if (text.includes('Unable to start a transaction in the given time')) return 'start_timeout';
-  if (text.includes('Transaction not found')) return 'not_found';
-  return closed ? 'closed' : 'other';
+  if (typeof meta !== 'object' || meta === null) return 'other';
+  const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value);
+  return finite(field(meta, 'timeout')) && finite(field(meta, 'timeTaken')) ? 'expired' : 'other';
 }
 
 function withheld(cls: string, err: object, type: string, original: string): Mutable<SerializedErr> {
   const header = HEADER.exec(original);
   const message = header
     ? `Invalid \`${header[1]}\` invocation ${WITHHELD}`
-    : cls === 'DriverAdapterError'
+    : cls === 'DriverAdapterError' || cls === 'DriverAdapterCause'
       ? `Driver adapter error ${WITHHELD}`
       : `Prisma error ${WITHHELD}`;
 
@@ -291,36 +255,24 @@ function withheld(cls: string, err: object, type: string, original: string): Mut
 
   const out: Mutable<SerializedErr> = { type, message };
   if (typeof stack === 'string') out.stack = `${type}: ${message}${frames}`;
-  const sqlState = liftSqlState(cls, err, original);
-  if (sqlState !== undefined) {
-    out.sqlState = sqlState;
-    // Only where the primary message is the `violates … constraint` sentence:
-    // any other SQLSTATE — a 22P02 quoting a value, a 23502 whose DETAIL
-    // carries a row — never reaches the pattern. What it can return is the
-    // first match, limited to `[A-Za-z0-9_]`.
-    if (CONSTRAINT_SQLSTATES.has(sqlState)) {
-      const constraint = CONSTRAINT.exec(original)?.[1];
-      if (constraint !== undefined) out.constraint = constraint;
-    }
-    // A terminality trigger raises 23514 with one of these tails in the
-    // PostgresError's own `message` field, never in DETAIL — so a message
-    // already named by `constraint` above is a genuine CHECK violation, not
-    // a trigger raise, and nothing past the message field is read for a
-    // trigger tail or a row id.
-    if (sqlState === '23514' && out.constraint === undefined) {
-      const pgMessage = PG_MESSAGE.exec(original)?.[1];
-      if (pgMessage !== undefined) {
-        const trigger = TERMINAL_TRIGGERS.find((key) => pgMessage.includes(TERMINAL_TRIGGER_TAILS[key]));
-        if (trigger !== undefined) {
-          out.trigger = trigger;
-          const ids = [...new Set(pgMessage.match(UUID) ?? [])].slice(0, MAX_ROW_IDS);
-          if (ids.length > 0) out.rowIds = Object.freeze(ids);
-        }
+  const pg = pgErrorOf(err);
+  if (pg !== null) {
+    out.sqlState = pg.sqlState;
+    if (pg.constraint !== undefined && CONSTRAINT_NAME.test(pg.constraint)) out.constraint = pg.constraint;
+    // A terminality trigger raises 23514 with one of these tails in Postgres's
+    // primary message; a genuine CHECK violation names its constraint there
+    // instead. DETAIL is never read, for a tail or a row id.
+    if (pg.sqlState === '23514' && pg.constraint === undefined) {
+      const trigger = TERMINAL_TRIGGERS.find((key) => pg.message.includes(TERMINAL_TRIGGER_TAILS[key]));
+      if (trigger !== undefined) {
+        out.trigger = trigger;
+        const ids = [...new Set(pg.message.match(UUID) ?? [])].slice(0, MAX_ROW_IDS);
+        if (ids.length > 0) out.rowIds = Object.freeze(ids);
       }
     }
-  } else if (cls === 'PrismaClientUnknownRequestError') {
-    const kind = CONNECTOR_KIND.exec(original)?.[1];
-    if (kind !== undefined && CONNECTOR_KINDS.has(kind)) out.connectorKind = kind;
+  } else {
+    const kind = adapterKindOf(err);
+    if (kind !== undefined) out.adapterKind = kind;
   }
   const meta = allowedMeta(field(err, 'meta'));
   if (meta !== undefined) out.meta = meta;

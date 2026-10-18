@@ -14,6 +14,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure, type TransientKind } from './api-errors';
+import { serializeErr } from './log-serializers';
 import { isPgPoolTimeout, pgErrorOf } from './pg-error';
 import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 
@@ -259,6 +260,7 @@ describe('transient kinds produced against the real database', () => {
       expect((err as Prisma.PrismaClientKnownRequestError).meta).toHaveProperty('timeTaken');
       expect(pgErrorOf(err)).toBeNull();
       expectKind(err, 'tx_budget', 'warn');
+      expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'expired' });
     });
 
     it('maxWait exceeded, the connection freed inside the pool bound: P2028 with meta {}, at warn', async () => {
@@ -272,6 +274,7 @@ describe('transient kinds produced against the real database', () => {
       expect((err as Prisma.PrismaClientKnownRequestError).meta).toEqual({});
       expect(isPgPoolTimeout(err)).toBe(false);
       expectKind(err, 'tx_budget', 'warn');
+      expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
       // `maxWait` is judged once the pool hands over a connection, not at its own deadline.
       expect(Date.now() - started).toBeGreaterThanOrEqual(600);
     });
