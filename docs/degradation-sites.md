@@ -345,7 +345,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 |---|---|---|---|
 | `src/app/api/account/route.ts:148` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/account/route.ts:198` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
-| `src/app/api/cron/daily-cleanup/route.ts:113` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
+| `src/app/api/cron/daily-cleanup/route.ts` (`settle`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/registrations/[id]/route.ts:587` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/registrations/route.ts:480` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/app/api/waitlist/route.ts:64` | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |

@@ -169,11 +169,9 @@ link on the browser that asked for it never touches this row.
 | push_class_reminders | boolean, default false | Push for the teacher's own class reminder |
 | push_invitations | boolean, default false | Push for an invitation from another teacher |
 | **Payment settings** | | |
-| payment_level | enum: 1, 2 | Level 1 = manual, Level 2 = payment processor |
 | *bank accounts* | → TeacherBankAccount, one per currency | Not tied to the payment level: the teacher's bank details live in `TeacherBankAccount` (below), not on this row. Students see bank methods only from the account in the payment's own currency |
 | payment_link | string, nullable | An open-ended `https:` link (a Tikkie, PayPal.me or Revolut link, no fixed amount) the teacher adds, shown to students as the `payment_link` method beside the bank ones. Bounded by `PAYMENT_LINK_MAX`; a `CHECK` on the column repeats that bound and the `https://` prefix, and `parsePaymentLink` (`src/lib/payment-link.ts`) is the one parser, which also refuses a link carrying a user name or password before the host. Not tied to the payment level or to a currency. Set to null by GDPR erasure (`deleteTeacherAccount`); the teacher export includes it |
-| processor_type | enum: mollie, stripe | Level 2 only |
-| processor_account_id | string, nullable | Level 2 only |
+| *processor connection* | → ProcessorConnection, at most one | A connected Mollie account lives in its own table (`ProcessorConnection`, below), never on this row, so no teacher read can carry its tokens |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -958,8 +956,7 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 | amount | decimal | In the currency of the registration's class (`Class.currency`); the row carries no currency of its own, because `completeClass` writes it after that class is already frozen. Includes the VAT |
 | vat_amount | decimal(10,2), default 0 | The VAT contained in `amount`, written at completion; `Payment_vat_amount_range_check`: `0 <= vat_amount <= amount` |
 | status | enum | pending → paid / overdue / not_charged; paid and not_charged both reopen to pending |
-| method | string, nullable | e.g. "cash", "bank_transfer", "mollie", "stripe" |
-| processor_ref | string, nullable | External transaction ID (Level 2) |
+| method | string, nullable | What settled it, typed in code as `PaidMethod` (`'manual' | 'mollie'`) when written. `manual` is the teacher's mark; `mollie` is a settled Mollie attempt, whose specific method (`ideal`, `creditcard`, …) is on the `ProcessorPayment`. A repeated webhook for the same attempt then meets `markPaymentPaid`'s same-method `unchanged` |
 | reminder_sent_at | datetime, nullable | Stamped by every reminder, automatic or manual, and by the teacher's "Not received" notice; the overdue-reminder sweep dedupes on it |
 | student_reported_at | datetime, nullable | The student's "I've sent it" claim on a Level 1 payment (#898). Set by `reportPaymentSent`, cleared by the student (`withdrawPaymentReport`), by the teacher's "Not received" (`rejectPaymentReport`), and by waiving the payment (`markPaymentNotCharged`, the student-archive waive). It displays as a standing claim only while the payment is outstanding; a paid row keeps it as the student's half of the record. See the note below |
 | **Timestamps** | | |
@@ -968,11 +965,81 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 | not_charged_at | datetime, nullable | Set when the teacher waives the payment (grace policy) |
 | updated_at | datetime | |
 
-Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: automated via Mollie/Stripe payment links. Failed payment retry policy is an open question for Level 2.
+Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: a Mollie attempt (`ProcessorPayment`, below) settles it by webhook and a refund can send it back. Failed payment retry policy is an open question for Level 2.
 
-`student_reported_at` is a claim, not a status: it never makes a payment `paid`, only the teacher's confirmation does, and a row with a standing claim stays `pending` or `overdue` (`OUTSTANDING_STATUSES`). `POST` and `DELETE /api/payments/[id]/sent` set and clear it for the student who owns the registration (`reportPaymentSent`, `withdrawPaymentReport`), answering with the student's view of the row (`StudentPaymentView`, `src/app/api/payments/[id]/shared.ts`), never `processor_ref` or the reminder stamp; no pause check, since a claim moves no money. `POST /api/payments/[id]/not-received` is the teacher's door (`rejectPaymentReport`): in one transaction it clears the claim, stamps `reminder_sent_at` and sends the student one `reminder` notification ("Payment not seen yet"); a paused teacher is refused `PAYMENTS_PAUSED` and the write rolls back. `markPaymentNotCharged` and the student-archive waive clear the claim; `markPaymentPaid` and `reopenPayment` leave it. A standing claim silences the automatic overdue reminder (`readDuePayments` and its stamp swap in `sendPaymentReminders`) and `resumePayments`'s reminder; a manual reminder is still the teacher's to send. `markOverduePayments` ignores the claim, so a claimed payment still goes overdue. Erasure keeps the column with the payment.
+`student_reported_at` is a claim, not a status: it never makes a payment `paid`, only the teacher's confirmation does, and a row with a standing claim stays `pending` or `overdue` (`OUTSTANDING_STATUSES`). `POST` and `DELETE /api/payments/[id]/sent` set and clear it for the student who owns the registration (`reportPaymentSent`, `withdrawPaymentReport`), answering with the student's view of the row (`StudentPaymentView`, `src/app/api/payments/[id]/shared.ts`), never the reminder stamp; no pause check, since a claim moves no money. `POST /api/payments/[id]/not-received` is the teacher's door (`rejectPaymentReport`): in one transaction it clears the claim, stamps `reminder_sent_at` and sends the student one `reminder` notification ("Payment not seen yet"); a paused teacher is refused `PAYMENTS_PAUSED` and the write rolls back. `markPaymentNotCharged` and the student-archive waive clear the claim; `markPaymentPaid` and `reopenPayment` leave it. A standing claim silences the automatic overdue reminder (`readDuePayments` and its stamp swap in `sendPaymentReminders`) and `resumePayments`'s reminder; a manual reminder is still the teacher's to send. `markOverduePayments` ignores the claim, so a claimed payment still goes overdue. Erasure keeps the column with the payment.
 
 `not_charged` is the grace-policy waiver (`docs/product-concept.md` §3): the teacher marks a post-completion payment as not collected, for the same class of case this app has no other exception mechanism for (a genuine emergency, lenience). It is post-completion only — early cancellation already produces no `Payment` row at all, since `completeClass` is the only place one is created.
+
+**A refund is the one way `paid` becomes `not_charged` (#896, spec Decisions 8 and 9).** `markPaymentNotCharged` still refuses a paid payment. `completeRefund` (`src/services/processor-attempts.ts`) writes the transition, in the transaction that records a Mollie refund as `refunded`, when the teacher chose *refund and waive*; *refund and ask again* writes `paid → pending` through `reopenInTransaction` instead. The choice is stored on the refund (`ProcessorRefund.outcome`) and applies only once Mollie reports the refund `refunded`, so the payment stays `paid` while it is queued, pending or processing. A refund of a duplicate attempt (a second payment of an already-settled `Payment`) has no outcome and changes no `Payment`.
+
+**A payment Mollie settled cannot be reopened by hand (Decision 17).** While an attempt with `settledPayment` exists, `reopenPayment` answers 409 `PAYMENT_SETTLED_BY_PROCESSOR`: the webhook proved the money arrived, so "Mark unpaid" would make the record say unpaid while the money sits in the teacher's balance and chase a student who paid. A refund is how it leaves `paid`; a completing "ask again" refund leaves out only the attempt it refunded from that check. The exception is a chargeback: once Mollie reports `amountChargedBack > 0` on the settling attempt, that attempt records `chargedBackAt`, stops settling the payment, and "Mark unpaid" returns. A charged-back attempt cannot be refunded.
+
+### ProcessorConnection (a teacher's Mollie account, #896)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *teacher_id* (FK) | → Teacher, unique, `onDelete: Cascade` | One connection per teacher. Reconnecting after a disconnect rewrites the row |
+| processor | enum `ProcessorType` (`mollie`, `stripe`) | Only `mollie` is written today |
+| organization_id | string | Mollie's `org_…` id from `/v2/organizations/me`; the token response carries no ids |
+| profile_id | string, nullable | The Mollie profile payments are created under; null while the teacher still has to choose one |
+| access_token, refresh_token | bytes, nullable | Ciphertexts (`sealToken`; `docs/technical-architecture.md`, Processor token cipher). Both present exactly when `revoked_at IS NULL` (a `CHECK`) |
+| access_token_expires_at | datetime, nullable | Mollie access tokens live 60 minutes; a read refreshes before use |
+| scopes | string[] | What the grant holds; every scope the feature uses is requested at connect |
+| testmode | boolean | Whether the grant is a test-mode one |
+| connected_at | datetime | |
+| disconnected_at | datetime, nullable | Set by a teacher's disconnect, or by a refresh answered `invalid_grant` (only while the row still holds the refresh token that was refused) |
+| revoke_after | datetime, nullable | When the tokens of a disconnected row may be revoked at Mollie: after its open attempts' expiry windows, because their webhooks still need the token |
+| revoked_at | datetime, nullable | Set when the tokens were revoked and nulled. `revoked_at` and `revoke_after` are set only on a disconnected row (a `CHECK`) |
+
+**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect), with the masked organization id and the profile's name as before and after.
+
+### OAuthState (a connect in flight, #896)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| state_hash | string, unique | `hashToken` of 32 random bytes; the raw value travels only in the OAuth `state` parameter |
+| *teacher_id* (FK) | → Teacher, `onDelete: Cascade` | |
+| *session_id* (FK) | → Session, `onDelete: Cascade` | The callback must arrive on the session that started the connect |
+| expires_at | datetime | 10 minutes after creation |
+| created_at | datetime | |
+
+Single use: the callback deletes the row as it consumes it, and the daily auth cleanup (`src/services/auth-cleanup.ts`) deletes expired ones.
+
+### ProcessorPayment (one attempt to pay through Mollie, #896)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *payment_id* (FK) | → Payment, `onDelete: Cascade`, indexed | A payment may have several attempts: one per tap the student makes, reused while an open one still fits |
+| *connection_id* (FK) | → ProcessorConnection, nullable, `onDelete: SetNull`, indexed | Null once the connection is deleted (teacher erasure deletes it last); the attempt then cannot be fetched and a webhook for it answers 200 |
+| processor_payment_id | string, unique | Mollie's `tr_…` id |
+| profile_id | string | The profile the payment was created under; a reuse requires the connection's current profile |
+| testmode | boolean | |
+| method | string | The Mollie method id. A string rather than the allowlist type, so a stored row stays readable after its method leaves the allowlist |
+| status | enum `ProcessorPaymentStatus` | Mollie's own set: `open`, `pending`, `authorized`, `paid`, `canceled`, `expired`, `failed` |
+| amount, currency | decimal(10,2), enum `Currency` | A snapshot of what Mollie was asked to charge, so no later currency switch relabels it |
+| checkout_url | string, nullable | |
+| expires_at, paid_at | datetime, nullable | |
+| settled_payment | boolean, default false | True on at most one attempt per `Payment` (partial unique index `WHERE settled_payment`): the one whose webhook moved the `Payment` to `paid`. Cleared by a refund's outcome and by a chargeback |
+| charged_back_at | datetime, nullable | Stamped when Mollie reports `amountChargedBack > 0` on the settling attempt |
+| created_at, updated_at | datetime | |
+
+### ProcessorRefund (a full refund of one attempt, #896)
+
+| Field | Type | Notes |
+|---|---|---|
+| **id** (PK) | uuid | |
+| *attempt_id* (FK) | → ProcessorPayment, `onDelete: Cascade`, indexed | |
+| processor_refund_id | string, nullable, unique | Mollie's `re_…` id; null while the intent is recorded but Mollie has not answered. An intent older than `ADOPT_AFTER_MS` (`src/services/refund-adoption.ts`) is resolved by adoption: the matching refund Mollie lists takes the id, and with none the intent is withdrawn (spec §6) |
+| amount | decimal(10,2) | The attempt's full amount: no partial refunds |
+| status | enum `ProcessorRefundStatus` | Mollie's: `queued`, `pending`, `processing`, `refunded`, `failed`, `canceled` |
+| outcome | enum `RefundOutcome`, nullable | `waived` or `reopened` for a refund of the settling attempt (the teacher's choice, applied when the refund reaches `refunded`); null for a duplicate |
+| requested_at, updated_at | datetime | |
+
+At most one non-failed refund exists per attempt (a partial unique index), so a second click cannot refund twice. A student's export carries each payment's attempts with their refunds' amounts and statuses; a teacher's carries their connection without its tokens (`src/services/gdpr.ts`).
 
 ---
 
@@ -1040,6 +1107,9 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
 - Account → has one Student (optional)
 - Teacher → has many TeacherRooms
 - Teacher → has many TeacherBankAccounts (at most one per currency)
+- Teacher → has at most one ProcessorConnection; ProcessorConnection → has many ProcessorPayments
+- Teacher → has many OAuthStates
+- Payment → has many ProcessorPayments (Mollie attempts); ProcessorPayment → has many ProcessorRefunds
 - Teacher → has many PayoutChangeEvents; each event has many PayoutPauseTokens
 - Teacher → has many ScheduleRules
 - ScheduleRule → has one ClassTemplate (kind: regular) or one StudioClassTemplate (kind: studio)
