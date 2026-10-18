@@ -9,6 +9,7 @@ import { PaymentDetails } from '@/components/student/payment-details';
 import { PaymentLinkPanel } from '@/components/student/payment-link-panel';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { MarkSentControl } from '@/components/student/mark-sent-control';
+import { ProcessorPayButton } from '@/components/pay/processor-pay-button';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, formatMoney } from '@/lib/format';
@@ -19,12 +20,16 @@ import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-p
 import {
   PAYMENTS_PAUSED_COPY,
   PAYMENT_METHOD_COPY,
+  paymentMethodLabel,
   paymentMethodsForTeacher,
-  teacherPaymentSelect,
+  paymentReference,
   type PaymentMethod,
   type PaymentMethodsAnswer,
 } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
+import { MOLLIE_METHODS } from '@/lib/processor-methods';
+import { payPageMethods, payPageTeacherSelect } from '@/services/pay-page-methods';
+import { mollieDeps } from '@/services/mollie-deps';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +39,13 @@ function MethodPanel({
   amount,
   currency,
   reference,
+  paymentId,
 }: {
   method: PaymentMethod;
   amount: number;
   currency: Currency;
   reference: string;
+  paymentId: string;
 }) {
   switch (method.kind) {
     case 'bank_transfer':
@@ -71,6 +78,8 @@ function MethodPanel({
           reference={reference}
         />
       );
+    case 'processor':
+      return <ProcessorPayButton paymentId={paymentId} method={method.method} label={MOLLIE_METHODS[method.method].label} />;
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
       const unhandled: never = method;
@@ -104,7 +113,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
                   defaultTimezone: true,
                   // Includes every bank account: the one in the class's currency is picked
                   // below, since this query cannot filter on a sibling column.
-                  ...teacherPaymentSelect,
+                  ...payPageTeacherSelect,
                 },
               },
             },
@@ -129,8 +138,11 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const entry = cls.calendarEntry;
   const teacher = entry.teacher;
   const amount = Number(payment.amount);
-  const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
-  const methods = paymentMethodsForTeacher(teacher, cls.currency);
+  const reference = paymentReference(entry);
+  // Only an outstanding payment shows its methods, so only it asks Mollie.
+  const methods = isOutstanding(payment.status)
+    ? await payPageMethods(prisma, mollieDeps(), teacher, cls.currency, payment.amount)
+    : paymentMethodsForTeacher(teacher, cls.currency);
   const state = studentPaymentStateText(payment);
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
@@ -244,13 +256,17 @@ function PayBody({
             <div className="border-t border-border">
               {methods.methods.map((method) => (
                 // A shared `name` makes the rows exclusive: opening one closes the others.
-                <details key={method.kind} name="pay-method" className="border-b border-border">
+                <details
+                  key={`${method.kind}:${method.kind === 'processor' ? method.method : ''}`}
+                  name="pay-method"
+                  className="border-b border-border"
+                >
                   <summary className="min-h-14 py-3 cursor-pointer">
-                    <span className="text-base text-ink">{PAYMENT_METHOD_COPY[method.kind].label}</span>
+                    <span className="text-base text-ink">{paymentMethodLabel(method)}</span>
                     <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
                   </summary>
                   <div className="pb-4">
-                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} />
+                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} paymentId={paymentId} />
                   </div>
                 </details>
               ))}

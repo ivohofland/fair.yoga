@@ -409,6 +409,19 @@ describe('GET /bookings/[classId]/pay', () => {
     expect(link).toBeGreaterThan(qr);
   });
 
+  // No Mollie connection: the rows are the manual-payment ones alone, and no
+  // processor row joins them.
+  it('offers a teacher with no Mollie connection exactly the manual-payment rows', async () => {
+    const html = await (await payPage(classIds.linkAndBank, studentToken)).text();
+    expect(html).toContain('How would you like to pay?');
+    expect(html).toContain('Bank transfer');
+    expect(html).toContain('QR code');
+    expect(html).toContain('Payment link');
+    expect(html.match(/name="pay-method"/g)).toHaveLength(3);
+    expect(html).not.toContain('iDEAL');
+    expect(html).not.toContain('Pay online');
+  });
+
   it('tells a late cancel why the class is still charged', async () => {
     const res = await payPage(classIds.lateCancel, studentToken);
     expect(res.status).toBe(200);

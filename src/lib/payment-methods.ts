@@ -2,6 +2,8 @@ import type { Currency, Prisma, TeacherBankAccount } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { parsePaymentLink, paymentLinkFromColumn } from '@/lib/payment-link';
 import { bankDetailsFromRow, type BankAccountColumns, type BankDetails } from '@/lib/bank-details';
+import { formatDayHeader } from '@/lib/format';
+import { MOLLIE_METHODS, type AllowedMollieMethod } from '@/lib/processor-methods';
 
 /** The one currency an EPC QR can carry. */
 export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
@@ -13,7 +15,8 @@ export const EPC_QR_CURRENCY = 'EUR' as const satisfies Currency;
 export type PaymentMethod =
   | { kind: 'bank_transfer'; beneficiary: string; details: BankDetails }
   | { kind: 'epc_qr'; beneficiary: string; iban: string; bic: string | null; currency: typeof EPC_QR_CURRENCY }
-  | { kind: 'payment_link'; url: string; host: string };
+  | { kind: 'payment_link'; url: string; host: string }
+  | { kind: 'processor'; method: AllowedMollieMethod };
 
 export type PaymentMethodKind = PaymentMethod['kind'];
 
@@ -22,7 +25,18 @@ export const PAYMENT_METHOD_COPY = {
   bank_transfer: { label: 'Bank transfer', hint: 'Copy the details into your banking app' },
   epc_qr: { label: 'QR code', hint: 'For a banking app on another device' },
   payment_link: { label: 'Payment link', hint: 'Pay in the app the link opens' },
+  processor: { label: 'Pay online', hint: 'Opens your teacher’s payment provider' },
 } as const satisfies Record<PaymentMethodKind, { label: string; hint: string }>;
+
+/** The chooser row's label: a processor row is named by its method, every other row by its kind. */
+export function paymentMethodLabel(method: PaymentMethod): string {
+  return method.kind === 'processor' ? MOLLIE_METHODS[method.method].label : PAYMENT_METHOD_COPY[method.kind].label;
+}
+
+/** What a payment is for: the class and its day. */
+export function paymentReference(entry: { classType: string; date: Date }): string {
+  return `${entry.classType} ${formatDayHeader(entry.date)}`;
+}
 
 /** A stored account's own data: its currency, holder name and every scheme column. */
 export type BankAccountData = { currency: Currency; holderName: string } & BankAccountColumns;

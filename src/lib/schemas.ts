@@ -375,6 +375,9 @@ export const processorProfileSchema = z.object({
   profileId: z.string().regex(/^pfl_[A-Za-z0-9]+$/).max(64),
 }).strict();
 
+/** The method a student starts a Mollie payment with, an id as Mollie writes it. */
+export const processorAttemptSchema = z.object({ method: z.string().min(1).max(32).regex(/^[a-z0-9]+$/) }).strict();
+
 /**
  * `POST /api/account/onboarding`'s wire shape. `z.enum(OnboardingStep)`
  * derives the accepted values from the Prisma enum itself — a hand-copied
