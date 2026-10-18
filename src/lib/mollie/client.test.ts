@@ -140,6 +140,22 @@ describe('createRefund', () => {
     expect(await mollie.createRefund('tok', 'tr_1', { amount: { value: '10.00', currency: 'EUR' }, testmode: false }))
       .toEqual({ kind: 'refused', detail: 'Insufficient balance', field: null });
   });
+  // A refund Mollie may have made is never answered as refused: the service then reconciles it.
+  it('throws MollieUnavailable with the status for a 5xx', async () => {
+    const { mollie } = client([json(503, { status: 503, title: 'Service Unavailable' })]);
+    const thrown = await mollie.createRefund('tok', 'tr_1', { amount: { value: '10.00', currency: 'EUR' }, testmode: false })
+      .then(() => null, (err: unknown) => err);
+    expect(thrown).toBeInstanceOf(MollieUnavailable);
+    expect((thrown as MollieUnavailable).status).toBe(503);
+  });
+  it.each([
+    ['a body that is not JSON', new Response('<html>ok</html>', { status: 201 })],
+    ['a body without a refund id', json(201, { status: 'queued', amount: { value: '10.00', currency: 'EUR' } })],
+  ])('throws MollieUnavailable for a 201 with %s', async (_label, response) => {
+    const { mollie } = client([response]);
+    await expect(mollie.createRefund('tok', 'tr_1', { amount: { value: '10.00', currency: 'EUR' }, testmode: false }))
+      .rejects.toBeInstanceOf(MollieUnavailable);
+  });
 });
 
 describe('authorizeUrl', () => {
