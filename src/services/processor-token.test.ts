@@ -5,6 +5,7 @@ vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
 
 import { createPrismaClient } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
+import type { PrismaClient } from '@/lib/prisma-client';
 import { MollieUnavailable, type MollieClient } from '@/lib/mollie/client';
 import { openToken, sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
@@ -34,7 +35,7 @@ function degradations(): { code: string }[] {
   return vi.mocked(logDegraded).mock.calls.map(([code]) => ({ code }));
 }
 
-async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revoked?: boolean }) {
+async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revoked?: boolean; disconnectedAt?: Date }) {
   await prisma.processorConnection.deleteMany({ where: { teacherId } });
   const sealKey = opts.sealWith ?? key;
   return prisma.processorConnection.create({
@@ -48,6 +49,7 @@ async function seedConnection(opts: { expiresAt?: Date; sealWith?: Buffer; revok
           accessToken: new Uint8Array(sealToken('access_plain', sealKey)),
           refreshToken: new Uint8Array(sealToken('refresh_plain', sealKey)),
           accessTokenExpiresAt: opts.expiresAt,
+          disconnectedAt: opts.disconnectedAt,
           scopes: [],
           testmode: true,
         },
@@ -64,7 +66,8 @@ beforeAll(async () => {
   accountId = teacher.accountId;
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  await prisma.notification.deleteMany({ where: { recipientId: teacherId } });
   vi.clearAllMocks();
   fake.refresh.mockReset();
 });
@@ -133,5 +136,58 @@ describe('getAccessToken', () => {
       return { kind: 'granted', grant: { accessToken: 'loser', refreshToken: 'rl', expiresInSeconds: 3600, scopes: [] } };
     });
     expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'winner' });
+  });
+
+  it('answers a token for a disconnected row that is not yet revoked', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() + 3_600_000), disconnectedAt: new Date(now.getTime() - 1000) });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'access_plain' });
+  });
+  it('answers disconnected for a missing row', async () => {
+    expect(await getAccessToken(prisma, deps, '00000000-0000-4000-8000-000000000000', now)).toEqual({ kind: 'disconnected' });
+  });
+  it('does not disconnect when a peer replaced the grant before invalid_grant arrived', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    fake.refresh.mockImplementation(async () => {
+      await prisma.processorConnection.update({
+        where: { id: c.id },
+        data: sealGrant({ accessToken: 'winner', refreshToken: 'rw', expiresInSeconds: 3600, scopes: [] }, key, now),
+      });
+      return { kind: 'invalid_grant' };
+    });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'winner' });
+    const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
+    expect(row.revokedAt).toBeNull();
+    expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
+    expect(degradations().map((d) => d.code)).not.toContain('PROCESSOR_DISCONNECTED');
+  });
+  it('keeps an existing disconnectedAt and tells the teacher nothing new on invalid_grant', async () => {
+    const earlier = new Date(now.getTime() - 86_400_000);
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1), disconnectedAt: earlier });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'disconnected' });
+    const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
+    expect(row).toMatchObject({ accessToken: null, refreshToken: null, disconnectedAt: earlier, revokedAt: now });
+    expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
+  });
+  it('does not start a second refresh for a caller whose read predates the first flight', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    const stale = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
+    fake.refresh.mockResolvedValue({ kind: 'granted', grant: { accessToken: 'a2', refreshToken: 'r2', expiresInSeconds: 3600, scopes: [] } });
+    expect(await getAccessToken(prisma, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'a2' });
+    let first = true;
+    const lagging = {
+      processorConnection: {
+        findUnique: (args: Parameters<typeof prisma.processorConnection.findUnique>[0]) => {
+          if (first) {
+            first = false;
+            return Promise.resolve(stale);
+          }
+          return prisma.processorConnection.findUnique(args);
+        },
+        updateMany: prisma.processorConnection.updateMany.bind(prisma.processorConnection),
+      },
+    } as unknown as PrismaClient;
+    expect(await getAccessToken(lagging, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'a2' });
+    expect(fake.refresh).toHaveBeenCalledTimes(1);
   });
 });
