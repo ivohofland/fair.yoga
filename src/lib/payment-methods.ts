@@ -170,7 +170,11 @@ export type PaymentMethodsAnswer = { kind: 'paused' } | { kind: 'methods'; metho
 /** What a student is told while a teacher has paused payments, in place of any method. */
 export const PAYMENTS_PAUSED_COPY = 'Payment details are being checked — please hold off for now.';
 
-/** The answer for a teacher read with `teacherPaymentSelect`, using their account in `currency`. */
+/**
+ * The answer for a teacher read with `teacherPaymentSelect`, using their account
+ * in `currency`: the bank and payment-link methods only. The Mollie rows are
+ * added by `payPageMethods` (`src/services/pay-page-methods.ts`).
+ */
 export function paymentMethodsForTeacher(teacher: ManualPaymentSources, currency: Currency): PaymentMethodsAnswer {
   if (teacher.paymentsPausedAt !== null) return { kind: 'paused' };
   return {

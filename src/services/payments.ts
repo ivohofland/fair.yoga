@@ -244,7 +244,11 @@ export async function markPaymentOverdue(
  *
  * A payment a Mollie attempt settled (`settledPayment`) is refused
  * `PAYMENT_SETTLED_BY_PROCESSOR`: the money is in the teacher's balance, so
- * a refund is how it leaves `paid` (`reopenInTransaction`).
+ * a refund is how it leaves `paid` (`reopenInTransaction`). A chargeback
+ * clears `settledPayment`, which is what lets this reopen apply again.
+ *
+ * Reopening also un-archives the student's link with this teacher; that and
+ * the lock order are `reopenInTransaction`'s.
  *
  * `studentReportedAt` is left as it is: reopen is also the Undo after Mark
  * paid, and the student's claim is not the teacher's to lose by a mis-tap.
@@ -269,10 +273,10 @@ export async function reopenPayment(
  * — an outstanding payment is not "nothing live". It locks the link's row and
  * then the payment's, in the order `docs/lock-order.md` fixes ("The `Payment`
  * row is a Mollie sync's gate"), so a caller that already holds the payment's
- * row lock must have taken the link's before it. A missing link (student never on the roster, or unlinked since)
- * writes nothing, and an applied reopen on one is logged; an `unchanged`
- * reopen leaves the link exactly as it was, since nothing about the payment
- * newly became live.
+ * row lock must have taken the link's before it. A missing link (student
+ * never on the roster, or unlinked since) writes nothing, and an applied
+ * reopen on one is logged; an `unchanged` reopen leaves the link exactly as it
+ * was, since nothing about the payment newly became live.
  */
 export async function reopenInTransaction(
   tx: Prisma.TransactionClient,
