@@ -35,4 +35,9 @@ export const NOTIFICATION_RETENTION_DAYS = {
   teacher_invitation: STANDARD_RETENTION_DAYS,
   walk_in_added: STANDARD_RETENTION_DAYS,
   class_reminder: STANDARD_RETENTION_DAYS,
+  processor_disconnected: STANDARD_RETENTION_DAYS,
+  payment_paid_twice: STANDARD_RETENTION_DAYS,
+  payment_charged_back: STANDARD_RETENTION_DAYS,
+  refund_failed: STANDARD_RETENTION_DAYS,
+  payment_refunded: STANDARD_RETENTION_DAYS,
 } as const satisfies Record<NotificationType, RetentionDays>;

@@ -1622,8 +1622,6 @@ export async function deleteTeacherAccount(
           bio: '',
           pageSlug: `deleted-${teacherId}`,
           customDomain: null,
-          processorType: null,
-          processorAccountId: null,
           paymentLink: null,
           ...TEACHER_PUSH_ERASED,
           deletedAt: new Date(),

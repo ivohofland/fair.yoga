@@ -559,7 +559,6 @@ const PAYMENT_ROW_KEYS = [
   'method',
   'notChargedAt',
   'paidAt',
-  'processorRef',
   'registrationId',
   'reminderSentAt',
   'status',
@@ -835,7 +834,6 @@ describe('the student payment claim: /sent and /not-received', () => {
         paidAt: null,
         notChargedAt: null,
         studentReportedAt: null,
-        processorRef: null,
         ...data,
       },
     });
@@ -886,16 +884,16 @@ describe('the student payment claim: /sent and /not-received', () => {
     expect(row.studentReportedAt).toBeNull();
   });
 
-  /** What the student doors answer with, sorted: none of the teacher's bookkeeping, `processorRef` above all. */
+  /** What the student doors answer with, sorted: none of the teacher's bookkeeping, `reminderSentAt` among them. */
   const STUDENT_VIEW_KEYS = ['id', 'notChargedAt', 'paidAt', 'status', 'studentReportedAt'];
 
   it('marks sent, answers a repeat unchanged, withdraws, answers a repeat withdrawal unchanged', async () => {
-    await reset({ processorRef: 'tr_student_must_not_see' });
+    await reset({ reminderSentAt: new Date('2026-09-02T10:00:00.000Z') });
 
     const first = (await expectApplied(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
     expect(first.studentReportedAt).not.toBeNull();
     expect(Object.keys(first).sort()).toEqual(STUDENT_VIEW_KEYS);
-    expect(first).not.toHaveProperty('processorRef');
+    expect(first).not.toHaveProperty('reminderSentAt');
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.studentReportedAt).not.toBeNull();
 
