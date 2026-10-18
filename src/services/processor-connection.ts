@@ -315,11 +315,11 @@ export type DisconnectOutcome =
   | { kind: 'teacher_gone' };
 
 /**
- * Stamps `disconnectedAt`, so students are offered no Mollie method from now
- * on, and records it. The grant is not revoked here: an attempt that may still
- * hear from its webhook needs a token, so `revokeAfter` is the latest expiry
- * among those, or now when there are none, and `revokeNow` says the caller may
- * revoke straight after commit.
+ * Stamps `disconnectedAt`, so the connection stops being live
+ * (`livePayoutIdentity`), and records it. The grant is not revoked here: an
+ * attempt that may still hear from its webhook needs a token, so `revokeAfter`
+ * is the latest expiry among those, or now when there are none, and
+ * `revokeNow` says the caller may revoke straight after commit.
  */
 export async function disconnect(db: PrismaClient, input: { teacherId: string; now?: Date }): Promise<DisconnectOutcome> {
   const now = input.now ?? new Date();
@@ -352,8 +352,8 @@ export type RevokeOutcome = 'revoked' | 'skipped' | 'unavailable';
  * while the row still holds the refresh token that was revoked and is still
  * disconnected, so a reconnect that rewrote the row while Mollie was being
  * called keeps its new grant (`skipped`). No transaction is open across the
- * call. A failure leaves the row as it was (`unavailable`) for the daily
- * sweep to retry.
+ * call. A failure leaves the row as it was (`unavailable`), still due for a
+ * later revoke.
  */
 export async function revokeDueConnection(
   db: PrismaClient,
@@ -382,7 +382,7 @@ export async function revokeDueConnection(
     logDegraded(
       'MOLLIE_UNAVAILABLE',
       { connectionId, operation: 'revoke', ...(err.status === null ? {} : { status: err.status }) },
-      'Mollie could not revoke a disconnected grant; the daily sweep retries',
+      'Mollie could not revoke a disconnected grant; the row stays due for a later revoke',
       err,
     );
     return 'unavailable';
