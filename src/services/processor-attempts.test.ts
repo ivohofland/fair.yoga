@@ -14,6 +14,7 @@ import { sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
+import { reopenPayment } from './payments';
 import { forgetOfferedMethods } from './processor-methods-offer';
 import {
   createAttempt, decideRefundSync, decideSync, processorReturnUrl, processorWebhookUrl, syncAttempt,
@@ -476,7 +477,8 @@ describe('decideSync', () => {
 
 describe('decideRefundSync', () => {
   const ALL: ProcessorRefundStatus[] = ['queued', 'pending', 'processing', 'refunded', 'failed', 'canceled'];
-  const OPEN: ProcessorRefundStatus[] = ['queued', 'pending', 'processing', 'canceled'];
+  const OPEN: ProcessorRefundStatus[] = ['queued', 'pending', 'processing'];
+  const FINAL: ProcessorRefundStatus[] = ['refunded', 'failed', 'canceled'];
 
   it.each(ALL)('%s reported again is unchanged', (status) => {
     expect(decideRefundSync({ storedStatus: status, mollieStatus: status })).toEqual({ kind: 'unchanged' });
@@ -490,11 +492,11 @@ describe('decideRefundSync', () => {
     expect(decideRefundSync({ storedStatus, mollieStatus: 'failed' })).toEqual({ kind: 'status', status: 'failed', complete: false, notifyFailed: true });
   });
 
-  it.each(OPEN.flatMap((from) => OPEN.filter((to) => to !== from).map((to) => [from, to] as const)))('%s → %s records the status only', (storedStatus, mollieStatus) => {
+  it.each(OPEN.flatMap((from) => [...OPEN, 'canceled' as const].filter((to) => to !== from).map((to) => [from, to] as const)))('%s → %s records the status only', (storedStatus, mollieStatus) => {
     expect(decideRefundSync({ storedStatus, mollieStatus })).toEqual({ kind: 'status', status: mollieStatus, complete: false, notifyFailed: false });
   });
 
-  it.each((['refunded', 'failed'] as const).flatMap((from) => ALL.map((to) => [from, to] as const)))('a %s row is never moved (to %s)', (storedStatus, mollieStatus) => {
+  it.each(FINAL.flatMap((from) => ALL.map((to) => [from, to] as const)))('a %s row is never moved (to %s)', (storedStatus, mollieStatus) => {
     expect(decideRefundSync({ storedStatus, mollieStatus })).toEqual({ kind: 'unchanged' });
   });
 });
@@ -698,7 +700,7 @@ describe('syncAttempt', () => {
       const sent = await notes('payment_charged_back', classId);
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({ recipientType: 'teacher', recipientId: teacherId, title: 'Payment disputed' });
-      expect(sent[0]!.body).toBe('Stu disputed €10.00 with their bank and it was taken back. You can mark the payment unpaid to ask again.');
+      expect(sent[0]!.body).toBe('Stu disputed €4.00 with their bank and it was taken back. You can mark the payment unpaid to ask again.');
 
       expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('unchanged');
       expect(await notes('payment_charged_back', classId)).toHaveLength(1);
@@ -710,6 +712,28 @@ describe('syncAttempt', () => {
       expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
       const [sent] = await notes('payment_charged_back', await classOf(paymentId));
       expect(sent!.body).toBe('Stu disputed €10.00 with their bank and it was taken back.');
+    });
+
+    it('lets the teacher reopen, and a second attempt then settles through the sync', async () => {
+      const { paymentId, attempt } = await settledAttempt();
+      fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, { amountChargedBack: { value: '10.00', currency: 'EUR' } }));
+      expect(await syncAttempt(prisma, deps, attempt.processorPaymentId)).toBe('charged_back');
+
+      expect((await reopenPayment(prisma, paymentId)).kind).toBe('applied');
+
+      const second = await prisma.processorPayment.create({
+        data: {
+          paymentId, connectionId, processorPaymentId: trId(), profileId: 'pfl_attempt', testmode: true, method: 'creditcard', status: 'open',
+          amount: new Prisma.Decimal('10.00'), currency: 'EUR', checkoutUrl: 'https://www.mollie.com/checkout/second',
+          expiresAt: new Date(Date.now() + 10 * MINUTE),
+        },
+      });
+      fake.getPayment.mockResolvedValue(view(second.processorPaymentId, { method: 'creditcard' }));
+      expect(await syncAttempt(prisma, deps, second.processorPaymentId)).toBe('settled');
+
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: second.id } })).settledPayment).toBe(true);
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: attempt.id } })).settledPayment).toBe(false);
+      expect(await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } })).toMatchObject({ status: 'paid', method: 'mollie' });
     });
 
     it('of zero is not a chargeback', async () => {
@@ -757,6 +781,8 @@ describe('syncAttempt', () => {
       expect(payment.status).toBe('not_charged');
       expect(payment.notChargedAt).not.toBeNull();
       expect(payment.studentReportedAt).toBeNull();
+      expect(payment.method).toBeNull();
+      expect(payment.paidAt).toBeNull();
       expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(false);
       expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
     });
