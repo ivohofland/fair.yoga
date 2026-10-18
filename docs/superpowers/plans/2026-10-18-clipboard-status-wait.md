@@ -8,7 +8,7 @@ cannot assert on the empty live region before the clipboard promise settles.
 - `CopyFieldList` (`src/components/student/copy-field-list.tsx`) always renders its
   `<p role="status">`, empty until a copy settles. `findByRole('status')` therefore
   resolves on the first poll, and the chained `toHaveTextContent` runs once, unretried.
-- The issue names two cases. Three in `payment-details.test.tsx` have the shape
+- The issue names two cases. At `origin/main` (3af485b8), three in `payment-details.test.tsx` have the shape
   `expect(await screen.findByRole('status')).toHaveTextContent(…)`:
   - "confirms the copy on the button that made it…" (`'IBAN copied'`) — **not named in
     the issue**. Its text arrives in `writeText().then`, so it races in the same way.
@@ -17,8 +17,9 @@ cannot assert on the empty live region before the clipboard promise settles.
     handler, which `fireEvent` flushes under `act`, so this one cannot race. Converted
     anyway so the three read alike.
 - The same shape elsewhere: `grep -rnE "findByRole\('status'[^)]*\)\)\.(toHaveTextContent|not)" src tests`
-  gives 5 hits = 3 here + 2 in `src/components/booking/passkey-sign-in.test.tsx`. The
-  passkey ones are sound: `PasskeySignIn` renders its `role="status"` only once
+  gives, at `origin/main` (3af485b8), 5 hits = 3 here + 2 in
+  `src/components/booking/passkey-sign-in.test.tsx`; after this change, 2 (the passkey
+  ones). Those are sound: `PasskeySignIn` renders its `role="status"` only once
   `state === 'incomplete'`, so the element arrives with its text.
 
 ## Task 1 — rewrite the three assertions
@@ -40,7 +41,7 @@ Prove it bites:
 
 ## Task 2 — the same race in `attendance-list.test.tsx` (found in branch review)
 
-The plan's grep keys on `'status'` and a chained `toHaveTextContent`, so it cannot see
+The plan's grep keys on `'status'` and a chained `toHaveTextContent`/`.not`, so it cannot see
 "surfaces the server's reason for a refusal…" in `src/components/class/attendance-list.test.tsx`:
 `const alert = await screen.findByRole('alert'); expect(alert.textContent).toContain(…)`.
 `AttendanceList` mounts its `sr-only` `role="alert"` unconditionally, empty until the
