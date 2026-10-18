@@ -741,7 +741,8 @@ true.
 
 **Sorting the id array does NOT order a multi-row write**, so a one-line sort
 fixes no multi-row site. `class.deleteMany({ where: { id: { in: ids } } })` compiles to
-`… WHERE id = ANY($1)`, and the row-visit order — which *is* the lock order —
+`… WHERE "id" IN ($1, $2, …)` (read from the query log on 2026-10-18, client
+engine), and the row-visit order — which *is* the lock order —
 is chosen by the planner, never by the array. Measured directly: one
 transaction holding a row, the multi-row `UPDATE` blocked on it, and a third
 transaction probing the other row with `FOR UPDATE NOWAIT` gave an identical

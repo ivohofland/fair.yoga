@@ -9,7 +9,7 @@ import { Prisma } from '@/lib/prisma-client';
 export interface PgError {
   /** The SQLSTATE: the adapter's `originalCode`, which is pg's `DatabaseError.code`. */
   readonly sqlState: string;
-  /** Postgres's primary message: the adapter's `originalMessage`. Never logged verbatim. */
+  /** Postgres's primary message: the adapter's `originalMessage`. It can quote row values. */
   readonly message: string;
   /** The violated constraint's name, for the SQLSTATEs in `CONSTRAINT_SOURCE` only. */
   readonly constraint?: string;

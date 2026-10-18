@@ -56,9 +56,8 @@ export async function resolveOrClaimAccount(
   if (!unclaimed) return null;
 
   try {
-    // Account first, then one scalar update: the claim/link CHECK
-    // constraint requires claimedAt and accountId to change together,
-    // and Prisma splits nested relation writes into separate statements.
+    // Account first, then one UPDATE writing claimedAt and accountId
+    // together, which the claim/link CHECK constraint requires.
     const created = await db.account.create({ data: { email } });
     await db.student.update({
       where: { id: unclaimed.id },

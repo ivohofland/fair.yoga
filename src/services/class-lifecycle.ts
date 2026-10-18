@@ -1623,18 +1623,16 @@ export async function updateClass(
   > = true;
   void _splitMatchesEntryFields;
 
-  // A key whose value is `undefined` is not an edit. Prisma agrees more
-  // strongly than you might expect: given a `data` object whose every value is
-  // undefined it issues no UPDATE at all and returns `{ count: 0 }` — with no
-  // regard for whether the row exists. Testing key *presence* (rather than
-  // defined *values*, as `sentEconomic` above already does) let a no-op
-  // payload reach the compare-and-swap, come back with a zero count, and land
-  // in the "unreachable" branch below as a 500.
+  // A key whose value is `undefined` is not an edit, and Prisma agrees: given
+  // a `data` object whose every value is undefined it sends no UPDATE, only a
+  // read of the ids its filter matches, and answers their count. So a no-op
+  // compare-and-swap reports a write that never happened, or a miss that is
+  // no lost race. Hence the test on defined *values*, as `sentEconomic` above
+  // does, never on key presence.
   //
-  // Asked PER HALF now, not once for the whole payload. A `startTime`-only
-  // edit leaves `classFields` all-undefined, and running the class CAS anyway
-  // would return `{ count: 0 }` for a request that asked it to do nothing —
-  // which this function would then read as a lost race.
+  // Asked PER HALF, not once for the whole payload. A `startTime`-only edit
+  // leaves `classFields` all-undefined, and running the class CAS anyway
+  // would answer a count for a statement that wrote nothing.
   const hasEntryEdit = Object.values(entryFields).some((v) => v !== undefined);
   const hasClassEdit = Object.values(classFields).some((v) => v !== undefined);
   // What was SENT, not what remains to write: a body of only unchanged

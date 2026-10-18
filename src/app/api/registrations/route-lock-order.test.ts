@@ -7,6 +7,7 @@ import * as waitlist from '@/services/waitlist';
 import { deleteStudentAccount, type ErasureOutcome } from '@/services/gdpr';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
+import { pgErrorOf } from '@/lib/pg-error';
 import { prisma as appPrisma } from '@/lib/db';
 import { cookie, seedSession } from '../../../../tests/helpers';
 import { createClassFixture } from '../../../../tests/class-fixtures';
@@ -622,10 +623,8 @@ describe('POST /api/registrations takes the Student gate (#625)', () => {
       // hold, not from the route's transaction budget expiring behind an
       // unbounded one.
       expect(settledWithinHold).toBe(true);
-      const logged = warn.mock.calls
-        .map(([payload]) => String((payload as { err?: unknown }).err))
-        .join('\n');
-      expect(logged).toMatch(/55P03/);
+      const loggedStates = warn.mock.calls.map(([payload]) => pgErrorOf((payload as { err?: unknown }).err)?.sqlState);
+      expect(loggedStates).toContain('55P03');
     } finally {
       await cleanup(fx);
     }

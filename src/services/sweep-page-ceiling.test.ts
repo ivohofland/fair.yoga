@@ -78,6 +78,34 @@ function recordClassReads(base: PrismaClient): { client: PrismaClient; ids: (str
   return { client, ids };
 }
 
+/**
+ * `base`, recording the longest `in` list any operation through it is handed,
+ * at any depth of its args. Attach it before `scopeSweep` so it sees the
+ * sweep's own args (`tests/scoped-sweep.ts`'s header).
+ */
+function recordLongestInList(base: PrismaClient): { client: PrismaClient; longest: () => number } {
+  let longest = 0;
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+    } else if (node !== null && typeof node === 'object') {
+      for (const [key, value] of Object.entries(node)) {
+        if (key === 'in' && Array.isArray(value)) longest = Math.max(longest, value.length);
+        visit(value);
+      }
+    }
+  };
+  const client = base.$extends({
+    query: {
+      async $allOperations({ args, query }) {
+        visit(args);
+        return query(args);
+      },
+    },
+  }) as unknown as PrismaClient;
+  return { client, longest: () => longest };
+}
+
 /** Every seeded id was read, exactly once, and nothing else was. */
 function expectReadExactlyOnce(read: (string | undefined)[], seeded: string[]): void {
   expect(new Set(read).size).toBe(read.length);
@@ -341,7 +369,8 @@ describe('reconcileWaitlists', () => {
   it("reads CEILING_ROWS queued classes binding at most a page's parameters per statement", async () => {
     if (!teachers) throw new Error('seed failed');
     const byTeacher = { calendarEntry: { teacherId: { in: teachers.teacherIds } } };
-    const recorded = recordClassReads(low);
+    const lists = recordLongestInList(low);
+    const recorded = recordClassReads(lists.client);
     const scoped = scopeSweep(recorded.client, {
       Class: byTeacher,
       WaitlistEntry: { class: byTeacher },
@@ -353,6 +382,11 @@ describe('reconcileWaitlists', () => {
     });
     expect(peakBoundParams(low)).toBeGreaterThan(0);
     expect(peakBoundParams(low)).toBeLessThanOrEqual(PAGE_PARAM_BOUND);
+    // The candidate ids reach Postgres as `in` lists in statements Prisma
+    // neither splits nor sends past its own parameter limit, so each list is
+    // a page at most, however many classes are queued.
+    expect(lists.longest()).toBeGreaterThan(0);
+    expect(lists.longest()).toBeLessThanOrEqual(SWEEP_PAGE_SIZE);
     expect(summary.candidates).toBe(CEILING_ROWS);
     expect(summary.reconciledClassIds).toEqual([]);
     expect(summary.failedClassIds).toEqual([]);

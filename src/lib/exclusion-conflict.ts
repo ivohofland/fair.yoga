@@ -6,7 +6,7 @@ import { pgErrorOf } from '@/lib/pg-error';
  *
  * A separate predicate from `isUniqueConflictOn` (`./unique-conflict`) because
  * an exclusion violation is not a unique violation: it has a SQLSTATE of its
- * own, and Prisma maps it to no P-code at all.
+ * own.
  *
  * A typed call and a raw one are both admitted, because both carry the
  * adapter's cause and they mean the same thing to a caller; a matcher built

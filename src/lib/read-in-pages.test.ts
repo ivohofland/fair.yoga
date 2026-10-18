@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readInPages, SWEEP_PAGE_SIZE } from './read-in-pages';
+import { readInPages, readInSlices, SWEEP_PAGE_SIZE } from './read-in-pages';
 
 interface Row {
   id: string;
@@ -95,5 +95,29 @@ describe('readInPages', () => {
     );
     expect(rejection).toBe(failure);
     expect(calls).toBe(2);
+  });
+});
+
+describe('readInSlices', () => {
+  it('makes no call for no keys', async () => {
+    let calls = 0;
+    const result = await readInSlices([], async () => {
+      calls++;
+      return [];
+    });
+    expect(result).toEqual([]);
+    expect(calls).toBe(0);
+  });
+
+  it('hands over consecutive slices of at most SWEEP_PAGE_SIZE keys and concatenates the answers in slice order', async () => {
+    const keys = source(2 * SWEEP_PAGE_SIZE + 1).map((r) => r.id);
+    const slices: string[][] = [];
+    const result = await readInSlices(keys, async (slice) => {
+      slices.push([...slice]);
+      return slice.map((id) => ({ id }));
+    });
+    expect(slices.map((s) => s.length)).toEqual([SWEEP_PAGE_SIZE, SWEEP_PAGE_SIZE, 1]);
+    expect(slices.flat()).toEqual(keys);
+    expect(result.map((r) => r.id)).toEqual(keys);
   });
 });

@@ -63,29 +63,15 @@ export type ApiFailure =
   | (ApiFailureBase & { readonly status: 503; readonly code?: CodeWithStatus<503> });
 
 /**
- * Matches the terminality triggers — plural since #247. Each raises
+ * Matches the terminality triggers. Each raises
  * `RAISE EXCEPTION ... USING ERRCODE = '23514'` with the same
  * `which is terminal` wording, and they mean the same thing to a caller
- * ("that class is frozen"), so they route through this one branch:
+ * ("that class is frozen"), so they route through this one branch.
+ * `TERMINAL_TRIGGER_TAILS` below is the roster: one key per trigger, each
+ * with the message tail that identifies it.
  *
- * - `class_terminal_status_guard`, BEFORE UPDATE OF status on `Class`, refuses
- *   to change a terminal class's status.
- * - `entry_frozen_schedule_guard`, BEFORE UPDATE OF date, "startTime",
- *   "durationMinutes" on `CalendarEntry`, refuses to move a terminal class in
- *   the calendar. It exists because `reapClosedWaitlistEntries` DELETES on a
- *   predicate of terminal AND `date` more than 365 days past, and only the
- *   first half was enforced (#247).
- * - `entry_terminal_liveness_guard`, BEFORE UPDATE OF "cancelledAt" on
- *   `CalendarEntry`, refuses to un-cancel a terminal regular entry or to
- *   cancel a completed one.
- * - `entry_completion_marker_guard`, BEFORE UPDATE OF "classCompletedAt" on
- *   `CalendarEntry`, refuses every departure from a marker already set. It
- *   guards the column the guard above it READS: `UPDATE OF` fires on presence
- *   in the SET list, so clearing the marker named none of that guard's three
- *   columns, fired nothing, and unfroze the schedule for the next statement.
- *
- * Re-derive the roster rather than trusting it — from the DATABASE, not from
- * the migrations, which also hold every trigger since dropped:
+ * Re-derive the triggers rather than trusting the roster — from the DATABASE,
+ * not from the migrations, which also hold every trigger since dropped:
  *
  *     SELECT t.tgname, c.relname
  *       FROM pg_trigger t
@@ -387,7 +373,7 @@ export function isRestrictViolationOn(error: unknown, constraints: readonly stri
  * degrading into somebody else's bucket at runtime.
  *
  * Each value is the SUBSTRING, not the whole message: the messages carry a row
- * id and, in three cases, a state word, so only the tail is stable.
+ * id and some carry a state word, so only the tail is stable.
  *
  * `satisfies Record<..., string>` with the keys spelled out is the tether: a
  * facet added to the union below without a tail here is a compile error, which
@@ -430,24 +416,15 @@ const TERMINAL_TRIGGER_FACETS = Object.keys(
  * Classify anything thrown out of a route handler. Total: every input,
  * including non-Error throwables, yields an ApiFailure.
  *
- * The lock-race-to-503 mapping this docblock once described as unqueued has
- * landed (the transient branch below), and the `busy` variants on the
- * template lifecycle result unions have landed alongside it: `class-template-
- * lifecycle.ts` exports `UpdateClassTemplateResult`, `PauseTemplateResult`
- * and `ArchiveTemplateResult`; `studio-class-template-lifecycle.ts` exports
- * their studio twins `UpdateStudioClassTemplateResult`,
- * `PauseStudioTemplateResult` and `ArchiveStudioTemplateResult`. They remain
- * complementary rather than redundant, and it is worth saying which does
- * what: each union makes contention a COMPILE error at the route that
- * switches on its `reason` — `PUT` and both `PATCH` branches at
- * `/api/class-templates/[id]`, and the same three at
- * `/api/studio-class-templates/[id]` — which a catch-all cannot; this branch
- * makes it legible everywhere else, which the unions cannot. A service that
- * catches contention never reaches here — by design, since it can say
- * something more specific than this can.
+ * The transient branch below and a service result union's `busy` variant are
+ * complementary rather than redundant: a union makes contention a COMPILE
+ * error at the route that switches on its `reason`, which a catch-all cannot;
+ * this branch makes contention legible everywhere else, which a union cannot.
+ * A service that catches contention never reaches here — by design, since it
+ * can say something more specific than this can.
  */
 export function classifyApiError(error: unknown): ApiFailure {
-  // The terminality triggers named in `terminalViolationOf`'s docblock
+  // The terminality triggers `TERMINAL_TRIGGER_TAILS` names
   // raise with SQLSTATE 23514. Reaching here means a write to a frozen class —
   // its status, its liveness, or since #247 its place in the calendar — got
   // past the guard that should have refused it first. That is a 409 either
@@ -480,15 +457,13 @@ export function classifyApiError(error: unknown): ApiFailure {
     // before it permanently DELETEs a class's queue — the precondition for the
     // data loss #247 exists to prevent. That must not land in the log at the
     // level a lock timeout lands at.
-    // FIVE values, four of them a trigger's own tail and the fifth the absence
-    // of any. `status` used to be the fallback — a real facet with a meaning of
-    // its own, at `warn`, the level that pages nobody — so a trigger added with
-    // a tail this list does not know about degraded into the bucket an operator
-    // queries for something else, silently and at the wrong level. It is now
-    // its own test like the rest, and an unrecognised tail answers `unknown` at
-    // `error`: an unplaceable terminality fire is a guard nobody has classified,
-    // which is the same "someone added an unguarded writer" reading the `date`
-    // and `completion` facets get.
+    // One facet per `TERMINAL_TRIGGER_TAILS` key, plus `unknown` for a tail
+    // that matches none. No real facet is the fallback: a trigger whose tail
+    // the roster does not know must not land in the bucket an operator queries
+    // for something else, at a level that pages nobody. `unknown` answers at
+    // `error`, because an unplaceable terminality fire is a guard nobody has
+    // classified — the same "someone added an unguarded writer" reading the
+    // `date` and `completion` facets get.
     //
     // `TERMINAL_TRIGGER_TAILS` is the roster, and it is a roster rather than a
     // chain so `api-errors.test.ts` can sweep the live migration bodies against
@@ -507,11 +482,10 @@ export function classifyApiError(error: unknown): ApiFailure {
       message: 'That class can no longer be changed',
       logMessage: 'terminal class write reached a DB trigger',
       level: trigger === 'status' || trigger === 'liveness' ? 'warn' : 'error',
-      // The logged `err` withholds a Prisma error's message, so this facet —
-      // with the `trigger` and `rowIds` the `err` serializer lifts from that
-      // message — is what identifies which guard fired. It is also GROUPABLE,
-      // which the driver string never was: one field turns "did the
-      // unfireable trigger fire" into a query.
+      // The logged `err` withholds Postgres's message, so this facet — with
+      // the `trigger` and `rowIds` the `err` serializer lifts from it — is what
+      // identifies which guard fired. It is also GROUPABLE: one field turns
+      // "did the unfireable trigger fire" into a query.
       detail: { trigger },
     };
   }

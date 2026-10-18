@@ -32,7 +32,7 @@ None blocks the design. Each is resolved inside the plan as stated, and the PR b
 2. **D2's `adapterKindOf` re-derivation command over-matches.** `grep -n "kind: '" node_modules/@prisma/client/runtime/client.d.ts` also prints `kind: 'batch'` and `kind: 'itx'` from unrelated types. The docs carry a block-limited command instead: `sed -n '/^declare type MappedError = {/,/^};/p' node_modules/@prisma/client/runtime/client.d.ts | grep -oE "kind: '[A-Za-z]+'"`. The spec also says the set "cannot be tethered by the compiler". That is true, but a test can tether it, so Task 1 adds a unit test that reads that same block and compares it with `ADAPTER_KINDS` minus `mysql`, `sqlite` and `mssql`. This is an addition, not a change of design.
 3. **§7's fabrication helper has no pool-timeout constructor.** The `P2024` fabrications (Task 8 lists them) must become pg-pool's plain `Error`, and §7 requires every fabrication to go through `tests/adapter-errors.ts`. Task 1 adds a fourth export, `pgPoolTimeout()`. Task 8 holds it to a produced pool timeout.
 4. **§4 D3's list of test call sites omits `tests/integration/erased-profile-restart.test.ts:167`.** That line is a comment, counted in §11's 28, and it describes column matching, which stops being true. Task 7 rewrites it.
-5. **§11's "18 `isUniqueConflictOn` call lines" counts the definition.** `git grep -n "isUniqueConflictOn(err" -- src ':!*.test.ts'` prints 18 lines, and one of them is the definition at `src/lib/unique-conflict.ts:66`. There are 17 call lines carrying 18 calls (`student-profile/route.ts:168` holds two). The spec's per-file breakdown ("student-profile 3") is off by the same one. Re-derive with `git grep -o "isUniqueConflictOn(err" -- src ':!*.test.ts' ':!src/lib/unique-conflict.ts' | wc -l`, which gives 18 calls; run it with `-n` instead of `-o` and it gives 17 lines. The PR body uses "18 calls on 17 lines" and corrects the spec's other mentions there, without editing the reviewed spec.
+5. **§11's "18 `isUniqueConflictOn` call lines" counts the definition.** `git grep -n "isUniqueConflictOn(err" -- src ':!*.test.ts'` prints 18 lines, and one of them is the definition at `src/lib/unique-conflict.ts:66`. There are 17 call lines carrying 18 calls (`student-profile/route.ts:168` holds two). The spec's per-file breakdown ("student-profile 3") is off by the same one. Re-derive with `git grep -o "isUniqueConflictOn(err" -- src ':!*.test.ts' ':!src/lib/unique-conflict.ts' | wc -l`, which gives 18 calls; run it with `-n` instead of `-o` and it gives 17 lines. The PR body uses "18 calls on 17 lines", and the spec carries the corrected count.
 
 **Unverified spec claims the plan measures before relying on them:**
 
@@ -1263,7 +1263,8 @@ Restore each break and re-run green.
 - `docs/technical-architecture.md`, "Relation loads over platform-wide sets":
   - the mechanism is now three scalar `IN` lists; quote §2 item 14's SQL;
   - Prisma loads no longer overflow the stack;
-  - the bind limit is 21,844 composite parents or 65,534 single-key values, failing with `08P01`, and the query compiler does not split;
+  - the bind limit is 21,844 composite parents, failing with `08P01`, and the query compiler does not split a composite relation load;
+  - an `in:` list is split only in a plain `findMany` (no `orderBy`, no `take`) or a single-key relation load, into statements of at most 32,765 values; every other statement over 32,766 bound parameters is refused before it is sent, with `P2029` (measured in Task 5 for the plain `findMany`, in Task 11 for the rest);
   - the rule is unchanged;
   - "How the ceiling tests reproduce it" becomes the parameter-count mechanism, the startup-option `lowStackClient`, and the one stack test for app SQL;
   - every number carries its re-derivation.
@@ -1422,7 +1423,7 @@ Run: `pnpm exec vitest run --project unit src/lib/pg-error.test.ts src/lib/check
 | `terminalViolationOf`: drop `message.includes('which is terminal')` | the CHECK case classifies `CLASS_FROZEN` and fails |
 | `isExclusionConflictOn`: compare against `'23514'` | every exclusion case fails |
 | `isRestrictViolationOn`: read `(error as Known).meta?.constraint` | the restrict cases fail |
-| `isMintKeyRefusal`: read `meta.constraint` | `payout-notice-delivery.test.ts`'s mint-refusal case fails |
+| `isMintKeyRefusal`: read `meta.constraint` | `payout-notice.test.ts`'s mint-refusal case fails |
 
 Restore each break and re-run green. Record the failure texts. Task 8 Step 6 runs the first three bites again against the transient matrix.
 
@@ -1776,7 +1777,7 @@ Restore each break and re-run green. Record the failure texts. If a row's failur
 
 - [ ] **Step 7: Docs, window gate, commit**
 
-- "Database errors": say what `pool_exhausted` covers, as measured. It covers raw, model and batch calls. It does not cover an interactive transaction, which fails first at `maxWait` as `P2028` with `meta {}` and classifies as `tx_budget`. The default `maxWait` (2 s) sits below the pool bound (10 s).
+- "Database errors": say what `pool_exhausted` covers, as measured. It covers raw, model and batch calls, and an interactive transaction too: `maxWait` is judged only once the pool hands over a connection. An interactive transaction whose wait outlives the pool bound is `pool_exhausted`; one whose connection is freed within the pool bound but after `maxWait` is `P2028` with `meta {}`, `tx_budget`. With the defaults (`maxWait` 2 s, pool bound 10 s), a wait ending between 2 s and 10 s is `tx_budget` and one reaching 10 s is `pool_exhausted`.
 - `docs/lock-order.md:1230-1244`: a typed `40P01` is a `DriverAdapterError` whose cause carries `originalCode: '40P01'`, and `transientDbFailure` reads it there (link "Database errors"). The dated block near `:3128` stays.
 
 Run "The window gate" with `N=8` and category `T`.
@@ -1979,13 +1980,14 @@ Run `git mv scripts/prisma-engine-probe.cjs scripts/prisma-client-probe.cjs`, th
   ```js
   if (failure.type === 'PrismaClientKnownRequestError' && failure.code === 'ENETUNREACH') {
     finish(0, 'client loaded; database unreachable with ENETUNREACH as expected');
-  } else if (failure.code === 'ERR_MODULE_NOT_FOUND') {
-    finish(1, 'the Prisma client could not load a module it imports lazily (the query compiler, or pg): the bundle is missing it');
+  } else if (output.includes('Failed to load external module')) {
+    finish(1, 'the Prisma client could not load a module it imports lazily (the query compiler): the bundle is missing it');
   } else {
     finish(1, `the health probe failed with type ${failure.type} and code ${failure.code}, expected PrismaClientKnownRequestError and ENETUNREACH`);
   }
   ```
-- **Import failures.** While waiting for the probe line, also check `output.includes('Cannot find module')`. If it appears before any probe line, call `finish(1, 'a module failed to load at import, before the health route ran')`.
+  A missing module carries no `code`: Turbopack wraps Node's error in a plain `Error` whose text, in the server's unwithheld output, is `Failed to load external module …`. That text is what both named failures key on.
+- **Import failures.** While awaiting the first HTTP response and while waiting for the probe line, also check `output.includes('Failed to load external module')`. If it appears before any probe line, call `finish(1, 'a module failed to load at import, before the health route ran')`. A missing `pg` takes this branch: the server stops at instrumentation-hook load and never answers HTTP.
 - **Prefix.** Every `prisma-engine-probe:` prefix becomes `prisma-client-probe:`.
 
 - [ ] **Step 5: `scripts/check-reserved-slugs.ts`**
@@ -2031,8 +2033,8 @@ Rebuild the runner (`docker build -t fairyoga .`). Paste each of the three docke
 
 | Break | How | Expected failure |
 |---|---|---|
-| runner without `pg` (§6 5a) | a scratch Dockerfile, `FROM fairyoga` + `RUN rm -rf /app/node_modules/pg`, tagged `fairyoga:885-nopg`; run the probe against it | the probe exits 1 with one of its named failures. Record which one, with its exact text |
-| runner without the query compiler (§6 4, 5b) | `FROM fairyoga` + `RUN find /app -name 'query_compiler_bg.postgresql.wasm-base64.js' -delete`, tagged `fairyoga:885-nowasm` | the probe exits 1, expected `ERR_MODULE_NOT_FOUND` → the lazy-module failure. **If the probe passes, stop**: §6 item 4's fallback is then required, and the spec owner decides it |
+| runner without `pg` (§6 5a) | a scratch Dockerfile, `FROM fairyoga` + `RUN rm -rf "$(readlink -f /app/.next-build/node_modules/pg-*)" /app/node_modules/pg /app/node_modules/.pnpm/pg@8.23.1`, tagged `fairyoga:885-nopg` (the bundle's hashed `pg-*` external resolves to `.pnpm/pg@8.23.1`, so removing `node_modules/pg` alone leaves the probe passing); run the probe against it | the probe exits 1 with the import failure. Record its exact text |
+| runner without the query compiler (§6 4, 5b) | `FROM fairyoga` + `RUN find /app -name 'query_compiler_bg.postgresql.wasm-base64.js' -delete`, tagged `fairyoga:885-nowasm` | the probe exits 1 with the lazy-module failure, keyed on `Failed to load external module`. **If the probe passes, stop**: §6 item 4's fallback is then required, and the spec owner decides it |
 | migrate image without the gate's import (§6 6) | delete the `COPY src/services/reserved-slug-holders.ts` line, rebuild as `fairyoga-migrate:885-bite`, run the step's command | the output has no `ENETUNREACH` (a module-not-found), and the step's `grep` fails |
 
 Restore the Dockerfile and remove the scratch images. Record every failure text in `$S/measurements.md`.
@@ -2099,9 +2101,9 @@ git grep -nE "(^|[^A-Za-z_])in: [A-Za-z_.]+" -- src ':!src/generated' ':!*.test.
 For each line, record the list's source and its largest realistic size (per-tenant, per-class, or platform-wide), and one of three verdicts:
 - "bounded by …";
 - "paged by `readInPages`";
-- "can exceed 65,534 values / 21,844 composite parents → fixed or filed".
+- "can exceed 32,766 bound parameters in a statement Prisma does not split / 21,844 composite parents → fixed or filed".
 
-A platform-wide unpaged list is a live defect (solve-issue §7's floor). If it is a sweep, fix it with `readInPages`; otherwise report it.
+A platform-wide unpaged list is a live defect (solve-issue §7's floor). If it is a sweep, bound it with `readInPages` or `readInSlices`; otherwise report it.
 
 - [ ] **Step 4: `name` / `char` columns on production raw paths** (Review Focus 4)
 

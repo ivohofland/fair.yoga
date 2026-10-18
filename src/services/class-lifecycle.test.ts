@@ -2123,11 +2123,10 @@ describe('updateClass (DB)', () => {
   it('treats an all-undefined payload as no edit, not as a vanished row', async () => {
     const cls = await makeClass(false);
 
-    // Prisma issues no UPDATE at all for a data object whose every value is
-    // undefined, returning { count: 0 } regardless of the row's existence.
-    // Before this was handled, that zero count was read as "the row vanished"
-    // and — with no economic fields to blame — reached an invariant throw,
-    // surfacing as a 500 for a request that asked for nothing.
+    // Prisma sends no UPDATE for a data object whose every value is
+    // undefined: it counts the rows the filter matches instead. A payload of
+    // nothing must therefore be answered before any write is attempted, as
+    // `no_fields`, rather than read off a count.
     const result = await updateClass(prisma, cls.id, { description: undefined });
     expect(result).toEqual({ ok: false, reason: 'no_fields' });
   });

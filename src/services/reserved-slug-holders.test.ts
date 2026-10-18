@@ -78,7 +78,7 @@ describe('scripts/check-reserved-slugs.ts', () => {
   afterAll(removeHeld);
 
   it('refuses when the database is unreachable', () => {
-    const r = runGate('postgresql://u:p@127.0.0.1:1/none?connect_timeout=2');
+    const r = runGate('postgresql://u:p@127.0.0.1:1/none');
     expect(r.stderr).toContain('reserved-slug check: failed to run; refusing the deploy');
     expect(r.status).toBe(1);
   }, 30_000);
