@@ -5,13 +5,17 @@ import type { SyncResult } from '@/services/processor-attempts';
 const m = vi.hoisted(() => ({
   syncAttempt: vi.fn(),
   mollieDeps: vi.fn(),
-  markPaymentPaid: vi.fn(),
+  dbWrite: vi.fn(),
 }));
 
-vi.mock('@/lib/db', () => ({ prisma: { marker: 'db' } }));
+// The route's three imports. The database's writes record a call, so a route
+// that wrote anything itself would be seen.
+vi.mock('@/lib/db', () => {
+  const writes = { update: m.dbWrite, updateMany: m.dbWrite, create: m.dbWrite, upsert: m.dbWrite };
+  return { prisma: { marker: 'db', payment: writes, processorPayment: writes, $transaction: m.dbWrite, $executeRaw: m.dbWrite } };
+});
 vi.mock('@/services/processor-attempts', () => ({ syncAttempt: m.syncAttempt }));
 vi.mock('@/services/mollie-deps', () => ({ mollieDeps: m.mollieDeps }));
-vi.mock('@/services/payments', () => ({ markPaymentPaid: m.markPaymentPaid }));
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { POST } = await import('./route');
@@ -35,7 +39,7 @@ describe('POST /api/webhooks/mollie', () => {
   it('syncs the attempt the form body names', async () => {
     m.syncAttempt.mockResolvedValue('settled');
     await POST(request('id=tr_x'));
-    expect(m.syncAttempt).toHaveBeenCalledWith({ marker: 'db' }, DEPS, 'tr_x');
+    expect(m.syncAttempt).toHaveBeenCalledWith(expect.objectContaining({ marker: 'db' }), DEPS, 'tr_x');
   });
 
   it.each<SyncResult>(['settled', 'unchanged', 'paid_twice', 'charged_back', 'status_only', 'unknown'])('answers 200 with no body for %s', async (result) => {
@@ -69,8 +73,7 @@ describe('POST /api/webhooks/mollie', () => {
   it('a body claiming paid does not settle: only the id reaches the sync, which fetches the status', async () => {
     m.syncAttempt.mockResolvedValue('unknown');
     await POST(request('id=tr_x&status=paid&amount=10.00'));
-    expect(m.syncAttempt).toHaveBeenCalledTimes(1);
-    expect(m.syncAttempt).toHaveBeenCalledWith({ marker: 'db' }, DEPS, 'tr_x');
-    expect(m.markPaymentPaid).not.toHaveBeenCalled();
+    expect(m.syncAttempt.mock.calls).toEqual([[expect.objectContaining({ marker: 'db' }), DEPS, 'tr_x']]);
+    expect(m.dbWrite).not.toHaveBeenCalled();
   });
 });
