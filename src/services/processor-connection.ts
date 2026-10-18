@@ -148,8 +148,9 @@ export async function completeConnect(
     if (answer.kind === 'invalid_grant') return refused;
     grant = answer.grant;
   } catch (err) {
-    if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
-    throw err;
+    if (!(err instanceof MollieUnavailable)) throw err;
+    mollieUnavailable(err, null, 'exchangeCode', 'Mollie could not exchange the OAuth code; the teacher was told to connect again');
+    return { kind: 'unavailable' };
   }
 
   // From here the grant is live at Mollie: every exit that does not store it revokes it.
@@ -157,12 +158,15 @@ export async function completeConnect(
   try {
     let org: { id: string; name: string };
     let profiles: MollieProfile[];
+    let operation: 'organization' | 'profiles' = 'organization';
     try {
       org = await deps.client.organization(grant.accessToken);
+      operation = 'profiles';
       profiles = usableProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
     } catch (err) {
-      if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
-      throw err;
+      if (!(err instanceof MollieUnavailable)) throw err;
+      mollieUnavailable(err, null, operation, 'Mollie could not be read for a new grant; nothing was stored and the grant is revoked');
+      return { kind: 'unavailable' };
     }
 
     const result = await db.$transaction(async (tx): Promise<ConnectWrite> => {
@@ -253,6 +257,21 @@ export function revokeDroppedGrant(deps: MollieDeps, refreshToken: string, conne
   });
 }
 
+/** Logs a Mollie call that failed as `MOLLIE_UNAVAILABLE`, with its status when Mollie answered one. */
+function mollieUnavailable(
+  err: MollieUnavailable,
+  connectionId: string | null,
+  operation: 'exchangeCode' | 'organization' | 'profiles',
+  message: string,
+): void {
+  logDegraded(
+    'MOLLIE_UNAVAILABLE',
+    { ...(connectionId === null ? {} : { connectionId }), operation, ...(err.status === null ? {} : { status: err.status }) },
+    message,
+    err,
+  );
+}
+
 /** Profiles that can take payments here: never a blocked one, and in live mode only live ones. */
 function usableProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
   return profiles.filter((p) => p.status !== 'blocked' && (testmode || p.mode === 'live'));
@@ -318,8 +337,9 @@ export async function chooseProfile(
   try {
     profiles = usableProfiles(await deps.client.profiles(token.accessToken), deps.config.testmode);
   } catch (err) {
-    if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
-    throw err;
+    if (!(err instanceof MollieUnavailable)) throw err;
+    mollieUnavailable(err, row.id, 'profiles', 'Mollie could not list the profiles; the profile was not changed');
+    return { kind: 'unavailable' };
   }
   if (!profiles.some((p) => p.id === input.profileId)) return { kind: 'unknown_profile' };
 
@@ -528,16 +548,20 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
   if (token.kind === 'disconnected') return { kind: 'none' };
   if (token.kind === 'unavailable') return { kind: 'unavailable' };
 
-  let org: { id: string; name: string };
-  let profiles: { id: string; name: string }[];
-  try {
-    const [o, p] = await Promise.all([deps.client.organization(token.accessToken), deps.client.profiles(token.accessToken)]);
-    org = o;
-    profiles = usableProfiles(p, deps.config.testmode).map(({ id, name }) => ({ id, name }));
-  } catch (err) {
-    if (err instanceof MollieUnavailable) return { kind: 'unavailable' };
-    throw err;
+  const [orgRead, profilesRead] = await Promise.allSettled([
+    deps.client.organization(token.accessToken),
+    deps.client.profiles(token.accessToken),
+  ]);
+  if (orgRead.status === 'rejected' || profilesRead.status === 'rejected') {
+    // One log for the read; when both calls failed it names the organization's.
+    const [operation, err]: ['organization' | 'profiles', unknown] =
+      orgRead.status === 'rejected' ? ['organization', orgRead.reason] : ['profiles', profilesRead.reason];
+    if (!(err instanceof MollieUnavailable)) throw err;
+    mollieUnavailable(err, row.id, operation, 'Mollie could not be read for the settings section; it shows Mollie as unreachable');
+    return { kind: 'unavailable' };
   }
+  const org = orgRead.value;
+  const profiles = usableProfiles(profilesRead.value, deps.config.testmode).map(({ id, name }) => ({ id, name }));
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
 
   const profileId = row.profileId;

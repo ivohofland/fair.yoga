@@ -399,18 +399,24 @@ describe('completeConnect', () => {
   });
 
   it.each([
-    ['the exchange', () => fake.exchangeCode.mockRejectedValue(new MollieUnavailable('down', 503))],
+    ['the exchange', () => fake.exchangeCode.mockRejectedValue(new MollieUnavailable('down', 401)), { operation: 'exchangeCode', status: 401 }],
     ['the organization read', () => {
       fake.exchangeCode.mockResolvedValue({ kind: 'granted', grant: FULL_GRANT });
       fake.organization.mockRejectedValue(new MollieUnavailable('down', null));
-    }],
-  ] as const)('answers unavailable without writing a connection when Mollie fails %s', async (_name, arrange) => {
+    }, { operation: 'organization' }],
+    ['the profiles read', () => {
+      mollieAnswers(ORG_A, [P1]);
+      fake.profiles.mockRejectedValue(new MollieUnavailable('down', 503));
+    }, { operation: 'profiles', status: 503 }],
+  ] as const)('answers unavailable, writes no connection and logs MOLLIE_UNAVAILABLE when Mollie fails %s', async (_name, arrange, context) => {
     const t = await freshTeacher();
     arrange();
+    fake.revoke.mockResolvedValue(undefined);
     const { authorizeUrl } = await startConnect(prisma, liveDeps, { teacherId: t.teacherId, sessionId: t.sessionId, now });
     const outcome = await completeConnect(prisma, liveDeps, { state: stateOf(authorizeUrl), code: 'code_x', sessionId: t.sessionId, now });
     expect(outcome).toEqual({ kind: 'unavailable' });
     expect(await prisma.processorConnection.count({ where: { teacherId: t.teacherId } })).toBe(0);
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([['MOLLIE_UNAVAILABLE', context, expect.any(String), expect.any(MollieUnavailable)]]);
   });
 
   it.each([
@@ -545,6 +551,9 @@ describe('chooseProfile', () => {
     await connect(t, ORG_A, [P1, P2]);
     fake.profiles.mockRejectedValue(new MollieUnavailable('down', 502));
     expect(await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P1.id })).toEqual({ kind: 'unavailable' });
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([
+      ['MOLLIE_UNAVAILABLE', { connectionId: (await connectionOf(t.teacherId)).id, operation: 'profiles', status: 502 }, expect.any(String), expect.any(MollieUnavailable)],
+    ]);
   });
 });
 
@@ -839,10 +848,28 @@ describe('readConnectionView', () => {
     expect(fake.listMethods).not.toHaveBeenCalled();
   });
 
-  it('is unavailable when Mollie cannot be reached', async () => {
+  it.each([
+    ['the organization', () => fake.organization.mockRejectedValue(new MollieUnavailable('down', 503)), { operation: 'organization', status: 503 }],
+    ['the profiles', () => fake.profiles.mockRejectedValue(new MollieUnavailable('down', null)), { operation: 'profiles' }],
+    ['both reads, logging once for the organization', () => {
+      fake.organization.mockRejectedValue(new MollieUnavailable('down', 500));
+      fake.profiles.mockRejectedValue(new MollieUnavailable('down', 502));
+    }, { operation: 'organization', status: 500 }],
+  ] as const)('is unavailable and logs MOLLIE_UNAVAILABLE once when Mollie cannot answer %s', async (_name, arrange, context) => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1]);
-    fake.organization.mockRejectedValue(new MollieUnavailable('down', 503));
+    vi.mocked(logDegraded).mockClear();
+    arrange();
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({ kind: 'unavailable' });
+    expect(vi.mocked(logDegraded).mock.calls).toEqual([
+      ['MOLLIE_UNAVAILABLE', { connectionId: (await connectionOf(t.teacherId)).id, ...context }, expect.any(String), expect.any(MollieUnavailable)],
+    ]);
+  });
+
+  it('rethrows a failure that is not Mollie being unavailable', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    fake.profiles.mockRejectedValue(new TypeError('bug'));
+    await expect(readConnectionView(prisma, liveDeps, t.teacherId)).rejects.toThrow('bug');
   });
 });
