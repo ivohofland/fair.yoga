@@ -518,13 +518,14 @@ chargeback counts as a chargeback: any `amountChargedBack` above zero.
   `PROCESSOR_TOKEN_KEY` replace `MOLLIE_API_KEY`); `Payment` Level 2 retry
   note.
 - `docs/data-model.md`: the three tables, the dropped columns, the narrowed
-  #47 rule, and Decision 17's reopen rule with its chargeback exception.
+  #47 rule, and Decision 17's reopen rule with its exceptions.
 - `docs/lock-order.md`: the connection writers under the teacher lock; the
   payment-then-attempt order.
 - `docs/degradation-sites.md`: the new codes.
 - CLAUDE.md *Payment Model*: Level 2's line, the grace-policy sentence on
   `paid → not_charged`, and that a Mollie-settled payment leaves `paid` only
-  by refund until a chargeback (Decision 17).
+  by refund until a chargeback, a revoked grant, or dashboard refunds covering
+  it in full (Decision 17).
 
 ## Mollie facts, as checked
 
