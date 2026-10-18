@@ -722,6 +722,44 @@ Mollie answers them `invalid_client`, which the adapter reports as
 Profile. For a cluster, check the app in Mollie's dashboard; the affected
 teachers reconnect once it is restored.
 
+### `PROCESSOR_PAYMENT_UNCONFIRMED`
+
+**What happened.** `syncAttempt` (`src/services/processor-attempts.ts`) was
+asked about a Mollie payment fair.yoga holds as an attempt (`attemptId`,
+Mollie's id `processorPaymentId`) and could not read or apply it. It answered
+`unknown`, so the webhook was answered 200 and Mollie does not retry it, and
+nothing was written. `reason` says why:
+
+- `teacher_erased` — the attempt has no connection: erasure deleted the
+  teacher's `ProcessorConnection`, so no token is left to ask Mollie with.
+- `connection_revoked` — the connection's grant is revoked, so no token.
+- `mollie_unknown` — Mollie answered 404 for a payment fair.yoga holds.
+- `status_unknown` — Mollie reported a status (`mollieStatus`) that
+  `ProcessorPaymentStatus` does not name.
+
+A Mollie id that no attempt holds is not fair.yoga's and is not logged.
+
+**Where the bad value lives.** Not in our data for the first two: the
+payment's money, if the student paid, went to the teacher's Mollie account and
+fair.yoga cannot see it. For `mollie_unknown`, the attempt row points at a
+payment Mollie no longer has (another mode or organization, or Mollie
+removed it). For `status_unknown`, Mollie changed its API.
+
+**Confirm.**
+
+```sql
+SELECT a.id, a."paymentId", a."connectionId", a.testmode, a.status, a."processorPaymentId",
+       p.status AS payment_status
+  FROM "ProcessorPayment" a JOIN "Payment" p ON p.id = a."paymentId"
+ WHERE a.id = '<attemptId>';
+```
+
+**Correct.** For `connection_revoked` or `mollie_unknown`, the teacher checks
+the payment in their Mollie dashboard and marks the payment paid by hand if
+the money arrived. For `teacher_erased`, nothing in fair.yoga can be
+corrected: the erased teacher's Mollie account holds the money. A repeating
+`status_unknown` means the client's status list needs the new value.
+
 ### `PROCESSOR_TOKEN_UNREADABLE`
 
 **What happened.** A sealed Mollie token for `connectionId` failed to open
