@@ -16,20 +16,21 @@ the numbering here is this spec's.
    pay-later product needs naming: one Mollie adds tomorrow is excluded until a
    reviewed PR adds it.
 2. **The allowlist, first version:** `ideal`, `wero`, `creditcard`,
-   `applepay`, `bancontact`, `eps`, `blik`, `przelewy24`, `twint`, `paypal`.
+   `applepay`, `bancontact`, `eps`, `blik`, `przelewy24`, `twint`.
    iDEAL and Wero are separate rows labelled "iDEAL" and "Wero"; Mollie has
    both as method ids, and the teacher's enablement decides which a student
    sees. Mollie's `banktransfer` is **not** on it: it duplicates the Level 1
    transfer and stays open up to 12 days, which would break Decision 6's
    short window. `googlepay` cannot be a payment `method` and is not on it.
-3. **PayPal is conditional.** Before the allowlist entry merges, the build
-   confirms whether PayPal's own pay-later ("Pay in 4", "Pay Later") can
-   appear inside a Mollie-created PayPal checkout, and whether it can be
-   switched off. If it can appear and cannot be switched off, PayPal is
-   removed from the allowlist. The finding is recorded in the PR body.
+3. **PayPal is not on the allowlist.** Mollie's PayPal page lists PayPal's own
+   pay-later products as part of the method (Pay in 4 in the US, FR and AU, Pay
+   Monthly, Pay in 3 in the UK, ES and IT, PayPal Credit, Pay in 30 in DE) and
+   documents no setting, on Mollie's side or the merchant's, that removes them.
+   A PayPal row could therefore put deferred payment in front of a student, so
+   it stays out until Mollie documents a switch; a later PR can add it.
 4. **No per-currency Level setting.** Mollie filters methods by currency once
    given the amount (iDEAL, Wero, Bancontact and EPS are EUR only; USD gets
-   card and PayPal). An empty overlap shows the Level 1 rows alone. A currency
+   cards). An empty overlap shows the Level 1 rows alone. A currency
    Mollie rejects is an empty overlap, not a degradation.
 5. **Every scope this issue uses is requested at connect**, `refunds.write`
    included, because adding a scope later forces every teacher to
@@ -38,7 +39,8 @@ the numbering here is this spec's.
    paid by hand or waives it. No Mollie call on the manual paths. The window is
    the method's expiry, written on its allowlist entry (Data): Wero 10 min,
    iDEAL 15, card and Apple Pay 30, Twint 45, Bancontact, EPS and
-   Przelewy24 60, PayPal 360; BLIK's is not in Mollie's table and is to verify. A completion inside it is a double payment
+   Przelewy24 60, BLIK 1 (Mollie's BLIK page gives a 55-second session timeout; the
+   expiry table has no row for it). A completion inside it is a double payment
    (Decision 7).
 7. **A webhook reporting paid for a payment already settled** records the
    attempt as paid, leaves the `Payment` untouched, tells the teacher the
@@ -154,9 +156,10 @@ is what Mollie's server-side POST is.
   `processor_disconnected`. `before`/`after` carry the masked organization id
   (`org_…` plus its last four characters) and the organization's name.
   `processor_changed` is a reconnect landing on a different organization.
-  The organization, not the profile, is the payout identity: Mollie pays a
-  balance out per organization, so choosing between an organization's
-  profiles writes no event.
+  Mollie links each balance to a profile, and each balance has its own bank
+  account and payout settings, so a payment lands in the balance of the profile
+  it was created under. Choosing between an organization's profiles can
+  therefore change where a teacher's money is paid out.
 - **`NotificationType`** gains `processor_disconnected`,
   `payment_paid_twice` and `refund_failed` (teacher) and `payment_refunded`
   (student). Every
@@ -388,17 +391,71 @@ money is the irreversible part:
 Each is stated above as the design assumes it; the plan's first task checks
 them and the spec is corrected where one fails.
 
-- A refund's status change calls the payment's `webhookUrl` (§5, §6).
-- The refund statuses and the error answered for a low balance (§6).
-- The Methods API's answer for an unsupported currency is a 422 (§3).
-- `DELETE /oauth2/tokens` revokes, and `approval_prompt=force` re-prompts (§1).
-- BLIK's default expiry (Decision 6).
-- Mollie pays balances out per organization, not per profile (Data).
-- Mollie refuses a `localhost` `webhookUrl` (§4), and which scope `embed=refunds`
-  needs (`refunds.read` is requested in case).
-- Whether refresh tokens rotate (§2 handles either; the conditional write
-  matters only if they do).
-- The PayPal pay-later check (Decision 3).
+Checked against docs.mollie.com on 2026-10-18; each line is the fact as found.
+
+- **Refund webhooks.** The payment's `webhookUrl` is called when a refund on
+  it reaches `processing`, `refunded` or `failed` (Payments API webhooks,
+  https://docs.mollie.com/reference/webhooks); `queued`, `pending` and
+  `canceled` do not call it (§5, §6).
+- **Refund statuses and the low-balance error.** The statuses are `queued`,
+  `pending`, `processing`, `refunded`, `failed`, `canceled`
+  (https://docs.mollie.com/reference/create-refund); the docs give no meaning
+  for any of them and no insufficient-balance error. Create-refund needs
+  `refunds.write`, and its documented errors are 409 for a duplicate and 422
+  for a missing field, each with `status`, `title`, `detail`, and `field` when
+  a field is at fault. Treating a 422 as a refusal and `queued` as a low
+  balance is therefore an assumption, held in §6 as copy fallbacks.
+- **Unsupported currency.** Not documented as a 422. The Methods API says "If
+  supplied, only payment methods that support the amount and currency are
+  returned" (https://docs.mollie.com/reference/list-methods) and documents only
+  400 and 429. The adapter answers `unsupported` for a 422 and for an empty
+  list alike (§3, Decision 4).
+- **Revocation and re-prompt.** `DELETE https://api.mollie.com/oauth2/tokens`
+  with Basic client credentials, `token_type_hint` and `token`, answers 204;
+  "Revoking a refresh token revokes all access tokens that were created using
+  the same authorization" (https://docs.mollie.com/reference/oauth-revoke-tokens).
+  The schema says JSON while the example is form-encoded. `approval_prompt` is
+  `auto` (default) or `force`; `force` shows the consent screen, and "if a
+  merchant creates a new authorization after a forced prompt, previously
+  active authorizations will be revoked"
+  (https://docs.mollie.com/reference/oauth2/authorize). The authorize URL is
+  `https://my.mollie.com/oauth2/authorize` with `client_id`, `state`, `scope`
+  (space-separated) and `response_type=code` required.
+- **BLIK's expiry.** Not in the expiry table
+  (https://docs.mollie.com/docs/handling-payment-status). Its page gives a
+  "Session timeout: 55 seconds" (https://docs.mollie.com/docs/blik); for the
+  other methods checked, the session timeout equals the table's expiry.
+- **Payout scope.** Wrong as stated. "Each balance is linked to a profile" and
+  "Payments processed with a profile's API key are credited to the balance
+  linked to that profile"; each balance can have its own bank account and
+  payout settings (https://docs.mollie.com/docs/balance). The docs do not say
+  whether two profiles may share one balance.
+- **`localhost` and `embed=refunds`.** Holds: "The webhookUrl must be reachable
+  from Mollie's point of view, so you cannot use `localhost`"
+  (https://docs.mollie.com/reference/create-payment). `embed` takes `captures`,
+  `refunds`, `chargebacks`, and Get payment lists only `payments.read`
+  (https://docs.mollie.com/reference/get-payment); `refunds.read` is still
+  requested in case.
+- **Refresh-token rotation.** Not documented. A refresh returns "The newly
+  generated access token and refresh token", "The refresh token does not
+  expire", and nothing says the old one is invalidated
+  (https://docs.mollie.com/reference/oauth-generate-tokens). §2 stores whatever
+  comes back. A revoked grant answers `invalid_grant` on the next refresh
+  (https://docs.mollie.com/docs/connect-manage-merchants); the HTTP status of
+  that answer is not documented.
+- **PayPal pay-later.** It can appear and no switch is documented; PayPal is
+  off the allowlist (Decision 3).
+- **Chargebacks.** (a) The payment carries `amountChargedBack`: "The total
+  amount that was charged back for this payment. Only available when the total
+  charged back amount is not zero"; the docs do not say that `status` changes,
+  and its values stay `open`, `pending`, `authorized`, `paid`, `canceled`,
+  `expired`, `failed`, so a charged-back payment can still read `paid`
+  (https://docs.mollie.com/reference/get-payment). (b) Yes: "the webhook will
+  be called when ... A chargeback is received on the payment"
+  (https://docs.mollie.com/reference/webhooks). (c) `embed=chargebacks`
+  exists on Get payment, which needs `payments.read`; listing a payment's
+  chargebacks also needs `payments.read` only
+  (https://docs.mollie.com/reference/list-payment-chargebacks).
 
 ## Out of scope
 
@@ -437,5 +494,4 @@ the teacher reopens by hand if they want to chase it); a retry policy
   (the cross-session test fails); remove the partial unique index (the
   double-click test fails); make `markPaymentNotCharged` accept `paid` (its
   refusal test fails).
-- **Manual, before merge:** one real connect against Mollie test mode, and the
-  PayPal pay-later check (Decision 3).
+- **Manual, before merge:** one real connect against Mollie test mode.
