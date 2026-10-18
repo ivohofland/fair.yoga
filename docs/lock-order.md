@@ -269,10 +269,10 @@ client embeds), which is not in git; read past it.
 - `src/services/processor-token.ts:112`, `getAccessToken`'s `invalid_grant`
   lock on one `ProcessorConnection` row (#896) — "The `ProcessorConnection`
   row is a leaf lock" below;
-- `src/services/processor-attempts.ts:520` and `src/services/payments.ts:322`,
+- `src/services/processor-attempts.ts:542` and `src/services/payments.ts:322`,
   `syncAttempt`'s and `reopenInTransaction`'s lock on one `Payment` row (#896)
   — "The `Payment` row is a Mollie sync's gate" below;
-- `src/services/processor-refunds.ts:92` and `:181`, `refundAttempt`'s lock on
+- `src/services/processor-refunds.ts:137` and `:324`, `refundAttempt`'s lock on
   one `Payment` row in its intent's transaction and in the one that stores
   Mollie's answer (#896) — the same section.
 
@@ -1069,8 +1069,7 @@ remaining twenty-three are transactions arming it:
   optional `TeacherStudent` lock and its `Payment` lock;
 - `refundAttempt`'s two transactions (`processor-refunds.ts`, #896): the
   intent's, before its `Payment` lock, and the one storing Mollie's answer,
-  before its `Payment` lock or, for an ask-again that completes there,
-  `reopenInTransaction`'s link lock;
+  before its optional `TeacherStudent` lock and its `Payment` lock;
 - `reserveHandoffComparisons` (`src/lib/auth/handoff.ts`, #767), the
   handoff-code budget reservation, before its `HandoffAttemptBudget` row lock.
 
@@ -1804,7 +1803,7 @@ completes, and then before the payment (the same section).
 payment unlocked, then takes `TeacherStudent`, then locks the `Payment` row
 `FOR UPDATE` and writes it. `syncAttempt` takes `TeacherStudent` only when it
 may complete a refund that reopens, and then first; `refundAttempt`'s second
-transaction likewise, through `completeRefund`. All four take the link
+transaction likewise, with `lockTeacherStudentLink` itself. All four take the link
 before any `Payment` row lock, which is the position the canonical line gives
 it. The
 booking paths are unchanged in order (`… → Registration → TeacherStudent`, then
@@ -1854,13 +1853,15 @@ transaction opens. So no erasure transaction holds `Payment` and
 
     git grep -n -E '(lockTeacherStudentLink|activateTeacherStudentLink|linkTeacherStudent)\(' -- src ':!*.test.ts'
 
-On 2026-10-18 it returned 16 lines = 3 definitions + 2 calls inside
+On 2026-10-18 it returned 17 lines = 3 definitions + 2 calls inside
 `roster-link.ts` (`linkTeacherStudent` → `activateTeacherStudentLink` →
-`lockTeacherStudentLink`) + 11 call sites:
+`lockTeacherStudentLink`) + 12 call sites:
 
 - `lockTeacherStudentLink` directly: `archiveStudent` (twice — its
   transaction, and the re-read after a waive miss), `reopenInTransaction`'s
-  body (`payments.ts`), `syncAttempt` (`processor-attempts.ts`, #896);
+  body (`payments.ts`), `syncAttempt` (`processor-attempts.ts`, #896),
+  `refundAttempt`'s answer transaction for an ask-again it completes
+  (`processor-refunds.ts`, #896);
 - `activateTeacherStudentLink` directly: the roster add in `POST
   /api/registrations` (`'missing'` rolls the registration back);
 - `linkTeacherStudent`: the self-booking branch of `POST /api/registrations`,
@@ -2601,8 +2602,9 @@ cannot cycle.
 
 **A refund takes the same gate, in two transactions with its Mollie calls
 between them.** `refundAttempt` (`src/services/processor-refunds.ts`) calls
-`getAccessToken` and `createRefund` after its first transaction commits and
-before its second opens, so no lock is held across either:
+`getAccessToken`, `createRefund` and, to reconcile an intent whose outcome is
+unknown, `getPayment` after its first transaction commits and before its
+second opens, so no lock is held across any of them:
 
 1. the intent: `setLockTimeout`, then the payment's `FOR UPDATE`, a plain read
    of the attempt, and the `ProcessorRefund` insert — no other row lock. The
@@ -2611,20 +2613,33 @@ before its second opens, so no lock is held across either:
    `FOR NO KEY UPDATE` does not conflict with it. A second intent for the
    same payment waits on the payment's lock, then meets the first one's
    committed row in `ProcessorRefund_one_live_per_attempt`;
-2. storing Mollie's answer: `setLockTimeout`, then the payment's `FOR UPDATE`,
-   then `completeRefund` when Mollie answered `refunded`, then the `UPDATE` of
-   its own refund row. An ask-again that Mollie answered `refunded` skips that
-   first lock and calls `completeRefund` first instead, whose
-   `reopenInTransaction` takes the `TeacherStudent` link and then the payment.
-   Either way the order is this section's
+2. storing Mollie's answer: `setLockTimeout`, then — only for an ask-again
+   that Mollie answered `refunded` — the pair's `TeacherStudent` link with
+   `lockTeacherStudentLink`, then the payment's `FOR UPDATE`, a re-read of its
+   own refund row (left alone when a sync adopted a Mollie refund into it
+   meanwhile), `completeRefund` when Mollie answered `refunded`, a
+   `refund_failed` insert when it answered `failed`, then the `UPDATE` of the
+   refund row. `completeRefund`'s `reopenInTransaction` re-locks rows this
+   transaction already holds. The order is this section's
    `[TeacherStudent →] Payment → ProcessorPayment → ProcessorRefund`.
 
-Its withdrawal — after a refusal, no answer, no usable token or no Mollie
-configuration — deletes the intent's own row by id, outside any transaction
-and without the payment's lock. That row has no Mollie id yet, so no sync can
-reach it (`syncAttempt` writes refund rows only by Mollie id); the one other
-reader, a sync counting the attempt's rows still awaiting an id, reads it
-unlocked.
+Its withdrawal — when no refund can exist at Mollie, or when Mollie lists none
+for an intent whose outcome was unknown — deletes the intent's own row by id,
+and only while its `processorRefundId` is still null, outside any transaction
+and without the payment's lock. A row with no Mollie id is reachable by a sync
+only through adoption, an `updateMany` under the payment's lock guarded by the
+same `processorRefundId IS NULL`, so the delete and an adoption exclude each
+other on the row itself: whichever writes first, the other matches nothing.
+
+**A sync adopts a refund into an intent that never stored its Mollie id.**
+`syncAttempt`'s refund loop, for a Mollie refund no row holds, reads the
+attempt's rows still awaiting an id and, when `adoptionFor`
+(`src/services/refund-adoption.ts`) names one, writes the Mollie id onto it
+(that guarded `updateMany`) and processes it as a stored row — all after the
+payment's lock, at step 3 of the order above. The pre-read that decides the
+link lock counts the row it would adopt, so an adopted ask-again that completes
+was met by a sync that started with the link; one adopted between the pre-read
+and the lock is deferred like any other.
 
 No test fails when `createRefund` moves inside the intent's transaction: a
 lock held across a network call is invisible to `processor-refunds.test.ts`,
@@ -2633,21 +2648,22 @@ whose client answers at once. Measured on 2026-10-18 by making that move
 
 **`ProcessorPayment` and `ProcessorRefund` rows sit after `Payment`.** Every
 statement that writes an existing attempt or refund row runs with that
-attempt's `Payment` row locked first: this transaction, `refundAttempt`'s
-second, and `reopenInTransaction` and `completeRefund` inside either — except
-`refundAttempt`'s withdrawal, for the reason above. `createAttempt` inserts
+attempt's `Payment` row locked first: this transaction (its adoption
+included), `refundAttempt`'s second, and `reopenInTransaction` and
+`completeRefund` inside either — except `refundAttempt`'s withdrawal, for the
+reason above. `createAttempt` inserts
 a new attempt and `refundAttempt`'s intent a new refund, neither of which
 another transaction can hold. A new writer of either table takes the
 payment's row first. The writers, re-derived on 2026-10-18 with
 
     git grep -nE 'processor(Payment|Refund)\.(update|updateMany|upsert|delete|deleteMany)\(' -- src ':!*.test.ts'
 
-returned 7 lines = 4 in `processor-attempts.ts` (`completeRefund`'s waive
+returned 8 lines = 5 in `processor-attempts.ts` (`completeRefund`'s waive
 releasing the attempt, and `syncAttempt`'s attempt write, its settle's
-`settledPayment` write and its refund-status write) + 2 in
-`processor-refunds.ts` (`refundAttempt`'s withdrawal and its refund-row write)
-+ 1 in `payments.ts` (`reopenInTransaction` releasing a refunded attempt). The
-arithmetic: 4 + 2 + 1 = 7.
+`settledPayment` write, its adoption's Mollie-id write and its refund-status
+write) + 2 in `processor-refunds.ts` (`refundAttempt`'s withdrawal and its
+refund-row write) + 1 in `payments.ts` (`reopenInTransaction` releasing a
+refunded attempt). The arithmetic: 5 + 2 + 1 = 8.
 No statement in `src/` deletes a `ProcessorConnection` or `Payment` row
 (`git grep -nE 'processorConnection\.(delete|deleteMany)\(|payment\.(delete|deleteMany)\(' -- src ':!*.test.ts'`
 returns nothing), so no foreign-key action (`connectionId`'s `SET NULL`, the
