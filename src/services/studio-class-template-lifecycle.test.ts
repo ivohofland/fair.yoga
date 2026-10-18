@@ -1396,6 +1396,22 @@ describe('updateStudioClassTemplate (DB)', () => {
   // teardown — it cannot rely on sitting past the counter's ceiling.
   let counter = 0;
 
+  /**
+   * Pins the clock at 12:00 UTC on today's UTC date, for the probe cases whose
+   * answer turns on what happens to today's occurrence. `Date` only: the
+   * database client and its pool keep their real timers.
+   */
+  function clockAtNoonToday(): void {
+    const today = new Date();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(
+      new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 12)),
+    );
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
   const makeTemplate = async (owner: string, classType: string) => {
     counter += 1;
     return prisma.studioClassTemplate.create({
@@ -1796,13 +1812,12 @@ describe('updateStudioClassTemplate (DB)', () => {
    * Getting this wrong lands the prediction EARLIER than the sweep delivers,
    * which is the dishonest direction.
    *
-   * `23:59` so the first candidate survives the probe's past-start filter on
-   * most runs; when it does not, the answer moves a week for a reason that has
-   * nothing to do with what this pins. The block's own `makeTemplate` walks
-   * its slots up from `'09:30'` an hour at a time, and that filter fires on
-   * any of them for most of the day. `23:59` is the last start a calendar day
-   * has, so only a run within `CLASS_GENERATION_INTERVAL_MS` of it, where the
-   * filter judges, drops today's candidate.
+   * `23:59` with the clock pinned by `clockAtNoonToday()`, so the probe's
+   * instant, one `CLASS_GENERATION_INTERVAL_MS` after the pin, falls before
+   * today's start and the past-start filter cannot drop today's candidate:
+   * only the holder can. The block's own `makeTemplate` walks its slots up
+   * from `'09:30'` an hour at a time, so its starts would not keep that
+   * margin.
    *
    * Both halves asserted: the week it IS and the week it is NOT, because the
    * failure is off by exactly one week and `not.toBe` alone would pass for any
@@ -1815,6 +1830,7 @@ describe('updateStudioClassTemplate (DB)', () => {
    * here cannot become a create-time failure there.
    */
   it('declines a date a live class from the other family holds, and names the week after', async () => {
+    clockAtNoonToday();
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const t = await prisma.studioClassTemplate.create({
       data: {
@@ -1971,14 +1987,12 @@ describe('updateStudioClassTemplate (DB)', () => {
    *
    * All three inputs are deliberate and none can drift with the calendar:
    *
-   *   - `dayOfWeek` is TODAY's UTC weekday, so today is the first occurrence
-   *     `probeHorizon` enumerates — unless the next sweep's instant has
-   *     already crossed UTC midnight, and then the enumeration starts after
-   *     today. Either way today is not named.
+   *   - `dayOfWeek` is TODAY's UTC weekday and the clock is pinned by
+   *     `clockAtNoonToday()`, so today is the first occurrence `probeHorizon`
+   *     enumerates.
    *   - `startTime` is `'00:00'` and this block's teacher is pinned to UTC, so
    *     the start instant for today is today's midnight UTC, never strictly
-   *     after the next sweep's instant. Today is dropped on every run, at every
-   *     hour, rather than only after some cutoff. It is also the opposite
+   *     after the next sweep's instant, whatever the clock reads. It is also the opposite
    *     arrangement from the two cross-family cases above, which pick `23:59`
    *     to keep today's occurrence alive.
    *   - No entry exists for this rule, so no week is held and the answer is
@@ -1990,6 +2004,7 @@ describe('updateStudioClassTemplate (DB)', () => {
    * other wrong answer.
    */
   it('drops an occurrence whose start has already passed, and names the week after', async () => {
+    clockAtNoonToday();
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const t = await prisma.studioClassTemplate.create({
       data: {
