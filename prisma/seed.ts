@@ -191,7 +191,6 @@ async function main() {
       defaultVatPercent: 9,
       defaultTimezone: 'Europe/Amsterdam',
       classReminder: 'morning_of',
-      paymentLevel: 'LEVEL_1',
       bankAccounts: { create: { currency: 'EUR', holderName: 'I. Hofland', iban: 'NL91ABNA0417164300' } },
     },
   });
@@ -207,7 +206,6 @@ async function main() {
       currency: 'GBP',
       defaultTimezone: 'Europe/London',
       classReminder: 'evening_before',
-      paymentLevel: 'LEVEL_1',
       paymentLink: 'https://monzo.me/sarahmitchell',
       // Sort code 12-34-56, stored as its digits.
       bankAccounts: {
@@ -238,7 +236,6 @@ async function main() {
       currency: 'USD',
       defaultTimezone: 'America/Los_Angeles',
       classReminder: 'evening_before',
-      paymentLevel: 'LEVEL_1',
       bankAccounts: {
         create: { currency: 'USD', holderName: 'M. Chen', routingNumber: '021000021', accountNumber: '1234567' },
       },

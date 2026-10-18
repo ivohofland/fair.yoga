@@ -59,7 +59,10 @@ describe('shouldPush', () => {
 
   it('covers every teacher type', () => {
     expect(Object.keys(TEACHER_PUSH_GROUP).sort()).toEqual(
-      ['booking_confirmed', 'class_cancelled', 'class_reminder', 'payment_request', 'teacher_invitation'],
+      [
+        'booking_confirmed', 'class_cancelled', 'class_reminder', 'payment_charged_back', 'payment_paid_twice',
+        'payment_request', 'processor_disconnected', 'refund_failed', 'teacher_invitation',
+      ],
     );
   });
 });
@@ -81,6 +84,11 @@ const STUDENT_COLUMN_FOR = {
   booking_confirmed: null,
   booking_cancelled: null,
   payment_received: null,
+  payment_refunded: 'pushPayments',
+  processor_disconnected: null,
+  payment_paid_twice: null,
+  payment_charged_back: null,
+  refund_failed: null,
 } as const satisfies Record<NotificationType, keyof StudentPushPrefs | null>;
 
 const TEACHER_COLUMN_FOR = {
@@ -89,6 +97,11 @@ const TEACHER_COLUMN_FOR = {
   payment_request: 'pushClassCompleted',
   class_reminder: 'pushClassReminders',
   teacher_invitation: 'pushInvitations',
+  processor_disconnected: 'pushClassCompleted',
+  payment_paid_twice: 'pushClassCompleted',
+  payment_charged_back: 'pushClassCompleted',
+  refund_failed: 'pushClassCompleted',
+  payment_refunded: null,
   waitlist_promoted: null,
   spot_available: null,
   spot_taken: null,

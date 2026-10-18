@@ -36,6 +36,11 @@ export const STUDENT_PUSH_GROUP = {
   booking_confirmed: 'never',
   booking_cancelled: 'never',
   payment_received: 'never',
+  payment_refunded: 'payments',
+  processor_disconnected: 'never',
+  payment_paid_twice: 'never',
+  payment_charged_back: 'never',
+  refund_failed: 'never',
 } as const satisfies Record<NotificationType, StudentPushGroup | 'never'>;
 
 export const TEACHER_PUSH_GROUP = {
@@ -44,6 +49,10 @@ export const TEACHER_PUSH_GROUP = {
   payment_request: 'classCompleted',
   class_reminder: 'classReminders',
   teacher_invitation: 'invitations',
+  processor_disconnected: 'classCompleted',
+  payment_paid_twice: 'classCompleted',
+  payment_charged_back: 'classCompleted',
+  refund_failed: 'classCompleted',
 } as const satisfies Record<TeacherNotificationType, TeacherPushGroup>;
 
 export const STUDENT_PUSH_COLUMN = {
