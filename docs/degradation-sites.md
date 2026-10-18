@@ -677,8 +677,9 @@ client, since the pay page will keep hiding Mollie until it does.
 **What happened.** Mollie answered `invalid_grant` to the refresh token stored
 for `connectionId` (`getAccessToken`, `src/services/processor-token.ts`). The
 connection was revoked in the same transaction: both tokens nulled, `revokedAt`
-set, and the teacher got a `processor_disconnected` notification. Students see
-the teacher's other payment options until the teacher reconnects.
+set. The teacher got a `processor_disconnected` notification only when the
+connection was not already disconnected. Students see the teacher's other
+payment options until the teacher reconnects.
 
 **Where the bad value lives.** Mollie's side: the teacher revoked this app's
 access in their Mollie dashboard, or Mollie revoked the grant.
@@ -724,8 +725,8 @@ Samples across every connection mean the key is wrong. A sample for one
 connection means that row is damaged.
 
 **Correct.** For a wrong key, restore the key the rows were sealed with and
-restart; nothing in the database changes. For one damaged row, run the statement below, then the teacher reconnects Mollie in Settings →
-Profile.
+restart; nothing in the database changes. For one damaged row, run the
+statement below, then the teacher reconnects Mollie in Settings → Profile.
 
 ```sql
 UPDATE "ProcessorConnection"

@@ -2,12 +2,14 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomBytes } from 'node:crypto';
 
 vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
+vi.mock('./processor-methods-cache', () => ({ forgetOfferedMethods: vi.fn() }));
 
 import { createPrismaClient } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
 import type { PrismaClient } from '@/lib/prisma-client';
 import { MollieUnavailable, type MollieClient } from '@/lib/mollie/client';
 import { openToken, sealToken } from '@/lib/processor-token-cipher';
+import { forgetOfferedMethods } from './processor-methods-cache';
 import { uniqueSuffix } from '../../tests/helpers';
 import { getAccessToken, sealGrant } from './processor-token';
 import type { MollieDeps } from './mollie-deps';
@@ -108,6 +110,7 @@ describe('getAccessToken', () => {
     expect(row).toMatchObject({ accessToken: null, refreshToken: null, disconnectedAt: now, revokedAt: now });
     expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(1);
     expect(degradations().map((d) => d.code)).toContain('PROCESSOR_DISCONNECTED');
+    expect(forgetOfferedMethods).toHaveBeenCalledWith(c.id);
   });
   it('answers unavailable and leaves the connection alone when Mollie is down', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
@@ -159,6 +162,7 @@ describe('getAccessToken', () => {
     expect(row.revokedAt).toBeNull();
     expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
     expect(degradations().map((d) => d.code)).not.toContain('PROCESSOR_DISCONNECTED');
+    expect(forgetOfferedMethods).not.toHaveBeenCalled();
   });
   it('keeps an existing disconnectedAt and tells the teacher nothing new on invalid_grant', async () => {
     const earlier = new Date(now.getTime() - 86_400_000);
@@ -189,5 +193,35 @@ describe('getAccessToken', () => {
     } as unknown as PrismaClient;
     expect(await getAccessToken(lagging, deps, c.id, now)).toEqual({ kind: 'token', accessToken: 'a2' });
     expect(fake.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the teacher nothing when their own disconnect commits while invalid_grant waits on the row', async () => {
+    const earlier = new Date(now.getTime() - 60_000);
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });
+    let locked!: () => void;
+    const lockedP = new Promise<void>((r) => (locked = r));
+    let release!: () => void;
+    const releaseP = new Promise<void>((r) => (release = r));
+    const holder = prisma.$transaction(async (tx) => {
+      await tx.processorConnection.update({ where: { id: c.id }, data: { disconnectedAt: earlier, revokeAfter: earlier } });
+      locked();
+      await releaseP;
+    });
+    await lockedP;
+    const lookup = getAccessToken(prisma, deps, c.id, now);
+    for (let i = 0; i < 100; i++) {
+      const waiting = await prisma.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND query LIKE '%ProcessorConnection%' AND pid <> pg_backend_pid()`;
+      if ((waiting[0]?.n ?? 0) > 0) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    release();
+    await holder;
+    expect(await lookup).toEqual({ kind: 'disconnected' });
+    const row = await prisma.processorConnection.findUniqueOrThrow({ where: { id: c.id } });
+    expect(row).toMatchObject({ disconnectedAt: earlier, revokedAt: now });
+    expect(await prisma.notification.count({ where: { recipientId: teacherId, type: 'processor_disconnected' } })).toBe(0);
   });
 });

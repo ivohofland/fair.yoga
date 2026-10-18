@@ -98,20 +98,21 @@ async function refreshOnce(
 
   if (answer.kind === 'invalid_grant') {
     const disconnected = await db.$transaction(async (tx) => {
-      // One statement keeps an existing `disconnectedAt` (COALESCE) and hands
-      // back whether there was one; it applies only while the row still holds
-      // the refresh token Mollie refused.
-      const changed = await tx.$queryRaw<{ wasDisconnected: boolean }[]>`
-        UPDATE "ProcessorConnection" AS c
-           SET "accessToken" = NULL, "refreshToken" = NULL, "accessTokenExpiresAt" = NULL,
-               "disconnectedAt" = COALESCE(c."disconnectedAt", ${now}),
-               "revokeAfter" = NULL, "revokedAt" = ${now}
-          FROM "ProcessorConnection" AS old
-         WHERE c.id = ${connectionId} AND old.id = c.id
-           AND c."revokedAt" IS NULL AND c."refreshToken" = ${sealedRefresh}
-        RETURNING (old."disconnectedAt" IS NOT NULL) AS "wasDisconnected"`;
-      const [first] = changed;
+      // The row is locked before `disconnectedAt` is read, so a disconnect
+      // that commits while this waits is seen; the refresh token it still
+      // holds is the one Mollie refused, or a newer grant has won.
+      const [first] = await tx.$queryRaw<{ wasDisconnected: boolean }[]>`
+        SELECT ("disconnectedAt" IS NOT NULL) AS "wasDisconnected"
+          FROM "ProcessorConnection"
+         WHERE id = ${connectionId} AND "revokedAt" IS NULL AND "refreshToken" = ${sealedRefresh}
+           FOR UPDATE`;
       if (first === undefined) return false;
+      await tx.$executeRaw`
+        UPDATE "ProcessorConnection"
+           SET "accessToken" = NULL, "refreshToken" = NULL, "accessTokenExpiresAt" = NULL,
+               "disconnectedAt" = COALESCE("disconnectedAt", ${now}),
+               "revokeAfter" = NULL, "revokedAt" = ${now}
+         WHERE id = ${connectionId}`;
       if (!first.wasDisconnected) {
         await createNotification(tx, {
           recipientType: 'teacher',

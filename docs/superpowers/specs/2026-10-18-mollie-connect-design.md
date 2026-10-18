@@ -308,8 +308,8 @@ leaving the byte.
 `getAccessToken(db, connectionId)` answers a live token or a typed
 `disconnected` result — refresh when within 5 minutes of expiry, single-flight
 per connection; `invalid_grant` runs Decision 14 in one transaction (the
-grant is already dead, so: null tokens, stamp `disconnectedAt` unless it is
-set and `revokedAt`, all only while the row still holds the refresh token that
+grant is already dead, so: null tokens, stamp `revokedAt`, and stamp `disconnectedAt`
+only if it is not already set, all only while the row still holds the refresh token that
 got `invalid_grant`; `processor_disconnected` notification only when the
 connection was not already disconnected), then `logDegraded`. A network failure is not `invalid_grant`: it degrades that one
 call and leaves the connection alone.
