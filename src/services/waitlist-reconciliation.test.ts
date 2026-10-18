@@ -1383,7 +1383,7 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // pg-pool's wait timeout classifies `pool_exhausted`, which logs at `error` — spied so
     // the real line does not leak into test output. This test asserts only
     // the streak, not the log level.
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
@@ -1432,7 +1432,7 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // pg-pool's wait timeout classifies `pool_exhausted`, which logs at `error` — spied so
     // the real line does not leak into test output. This test asserts only
     // the streak, not the log level.
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
@@ -1499,7 +1499,7 @@ describe('reconcileWaitlists (DB)', () => {
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const debug = vi.spyOn(log, 'debug').mockImplementation(() => undefined);
-    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // pg-pool's wait timeout classifies `pool_exhausted`, which logs at `error` — spied so
     // the real line does not leak into test output. This test asserts only
     // the streak, not the log level.
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
@@ -1714,7 +1714,7 @@ describe('reconcileWaitlists (DB)', () => {
    * pino to stdout with no transport, so nothing pages anyone off either level
    * (`DEPLOYMENT.md` §7); the level is the correct classification for when that is fixed.
    *
-   * `P2028` (`tx_budget`), not `P2024`: this is the site the kind's own level
+   * `P2028` (`tx_budget`), not `pool_exhausted`: this is the site the kind's own level
    * would otherwise defeat the point of — `pool_exhausted` logs at `error`
    * from tick 1, which would make the `stuck` override at tick 5 untestable by
    * level. `tx_budget` logs at `warn` on its own, so ticks 1–4 at `warn` and
@@ -1799,7 +1799,7 @@ describe('reconcileWaitlists (DB)', () => {
     const streaks = createReconciliationStreaks();
 
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    // `P2024` classifies `pool_exhausted`, which logs at `error` — spied so
+    // pg-pool's wait timeout classifies `pool_exhausted`, which logs at `error` — spied so
     // the real line does not leak into test output. This test asserts only
     // the streak, not the log level.
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
