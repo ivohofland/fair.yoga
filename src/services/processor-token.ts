@@ -3,6 +3,7 @@ import { MollieUnavailable, type TokenAnswer, type TokenGrant } from '@/lib/moll
 import { openToken, sealToken, TokenCipherError } from '@/lib/processor-token-cipher';
 import { logDegraded } from '@/lib/degradation';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
+import { maskOrganizationId } from '@/lib/processor-liveness';
 import { createNotification } from './notifications';
 import { forgetOfferedMethods } from './processor-methods-cache';
 import type { MollieDeps } from './mollie-deps';
@@ -105,8 +106,8 @@ async function refreshOnce(
       // The row is locked before `disconnectedAt` is read, so a disconnect
       // that commits while this waits is seen; the refresh token it still
       // holds is the one Mollie refused, or a newer grant has won.
-      const [first] = await tx.$queryRaw<{ wasDisconnected: boolean }[]>`
-        SELECT ("disconnectedAt" IS NOT NULL) AS "wasDisconnected"
+      const [first] = await tx.$queryRaw<{ wasDisconnected: boolean; organizationId: string }[]>`
+        SELECT ("disconnectedAt" IS NOT NULL) AS "wasDisconnected", "organizationId"
           FROM "ProcessorConnection"
          WHERE id = ${connectionId} AND "revokedAt" IS NULL AND "refreshToken" = ${sealedRefresh}
            FOR UPDATE`;
@@ -118,6 +119,12 @@ async function refreshOnce(
                "revokeAfter" = NULL, "revokedAt" = ${now}
          WHERE id = ${connectionId}`;
       if (!first.wasDisconnected) {
+        // The identity left as a disconnect leaves it, so a resume after a
+        // pause can say why Mollie dropped out of the details. No payout
+        // notice: the notification below already tells the teacher.
+        await tx.payoutChangeEvent.create({
+          data: { teacherId, kind: 'processor_disconnected', before: maskOrganizationId(first.organizationId), after: null },
+        });
         await createNotification(tx, {
           recipientType: 'teacher',
           recipientId: teacherId,

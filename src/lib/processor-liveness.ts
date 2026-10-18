@@ -14,6 +14,16 @@ export const MOLLIE_SCOPES = [
  */
 export type LiveIdentity = { organizationId: string; profileId: string };
 
+/** `org_…` and the id's last four characters. */
+export function maskOrganizationId(id: string): string {
+  return `org_…${id.slice(-4)}`;
+}
+
+/** `pfl_…` and the id's last four characters. */
+export function maskProfileId(id: string): string {
+  return `pfl_…${id.slice(-4)}`;
+}
+
 /**
  * The connection's payout identity while it is live — not disconnected, and
  * with a profile chosen — else null, as for no connection at all. Live as

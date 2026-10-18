@@ -12,6 +12,7 @@ import { hashToken } from '@/lib/auth/magic-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { MollieUnavailable, createMollieClient, type MollieClient, type MollieProfile, type TokenGrant } from '@/lib/mollie/client';
 import { openToken } from '@/lib/processor-token-cipher';
+import { maskOrganizationId, maskProfileId } from '@/lib/processor-liveness';
 import { logDegraded } from '@/lib/degradation';
 import { log } from '@/lib/log';
 import { forgetOfferedMethods } from './processor-methods-cache';
@@ -27,8 +28,6 @@ import {
   chooseProfile,
   completeConnect,
   disconnect,
-  maskOrganizationId,
-  maskProfileId,
   payoutIdentityLabel,
   readConnectionView,
   revokeConnection,
