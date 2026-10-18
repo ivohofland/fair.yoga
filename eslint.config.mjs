@@ -236,9 +236,9 @@ const eslintConfig = defineConfig([
       ],
     },
   },
-  // The engine probe is CommonJS by construction (`.cjs`) and uses `require`.
+  // The client probe is CommonJS by construction (`.cjs`) and uses `require`.
   {
-    files: ['scripts/prisma-engine-probe.cjs'],
+    files: ['scripts/prisma-client-probe.cjs'],
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
   // docs/ holds the vendored design-system reference (prototype JSX, generated

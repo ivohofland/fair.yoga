@@ -828,50 +828,97 @@ and check the exit code.
 ### Prisma's engine in the images
 
 `docker-build` in `.github/workflows/ci.yml` starts both images far enough to
-prove Prisma's engine loads, and runs every container with `--network none`.
-Reason, measured 2026-09-30 on `node:24-alpine`, arm64, Prisma 6.19.3: given
-network access, when the image's engine is missing, corrupt or unloadable,
-Prisma downloads a replacement from `binaries.prisma.sh` and then reports
-P1001 anyway, so a P1001 check passes without the image's engine ever having
-loaded. With `--network none` the same images fail (`EAI_AGAIN` on
-`binaries.prisma.sh`, exit 1). With libssl removed Prisma falls back to the
-`openssl-1.1.x` target and tries to download it, which also fails offline.
+prove the Prisma client loads in the runner and the schema engine in the
+migrate image, and runs every container with `--network none`.
+Reason for the migrate image, measured 2026-09-30 on `node:24-alpine`, arm64,
+Prisma 6.19.3: given network access, when the image's engine is missing,
+corrupt or unloadable, Prisma downloads a replacement from
+`binaries.prisma.sh` and then reports P1001 anyway, so a P1001 check passes
+without the image's engine ever having loaded. With `--network none` the same
+images fail (`EAI_AGAIN` on `binaries.prisma.sh`, exit 1). With libssl removed
+Prisma falls back to the `openssl-1.1.x` target and tries to download it,
+which also fails offline.
 Re-derive: build a scratch Dockerfile whose `migrate` stage `RUN rm`s the
 engine (the schema engine under
 `/app/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-*`
 plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
-without `--network none`.
+without `--network none`. In the runner, `--network none` is also what makes
+pg's connect fail at once with `ENETUNREACH`, the code the probe asserts.
 
-The runner image carries `@prisma/client` only as the runtime the bundle's
-external (`@prisma/client/runtime/library`) resolves to, under
-`/app/node_modules/.pnpm` with no top-level `/app/node_modules/@prisma` link,
-and no generated client outside the bundle: the client exists there only inside
-the Next bundle, with its engine traced to `/app/src/generated/prisma/`. Nothing outside the bundle can construct it, so
-`scripts/prisma-engine-probe.cjs` boots the real `/app/server.js` with
+**What the runner carries** (#885, client engine plus `@prisma/adapter-pg`).
+No Prisma `*.node`: the only native file in the image is sharp's, Next's
+image optimiser. The client exists only inside the Next bundle; what it loads
+from outside is `@prisma/client`'s client runtime and the query compiler's
+`query_compiler_bg.postgresql.js` and `query_compiler_bg.postgresql.wasm-base64.js`,
+and `pg` with `pg-pool`, `pg-protocol`, `pg-types` and `pg-connection-string`,
+all under `/app/node_modules/.pnpm`. The adapter is bundled. The bundle
+reaches `pg` as a hashed external, `pg-<hash>`, through the link
+`/app/.next-build/node_modules/pg-<hash>` →
+`../../node_modules/.pnpm/pg@<version>/node_modules/pg`, not through
+`/app/node_modules/pg`: removing that top-level link leaves the app working.
+Re-derive after `pnpm run build`:
+
+```bash
+find .next-build/standalone -name '*.node'
+find .next-build/standalone/node_modules -maxdepth 4 -type d -path '*pg*'
+find .next-build/standalone -name 'query_compiler_bg.postgresql*'
+grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u
+ls -l .next-build/standalone/.next-build/node_modules
+grep -nE '"(pg|@prisma/client)"' node_modules/next/dist/lib/server-external-packages.jsonc
+```
+
+The externals line prints `@prisma/client/runtime/client`,
+`@prisma/client/runtime/query_compiler_bg.postgresql.js` and
+`@prisma/client/runtime/query_compiler_bg.postgresql.wasm-base64.js`. The
+jsonc prints its `"@prisma/client"` and `"pg"` lines: Next externalises both
+by default, so the config sets no `serverExternalPackages`. The build log
+carries no `pg-native` or `query_compiler` warning. Measured 2026-10-18 on
+`node:24-alpine`, arm64, Prisma 6.19.3, Next 16.4.0.
+
+**The runner probe.** Nothing outside the bundle can construct the client, so
+`scripts/prisma-client-probe.cjs` boots the real `/app/server.js` with
 `DATABASE_URL` at `203.0.113.1` (RFC 5737, unroutable) and waits for the
 health route's log line whose `msg` is `health check: database probe failed`.
-It passes only when that line's error message is Prisma's
-can't-reach-database text, which can only come from an engine that loaded and
-tried the connection. That proves the bundle finds its own engine, which a
-`require` of a package copy beside the bundle never did.
+It passes only when that line's `err.type` is `PrismaClientKnownRequestError`
+and its `err.code` is `ENETUNREACH`: the bundle constructed a client, the
+client handed the query to the adapter, and pg tried the network. It reads
+`type` and `code` because the log withholds a Prisma error's message. Measured
+on the arm64 runner image, 2026-10-18.
 
-The bundle's external is re-derived after `pnpm run build` by
-`grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u`,
-which prints `@prisma/client/runtime/library` and nothing else. Measured
-2026-10-17 on `node:24-alpine`, arm64 locally and amd64 in CI, Prisma 6.19.3,
-Next 16.4.0.
+A module missing from the bundle is recognised differently, because the error
+it raises carries no code. The bundler wraps the failed load in its own
+`Failed to load external module <name>: …` error, which is not a Prisma error
+and is printed in full, so the probe looks for that text in the server's
+output. The probe's two failures, measured on scratch images `FROM` the
+runner, 2026-10-18, arm64:
 
-The probe matches the message, not a code, because the logged
-`PrismaClientInitializationError` carries none: the serializer takes `code`
-from `err.errorCode`, and a lazy-connect `$queryRaw` failure leaves that
-unset. Measured identically on an image built from `origin/main` at 7ec3c799,
-so it is not the generator's doing. Revisiting the P-codes and the serializer
-belongs to #885.
+- **No `pg`**: `RUN` removing `/app/node_modules/.pnpm/pg@<version>` (the
+  target of `/app/.next-build/node_modules/pg-*`). The server fails while
+  loading its instrumentation hook (`Failed to load external module
+  pg-<hash>: Error [ERR_MODULE_NOT_FOUND]: Cannot find package …`), never
+  answers, and the probe exits 1 with
+  `prisma-client-probe: a module failed to load at import, before the health route ran`.
+- **No query compiler**: `RUN find /app -name 'query_compiler_bg.postgresql.wasm-base64.js' -delete`.
+  The server starts; the health route's query logs a plain `Error` with no
+  `code` (`Failed to load external module @prisma/client-<hash>/runtime/query_compiler_bg.postgresql.wasm-base64.js: Error: Cannot find module …`),
+  and the probe exits 1 with
+  `prisma-client-probe: the Prisma client could not load a module it imports lazily (the query compiler): the bundle is missing it`.
+  So a `$queryRaw`, the health route's query, does load the compiler.
 
-Re-derive the runner probe: build a scratch image `FROM` the runner with
-`RUN rm /app/src/generated/prisma/*.node` and run the CI probe step on it. It fails with
-`prisma-engine-probe: the query engine did not load: the bundle has no engine for this platform`,
-followed by the server's own `Prisma Client could not locate the Query Engine`.
+Any other probe line fails with
+`prisma-client-probe: the health probe failed with type <type> and code <code>, expected PrismaClientKnownRequestError and ENETUNREACH`.
+
+**The reserved-slug gate** in the migrate image runs its own query against the
+same address; it prints the Known error with `code: 'ENETUNREACH'` and exits 1,
+which CI asserts. Dropping the stage's `COPY src/services/reserved-slug-holders.ts`
+makes it fail with `Error: Cannot find module '../src/services/reserved-slug-holders'`
+and no `ENETUNREACH`, so the step fails. Measured 2026-10-18, arm64.
+
+**Image sizes** (`docker image inspect -f '{{.Size}}' fairyoga fairyoga-migrate`,
+arm64, 2026-10-18): runner 108,697,551 bytes before #885 and 101,134,549
+after; migrate 442,044,754 before and 418,856,250 after. The runner's idle
+memory after its first `/api/health` (`docker stats --no-stream`) went from
+98.93 MiB to 107.1 MiB.
 
 ### The database image
 
