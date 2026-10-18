@@ -96,8 +96,8 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `lockTeacherForShare` arms the shared 2s `lock_timeout` for the whole
   // transaction, so every wait in it is bounded and an expiry answers the
   // generic, code-less 503 (issue 228 tracks a named one for the create
-  // paths). The client's interactive-transaction defaults (`maxWait`,
-  // `timeout`; `createPrismaClient`) can surface that same 503.
+  // paths). The client's `maxWait` (`createPrismaClient`) and Prisma's
+  // default `timeout` can surface that same 503.
   const outcome = await prisma.$transaction(async (tx) => {
     // The transaction's first lock (`docs/lock-order.md`, "The `Teacher` row
     // is the first lock (#758)"). The values it reads under that lock

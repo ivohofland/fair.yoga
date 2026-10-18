@@ -19,8 +19,7 @@ import { pgErrorOf } from '@/lib/pg-error';
 export function isCheckViolationOn(err: unknown, constraint: string): boolean {
   // An empty name would make the name half vacuous and collapse this to "is
   // this a 23514", which is the one match the docblock above exists to
-  // prevent. `isRestrictViolationOn` needs no such line because
-  // `[].includes(x)` is false; a string needs it.
+  // prevent.
   if (constraint === '') return false;
   const pg = pgErrorOf(err);
   return pg !== null && pg.sqlState === '23514' && pg.constraint === constraint;

@@ -103,12 +103,13 @@ const eslintConfig = defineConfig([
     },
   },
   // Refuses a direct import of the Prisma package (`@prisma/client` and every
-  // subpath of it) and of the generated output under `src/generated`,
-  // everywhere but the funnels listed in `ignores` below, which re-export the
-  // generated output.
+  // subpath of it), of the generated output under `src/generated`, and of
+  // `pg` and `@prisma/adapter-pg`, everywhere but the funnels listed in
+  // `ignores` below, which re-export the generated output and build the pool.
   // What this rule does not see, and why: docs/technical-architecture.md,
   // "Where Prisma comes from".
-  // `prisma-enums.ts` is exempt here too, and its own funnel pin refuses any other import.
+  // `prisma-enums.ts` is exempt from every group here; `prisma-client.test.ts`
+  // ("prisma funnel imports") refuses any other import in it.
   {
     files: ['**/*.ts', '**/*.tsx', '**/*.mts'],
     ignores: ['src/lib/prisma-client.ts', 'src/lib/prisma-enums.ts'],

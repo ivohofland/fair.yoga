@@ -1234,10 +1234,11 @@ exposure reopens for whichever pairing of template-driven writers is live.
 codes under "lost a contention race, not a bad request" (`isTransientDbError`,
 #174, checked after `terminalViolationOf`'s `23514` but before
 `P2002`'s 409 in `src/lib/api-errors.ts`). Reproduced directly rather than
-trusted (#196): two real `updateClass` writes racing over
-`Class_teacher_slot_unique` with no synchronisation, throwaway database, hit
-on attempt 5 of a 150-attempt budget, and `classifyApiError` answered 503,
-"The system was busy … Please try again". `updateClass`'s write is a model
+trusted (#196), measured on Prisma's library engine and against
+`Class_teacher_slot_unique`, a key #327 later replaced: two real `updateClass`
+writes racing with no synchronisation, throwaway database, hit on attempt 5 of
+a 150-attempt budget, and `classifyApiError` answered 503, "The system was
+busy … Please try again". On the client engine, `updateClass`'s write is a model
 call, so a `40P01` from it is a typed `DriverAdapterError` whose `cause`
 carries `originalCode: '40P01'`, and `transientDbFailure` reads the SQLSTATE
 there (`docs/technical-architecture.md`, "Database errors"). Both shapes of a
@@ -1251,7 +1252,8 @@ the one transaction there not at Read Committed is `getPlatformCounts`'s
 read-only Repeatable Read batch (`src/services/admin-metrics.ts`), and Postgres
 raises `40001` at Repeatable Read only when a write meets a concurrent update;
 none runs Serializable. Re-derive with
-`git grep -niE "isolationLevel|SERIALIZABLE|REPEATABLE READ" -- src ':!*.test.ts' ':!src/generated'`.
+`git grep -nwE "isolationLevel|Serializable|RepeatableRead|SERIALIZABLE|REPEATABLE READ" -- src ':!*.test.ts' ':!src/generated'`
+(case-sensitive and whole-word, so it prints only the one hit).
 
 What stays true regardless of which status code answers it: the cycle itself
 is not fixable by reordering, only classifiable once it happens. A transaction

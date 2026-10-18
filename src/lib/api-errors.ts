@@ -138,9 +138,10 @@ function terminalViolationOf(error: unknown): PgError | null {
  *   side. `docs/lock-order.md` ("The slot key is a wait edge, and the
  *   ascending-by-`id` rule cannot see it") owns which cycles are reachable
  *   and at what rate; this file owns only the kind.
- * - `serialization` (`40001`, `P2034`) — a serialization failure, on its raw
- *   shape (`40001`) or its typed one (`P2034`). Which code paths can raise
- *   one is `docs/lock-order.md`'s.
+ * - `serialization` (`40001`, `P2034`) — a serialization failure, read from
+ *   its SQLSTATE on either shape; `P2034` is matched as well, for a typed
+ *   error that carries no adapter cause. Which code paths can raise one is
+ *   `docs/lock-order.md`'s.
  * - `pool_exhausted` (pg-pool's wait timeout) — the connection pool handing
  *   out nothing in time. The pool timeout's shape, and which waits end as
  *   this kind rather than `tx_budget`: `docs/technical-architecture.md`,
@@ -249,9 +250,8 @@ function transientKindShallow(error: unknown): TransientKind | null {
  * `null` when the error is not one.
  *
  * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
- * adapter's shapes carries it (a typed call's `DriverAdapterError` or a raw
- * call's `P2010`); the shapes are in `docs/technical-architecture.md`,
- * "Database errors". Nothing here reads an error's text, so a message that
+ * adapter's shapes carries it; the shapes are in
+ * `docs/technical-architecture.md`, "Database errors". Nothing here reads an error's text, so a message that
  * merely quotes a SQLSTATE as a digit string (a postcode, an amount, an id
  * fragment) is never relabelled "the database is busy, try again", which
  * would be exactly the wrong advice. `terminalViolationOf` above reads its
@@ -310,11 +310,7 @@ export function isLockTimeout(error: unknown): boolean {
  * Lives beside `isTransientDbError` because it answers the same kind of
  * question — what does this thrown value MEAN — and splitting the two across
  * modules by who imports them would put the two halves of one lookup table in
- * two places. This module's own imports stay within that same table —
- * `isExclusionConflictOn` (`./exclusion-conflict`) is the shared DB-error
- * matcher `classifyApiError` reuses below rather than re-implementing, and it
- * in turn imports only `./pg-error` — so a service using this module for
- * classification alone still pulls in nothing web-framework-shaped.
+ * two places.
  */
 export function isRecordNotFound(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';

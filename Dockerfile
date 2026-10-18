@@ -62,9 +62,9 @@ COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
 COPY scripts/check-reserved-slugs.ts ./scripts/check-reserved-slugs.ts
 COPY src/services/reserved-slug-holders.ts ./src/services/reserved-slug-holders.ts
 COPY src/lib/reserved-slugs.ts ./src/lib/reserved-slugs.ts
-# The module the scripts and services above import. It imports the client
-# generated above, @prisma/adapter-pg and node:os; the adapter and pg are
-# already here, since this stage is built FROM deps.
+# The module the scripts and services above import. Its imports are pinned by
+# prisma-client.test.ts ("prisma funnel imports"); every non-relative one must
+# already be in deps, which this stage is built FROM.
 COPY src/lib/prisma-client.ts ./src/lib/prisma-client.ts
 CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm exec tsx scripts/check-reserved-slugs.ts"]
 

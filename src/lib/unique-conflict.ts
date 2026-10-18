@@ -20,8 +20,7 @@ export type UniqueConstraintName = (typeof UNIQUE_CONSTRAINTS)[number];
 
 /**
  * True when `err` carries a Postgres unique violation (`23505`) on one of
- * `names`, whether it arrived as a typed P2002, a raw P2010 or a bare
- * `DriverAdapterError`.
+ * `names`, whether it arrived as a typed P2002 or a raw P2010.
  *
  * Matched by name because two tables can share a column set and only the
  * name tells them apart: `Student.email` and the `Account.email` a ticket
@@ -31,9 +30,11 @@ export type UniqueConstraintName = (typeof UNIQUE_CONSTRAINTS)[number];
  * "Database errors".
  *
  * A name match is narrower than a column match: a collision on a name the
- * caller did not list falls past it. What that costs depends on the catch.
- * One that rethrows hands it to `classifyApiError`'s 409 fallback; one that
- * refuses it as unrecognised answers 500.
+ * caller did not list falls past it. What that costs depends on the catch
+ * and the shape. A rethrown typed P2002 reaches `classifyApiError`'s 409
+ * fallback; a rethrown raw P2010, or a catch that refuses the collision as
+ * unrecognised, answers 500 by design (`docs/technical-architecture.md`,
+ * "Database errors").
  *
  * When a caller has no use for telling two names apart, it lists both and
  * answers them alike. When a caller does need to tell two models' collisions
