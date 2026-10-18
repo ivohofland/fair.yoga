@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import type { SessionUser } from '@/lib/types';
 import { codedRefusal } from '@/lib/api-error-codes';
-import { expectApplied, expectRefusal } from '../../../../../../tests/api-assertions';
+import { expectApplied, expectRefusal, expectUnchanged } from '../../../../../../tests/api-assertions';
 
 const m = vi.hoisted(() => ({
   validateSession: vi.fn<(db: unknown, token: string) => Promise<SessionUser | null>>(),
@@ -57,6 +57,11 @@ describe('POST /api/payments/[id]/refund', () => {
 
     expect(await expectApplied(await POST(request(), ctx))).toEqual({ refundStatus: 'queued', outcomeApplied: false, payment: PAYMENT });
     expect(m.refundAttempt).toHaveBeenCalledWith(DB, DEPS, { paymentId: 'pay-1', attemptId: ATTEMPT_ID, choice: 'waive' });
+  });
+
+  it('answers unchanged with the payment row for an attempt already refunded', async () => {
+    m.refundAttempt.mockResolvedValue({ kind: 'unchanged' });
+    expect(await expectUnchanged(await POST(request(), ctx))).toEqual({ refundStatus: 'refunded', payment: PAYMENT });
   });
 
   it('passes a null choice through for a duplicate', async () => {

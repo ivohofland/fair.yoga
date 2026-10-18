@@ -32,3 +32,19 @@ beforeEach(() => {
   routerPush.mockClear();
   routerReplace.mockClear();
 });
+
+/**
+ * jsdom has `HTMLDialogElement` without `showModal`/`close`. These stand in
+ * for the attribute half of each: `open` set or removed, `close` fired. The
+ * top layer, the focus trap and Escape are the browser's and are not
+ * simulated; a test dispatches the dialog's `cancel` event itself.
+ */
+if (typeof HTMLDialogElement !== 'undefined' && typeof HTMLDialogElement.prototype.showModal !== 'function') {
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+}

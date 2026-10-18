@@ -141,11 +141,42 @@ describe('ReceivedPaymentRow', () => {
         renderWith([attempt()]);
 
         fireEvent.click(screen.getByRole('button', { name: /^Refund iDEAL/ }));
-        fireEvent.click(screen.getByRole('button', { name: 'Refund and waive' }));
+        fireEvent.click(screen.getByRole('radio', { name: 'Refund and waive' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Refund €14.00' }));
 
         expect(await screen.findByText('Refund pending')).toBeInTheDocument();
         await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(screen.getByText('Refund pending')).toHaveFocus();
+      });
+
+      it('shows a refund Mollie answered failed as failed, offering it again', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ data: { refundStatus: 'failed', outcomeApplied: false, payment: { id: 'pay-1' } } }), { status: 200 }),
+        ));
+        renderWith([attempt()]);
+
+        fireEvent.click(screen.getByRole('button', { name: /^Refund iDEAL/ }));
+        fireEvent.click(screen.getByRole('radio', { name: 'Refund and ask again' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Refund €14.00' }));
+
+        expect(await screen.findByText('Refund failed')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^Refund iDEAL/ })).toBeInTheDocument();
+      });
+
+      it('follows the server once its refunds change after the refresh', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ data: { refundStatus: 'queued', outcomeApplied: false, payment: { id: 'pay-1' } } }), { status: 200 }),
+        ));
+        const { rerender } = render(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="UTC" processorAttempts={[attempt()]} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Refund iDEAL/ }));
+        fireEvent.click(screen.getByRole('radio', { name: 'Refund and waive' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Refund €14.00' }));
+        expect(await screen.findByText('Refund pending')).toBeInTheDocument();
+
+        rerender(<ReceivedPaymentRow currency="EUR" {...base} paidAt={null} timeZone="UTC" processorAttempts={[attempt({ refunds: [{ status: 'failed' }] })]} />);
+
+        expect(screen.getByText('Refund failed')).toBeInTheDocument();
       });
     });
   });

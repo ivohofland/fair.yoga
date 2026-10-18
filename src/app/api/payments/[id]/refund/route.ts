@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
-  isErrorResponse, parseBody, requireTeacher, respondError, respondRefusal, respondTyped, withErrorHandler,
+  isErrorResponse, parseBody, requireTeacher, respondError, respondRefusal, respondTyped, respondUnchanged, withErrorHandler,
 } from '@/lib/api-utils';
 import type { Payment, ProcessorRefundStatus } from '@/lib/prisma-client';
 import { refundSchema } from '@/lib/schemas';
@@ -9,7 +9,11 @@ import { mollieDeps } from '@/services/mollie-deps';
 import { refundAttempt } from '@/services/processor-refunds';
 import { loadOwnedPayment } from '../shared';
 
-/** Refunds one Mollie attempt of the teacher's own payment in full, and answers the refund's status and the payment as it now stands. */
+/**
+ * Refunds one Mollie attempt of the teacher's own payment in full, and answers
+ * the refund's status and the payment as it now stands; an attempt already
+ * refunded answers `unchanged`.
+ */
 export const POST = withErrorHandler(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -32,6 +36,10 @@ export const POST = withErrorHandler(async (
         outcomeApplied: result.outcomeApplied,
         payment,
       });
+    }
+    case 'unchanged': {
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id } });
+      return respondUnchanged<{ refundStatus: 'refunded'; payment: Payment }>({ refundStatus: 'refunded', payment });
     }
     case 'invalid':
       return respondError(result.message, 400);

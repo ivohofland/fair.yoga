@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, onTestFinished } from 'vitest';
 import { randomBytes } from 'node:crypto';
 
 vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
 
 import { createPrismaClient, Prisma, type PrismaClient, type ProcessorPaymentStatus, type ProcessorRefundStatus } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
+import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { MollieUnavailable, type MollieClient, type MolliePaymentView, type RefundAnswer } from '@/lib/mollie/client';
 import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
@@ -15,6 +16,7 @@ import type { MollieDeps } from './mollie-deps';
 import { markPaymentNotCharged } from './payments';
 import { syncAttempt } from './processor-attempts';
 import { refundAttempt, type RefundResult } from './processor-refunds';
+import { ADOPT_AFTER_MS } from './refund-adoption';
 
 const prisma = createPrismaClient();
 const key = randomBytes(32);
@@ -360,17 +362,6 @@ describe('refundAttempt', () => {
       expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
     });
 
-    it('unreachable answers unavailable, logs it and deletes the row', async () => {
-      const c = await settledAttempt();
-      fake.createRefund.mockRejectedValue(new MollieUnavailable('down', 502));
-
-      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
-
-      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
-      expect(logDegraded).toHaveBeenCalledWith('MOLLIE_UNAVAILABLE', expect.objectContaining({ operation: 'createRefund', status: 502 }), expect.any(String), expect.any(MollieUnavailable));
-      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('paid');
-    });
-
     it('answers unavailable and deletes the row when Mollie is not configured', async () => {
       const c = await settledAttempt();
       expect(await refundAttempt(prisma, null, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
@@ -405,6 +396,243 @@ describe('refundAttempt', () => {
     expect((await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: null })).kind).toBe('invalid');
     expect((await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).kind).toBe('requested');
     expect(fake.createRefund).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('refundAttempt: an intent is resolved, never stranded', () => {
+  const amount = { value: '10.00', currency: 'EUR' };
+
+  function listed(attempt: { processorPaymentId: string }, refunds: MolliePaymentView['refunds']) {
+    fake.getPayment.mockResolvedValue(view(attempt.processorPaymentId, refunds));
+  }
+
+  /** `prisma` whose `processorConnection` reads throw, so `getAccessToken` does. */
+  function tokenThrows(): PrismaClient {
+    return new Proxy(prisma, {
+      get(target, prop, receiver) {
+        if (prop === 'processorConnection') {
+          return { findUnique: () => Promise.reject(new Error('connection read failed')) };
+        }
+        const value: unknown = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+  }
+
+  /** `prisma` whose second `$transaction` (the one storing Mollie's answer) throws. */
+  function answerStoreThrows(): PrismaClient {
+    let calls = 0;
+    return new Proxy(prisma, {
+      get(target, prop, receiver) {
+        if (prop === '$transaction') {
+          return (fn: TransactionFn) => {
+            calls += 1;
+            if (calls === 2) return Promise.reject(new Error('lock timeout'));
+            return target.$transaction(fn);
+          };
+        }
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    });
+  }
+
+  async function awaitingRow(attemptId: string, ageMs: number, outcome: 'waived' | 'reopened' | null = 'waived') {
+    return prisma.processorRefund.create({
+      data: {
+        attemptId, processorRefundId: null, amount: new Prisma.Decimal('10.00'), status: 'queued', outcome,
+        requestedAt: new Date(Date.now() - ageMs),
+      },
+    });
+  }
+
+  describe('withdraws when nothing can exist at Mollie', () => {
+    it('a throw from getAccessToken withdraws the intent and rethrows', async () => {
+      const c = await settledAttempt();
+      await expect(refundAttempt(tokenThrows(), deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).rejects.toThrow('connection read failed');
+      expect(fake.createRefund).not.toHaveBeenCalled();
+      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
+    });
+  });
+
+  describe('after an ambiguous failure of the create, asks Mollie once', () => {
+    it('adopts the refund Mollie lists, and applies its outcome', async () => {
+      const error = vi.spyOn(log, 'error');
+      onTestFinished(() => error.mockRestore());
+      const c = await settledAttempt();
+      const held = await prisma.processorRefund.create({
+        data: { attemptId: c.attempt.id, processorRefundId: reId(), amount: new Prisma.Decimal('10.00'), status: 'failed', outcome: 'waived' },
+      });
+      const mollieId = reId();
+      fake.createRefund.mockRejectedValue(new MollieUnavailable('timed out', null));
+      listed(c.attempt, [
+        { id: held.processorRefundId!, status: 'failed', amount },
+        { id: reId(), status: 'refunded', amount: { value: '4.00', currency: 'EUR' } },
+        { id: mollieId, status: 'refunded', amount },
+      ]);
+
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' });
+
+      expect(result).toEqual({ kind: 'requested', refundStatus: 'refunded', outcomeApplied: true });
+      expect(fake.getPayment).toHaveBeenCalledWith('access_plain', c.attempt.processorPaymentId, { testmode: true });
+      expect(await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id, id: { not: held.id } } })).toMatchObject({
+        processorRefundId: mollieId, status: 'refunded', outcome: 'waived',
+      });
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('not_charged');
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+      expect(logDegraded).toHaveBeenCalledWith('MOLLIE_UNAVAILABLE', expect.objectContaining({ operation: 'createRefund' }), expect.any(String), expect.any(MollieUnavailable));
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('withdraws when Mollie lists none, and answers unavailable', async () => {
+      const c = await settledAttempt();
+      fake.createRefund.mockRejectedValue(new MollieUnavailable('bad gateway', 502));
+      listed(c.attempt, [{ id: reId(), status: 'queued', amount: { value: '9.99', currency: 'EUR' } }]);
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+
+      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('paid');
+    });
+
+    it('treats a throw that is not Mollie’s the same way', async () => {
+      const c = await settledAttempt();
+      fake.createRefund.mockRejectedValue(new TypeError('socket hang up'));
+      listed(c.attempt, []);
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+      expect(fake.getPayment).toHaveBeenCalledTimes(1);
+      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
+    });
+
+    it('keeps the intent and logs it when Mollie cannot say either', async () => {
+      const error = vi.spyOn(log, 'error');
+      onTestFinished(() => error.mockRestore());
+      const c = await settledAttempt();
+      fake.createRefund.mockRejectedValue(new MollieUnavailable('timed out', null));
+      fake.getPayment.mockRejectedValue(new MollieUnavailable('timed out', null));
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+
+      const kept = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
+      expect(kept).toMatchObject({ processorRefundId: null, status: 'queued' });
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ attemptId: c.attempt.id, refundId: kept.id }), expect.any(String));
+    });
+  });
+
+  it('logs Mollie’s refund id and rethrows when storing its answer fails, keeping the intent', async () => {
+    const error = vi.spyOn(log, 'error');
+    onTestFinished(() => error.mockRestore());
+    const c = await settledAttempt();
+    const mollieId = reId();
+    fake.createRefund.mockResolvedValue(created('queued', mollieId));
+
+    await expect(refundAttempt(answerStoreThrows(), deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).rejects.toThrow('lock timeout');
+
+    const kept = await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } });
+    expect(kept.processorRefundId).toBeNull();
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptId: c.attempt.id, refundId: kept.id, mollieRefundId: mollieId, refundStatus: 'queued' }),
+      expect.any(String),
+    );
+  });
+
+  describe('with an earlier intent still awaiting its Mollie id', () => {
+    it('refuses REFUND_ALREADY_REQUESTED while it is young, asking Mollie nothing', async () => {
+      const c = await settledAttempt();
+      await awaitingRow(c.attempt.id, 10_000);
+
+      expect(refusalCode(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' }))).toBe('REFUND_ALREADY_REQUESTED');
+      expect(fake.createRefund).not.toHaveBeenCalled();
+      expect(fake.getPayment).not.toHaveBeenCalled();
+    });
+
+    it('adopts a stale one Mollie lists and answers as if this call had made it', async () => {
+      const c = await settledAttempt();
+      const stale = await awaitingRow(c.attempt.id, ADOPT_AFTER_MS + 60_000);
+      const mollieId = reId();
+      listed(c.attempt, [{ id: mollieId, status: 'pending', amount }]);
+
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' });
+
+      expect(result).toEqual({ kind: 'requested', refundStatus: 'pending', outcomeApplied: false });
+      expect(fake.createRefund).not.toHaveBeenCalled();
+      expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ processorRefundId: mollieId, status: 'pending' });
+    });
+
+    it('answers unchanged when the stale one Mollie lists is already refunded, applying its outcome', async () => {
+      const c = await settledAttempt();
+      await awaitingRow(c.attempt.id, ADOPT_AFTER_MS + 60_000, 'reopened');
+      listed(c.attempt, [{ id: reId(), status: 'refunded', amount }]);
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unchanged' });
+      expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('pending');
+      expect(fake.createRefund).not.toHaveBeenCalled();
+    });
+
+    it('withdraws a stale one Mollie does not list, then refunds as asked', async () => {
+      const c = await settledAttempt();
+      const stale = await awaitingRow(c.attempt.id, ADOPT_AFTER_MS + 60_000, 'reopened');
+      listed(c.attempt, []);
+      const mollieId = reId();
+      fake.createRefund.mockResolvedValue(created('queued', mollieId));
+
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' });
+
+      expect(result).toEqual({ kind: 'requested', refundStatus: 'queued', outcomeApplied: false });
+      expect(await prisma.processorRefund.count({ where: { id: stale.id } })).toBe(0);
+      expect(await prisma.processorRefund.findFirstOrThrow({ where: { attemptId: c.attempt.id } })).toMatchObject({ processorRefundId: mollieId, outcome: 'waived' });
+      expect(fake.createRefund).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers unavailable, keeping a stale one, when Mollie cannot say', async () => {
+      const c = await settledAttempt();
+      const stale = await awaitingRow(c.attempt.id, ADOPT_AFTER_MS + 60_000);
+      fake.getPayment.mockRejectedValue(new MollieUnavailable('timed out', null));
+
+      expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unavailable' });
+      expect(await prisma.processorRefund.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ processorRefundId: null });
+      expect(fake.createRefund).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('refundAttempt: other answers', () => {
+  it('answers unchanged for an attempt already refunded, whatever the choice, asking Mollie nothing', async () => {
+    const c = await attemptOn('not_charged', { settledPayment: false });
+    await prisma.processorRefund.create({
+      data: { attemptId: c.attempt.id, processorRefundId: reId(), amount: new Prisma.Decimal('10.00'), status: 'refunded', outcome: 'waived' },
+    });
+
+    expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: null })).toEqual({ kind: 'unchanged' });
+    expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({ kind: 'unchanged' });
+    expect(fake.createRefund).not.toHaveBeenCalled();
+  });
+
+  it('tells the teacher once when Mollie answers the create already failed', async () => {
+    const c = await settledAttempt();
+    fake.createRefund.mockResolvedValue(created('failed'));
+
+    expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).toEqual({
+      kind: 'requested', refundStatus: 'failed', outcomeApplied: false,
+    });
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).status).toBe('paid');
+    expect(await notes('refund_failed', c.classId)).toHaveLength(1);
+
+    await mollieReports(c.attempt, 'failed');
+    await syncAttempt(prisma, deps, c.attempt.processorPaymentId);
+    expect(await notes('refund_failed', c.classId)).toHaveLength(1);
+  });
+
+  it('completes a duplicate’s refund answered already refunded without touching the payment', async () => {
+    const c = await duplicateAttempt();
+    const before = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+    fake.createRefund.mockResolvedValue(created('refunded'));
+
+    expect(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: null })).toEqual({
+      kind: 'requested', refundStatus: 'refunded', outcomeApplied: false,
+    });
+    expect((await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } })).updatedAt).toEqual(before.updatedAt);
+    expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
   });
 });
 

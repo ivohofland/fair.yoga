@@ -39,14 +39,17 @@ describe('RefundDialog', () => {
     return JSON.parse(init.body as string);
   }
 
-  it('offers the settling attempt’s two outcomes and states the amount and where it comes from', () => {
+  it('opens as a modal dialog, offers the two outcomes as a choice, and refunds only once one is chosen', () => {
     render(<RefundDialog {...base} settles />);
 
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.tagName).toBe('DIALOG');
+    expect(dialog).toHaveAttribute('open');
     expect(screen.getByText('€10.00 goes back to Ana D. from your Mollie balance.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refund and waive' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Refund and ask again' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Refund duplicate payment' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Refund and waive' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Refund and ask again' })).not.toBeChecked();
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Refund €10.00', 'Cancel']);
+    expect(screen.getByRole('button', { name: 'Refund €10.00' })).toBeDisabled();
   });
 
   it.each([
@@ -56,10 +59,31 @@ describe('RefundDialog', () => {
     answer(200, { data: { refundStatus: 'queued', outcomeApplied: false, payment: { id: 'pay-1' } } });
     render(<RefundDialog {...base} settles />);
 
-    fireEvent.click(screen.getByRole('button', { name: label }));
+    fireEvent.click(screen.getByRole('radio', { name: label }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refund €10.00' }));
 
     await waitFor(() => expect(onRequested).toHaveBeenCalledWith('queued'));
     expect(sentBody()).toEqual({ attemptId: 'att-1', choice });
+  });
+
+  it('locks the page’s scroll while open', () => {
+    const { unmount } = render(<RefundDialog {...base} settles />);
+    expect(document.body.style.overflow).toBe('hidden');
+    unmount();
+    expect(document.body.style.overflow).toBe('');
+  });
+
+  it('cannot be dismissed while the refund is in flight', async () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+    render(<RefundDialog {...base} settles={false} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refund duplicate payment' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled());
+    const dialog = screen.getByRole('dialog');
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    fireEvent.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('offers a duplicate’s refund alone, and posts no choice', async () => {
@@ -77,20 +101,23 @@ describe('RefundDialog', () => {
     answer(409, { error: { code: 'REFUND_REFUSED', message: 'Your Mollie balance is too low for this refund. Top it up in Mollie, then try again.' } });
     render(<RefundDialog {...base} settles />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Refund and waive' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Refund and waive' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refund €10.00' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Your Mollie balance is too low for this refund.');
     expect(onRequested).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('closes on Cancel and on Escape without posting', () => {
+  it('closes on Cancel, on Escape and on the backdrop without posting', () => {
     render(<RefundDialog {...base} settles />);
+    const dialog = screen.getByRole('dialog');
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    fireEvent.click(dialog);
 
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(3);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
