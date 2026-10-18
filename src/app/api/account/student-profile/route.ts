@@ -12,6 +12,7 @@ import {
   clearDeclinedTicketCookie,
 } from '@/lib/auth';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { liveProfile } from '@/lib/live-profile';
 import { log } from '@/lib/log';
 
@@ -138,11 +139,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // holds this address.
   //
   // The TICKET path has no session and no "caller's own account". Its
-  // `email` collision means a DIFFERENT account appeared for this address
-  // during the ticket's one-hour window (a real, if narrow, race — not a
-  // double-tap), so the catch below answers it separately, with its own
-  // code and a log line. Its `accountId` cannot collide: the account is
-  // created in the same statement.
+  // address collision means a DIFFERENT account appeared for this address
+  // during the ticket's one-hour window (`Account_email_key`; a real, if
+  // narrow, race — not a double-tap), or a student row holds the address
+  // without one (`Student_email_key`). The catch below answers both
+  // separately, with their own code and a log line. Its `accountId` cannot
+  // collide: the account is created in the same statement.
   //
   // Only the `create` is inside: every branch of the catch below names a
   // unique constraint or partial unique index on the student row, so a
@@ -165,7 +167,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   } catch (err) {
     if (
       auth.source === 'session' &&
-      (isUniqueConflictOn(err, ['accountId']) || isUniqueConflictOn(err, ['email']))
+      isUniqueConflictOn(err, ['Student_email_key', 'Student_account_live_unique'])
     ) {
       const studentId = await liveStudentIdOf(auth.accountId);
       if (studentId === null) {
@@ -177,7 +179,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       }
       return clearDeclinedTicketCookie(studentSideExists(studentId), authorization);
     }
-    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['email'])) {
+    if (auth.source === 'ticket' && isUniqueConflictOn(err, ['Account_email_key', 'Student_email_key'])) {
       // Not the caller's own account — see the comment above this block.
       // Worth a log line: unlike the session path's double-tap, this is
       // not the benign, expected shape of this collision.
@@ -199,7 +201,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // unrecognised P2002 here means schema drift or a bug, not an
       // ordinary lost race.
       log.error(
-        { err, rawTarget: err.meta?.target },
+        { err, constraint: pgErrorOf(err)?.constraint },
         'student profile create hit a unique constraint its authorization path cannot reach',
       );
       throw new Error('student profile create: unrecognised unique constraint');

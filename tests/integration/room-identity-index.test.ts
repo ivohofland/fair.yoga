@@ -86,7 +86,7 @@ describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
     await shared(address, '2', 'Annex');
 
     const err = await shared(address, '2', 'Annex').catch((e: unknown) => e);
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+    expect(isUniqueConflictOn(err, ['Room_public_identity_unique'])).toBe(true);
   });
 
   it('refuses as shared a second room differing only by case (#260)', async () => {
@@ -100,7 +100,7 @@ describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
     await shared(address, '3', 'Studio A');
 
     const err = await shared(variantAddress, '3', 'studio a').catch((e: unknown) => e);
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+    expect(isUniqueConflictOn(err, ['Room_public_identity_unique'])).toBe(true);
   });
 
   it('refuses as shared a second room differing only by whitespace (#260)', async () => {
@@ -115,6 +115,6 @@ describe('sameRoomIdentity agrees with Room_public_identity_unique', () => {
     await shared(address, '4', 'Attic');
 
     const err = await shared(paddedAddress, ' 4 ', 'Attic ').catch((e: unknown) => e);
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+    expect(isUniqueConflictOn(err, ['Room_public_identity_unique'])).toBe(true);
   });
 });

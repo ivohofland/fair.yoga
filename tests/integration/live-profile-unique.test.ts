@@ -81,7 +81,7 @@ describe('one live profile per account (#623)', () => {
       caught = err;
     }
     expect(caught).toBeDefined();
-    expect(isUniqueConflictOn(caught, ['accountId'])).toBe(true);
+    expect(isUniqueConflictOn(caught, ['Student_account_live_unique'])).toBe(true);
   });
 
   it('accepts a new live Teacher beside an erased one on the same account', async () => {
@@ -132,6 +132,6 @@ describe('one live profile per account (#623)', () => {
       caught = err;
     }
     expect(caught).toBeDefined();
-    expect(isUniqueConflictOn(caught, ['accountId'])).toBe(true);
+    expect(isUniqueConflictOn(caught, ['Teacher_account_live_unique'])).toBe(true);
   });
 });

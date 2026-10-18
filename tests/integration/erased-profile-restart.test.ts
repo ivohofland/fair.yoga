@@ -163,10 +163,10 @@ describe('an erased profile no longer bars its account (#623)', () => {
     // This exercises the route's PRE-CHECK (`if (session.studentId)`), which
     // returns before the create is attempted — not the catch. The id it
     // names is the live side's; the erased one beside it is not a student
-    // side this account has. The proof that
-    // `isUniqueConflictOn(err, ['accountId'])` still matches over a PARTIAL
-    // index is in `tests/integration/live-profile-unique.test.ts`, which
-    // asserts that predicate on a real violation.
+    // side this account has. The proof that a violation of the PARTIAL
+    // index `Student_account_live_unique` is matched by its name is in
+    // `tests/integration/live-profile-unique.test.ts`, which asserts that
+    // predicate on a real violation.
     expect(await expectUnchanged(res)).toEqual({ studentId: live.id });
     expect(
       await prisma.student.count({ where: { accountId: acct.id, deletedAt: null } }),

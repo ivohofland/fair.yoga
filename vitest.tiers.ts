@@ -183,6 +183,9 @@ export const LOCK_CONTENTION_TESTS = [
   // #811: the passkey removal's shape, for the `Account` row every
   // multi-session sign-out writer takes first; its header carries the reason.
   'src/services/account-sign-out-lock-order.test.ts',
+  // #885: the `teacher-profile/route-lock-order.test.ts` shape, for the
+  // unique-constraint names each conflict catch matches.
+  'src/lib/pg-error-sites.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

@@ -211,7 +211,7 @@ export const PUT = withErrorHandler(async (
       data: updateData,
     });
   } catch (err) {
-    if (isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])) {
+    if (isUniqueConflictOn(err, ['Room_private_identity_unique'])) {
       return respondError(
         // `floor`/`roomName` both default to `""` and are optional free-text,
         // so two genuinely different private rooms at one address, both left

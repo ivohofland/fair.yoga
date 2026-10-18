@@ -20,6 +20,7 @@ import { recordDispatchFailure } from '@/lib/notify-health';
 import { isRecordNotFound } from '@/lib/api-errors';
 import { requireNormalised } from '@/lib/schemas';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { liveProfile } from '@/lib/live-profile';
 import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
@@ -399,7 +400,7 @@ export async function inviteContact(
       });
       invitationId = created.id;
     } catch (err) {
-      if (isUniqueConflictOn(err, ['teacherId', 'email'])) {
+      if (isUniqueConflictOn(err, ['Invitation_teacherId_email_key'])) {
         const winner = await db.invitation.findUnique({
           where: { teacherId_email: { teacherId, email } },
           select: REPEAT_SELECT,
@@ -416,7 +417,7 @@ export async function inviteContact(
         // an unrecognised P2002 here means schema drift or a bug, not an
         // ordinary lost race.
         log.error(
-          { err, rawTarget: err.meta?.target },
+          { err, constraint: pgErrorOf(err)?.constraint },
           'invitation create hit a unique constraint that is not the (teacher, email) key',
         );
         throw new Error('invitation create: unrecognised unique constraint');

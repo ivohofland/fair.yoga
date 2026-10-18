@@ -11,6 +11,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { log } from '@/lib/log';
 import { createTeacherRoomSchema } from '@/lib/schemas';
 import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
@@ -97,7 +98,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // re-reads the link that won and answers as the pre-check would have for
   // it, so a client cannot tell the two paths apart (#161).
   //
-  // Matched on the column set rather than on `P2002` alone. `TeacherRoom`
+  // Matched on the constraint name rather than on `P2002` alone. `TeacherRoom`
   // also declares `@@unique([id, isArchived])`, which this create cannot
   // collide on — `id` is a fresh uuid — but a bare code check would swallow
   // that key and any key added later under reasoning established only for
@@ -114,7 +115,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
     return respondOk(teacherRoom, 201);
   } catch (err) {
-    if (isUniqueConflictOn(err, ['teacherId', 'roomId'])) {
+    if (isUniqueConflictOn(err, ['TeacherRoom_teacherId_roomId_key'])) {
       // The unique violation is raised only once the winner has committed, so
       // this read sees it.
       const winner = await prisma.teacherRoom.findUnique({ where: linkKey });
@@ -132,7 +133,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // unrecognised P2002 here means schema drift or a bug, not an
       // ordinary lost race.
       log.error(
-        { err, rawTarget: err.meta?.target },
+        { err, constraint: pgErrorOf(err)?.constraint },
         'teacher-room create hit a unique constraint that is not the link key',
       );
       throw new Error('teacher-room create: unrecognised unique constraint');

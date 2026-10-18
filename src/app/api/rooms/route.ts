@@ -69,7 +69,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // No pre-check here on purpose. `Room` has exactly two identity indexes —
   // `Room_public_identity_unique` and `Room_private_identity_unique` (plus
   // `Room_pkey` on `id`, which this create cannot collide on) — and
-  // the catch below matches both column shapes, so no `P2002` this create
+  // the catch below matches both names, so no `P2002` this create
   // can raise ever reaches the generic fallback in `withErrorHandler`
   // (`classifyApiError`'s `warn`, src/lib/api-errors.ts). A `findFirst`
   // guard in front would only make the catch reachable under a race — and
@@ -93,12 +93,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     });
     return respondTyped<RoomResult>(room, 201);
   } catch (err) {
-    // Two indexes, two shapes: public rooms are unique across the whole
-    // shared namespace, private rooms only within their creator.
-    if (
-      isUniqueConflictOn(err, ['address', 'floor', 'roomName']) ||
-      isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])
-    ) {
+    // Two indexes: public rooms are unique across the whole shared
+    // namespace, private rooms only within their creator.
+    if (isUniqueConflictOn(err, ['Room_public_identity_unique', 'Room_private_identity_unique'])) {
       return respondError(
         body.isPublic
           ? 'A shared room at this address already exists'

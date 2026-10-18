@@ -3,6 +3,7 @@ import { Prisma } from '@/lib/prisma-client';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
+import { pgErrorOf } from '@/lib/pg-error';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -113,11 +114,9 @@ async function expectSlotRefusal(fn: () => Promise<unknown>): Promise<void> {
  * the cross-family half of #296 observable at all: an entry with no child
  * belongs to no family.
  *
- * The assertions name the exclusion constraint by NAME
- * (`isExclusionConflictOn`) rather than by `meta.target`, because a 23P01
- * exclusion violation carries no `meta.target`: `code` and `meta` are both
- * `undefined` on the Prisma error (`src/lib/exclusion-conflict.ts`), which is
- * the whole reason that matcher exists rather than reusing `isUniqueConflictOn`.
+ * The assertions name the exclusion constraint through `isExclusionConflictOn`
+ * (`src/lib/exclusion-conflict.ts`): a 23P01 exclusion violation is not a
+ * unique violation, so `isUniqueConflictOn` never matches it.
  *
  * LOAD-BEARING PROPERTY THIS WHOLE DESCRIBE DEPENDS ON:
  * `CalendarEntry_teacher_slot_excl` keys on `(teacherId, span)` only — `kind`
@@ -255,27 +254,17 @@ describe('Room identity indexes', () => {
     const err = await prisma.room.create({ data: room(otherTeacherId, true, 'PubA') })
       .catch((e: unknown) => e);
     expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2002');
-    // #260: Room_public_identity_unique is an expression index on lower(trim(...)),
-    // which Postgres decompiles to TRIM(BOTH FROM ...) in meta.target.
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target).toEqual([
-      'lower(TRIM(BOTH FROM address))',
-      'lower(TRIM(BOTH FROM floor))',
-      'lower(TRIM(BOTH FROM roomName))',
-    ]);
-    expect(isUniqueConflictOn(err, ['address', 'floor', 'roomName'])).toBe(true);
+    // #260: Room_public_identity_unique is an expression index on lower(trim(...)).
+    expect(pgErrorOf(err)?.constraint).toBe('Room_public_identity_unique');
+    expect(isUniqueConflictOn(err, ['Room_public_identity_unique'])).toBe(true);
   });
 
   it('scopes private rooms per creator: same teacher twice is rejected', async () => {
     await prisma.room.create({ data: room(teacherId, false, 'PrivA') });
     const err = await prisma.room.create({ data: room(teacherId, false, 'PrivA') })
       .catch((e: unknown) => e);
-    expect((err as Prisma.PrismaClientKnownRequestError).meta?.target).toEqual([
-      'createdById',
-      'lower(TRIM(BOTH FROM address))',
-      'lower(TRIM(BOTH FROM floor))',
-      'lower(TRIM(BOTH FROM roomName))',
-    ]);
-    expect(isUniqueConflictOn(err, ['createdById', 'address', 'floor', 'roomName'])).toBe(true);
+    expect(pgErrorOf(err)?.constraint).toBe('Room_private_identity_unique');
+    expect(isUniqueConflictOn(err, ['Room_private_identity_unique'])).toBe(true);
   });
 
   it('scopes private rooms per creator: a different teacher is allowed', async () => {

@@ -564,10 +564,10 @@ export function classifyApiError(error: unknown): ApiFailure {
 
   // Reaching this branch means a `create` raised a P2002 that its own caller
   // did not recognise: a route that never pre-checked, or a catch that
-  // rethrows a P2002 its column set did not match. Both are worth knowing
+  // rethrows a P2002 whose constraint it did not list. Both are worth knowing
   // about; neither is an outage, which is why this is `warn` and not `error`.
-  // `meta.target` names the constraint — without it the log says something
-  // already existed but not what, which is the same gap one level in.
+  // `constraint` names it — without it the log says something already
+  // existed but not what, which is the same gap one level in.
   //
   // No count of such routes here: a number about other files has no owner,
   // and the edit that falsifies it happens where nobody is reading this.
@@ -578,7 +578,7 @@ export function classifyApiError(error: unknown): ApiFailure {
       message: 'That already exists. Refresh to see the latest.',
       logMessage: 'unique constraint escaped a route to the 409 fallback',
       level: 'warn',
-      detail: { target: error.meta?.target },
+      detail: { constraint: pgErrorOf(error)?.constraint },
     };
   }
 

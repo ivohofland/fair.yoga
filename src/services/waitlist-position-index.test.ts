@@ -104,7 +104,7 @@ describe('WaitlistEntry_waiting_position_key', () => {
   it('refuses a second waiting row at a position its class already holds', async () => {
     await entry(classA, 0, 1, 'waiting');
     const err = await entry(classA, 1, 1, 'waiting').catch((e: unknown) => e);
-    expect(isUniqueConflictOn(err, ['classId', 'position'])).toBe(true);
+    expect(isUniqueConflictOn(err, ['WaitlistEntry_waiting_position_key'])).toBe(true);
   });
 
   it('accepts a waiting row at a position a closed row still holds', async () => {

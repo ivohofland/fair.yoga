@@ -96,7 +96,7 @@ export const PUT = withErrorHandler(async (
 
 /** The answer to a write the database refused for a reason the teacher can act on. */
 function refusalForWriteError(err: unknown): NextResponse | null {
-  if (isUniqueConflictOn(err, ['pageSlug'])) {
+  if (isUniqueConflictOn(err, ['Teacher_pageSlug_key'])) {
     return respondError(PAGE_SLUG_TAKEN_MESSAGE, 409, 'SLUG_TAKEN');
   }
   return null;

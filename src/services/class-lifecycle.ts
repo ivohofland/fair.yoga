@@ -1789,7 +1789,7 @@ export async function updateClass(
     // names a date AND time; this collision can fire with the two entries'
     // times entirely different, so naming the time back to the teacher there
     // would describe a clash that didn't happen.
-    if (isUniqueConflictOn(err, ['scheduleRuleId', 'date'])) {
+    if (isUniqueConflictOn(err, ['CalendarEntry_scheduleRuleId_date_key'])) {
       return { ok: false, reason: 'template_date_conflict' };
     }
     throw err;
