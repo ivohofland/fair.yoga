@@ -98,7 +98,8 @@ the numbering here is this spec's.
     the record say unpaid while the money sits in the teacher's balance, and
     chase a student who paid. `reopenPayment` refuses (409
     `PAYMENT_SETTLED_BY_PROCESSOR`, "Mollie confirmed this payment. Refund it
-    instead.") while an attempt with `settledPayment` exists, and the teacher's
+    instead.") while an attempt with `settledPayment` exists (a completing
+    refund's "ask again" leaves out only the attempt it refunded), and the teacher's
     row offers **Refund** in its place. The exception is a chargeback: once
     Mollie reports `amountChargedBack > 0` on the settling attempt, the attempt
     records `chargedBackAt`, stops settling the payment, the teacher is told,
@@ -375,7 +376,7 @@ Applying a fetched status (`applyAttemptStatus`, shared with the return page):
 
 | Mollie says | `Payment` is | Then |
 |---|---|---|
-| `paid` with `amountChargedBack > 0`, attempt not yet charged back | any | attempt `chargedBackAt`, `settledPayment = false`, `Payment` untouched (a settled one stays `paid`); teacher gets `payment_charged_back` ("<student> disputed <amount> with their bank and it was taken back. You can mark the payment unpaid to ask again."; for an attempt that did not settle the payment, the first sentence alone). Repeat → `unchanged`. Any amount above zero is a chargeback, a partial one included. This row is checked before the others |
+| `paid` with `amountChargedBack > 0`, attempt not yet charged back | any | attempt `chargedBackAt`, `settledPayment = false`, `Payment` untouched (a settled one stays `paid`); teacher gets `payment_charged_back` ("<student> disputed <the amount Mollie reports charged back> with their bank and it was taken back. You can mark the payment unpaid to ask again."; for an attempt that did not settle the payment, the first sentence alone). Repeat → `unchanged`. Any amount above zero is a chargeback, a partial one included. This row is checked before the others |
 | `paid` | `pending`/`overdue` | attempt `paid`, `settledPayment = true`, `markPaymentPaid(…, 'mollie')`; no notification, as for a manual mark-paid (nothing writes `payment_received` today) |
 | `paid` | `paid` by this attempt | `unchanged` |
 | `paid` | `paid` otherwise, or `not_charged` | attempt `paid`, `Payment` untouched, teacher gets `payment_paid_twice` with a refund action (Decision 7) |
