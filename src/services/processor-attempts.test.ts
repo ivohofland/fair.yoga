@@ -302,21 +302,28 @@ describe('createAttempt', () => {
   });
 
   describe('when the row changes while Mollie is called', () => {
-    it('records the attempt on a connection disconnected meanwhile and keeps its token past the attempt', async () => {
+    it('records nothing and refuses PROCESSOR_NOT_CONNECTED on a connection disconnected meanwhile', async () => {
       const { paymentId } = await freshPayment();
+      const at = new Date();
       fake.createPayment.mockImplementation(async () => {
-        const at = new Date();
         await prisma.processorConnection.update({ where: { id: connectionId }, data: { disconnectedAt: at, revokeAfter: at } });
         return molliePayment();
       });
 
-      const outcome = await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' });
+      expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_NOT_CONNECTED');
 
-      if (outcome.kind !== 'checkout') throw new Error(`expected checkout, got ${JSON.stringify(outcome)}`);
-      const attempt = await prisma.processorPayment.findUniqueOrThrow({ where: { id: outcome.attemptId } });
-      const conn = await prisma.processorConnection.findUniqueOrThrow({ where: { id: connectionId } });
-      expect(attempt.expiresAt).not.toBeNull();
-      expect(conn.revokeAfter!.getTime()).toBeGreaterThanOrEqual(attempt.expiresAt!.getTime());
+      expect(await prisma.processorPayment.count({ where: { paymentId } })).toBe(0);
+      expect((await prisma.processorConnection.findUniqueOrThrow({ where: { id: connectionId } })).revokeAfter).toEqual(at);
+    });
+
+    it('records nothing and refuses PROCESSOR_NOT_CONNECTED on a profile cleared meanwhile', async () => {
+      const { paymentId } = await freshPayment();
+      fake.createPayment.mockImplementation(async () => {
+        await prisma.processorConnection.update({ where: { id: connectionId }, data: { profileId: null } });
+        return molliePayment();
+      });
+      expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_NOT_CONNECTED');
+      expect(await prisma.processorPayment.count({ where: { paymentId } })).toBe(0);
     });
 
     it('records nothing and refuses PROCESSOR_NOT_CONNECTED on a connection revoked meanwhile', async () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PrismaClient } from '@/lib/prisma-client';
+import type { Prisma, PrismaClient } from '@/lib/prisma-client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { logDegraded } from '@/lib/degradation';
@@ -21,6 +21,11 @@ export type CreateAttemptOutcome =
   | { kind: 'checkout'; attemptId: string; checkoutUrl: string }
   | { kind: 'refused'; refusal: AttemptRefusal }
   | { kind: 'unavailable' };
+
+/** The connection columns `takesMolliePayments` reads, and the row's id. */
+const LIVENESS_SELECT = {
+  id: true, organizationId: true, profileId: true, disconnectedAt: true, scopes: true,
+} as const satisfies Prisma.ProcessorConnectionSelect;
 
 /** An open attempt is reused only while it has more than this long left. */
 const REUSE_MARGIN_MS = 60_000;
@@ -61,9 +66,9 @@ function expiryOf(view: MolliePaymentView, method: AllowedMollieMethod, now: Dat
  * row is written after `createPayment` answers, in that transaction, which
  * takes the teacher's lock first and re-checks the payment, the pause and the
  * connection under it; so when `createPayment`'s answer is lost no row is
- * written and the student is given no checkout URL. A connection disconnected
- * while Mollie was called still gets the attempt, and its `revokeAfter` is
- * raised to at least the attempt's expiry.
+ * written and the student is given no checkout URL. A connection that stopped
+ * taking payments while Mollie was called is refused with nothing written,
+ * and the Mollie payment it started expires unpaid.
  */
 export async function createAttempt(
   db: PrismaClient,
@@ -90,9 +95,7 @@ export async function createAttempt(
                   teacher: {
                     select: {
                       paymentsPausedAt: true,
-                      processorConnection: {
-                        select: { id: true, organizationId: true, profileId: true, testmode: true, disconnectedAt: true, scopes: true },
-                      },
+                      processorConnection: { select: { ...LIVENESS_SELECT, testmode: true } },
                     },
                   },
                 },
@@ -178,7 +181,7 @@ export async function createAttempt(
 
   return db.$transaction(async (tx): Promise<CreateAttemptOutcome> => {
     // The teacher first, as `disconnect` takes it: a disconnect has either
-    // committed before the read below, or waits and then sees this attempt.
+    // committed before the read below, or waits and then counts this attempt.
     if ((await lockTeacherForNoKeyUpdate(tx, entry.teacherId)) === null) return refused(NOT_CONNECTED);
     const current = await tx.payment.findUnique({
       where: { id: payment.id },
@@ -191,7 +194,7 @@ export async function createAttempt(
                 calendarEntry: {
                   select: {
                     teacher: {
-                      select: { paymentsPausedAt: true, processorConnection: { select: { id: true, revokedAt: true, disconnectedAt: true } } },
+                      select: { paymentsPausedAt: true, processorConnection: { select: LIVENESS_SELECT } },
                     },
                   },
                 },
@@ -206,7 +209,7 @@ export async function createAttempt(
     const teacher = current.registration.class.calendarEntry.teacher;
     if (teacher.paymentsPausedAt !== null) return refused(PAUSED);
     const row = teacher.processorConnection;
-    if (row === null || row.id !== connection.id || row.revokedAt !== null) return refused(NOT_CONNECTED);
+    if (row === null || row.id !== connection.id || !takesMolliePayments(row)) return refused(NOT_CONNECTED);
 
     await tx.processorPayment.create({
       data: {
@@ -222,14 +225,6 @@ export async function createAttempt(
         expiresAt,
       },
     });
-    if (row.disconnectedAt !== null) {
-      // Disconnected since the first read: the token must outlive this
-      // attempt, so its webhooks can still be fetched.
-      await tx.$executeRaw`
-        UPDATE "ProcessorConnection"
-           SET "revokeAfter" = GREATEST("revokeAfter", ${expiresAt})
-         WHERE id = ${connection.id}`;
-    }
     return { kind: 'checkout', attemptId, checkoutUrl };
   });
 }
