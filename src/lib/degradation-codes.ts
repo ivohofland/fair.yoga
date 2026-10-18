@@ -75,7 +75,7 @@ export const DEGRADATION_CODES = {
   MOLLIE_UNAVAILABLE: {
     level: 'warn',
     description:
-      'Mollie could not be reached or answered unexpectedly. The pay page showed the teacher’s other payment rows without Mollie’s, a student’s Mollie payment could not be started, a webhook was answered 503 for Mollie to retry, or a grant could not be revoked.',
+      'Mollie could not be reached or answered unexpectedly. The pay page showed the teacher’s other payment rows without Mollie’s, a student’s Mollie payment could not be started, a webhook was answered 503 for Mollie to retry, a grant could not be revoked, a teacher’s connect or profile change was told Mollie could not be reached, or the settings section showed Mollie as unreachable.',
     contextKeys: ['connectionId', 'operation', 'status'],
   },
   PROCESSOR_DISCONNECTED: {
