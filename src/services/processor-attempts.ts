@@ -80,11 +80,15 @@ function expiryOf(view: MolliePaymentView, method: AllowedMollieMethod, now: Dat
 /**
  * Starts the student's Mollie payment for one of their own payments, or
  * reuses an open attempt for the same method, made under the connection's
- * current profile and mode, that has more than a minute left. A connection
- * that takes no payments is refused before Mollie's configuration is looked
- * at, so a teacher without Mollie answers `PROCESSOR_NOT_CONNECTED` even when
- * it is unconfigured (`unavailable`); one made in the other mode than the
- * server's is refused once it is (`takesMolliePaymentsIn`).
+ * current profile and mode, that has more than a minute left.
+ *
+ * Two refusals, in this order. A connection that takes no payments in any
+ * mode (`takesMolliePayments`) is refused `PROCESSOR_NOT_CONNECTED` before
+ * the configuration is read, so a teacher without Mollie is told that even
+ * on a server where Mollie is not configured. Otherwise, Mollie not being
+ * configured answers `unavailable`, and a connection made in the other mode
+ * than the server's (`takesMolliePaymentsIn`) is refused
+ * `PROCESSOR_NOT_CONNECTED`.
  *
  * Every Mollie call runs before its transaction opens. The attempt row is
  * written after `createPayment` answers, in that transaction, which takes the

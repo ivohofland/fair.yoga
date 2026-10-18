@@ -435,7 +435,7 @@ Mollie call; a known id costs one Mollie GET whose answer is the only thing
 believed. A refund webhook (`re_…` ids do not arrive on their own; Mollie calls
 the payment's webhook) is handled by re-reading the payment's embedded refunds.
 
-Applying a fetched status (`applyAttemptStatus`, shared with the return page):
+Applying a fetched status (`syncAttempt`, shared with the return page, which decides each row with `decideSync`):
 
 | Mollie says | `Payment` is | Then |
 |---|---|---|
@@ -621,7 +621,7 @@ chargeback, so an attempt keeps `chargedBackAt` once stamped); a retry policy
 ## Testing
 
 - **Unit:** the cipher (round trip, tamper → throws, wrong version → throws);
-  `isAllowedMollieMethod` and overlap ordering; `applyAttemptStatus`'s table,
+  `isAllowedMollieMethod` and overlap ordering; `decideSync`'s table,
   row by row.
 - **No test reaches Mollie, and no integration test sees the wire.**
   Integration tests run against a live dev server that a test cannot re-env
