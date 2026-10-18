@@ -15,6 +15,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { MollieUnavailable, type MollieClient } from '@/lib/mollie/client';
 import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 import { logDegraded } from '@/lib/degradation';
+import { log } from '@/lib/log';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
 import { uniqueSuffix } from '../../tests/helpers';
@@ -212,14 +213,23 @@ describe('teacher erasure', () => {
     await expectErased(deleteTeacherAccount(prisma, w.teacherId, deps));
     expect(await prisma.processorConnection.count({ where: { teacherId: w.teacherId } })).toBe(0);
     expect(fake.revoke).not.toHaveBeenCalled();
-    expect(vi.mocked(logDegraded).mock.calls.map(([code]) => code)).toContain('PROCESSOR_TOKEN_UNREADABLE');
+    expect(vi.mocked(logDegraded).mock.calls.map(([code, , message]) => [code, message])).toContainEqual([
+      'PROCESSOR_TOKEN_UNREADABLE',
+      expect.stringContaining('erased teacher'),
+    ]);
   });
 
-  it('deletes the row and calls Mollie for nothing when Mollie is not configured', async () => {
+  it('deletes the row, calls Mollie for nothing and records the grant it left when Mollie is not configured', async () => {
     const w = await world();
-    await expectErased(deleteTeacherAccount(prisma, w.teacherId, null));
-    expect(await prisma.processorConnection.count({ where: { teacherId: w.teacherId } })).toBe(0);
-    expect(fake.revoke).not.toHaveBeenCalled();
+    const warn = vi.spyOn(log, 'warn');
+    try {
+      await expectErased(deleteTeacherAccount(prisma, w.teacherId, null));
+      expect(await prisma.processorConnection.count({ where: { teacherId: w.teacherId } })).toBe(0);
+      expect(fake.revoke).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith({ connectionId: w.connectionId }, expect.stringContaining('stays authorized at Mollie'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('does not revoke a grant that was already revoked, and deletes its row', async () => {

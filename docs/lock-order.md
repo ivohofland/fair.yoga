@@ -2470,7 +2470,8 @@ restored afterwards: `FOR KEY SHARE` in
 ## The `ProcessorConnection` row is a leaf lock (#896)
 
 A teacher has at most one `ProcessorConnection` row (`teacherId` is unique).
-Where a transaction takes it, it is the last row that transaction locks:
+Where a transaction takes it, it is the last row that transaction locks, apart
+from the rows its own write reaches through a foreign key:
 
     Teacher → ProcessorConnection
 
@@ -2511,22 +2512,27 @@ The sites:
   holding the `Payment` row waits on `Teacher` or on this row (the `Payment`
   writers in "Where `Payment` sits" take neither).
 
-- `deleteTeacherAccount` (`src/services/gdpr.ts`) deletes the row. Its
-  `lockTeacherForNoKeyUpdate` is the transaction's first lock and the
-  connection's read and `deleteMany` come directly after it, ahead of the
-  template and `Class` locks. That placement is the exception to "the last row
-  that transaction locks", and it is deliberate: the foreign key from
-  `ProcessorPayment.connectionId` is `ON DELETE SET NULL`, so the delete
-  writes the teacher's attempt rows without their `Payment` rows locked, which
+- `deleteTeacherAccount` (`src/services/gdpr.ts`) deletes the row, as the last
+  statements of its transaction, after the `TeacherStudent` delete and after
+  the payout events. Its `lockTeacherForNoKeyUpdate` is the transaction's first
+  lock, as for the sites above. The foreign key from
+  `ProcessorPayment.connectionId` is `ON DELETE SET NULL`, so the delete also
+  writes the teacher's attempt rows, without their `Payment` rows locked, which
   the order in "`ProcessorPayment` and `ProcessorRefund` rows sit after
-  `Payment`" below otherwise forbids. It cannot close a cycle. The delete
-  waits on an attempt only behind a sync that holds that attempt's `Payment`
-  row, and that sync waits on nothing the erasure holds at that point: the
-  `Teacher` and connection rows, which its statements take no key share of,
-  as they change no foreign-key column. Taken later, after the erasure's
-  `Class` locks, the same wait could cross a sync's `FOR KEY SHARE` on a
-  `Class` row. The erasure also deletes the teacher's `OAuthState` rows in the
-  same place, which no other row waits on. No Mollie call is made inside the
+  `Payment`" below otherwise requires. That is safe only because it comes last.
+  A sync or a refund that completes a reopened refund holds a `TeacherStudent`
+  link, then a `Payment`, then writes the attempt, and takes no `Teacher` lock.
+  An erasure that deleted the connection earlier would hold the attempt and
+  then wait on a link such a sync holds, while the sync waits on the attempt:
+  a cycle. By the end the erasure has deleted every link of the teacher, so a
+  sync holding one makes it wait there, before it has touched an attempt, and
+  a sync without one holds a `Payment` and an attempt and needs nothing the
+  erasure holds. `gdpr-lock-order.test.ts` holds the placement: a held link
+  makes the erasure wait while the attempt and the connection are still free.
+  Measured on 2026-10-18 with the delete moved to directly after the `Teacher`
+  lock: that test failed on its first probe (`expected { Object (error) } to
+  be 'free'`, the attempt row locked by the erasure). The erasure also deletes
+  the teacher's `OAuthState` rows there. No Mollie call is made inside the
   transaction; the grant is revoked after commit.
 
 Two more statements write the row outside any transaction, each a single
@@ -2537,21 +2543,23 @@ holds the refresh token Mollie was asked to revoke and is still disconnected.
 The daily sweep (`revokeDueConnections`, `processor-revocation.ts`) writes only
 through `revokeDueConnection`, one row per call, so it adds no statement.
 
-No site takes `Teacher`, or any other row in this file, after the
-`ProcessorConnection` row — the erasure's attempt rows being the one thing it
-writes after it, argued above — and every transaction that takes the row takes
-`Teacher` first, so those six sites queue on `Teacher` before they reach it. The two single-statement writes hold only the row they match while they
-wait, so they close no cycle either. A new site that locks this row together
-with any row other than `Teacher` before it has to be placed in the order
-here first. The six sites are the transactional `lockTeacherForNoKeyUpdate(`
-calls in the processor services, re-derived on 2026-10-18 with
+Every transaction that takes the row takes `Teacher` first, so those six sites
+queue on `Teacher` before they reach it. None takes another lockable row of this
+file after the connection except the erasure's `SET NULL` writes of attempt
+rows, argued above. The two single-statement writes hold only the row they
+match while they wait, so they close no cycle either. A new site that locks
+this row together with any row other than `Teacher` before it has to be placed
+in the order here first. The six sites are the transactional
+`lockTeacherForNoKeyUpdate(` calls in the processor services plus the
+erasure's, re-derived on 2026-10-18 with
 
     git grep -n 'lockTeacherForNoKeyUpdate(' -- 'src/services/processor-*.ts' ':!*.test.ts'
+    git grep -n 'lockTeacherForNoKeyUpdate(' -- src/services/gdpr.ts
 
-which returned 5 lines = 3 in `processor-connection.ts` (`completeConnect`,
+The first returned 5 lines = 3 in `processor-connection.ts` (`completeConnect`,
 `chooseProfile`, `disconnect`) + 1 in `processor-token.ts` (`invalid_grant`)
-+ 1 in `processor-attempts.ts` (`createAttempt`), plus the erasure's own, which
-that pattern does not reach and which sits in `gdpr.ts`: 5 + 1 = 6.
++ 1 in `processor-attempts.ts` (`createAttempt`). The second returned 1 line,
+`deleteTeacherAccount`'s: 5 + 1 = 6.
 
 The `invalid_grant` lock is plain `FOR UPDATE` with no `OF`, so it does not
 appear in the `FOR UPDATE OF` census of `Class` locks above.
@@ -2687,11 +2695,11 @@ write) + 2 in `processor-refunds.ts` (`refundAttempt`'s withdrawal and its
 refund-row write) + 1 in `payments.ts` (`reopenInTransaction` releasing a
 refunded attempt). The arithmetic: 5 + 2 + 1 = 8.
 Only one statement in `src/` deletes a `ProcessorConnection` or `Payment` row:
-the teacher erasure's `processorConnection.deleteMany` (`gdpr.ts`), whose
-`SET NULL` on `connectionId` writes the attempt rows without the `Payment`
-lock. Its placement and why it closes no cycle are under "The
-`ProcessorConnection` row is a leaf lock" above. No statement deletes a
-`Payment`, so the cascade writes nothing. Re-derived on 2026-10-18 with
+the teacher erasure's `processorConnection.delete` (`gdpr.ts`), whose `SET NULL`
+on `connectionId` writes the attempt rows without the `Payment` lock. Its
+placement, last in the erasure's transaction, and why it closes no cycle are
+under "The `ProcessorConnection` row is a leaf lock" above. No statement deletes
+a `Payment`, so the cascade writes nothing. Re-derived on 2026-10-18 with
 
     git grep -nE 'processorConnection\.(delete|deleteMany)\(|payment\.(delete|deleteMany)\(' -- src ':!*.test.ts'
 

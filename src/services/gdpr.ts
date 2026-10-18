@@ -20,7 +20,9 @@ import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
 import { mollieDeps, type MollieDeps } from './mollie-deps';
-import { revokeDroppedGrant, unrevokedRefresh } from './processor-connection';
+import { revokeDroppedGrant } from './processor-connection';
+import { openToken, TokenCipherError } from '@/lib/processor-token-cipher';
+import { logDegraded } from '@/lib/degradation';
 import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss } from './waitlist';
 import {
   CLASS_TO_ENTRY_JOIN,
@@ -1324,26 +1326,6 @@ export async function deleteTeacherAccount(
       // transaction.
       await lockTeacherForNoKeyUpdate(tx, teacherId);
 
-      // The Mollie connection, directly after the `Teacher` lock and ahead of
-      // every template and `Class` lock: deleting it nulls `connectionId` on
-      // the teacher's attempts, and those writes must not wait on a sync that
-      // holds an attempt while it waits on a `Class` this transaction holds.
-      // The row is read and deleted under the teacher lock, which every
-      // writer of the row takes first, so the refresh token opened here is
-      // the one deleted. Nothing is sent to Mollie in this transaction; the
-      // grant is revoked after commit. `docs/lock-order.md`, "The
-      // `ProcessorConnection` row is a leaf lock (#896)".
-      const connection = await tx.processorConnection.findUnique({
-        where: { teacherId },
-        select: { id: true, refreshToken: true, revokedAt: true },
-      });
-      const droppedGrant =
-        connection === null || deps === null
-          ? null
-          : { connectionId: connection.id, refreshToken: unrevokedRefresh(connection, deps) };
-      await tx.processorConnection.deleteMany({ where: { teacherId } });
-      await tx.oAuthState.deleteMany({ where: { teacherId } });
-
       // Template child rows locked next, ordered by id (#229), after the
       // `Teacher` lock and ahead of every `Class` lock. `ClassTemplate` before
       // `Class` is the canonical direction; which sites take that order is
@@ -1723,6 +1705,27 @@ export async function deleteTeacherAccount(
       await tx.payoutPauseToken.deleteMany({ where: { teacherId } });
       await tx.payoutChangeEvent.deleteMany({ where: { teacherId } });
 
+      // The Mollie connection goes last, and its place is held by a test.
+      // Deleting it nulls `connectionId` on the teacher's attempts, and a sync
+      // or refund that completes a reopened refund writes an attempt while it
+      // holds a `TeacherStudent` link, which this transaction has already
+      // deleted by here. Earlier, the delete would hold the attempts and then
+      // wait on that link. `docs/lock-order.md`, "The `ProcessorConnection`
+      // row is a leaf lock (#896)".
+      //
+      // Read and removed in one statement, so the sealed refresh token
+      // returned is the one deleted. Nothing is sent to Mollie in this
+      // transaction; the grant is revoked after commit.
+      const connection = await tx.processorConnection.findUnique({ where: { teacherId }, select: { id: true } });
+      const droppedGrant =
+        connection === null
+          ? null
+          : await tx.processorConnection.delete({
+              where: { id: connection.id },
+              select: { id: true, refreshToken: true, revokedAt: true },
+            });
+      await tx.oAuthState.deleteMany({ where: { teacherId } });
+
       return { skipped, droppedGrant };
     },
     // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298); the
@@ -1755,8 +1758,27 @@ export async function deleteTeacherAccount(
 
   // After commit, not awaited: the connection row is gone, so a failure has
   // nothing to retry from and is logged by `revokeDroppedGrant`.
-  if (deps !== null && droppedGrant !== null && droppedGrant.refreshToken !== null) {
-    revokeDroppedGrant(deps, droppedGrant.refreshToken, droppedGrant.connectionId);
+  if (droppedGrant !== null && droppedGrant.revokedAt === null && droppedGrant.refreshToken !== null) {
+    if (deps === null) {
+      log.warn(
+        { connectionId: droppedGrant.id },
+        'teacher erasure: Mollie is not configured, so the erased teacher’s grant stays authorized at Mollie',
+      );
+    } else {
+      let refreshToken: string | null = null;
+      try {
+        refreshToken = openToken(droppedGrant.refreshToken, deps.config.tokenKey);
+      } catch (err) {
+        if (!(err instanceof TokenCipherError)) throw err;
+        logDegraded(
+          'PROCESSOR_TOKEN_UNREADABLE',
+          { connectionId: droppedGrant.id },
+          'the erased teacher’s stored processor token could not be opened, so it was not revoked',
+          err,
+        );
+      }
+      if (refreshToken !== null) revokeDroppedGrant(deps, refreshToken, droppedGrant.id);
+    }
   }
 
   // The cause of each skipped cancel, read AFTER the commit.

@@ -1471,6 +1471,7 @@ model ProcessorPayment {
   refunds    ProcessorRefund[]
 
   @@index([paymentId])
+  @@index([connectionId])
 }
 
 /// A full refund of one attempt. `processorRefundId` is null until the
