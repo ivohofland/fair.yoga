@@ -7,6 +7,7 @@ import { createPrismaClient, Prisma, type PaymentStatus, type PrismaClient, type
 import { logDegraded } from '@/lib/degradation';
 import { log } from '@/lib/log';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { MollieUnavailable, type CreatePaymentInput, type MollieClient, type MolliePaymentView } from '@/lib/mollie/client';
 import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 import { paymentReference } from '@/lib/payment-methods';
@@ -129,6 +130,18 @@ async function seedAttempt(
       amount: new Prisma.Decimal('10.00'), currency: 'EUR', checkoutUrl: 'https://www.mollie.com/checkout/seeded', expiresAt,
     },
   });
+}
+
+/** Whether some backend waits on `holderPid`'s locks before the deadline passes. */
+async function blockedBy(holderPid: number): Promise<boolean> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const rows = await prisma.$queryRaw<{ pid: number }[]>`
+      SELECT pid FROM pg_stat_activity WHERE ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+    if (rows.length > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
 }
 
 function refusalCode(outcome: CreateAttemptOutcome): string | null {
@@ -368,6 +381,31 @@ describe('createAttempt', () => {
       expect.any(String),
       expect.any(MollieUnavailable),
     );
+  });
+
+  // A disconnect holds the teacher's lock while it stamps `disconnectedAt`;
+  // the attempt's write takes that lock first, so it waits on the disconnect
+  // and then sees it, rather than recording an attempt on a connection that
+  // no longer takes payments.
+  it('waits on a disconnect holding the teacher lock, then refuses PROCESSOR_NOT_CONNECTED and writes nothing', { timeout: 20_000 }, async () => {
+    const { paymentId } = await freshPayment();
+    let attempting: Promise<CreateAttemptOutcome> = Promise.resolve({ kind: 'unavailable' });
+    let waited = false;
+
+    await prisma.$transaction(async (tx) => {
+      const [holder] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      await lockTeacherForNoKeyUpdate(tx, teacherId);
+      const at = new Date();
+      await tx.processorConnection.update({ where: { id: connectionId }, data: { disconnectedAt: at, revokeAfter: at } });
+      attempting = createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' });
+      waited = await blockedBy(holder!.pid);
+    }, { timeout: 15_000 });
+
+    const outcome = await attempting;
+    expect(waited, 'the attempt never waited on the disconnect’s teacher lock').toBe(true);
+    expect(fake.createPayment).toHaveBeenCalledTimes(1);
+    expect(refusalCode(outcome)).toBe('PROCESSOR_NOT_CONNECTED');
+    expect(await prisma.processorPayment.count({ where: { paymentId } })).toBe(0);
   });
 
   describe('when the row changes while Mollie is called', () => {
