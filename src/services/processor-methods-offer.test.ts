@@ -2,14 +2,20 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { randomBytes } from 'node:crypto';
 
 vi.mock('@/lib/degradation', () => ({ logDegraded: vi.fn() }));
+vi.mock('./processor-token', async (orig) => {
+  const real = await orig<typeof import('./processor-token')>();
+  return { ...real, getAccessToken: vi.fn(real.getAccessToken) };
+});
 
 import { createPrismaClient, Prisma } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
 import { MollieUnavailable, type MollieClient } from '@/lib/mollie/client';
 import { sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
+import { getAccessToken } from './processor-token';
 import type { MollieDeps } from './mollie-deps';
 import { forgetOfferedMethods, listOfferedMethods } from './processor-methods-offer';
+import { offerCache } from './processor-methods-cache';
 
 const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
@@ -113,5 +119,23 @@ describe('listOfferedMethods', () => {
     expect(fake.listMethods).toHaveBeenCalledTimes(2);
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('6.00'), 'EUR', 1_000 + 60_000);
     expect(fake.listMethods).toHaveBeenCalledTimes(3);
+  });
+  it('keys the cache by currency', async () => {
+    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal'] });
+    await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000);
+    await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'GBP', 1_000);
+    expect(fake.listMethods).toHaveBeenCalledTimes(2);
+  });
+  it('never asks for a token on a zero amount', async () => {
+    await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('0.00'), 'EUR');
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+  it('drops expired entries when another amount is written', async () => {
+    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal'] });
+    await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000);
+    await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('6.00'), 'EUR', 1_000 + 60_000);
+    expect(fake.listMethods).toHaveBeenCalledTimes(2);
+    expect(offerCache.has(`${conn.id}:EUR:5.00`)).toBe(false);
+    expect(offerCache.has(`${conn.id}:EUR:6.00`)).toBe(true);
   });
 });
