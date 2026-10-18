@@ -1787,42 +1787,51 @@ Dialog component test: for a settling attempt it offers **Refund and waive** and
 ```ts
 export async function refundAttempt(db: PrismaClient, deps: MollieDeps | null, input: { paymentId: string; attemptId: string; choice: RefundChoice | null; now?: Date }): Promise<RefundResult> {
   const now = input.now ?? new Date();
-  // 1. Record the intent under the payment's row lock; the partial unique index stops a second one.
-  const intent = await db.$transaction(async (tx) => {
+  const first = await recordIntent(db, input, now);
+  if (first.kind !== 'stale') return first.kind === 'recorded' ? requestRefund(db, deps, first) : first;
+  // An older intent with no Mollie id: adopted, withdrawn, or left while Mollie cannot say.
+  const reconciled = await reconcileStale(db, deps, first);
+  if (reconciled !== 'withdrawn') return reconciled;
+  const second = await recordIntent(db, input, now);
+  if (second.kind === 'stale') return { kind: 'refused', refusal: ALREADY_REQUESTED };
+  return second.kind === 'recorded' ? requestRefund(db, deps, second) : second;
+}
+
+// 1. Record the intent under the payment's row lock, and nothing else.
+function recordIntent(db, input, now) {
+  return db.$transaction(async (tx) => {
+    await setLockTimeout(tx);
     await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${input.paymentId} FOR UPDATE`;
     const attempt = await tx.processorPayment.findFirst({
       where: { id: input.attemptId, paymentId: input.paymentId },
-      select: { id: true, status: true, settledPayment: true, chargedBackAt: true, amount: true, currency: true, processorPaymentId: true, connectionId: true, connection: { select: { testmode: true } }, payment: { select: { status: true } } },
+      // testmode is the attempt's own; refunds and the registration's pair are read too.
+      select: INTENT_ATTEMPT_SELECT,
     });
-    if (!attempt) return { kind: 'refused', refusal: codedRefusal('NOT_FOUND', 'This payment no longer exists.') } as const;
-    if (attempt.status !== 'paid') return { kind: 'refused', refusal: codedRefusal('REFUND_NOT_ALLOWED', 'Only a completed Mollie payment can be refunded.') } as const;
-    if (attempt.chargedBackAt !== null) return { kind: 'refused', refusal: codedRefusal('REFUND_NOT_ALLOWED', 'The student’s bank already took this payment back.') } as const;
-    if (attempt.connectionId === null) return { kind: 'refused', refusal: codedRefusal('PROCESSOR_NOT_CONNECTED', 'Mollie is no longer connected.') } as const;
+    if (!attempt) return refused('NOT_FOUND');
+    if (attempt.status !== 'paid') return refused('REFUND_NOT_ALLOWED');
+    if (attempt.refunds.some((r) => r.status === 'refunded')) return { kind: 'unchanged' };
+    if (attempt.chargedBackAt !== null) return refused('REFUND_NOT_ALLOWED');
+    if (attempt.connectionId === null) return refused('PROCESSOR_NOT_CONNECTED');
     const settles = attempt.settledPayment && attempt.payment.status === 'paid';
-    if (settles !== (input.choice !== null)) {
-      return { kind: 'invalid', message: settles ? 'Choose whether to waive the payment or ask again.' : 'This payment was a duplicate; there is nothing to waive.' } as const;
+    if (settles !== (input.choice !== null)) return { kind: 'invalid', message: settles ? 'Choose whether to waive the payment or ask again.' : 'This payment was a duplicate; there is nothing to waive.' };
+    const awaiting = oldestWithoutMollieId(attempt.refunds);
+    if (awaiting) {
+      if (now.getTime() - awaiting.requestedAt.getTime() < ADOPT_AFTER_MS) return refused('REFUND_ALREADY_REQUESTED');
+      return { kind: 'stale', refundId: awaiting.id, outcome: awaiting.outcome, attempt /* … */ };
     }
     try {
-      const refund = await tx.processorRefund.create({
-        data: { attemptId: attempt.id, amount: attempt.amount, status: 'queued', outcome: input.choice === null ? null : input.choice === 'waive' ? 'waived' : 'reopened' },
-        select: { id: true },
-      });
-      return { kind: 'recorded', refundId: refund.id, attempt } as const;
+      const refund = await tx.processorRefund.create({ data: { attemptId: attempt.id, amount: attempt.amount, status: 'queued', outcome: OUTCOME_OF[input.choice] ?? null }, select: { id: true } });
+      return { kind: 'recorded', refundId: refund.id, attempt /* … */ };
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        return { kind: 'refused', refusal: codedRefusal('REFUND_ALREADY_REQUESTED', 'A refund for this payment is already on its way.') } as const;
-      }
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return refused('REFUND_ALREADY_REQUESTED');
       throw err;
     }
   });
-  if (intent.kind !== 'recorded') return intent;
-  // 2. The money: outside any transaction.
-  // 3. Mollie's answer decides whether the intent stays; the outcome applies only once the refund is `refunded`.
-  …
 }
+// 2. The money, outside any transaction (requestRefund); 3. Mollie's answer (storeAnswer), as below.
 ```
 
-Steps 2–3 as the spec says. The row is withdrawn (deleted by id, only while its `processorRefundId` is still null) only when nothing can exist at Mollie: `deps` null; `getAccessToken` throwing (withdraw, rethrow) or answering other than `token`; `createRefund` answering `refused` (`REFUND_REFUSED`, with `detail` mapped to copy: a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn’t accept this refund: <detail>"). `createRefund` throwing — `MollieUnavailable` (logged with `logDegraded`) or anything else — is ambiguous: call `getPayment(token, attempt.processorPaymentId, { testmode: attempt.testmode })` once and adopt a listed refund no row holds with the attempt's amount and currency; with none, withdraw and answer `unavailable`; when `getPayment` fails, keep the row, `log.error({ attemptId, refundId })` and answer `unavailable`. An accepted or adopted refund is stored in one transaction under the payment's lock (the `TeacherStudent` link first when an ask-again completes there): the row is re-read and left alone when a sync adopted it meanwhile; otherwise `completeRefund` when the status is `refunded`, `refund_failed` when it is `failed`, then the row's `processorRefundId` and status. That transaction failing logs `{ attemptId, refundId, mollieRefundId, refundStatus }` at error and rethrows. Before recording an intent, an earlier row with no Mollie id answers `REFUND_ALREADY_REQUESTED` while younger than `ADOPT_AFTER_MS` (`src/services/refund-adoption.ts`), and is otherwise reconciled with the same `getPayment` logic first. Answer `requested` with `outcomeApplied` = `completeRefund` answered `applied`, or `unchanged` for an attempt whose refund is already `refunded`.
+Steps 2–3 as the spec says. The row is withdrawn (deleted by id, only while its `processorRefundId` is still null) only when nothing can exist at Mollie: `deps` null; `getAccessToken` throwing (withdraw, rethrow) or answering other than `token`; `createRefund` answering `refused` (`REFUND_REFUSED`, with `detail` mapped to copy: a detail mentioning balance → "Your Mollie balance is too low for this refund. Top it up in Mollie, then try again."; else "Mollie didn’t accept this refund: <detail>"). `createRefund` throwing — `MollieUnavailable` (logged with `logDegraded`) or anything else — is ambiguous: call `getPayment(token, attempt.processorPaymentId, { testmode: attempt.testmode })` once and adopt a listed refund no row holds with the attempt's amount and currency, preferring one not `failed` or `canceled`; with none, withdraw and answer `unavailable`; when `getPayment` fails, keep the row, `log.error({ attemptId, refundId })` and answer `unavailable`. An accepted or adopted refund is stored in one transaction under the payment's lock (the `TeacherStudent` link first when an ask-again completes there): the row is re-read and left alone when a sync adopted it meanwhile; otherwise `completeRefund` when the status is `refunded`, `refund_failed` when it is `failed`, then the row's `processorRefundId` and status. That transaction failing logs `{ attemptId, refundId, mollieRefundId, refundStatus }` at error and rethrows. Before recording an intent, an earlier row with no Mollie id answers `REFUND_ALREADY_REQUESTED` while younger than `ADOPT_AFTER_MS` (`src/services/refund-adoption.ts`), and is otherwise reconciled with the same `getPayment` logic first (a token that cannot be had, or a throw while getting one, answers `unavailable` and keeps that row). Answer `requested` with `outcomeApplied` = `completeRefund` answered `applied`, or `unchanged` for an attempt whose refund is already `refunded`.
 
 Update `markPaymentNotCharged`'s docblock sentence "a paid one is refused, because waiving it would be a refund" to state what is true now: a paid one is refused here; waiving after a real refund is `completeRefund`'s, in the transaction that records the refund as `refunded`.
 

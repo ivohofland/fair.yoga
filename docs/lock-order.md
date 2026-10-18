@@ -272,9 +272,10 @@ client embeds), which is not in git; read past it.
 - `src/services/processor-attempts.ts:542` and `src/services/payments.ts:322`,
   `syncAttempt`'s and `reopenInTransaction`'s lock on one `Payment` row (#896)
   — "The `Payment` row is a Mollie sync's gate" below;
-- `src/services/processor-refunds.ts:137` and `:324`, `refundAttempt`'s lock on
-  one `Payment` row in its intent's transaction and in the one that stores
-  Mollie's answer (#896) — the same section.
+- two lines in `src/services/processor-refunds.ts`, `refundAttempt`'s lock on
+  one `Payment` row in `recordIntent` (the intent's transaction) and in
+  `storeAnswer` (the one that stores Mollie's answer) (#896) — the same
+  section. Named by function, since their line numbers move with the file.
 
 Five of the eleven are false positives this command cannot suppress: the
 table name (`"ClassTemplate"` at `room-archive.ts:251` and `room-switch.ts:88`,

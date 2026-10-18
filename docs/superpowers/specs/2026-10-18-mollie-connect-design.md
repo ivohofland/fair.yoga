@@ -232,8 +232,12 @@ refund whose outcome is `reopened` reuses `reopenPayment`'s transaction body,
 so it takes that function's order — the `TeacherStudent` link first, then the
 payment — rather than this one. A sync transaction that may complete such a
 refund therefore starts with the link lock; whether it may is decided before
-the transaction opens, from the fetched view (a fair.yoga refund with that
-outcome that Mollie now reports `refunded` and the row does not yet).
+the transaction opens, from the fetched view and the stored rows: a fair.yoga
+refund with that outcome that Mollie now reports `refunded` and the row does
+not yet, counting a refund no row holds by the row the sync would adopt it
+into (§5). The refund request's own answer transaction (§6 step 3) takes the
+link itself, before the payment, when an ask-again it stores is already
+`refunded`; its intent transaction locks the payment alone.
 
 No database lock is ever held across a Mollie call. Refresh races are settled
 by a single-flight promise per connection in process (one process, one VPS)
@@ -414,7 +418,8 @@ irreversible part:
    a registered code with copy). When the request's outcome is unknown — it
    throws, times out, or answers 5xx or an unreadable body — the payment's
    refunds are fetched from Mollie once: a refund no row holds, with the
-   attempt's amount and currency, is adopted as this request's; with none,
+   attempt's amount and currency, is adopted as this request's (one not
+   `failed` or `canceled` when there is one); with none,
    the row is withdrawn and the request answers 503; when that fetch fails
    too, the row is kept, logged at error, and the request answers 503. An
    accepted or adopted refund's id and status are stored in one transaction.
