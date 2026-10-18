@@ -10,6 +10,7 @@ import { formatDayHeader } from '@/lib/format';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { createPrismaClient, type PrismaClient } from '@/lib/prisma-client';
+import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
@@ -242,6 +243,35 @@ describe('payment reminders (DB)', () => {
       expect(note.body).toMatch(/^€12\.50 for PayRem Hatha class on .* at 09:00 is still open\.$/);
     } finally {
       await prisma.teacher.update({ where: { id: teacherId }, data: { paymentLink: null } });
+    }
+  });
+
+  // Mollie is this teacher's only way to be paid: the pay page offers it, so
+  // the reminder must not say to pay directly.
+  it('leaves out "Pay your teacher directly" when the teacher takes payments only through Mollie', async () => {
+    expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
+    await prisma.processorConnection.create({
+      data: {
+        teacherId, processor: 'mollie', organizationId: 'org_payrem', profileId: 'pfl_payrem',
+        accessToken: new Uint8Array([1]), refreshToken: new Uint8Array([1]), accessTokenExpiresAt: new Date(now.getTime() + DAY),
+        scopes: [...MOLLIE_SCOPES], testmode: true,
+      },
+    });
+    try {
+      const payment = await makePayment(new Date(now.getTime() - 9 * DAY), 'overdue');
+      const scoped = scopeSweep(prisma, { Payment: { id: { in: [payment.id] } } });
+      expect(await sendPaymentReminders(scoped.db, now)).toBe(1);
+
+      const reg = await prisma.registration.findUniqueOrThrow({
+        where: { id: payment.registrationId },
+        select: { studentId: true },
+      });
+      const note = await prisma.notification.findFirstOrThrow({
+        where: { recipientId: reg.studentId, type: 'reminder', relatedClassId: classId },
+      });
+      expect(note.body).toMatch(/^€12\.50 for PayRem Hatha class on .* at 09:00 is still open\.$/);
+    } finally {
+      await prisma.processorConnection.deleteMany({ where: { teacherId } });
     }
   });
 

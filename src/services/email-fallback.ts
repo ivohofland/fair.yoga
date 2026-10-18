@@ -25,7 +25,7 @@ import type { UnsubscribeKind } from '@/lib/unsubscribe-kind';
 import { log } from '@/lib/log';
 import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
-import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect, type PayGuidance } from '@/lib/payment-methods';
+import { payGuidanceForTeacher, teacherPaymentSelect, type PayGuidance } from '@/lib/payment-methods';
 
 /**
  * What the teacher of the class a student payment notification is about lets
@@ -47,7 +47,7 @@ async function studentPaymentEmailGuidance(
     },
   });
   if (cls === null) return undefined;
-  return payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
+  return payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
 }
 
 /**

@@ -4,6 +4,7 @@ import { Currency } from '@/lib/prisma-client';
 import type { PaymentQr } from '@/components/student/payment-qr';
 import { SCHEME_FOR_CURRENCY } from '@/lib/bank-details';
 import { log } from '@/lib/log';
+import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 import {
   EPC_QR_CURRENCY,
   PAYMENT_METHOD_COPY,
@@ -13,6 +14,7 @@ import {
   nonBlank,
   paymentMethodsFor,
   payGuidanceFor,
+  payGuidanceForTeacher,
   paymentMethodsForTeacher,
   type PaymentMethod,
   type PaymentMethodKind,
@@ -211,6 +213,27 @@ describe('payGuidanceFor', () => {
     expect(payGuidanceFor({ kind: 'paused' })).toBe('hold_off');
     expect(payGuidanceFor({ kind: 'methods', methods: [LINK_METHOD] })).toBe('methods');
     expect(payGuidanceFor({ kind: 'methods', methods: [] })).toBe('directly');
+  });
+});
+
+describe('payGuidanceForTeacher', () => {
+  const live = { organizationId: 'org_x', profileId: 'pfl_x', disconnectedAt: null, scopes: [...MOLLIE_SCOPES] };
+  const none = { id: TEACHER_ID, paymentLink: null, paymentsPausedAt: null, bankAccounts: [] };
+
+  it('answers methods for a teacher whose only way to be paid is Mollie', () => {
+    expect(payGuidanceForTeacher({ ...none, processorConnection: live }, 'EUR')).toBe('methods');
+  });
+  it('answers directly with no manual method and no connection that takes payments', () => {
+    expect(payGuidanceForTeacher({ ...none, processorConnection: null }, 'EUR')).toBe('directly');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, disconnectedAt: new Date() } }, 'EUR')).toBe('directly');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, profileId: null } }, 'EUR')).toBe('directly');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, scopes: ['payments.read'] } }, 'EUR')).toBe('directly');
+  });
+  it('answers methods for a manual method, with or without Mollie', () => {
+    expect(payGuidanceForTeacher({ ...none, paymentLink: LINK, processorConnection: null }, 'EUR')).toBe('methods');
+  });
+  it('answers hold off while paused, even with Mollie connected', () => {
+    expect(payGuidanceForTeacher({ ...none, paymentsPausedAt: new Date(), processorConnection: live }, 'EUR')).toBe('hold_off');
   });
 });
 

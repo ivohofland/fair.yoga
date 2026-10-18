@@ -220,7 +220,7 @@ export interface NotificationEmailInput {
   relatedClassId?: string | null;
   /**
    * What the class's teacher lets a student do about paying, read at send
-   * time (`payGuidanceFor`). A student payment notification gets its Pay now
+   * time (`payGuidanceForTeacher`). A student payment notification gets its Pay now
    * button only when this is `'methods'`.
    */
   payGuidance?: PayGuidance;

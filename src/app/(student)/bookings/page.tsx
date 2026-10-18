@@ -20,8 +20,7 @@ import { formatInstantInZone } from '@/lib/timezone';
 import { PAY_NOW_LABEL, payPagePath, studentNotificationHref } from '@/lib/notification-links';
 import {
   PAYMENTS_PAUSED_COPY,
-  payGuidanceFor,
-  paymentMethodsForTeacher,
+  payGuidanceForTeacher,
   teacherPaymentSelect,
   type PayGuidance,
 } from '@/lib/payment-methods';
@@ -375,7 +374,7 @@ export default async function StudentBookingsPage() {
             const cls = reg.class;
             const payment = reg.payment;
             const outstanding = payment ? isOutstanding(payment.status) : false;
-            const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
+            const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
             // While paused the pay page shows only the hold-off copy, so a
             // claim links there only when it can show the claim and its Undo.
             const claimLinked = payment ? isClaimStanding(payment) && guidance !== 'hold_off' : false;

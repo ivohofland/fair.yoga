@@ -35,7 +35,7 @@ import {
 import { timeToHHmm } from '@/lib/time-of-day';
 import { formatDayHeader, formatMoney } from '@/lib/format';
 import { studentPaymentRequestBody } from '@/lib/payment-request-copy';
-import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { log } from '@/lib/log';
 import { redecideAfterMove, stampIfPastCancelCheck } from './auto-cancel-decision';
@@ -890,7 +890,7 @@ export async function completeClass(
     // Payments exist — now tell people about them, in the same transaction.
     // In the Level 1 model this notification IS the payment request.
     // A paused teacher's students still get the request, told to hold off.
-    const guidance = payGuidanceFor(paymentMethodsForTeacher(cls.calendarEntry.teacher, cls.currency));
+    const guidance = payGuidanceForTeacher(cls.calendarEntry.teacher, cls.currency);
     const notifications: CreateNotificationInput[] = billed.map((s, i) => {
       const reg = chargedRegistrations[i]!;
       return {
