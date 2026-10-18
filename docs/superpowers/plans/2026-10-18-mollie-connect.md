@@ -552,7 +552,7 @@ export type RefundAnswer =
   | { kind: 'created'; refund: MollieRefundView }
   | { kind: 'refused'; detail: string; field: string | null };
 export interface MollieClient {
-  authorizeUrl(input: { redirectUri: string; state: string; scopes: readonly string[] }): string;
+  authorizeUrl(input: { redirectUri: string; state: string; scopes: readonly string[]; forcePrompt: boolean }): string;
   exchangeCode(code: string, redirectUri: string): Promise<TokenAnswer>;
   refresh(refreshToken: string): Promise<TokenAnswer>;
   revoke(refreshToken: string): Promise<void>;
@@ -764,7 +764,7 @@ function toView(p: z.infer<typeof paymentSchema>): MolliePaymentView {
 
 then `createMollieClient` with one private `send(url, init)` that applies `AbortSignal.timeout(timeoutMs)`, converts a rejected fetch into `MollieUnavailable(…, null, { cause })`, and returns the `Response`; and one `parse(schema, res)` that throws `MollieUnavailable('unexpected response shape', res.status)` when zod fails. Each method:
 
-- `authorizeUrl`: `AUTHORIZE?client_id&redirect_uri&state&scope=<space-joined>&response_type=code&approval_prompt=force`.
+- `authorizeUrl`: `AUTHORIZE?client_id&redirect_uri&state&scope=<space-joined>&response_type=code`, plus `&approval_prompt=force` only when `forcePrompt` (a reconnect): Mollie revokes the previous authorizations when a forced prompt ends in a new one, and `auto` is the default.
 - `exchangeCode`/`refresh`: `POST API/oauth2/tokens`, `Authorization: Basic base64(id:secret)`, `Content-Type: application/x-www-form-urlencoded`, body `grant_type=authorization_code&code&redirect_uri` or `grant_type=refresh_token&refresh_token`. 200 → `granted` (scopes split on spaces; `refreshToken` falls back to the one sent, for refresh). 400 with `error: 'invalid_grant'` → `invalid_grant`. Else → throw.
 - `revoke`: `DELETE API/oauth2/tokens`, same Basic auth, form body `token_type_hint=refresh_token&token=…`. 2xx → resolve; else throw.
 - `/v2` calls: `Authorization: Bearer <token>`; `organization` → `GET /v2/organizations/me`; `profiles` → `GET /v2/profiles?limit=250`; `listMethods` → `GET /v2/methods` with the query above, 422 → `unsupported`; `createPayment` → `POST /v2/payments` JSON body (omit `webhookUrl` when null, include `testmode: true` only when true, never `applicationFee`); `getPayment` → `GET /v2/payments/{id}?embed=refunds` (+`testmode=true`), 404 → null; `createRefund` → `POST /v2/payments/{id}/refunds` JSON `{ amount, testmode? }`, 422 → `refused` with `detail` (default `'Mollie refused the refund.'`) and `field`.
@@ -855,8 +855,8 @@ describe('the allowlist', () => {
 
 describe('orderOffered', () => {
   it('keeps allowlisted ids in allowlist order and reports the rest', () => {
-    expect(orderOffered(['paypal', 'klarna', 'ideal', 'newmethod'])).toEqual({
-      offered: ['ideal', 'paypal'], excluded: ['klarna', 'newmethod'],
+    expect(orderOffered(['twint', 'klarna', 'ideal', 'paypal', 'newmethod'])).toEqual({
+      offered: ['ideal', 'twint'], excluded: ['klarna', 'paypal', 'newmethod'],
     });
   });
 });
@@ -895,10 +895,9 @@ export const MOLLIE_METHODS = {
   creditcard: { label: 'Card', expiresMinutes: 30, recurring: false },
   applepay: { label: 'Apple Pay', expiresMinutes: 30, recurring: false },
   eps: { label: 'EPS', expiresMinutes: 60, recurring: false },
-  blik: { label: 'BLIK', expiresMinutes: 60, recurring: false },
+  blik: { label: 'BLIK', expiresMinutes: 1, recurring: false },
   przelewy24: { label: 'Przelewy24', expiresMinutes: 60, recurring: false },
   twint: { label: 'TWINT', expiresMinutes: 45, recurring: false },
-  paypal: { label: 'PayPal', expiresMinutes: 360, recurring: false },
 } as const satisfies Record<string, MollieMethodEntry>;
 
 export type AllowedMollieMethod = keyof typeof MOLLIE_METHODS;
@@ -935,7 +934,7 @@ export const EXCLUSION_COPY = {
 export const LONGEST_METHOD_EXPIRY_MINUTES = Math.max(...ORDER.map((m) => MOLLIE_METHODS[m].expiresMinutes));
 ```
 
-(Set BLIK's `expiresMinutes` to what Task 0 found.)
+(BLIK's `expiresMinutes` is 1: Mollie's BLIK page gives a 55-second session timeout and the expiry table has no row for it.)
 
 - [ ] **Step 4: Run, see them pass.** Same command → PASS.
 
@@ -987,9 +986,9 @@ Create a teacher and a live connection whose tokens are sealed with a test key a
 
 ```ts
 it('offers allowlisted methods in allowlist order and reports the rest', async () => {
-  fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['paypal', 'klarna', 'ideal'] });
+  fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['twint', 'klarna', 'ideal'] });
   expect(await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('12.50'), 'EUR'))
-    .toEqual({ kind: 'methods', offered: ['ideal', 'paypal'], excluded: ['klarna'] });
+    .toEqual({ kind: 'methods', offered: ['ideal', 'twint'], excluded: ['klarna'] });
   expect(fake.listMethods).toHaveBeenCalledWith('access_plain', { profileId: conn.profileId, amount: { value: '12.50', currency: 'EUR' }, testmode: true });
 });
 it('drops an id the processor returns that the allowlist does not hold', async () => {
@@ -1468,7 +1467,7 @@ export function processorWebhookUrl(appUrl: string): string | null; // null when
 `pay-page-methods.test.ts` (unit, real DB, fake client):
 1. No connection → exactly `paymentMethodsForTeacher(teacher, currency)`.
 2. `deps` null with a live connection → the same.
-3. Live connection, Mollie offers `['paypal','ideal']` → `{ kind: 'methods', methods: [processor ideal, processor paypal, ...the Level 1 methods in their existing order] }`.
+3. Live connection, Mollie offers `['twint','ideal']` → `{ kind: 'methods', methods: [processor ideal, processor twint, ...the Level 1 methods in their existing order] }`.
 4. Mollie unavailable → the Level 1 answer, unchanged.
 5. Paused teacher → `{ kind: 'paused' }` and no Mollie call.
 6. Disconnected connection (`disconnectedAt` set, tokens still present) → no Mollie call, Level 1 answer.
