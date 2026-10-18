@@ -32,12 +32,7 @@ const NETWORK_ERROR = 'Network error. Please try again.';
 
 /** Whether `value` is a string holding an absolute https URL. */
 function isHttpsUrl(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  try {
-    return new URL(value).protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return typeof value === 'string' && URL.canParse(value) && new URL(value).protocol === 'https:';
 }
 
 /**

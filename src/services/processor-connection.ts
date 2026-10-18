@@ -553,14 +553,14 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
     deps.client.organization(token.accessToken),
     deps.client.profiles(token.accessToken),
   ]);
-  if (orgRead.status === 'rejected' || profilesRead.status === 'rejected') {
-    // One log for the read; when both calls failed it names the organization's.
-    const [operation, err]: ['organization' | 'profiles', unknown] =
-      orgRead.status === 'rejected' ? ['organization', orgRead.reason] : ['profiles', profilesRead.reason];
+  // One log for the read; when both calls failed it names the organization's.
+  const unreadable = (operation: 'organization' | 'profiles', err: unknown): ConnectionView => {
     if (!(err instanceof MollieUnavailable)) throw err;
     mollieUnavailable(err, row.id, operation, 'Mollie could not be read for the settings section; it shows Mollie as unreachable');
     return { kind: 'unavailable' };
-  }
+  };
+  if (orgRead.status === 'rejected') return unreadable('organization', orgRead.reason);
+  if (profilesRead.status === 'rejected') return unreadable('profiles', profilesRead.reason);
   const org = orgRead.value;
   const profiles = usableProfiles(profilesRead.value, deps.config.testmode).map(({ id, name }) => ({ id, name }));
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
