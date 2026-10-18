@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { routerRefresh } from '../../../tests/setup/components';
+import { routerReplace } from '../../../tests/setup/components';
 import { EXCLUSION_COPY } from '@/lib/processor-methods';
 import type { ConnectionView } from '@/services/processor-connection';
 import { MollieConnectionSection } from './mollie-connection-section';
@@ -20,9 +20,9 @@ const CONNECTED: Extract<ConnectionView, { kind: 'connected' }> = {
   profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: ['klarna', 'paypal'], missingScopes: [],
 };
 
-function show(view: ConnectionView, opts: { configured?: boolean; status?: Parameters<typeof MollieConnectionSection>[0]['status'] } = {}) {
+function show(view: ConnectionView, opts: { status?: Parameters<typeof MollieConnectionSection>[0]['status'] } = {}) {
   vi.stubGlobal('fetch', fetchMock);
-  return render(<MollieConnectionSection teacherId="t1" configured={opts.configured ?? true} view={view} status={opts.status ?? null} />);
+  return render(<MollieConnectionSection teacherId="t1" view={view} status={opts.status ?? null} />);
 }
 
 function ok(data: unknown): Response {
@@ -30,11 +30,6 @@ function ok(data: unknown): Response {
 }
 
 describe('MollieConnectionSection', () => {
-  it('renders nothing when Mollie is not configured', () => {
-    const { container } = show({ kind: 'none' }, { configured: false });
-    expect(container).toBeEmptyDOMElement();
-  });
-
   it('offers to connect, POSTs the connect and sends the browser to Mollie', async () => {
     const assign = vi.fn();
     Object.defineProperty(window, 'location', { value: { assign }, writable: true });
@@ -60,17 +55,23 @@ describe('MollieConnectionSection', () => {
     show({ kind: 'choose_profile', profiles: PROFILES });
     fireEvent.click(screen.getByLabelText('Retreats'));
     fireEvent.click(screen.getByRole('button', { name: 'Use this profile' }));
-    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/profile'));
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/teachers/t1/processor/profile');
     expect(init.method).toBe('PUT');
     expect(JSON.parse(init.body as string)).toEqual({ profileId: 'pfl_two' });
   });
 
-  it('says to create a profile first when Mollie lists none', () => {
+  it('says to create a profile first when Mollie lists none, and offers to connect again', async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+    fetchMock.mockResolvedValue(ok({ authorizeUrl: 'https://my.mollie.com/again' }));
     show({ kind: 'choose_profile', profiles: [] });
     expect(screen.getByText(/Create a website profile in Mollie first/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Use this profile' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Disconnect Mollie' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Connect again' }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('https://my.mollie.com/again'));
   });
 
   it('describes a connection: who, the methods students see, the ones left out and why, and the fees', () => {
@@ -78,6 +79,7 @@ describe('MollieConnectionSection', () => {
     expect(screen.getByText('Mollie connected — Anna Yoga · Studio Anna')).toBeInTheDocument();
     expect(screen.getByText('iDEAL')).toBeInTheDocument();
     expect(screen.getByText('Card')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Not offered' })).toBeInTheDocument();
     expect(screen.getByText('klarna')).toBeInTheDocument();
     expect(screen.getByText(EXCLUSION_COPY.pay_later)).toBeInTheDocument();
     expect(screen.getByText(EXCLUSION_COPY.not_offered)).toBeInTheDocument();
@@ -85,7 +87,7 @@ describe('MollieConnectionSection', () => {
     expect(screen.queryByText('Test mode')).toBeNull();
     expect(screen.queryByText(/Wero payments can be disputed/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Change profile' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disconnect Mollie' })).toBeInTheDocument();
   });
 
   it('marks test mode and notes Wero’s dispute window when Wero is offered', () => {
@@ -101,7 +103,7 @@ describe('MollieConnectionSection', () => {
     expect(screen.getByText(/Payments then go to that profile’s Mollie balance/)).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Retreats'));
     fireEvent.click(screen.getByRole('button', { name: 'Use this profile' }));
-    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/profile'));
     expect(JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string)).toEqual({ profileId: 'pfl_two' });
   });
 
@@ -116,32 +118,69 @@ describe('MollieConnectionSection', () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://my.mollie.com/x'));
   });
 
-  it('disconnects after a confirmation', async () => {
+  it('disconnects after a confirmation, dropping the return status from the URL', async () => {
     fetchMock.mockResolvedValue(ok({ connected: false }));
-    show(CONNECTED);
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
-    expect(fetchMock).not.toHaveBeenCalled();
+    show(CONNECTED, { status: 'connected' });
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect Mollie' }));
-    await waitFor(() => expect(routerRefresh).toHaveBeenCalled());
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith('/settings/profile'));
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('/api/teachers/t1/processor');
     expect(init.method).toBe('DELETE');
   });
 
-  it('says when Mollie cannot be reached and still offers Disconnect', () => {
+  it('says when Mollie cannot be reached and offers Reconnect beside Disconnect', async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+    fetchMock.mockResolvedValue(ok({ authorizeUrl: 'https://my.mollie.com/re' }));
     show({ kind: 'unavailable' });
     expect(screen.getByText('Mollie can’t be reached right now.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Disconnect' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Disconnect Mollie' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith('https://my.mollie.com/re'));
+  });
+
+  it('focuses the confirmation’s Disconnect, which the question describes, and Cancel hands focus back', () => {
+    show(CONNECTED);
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect Mollie' }));
+    const confirm = screen.getByRole('button', { name: 'Disconnect' });
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveAccessibleDescription(/Disconnect Mollie\? Students will see your other payment options/);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Disconnect Mollie' })).toHaveFocus();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('moves focus to the section heading once disconnected', async () => {
+    fetchMock.mockResolvedValue(ok({ connected: false }));
+    show(CONNECTED);
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect Mollie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Mollie' })).toHaveFocus());
+  });
+
+  it('focuses the current profile on Change profile, and Cancel hands focus back', () => {
+    show({ ...CONNECTED, profiles: PROFILES });
+    fireEvent.click(screen.getByRole('button', { name: 'Change profile' }));
+    expect(screen.getByLabelText('Studio Anna')).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('button', { name: 'Change profile' })).toHaveFocus();
+  });
+
+  it('gives its text triggers a 44px tap height', () => {
+    show({ ...CONNECTED, profiles: PROFILES });
+    expect(screen.getByRole('button', { name: 'Disconnect Mollie' })).toHaveClass('min-h-11');
   });
 
   it.each([
-    ['connected', 'Mollie is connected.'],
-    ['choose', 'Choose which Mollie profile students’ payments go to.'],
-    ['expired', 'That Mollie sign-in link expired. Connect again.'],
-    ['cancelled', 'Connecting Mollie was cancelled.'],
-    ['unavailable', 'Mollie couldn’t be reached. Try connecting again in a moment.'],
-  ] as const)('shows one status line on return: %s', (status, text) => {
+    ['connected', 'Mollie is connected.', 'text-teal'],
+    ['choose', 'Choose which Mollie profile students’ payments go to.', 'text-teal'],
+    ['expired', 'That Mollie sign-in link expired. Connect again.', 'text-brown'],
+    ['cancelled', 'Connecting Mollie was cancelled.', 'text-brown'],
+    ['unavailable', 'Mollie couldn’t be reached. Try connecting again in a moment.', 'text-brown'],
+  ] as const)('shows one status line on return: %s', (status, text, colour) => {
     show({ kind: 'none' }, { status });
-    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.getByText(text)).toHaveClass(colour);
   });
 });
