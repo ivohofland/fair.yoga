@@ -17,7 +17,7 @@ afterEach(() => {
 const PROFILES = [{ id: 'pfl_one', name: 'Studio Anna' }, { id: 'pfl_two', name: 'Retreats' }];
 const CONNECTED: Extract<ConnectionView, { kind: 'connected' }> = {
   kind: 'connected', organizationName: 'Anna Yoga', profileId: 'pfl_one', profileName: 'Studio Anna', testmode: false,
-  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: ['klarna', 'giropay'], missingScopes: [],
+  profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: [{ id: 'klarna', description: 'Pay later.' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'giropay', description: null }], missingScopes: [],
 };
 
 function show(view: ConnectionView, opts: { status?: Parameters<typeof MollieConnectionSection>[0]['status'] } = {}) {
@@ -80,9 +80,12 @@ describe('MollieConnectionSection', () => {
     expect(screen.getByText('iDEAL')).toBeInTheDocument();
     expect(screen.getByText('Card')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Not offered' })).toBeInTheDocument();
-    expect(screen.getByText('klarna')).toBeInTheDocument();
+    expect(screen.getByText('Pay later.')).toBeInTheDocument();
+    expect(screen.getByText('Bank transfer')).toBeInTheDocument();
+    expect(screen.queryByText('banktransfer')).toBeNull();
+    expect(screen.getByText('giropay')).toBeInTheDocument();
     expect(screen.getByText(EXCLUSION_COPY.pay_later)).toBeInTheDocument();
-    expect(screen.getByText(EXCLUSION_COPY.not_offered)).toBeInTheDocument();
+    expect(screen.getAllByText(EXCLUSION_COPY.not_offered)).toHaveLength(2);
     expect(screen.getByText('Mollie deducts its fees from each payment; you see the net amount in Mollie.')).toBeInTheDocument();
     expect(screen.queryByText('Test mode')).toBeNull();
     expect(screen.queryByText(/Wero payments can be disputed/)).toBeNull();

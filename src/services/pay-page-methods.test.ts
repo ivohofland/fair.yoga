@@ -10,7 +10,7 @@ import { paymentMethodsForTeacher } from '@/lib/payment-methods';
 import { sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
 import type { MollieDeps } from './mollie-deps';
-import { forgetOfferedMethods } from './processor-methods-offer';
+import { forgetOfferedMethods } from './processor-methods-cache';
 import { payPageMethods, payPageTeacherSelect } from './pay-page-methods';
 
 const prisma = createPrismaClient();
@@ -101,7 +101,7 @@ describe('payPageMethods', () => {
 
   it('puts the offered Mollie methods first, in allowlist order, before the manual-payment methods', async () => {
     await seedConnection();
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['twint', 'ideal'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['twint', 'ideal'].map((id) => ({ id, description: null })) });
     const t = await teacher();
     const manual = paymentMethodsForTeacher(t, 'EUR');
     if (manual.kind !== 'methods') throw new Error('expected methods');

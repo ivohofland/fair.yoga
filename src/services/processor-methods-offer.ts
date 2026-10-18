@@ -1,18 +1,22 @@
 import { Prisma, type Currency, type PrismaClient } from '@/lib/prisma-client';
-import { MollieUnavailable } from '@/lib/mollie/client';
-import { orderOffered, type AllowedMollieMethod } from '@/lib/processor-methods';
+import { MollieUnavailable, type MollieMethod } from '@/lib/mollie/client';
+import { orderOffered } from '@/lib/processor-methods';
 import { logDegraded } from '@/lib/degradation';
 import type { MollieDeps } from './mollie-deps';
 import { getAccessToken } from './processor-token';
 import { METHODS_CACHE_MS, offerCache, putOffer, type CachedOffer } from './processor-methods-cache';
-export { forgetOfferedMethods, METHODS_CACHE_MS } from './processor-methods-cache';
 
-export type OfferedMethods =
-  | { kind: 'methods'; offered: AllowedMollieMethod[]; excluded: string[] }
-  | { kind: 'unavailable' };
+export type OfferedMethods = CachedOffer | { kind: 'unavailable' };
 
 const MIN_AMOUNT = new Prisma.Decimal('0.01');
 const EMPTY: CachedOffer = { kind: 'methods', offered: [], excluded: [] };
+
+/** `orderOffered` over the listed ids, each excluded id carrying Mollie's description. */
+function withDescriptions(methods: readonly MollieMethod[]): CachedOffer {
+  const { offered, excluded } = orderOffered(methods.map((m) => m.id));
+  const description = new Map(methods.map((m) => [m.id, m.description]));
+  return { kind: 'methods', offered, excluded: excluded.map((id) => ({ id, description: description.get(id) ?? null })) };
+}
 
 /** The teacher's enabled methods for this amount and currency that fair.yoga offers. */
 export async function listOfferedMethods(
@@ -37,7 +41,7 @@ export async function listOfferedMethods(
       amount: { value: amount.toFixed(2), currency },
       testmode: connection.testmode,
     });
-    value = answer.kind === 'unsupported' ? EMPTY : { kind: 'methods', ...orderOffered(answer.ids) };
+    value = answer.kind === 'unsupported' ? EMPTY : withDescriptions(answer.methods);
   } catch (err) {
     if (!(err instanceof MollieUnavailable)) throw err;
     logDegraded('MOLLIE_UNAVAILABLE', { connectionId: connection.id, operation: 'listMethods', ...(err.status === null ? {} : { status: err.status }) }, 'Mollie methods unavailable; pay page shows the other rows', err);

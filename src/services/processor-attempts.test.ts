@@ -15,7 +15,7 @@ import { uniqueSuffix } from '../../tests/helpers';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
 import { reopenPayment } from './payments';
-import { forgetOfferedMethods } from './processor-methods-offer';
+import { forgetOfferedMethods } from './processor-methods-cache';
 import { ADOPT_AFTER_MS } from './refund-adoption';
 import {
   createAttempt, decideRefundSync, decideSync, processorReturnUrl, processorWebhookUrl, syncAttempt,
@@ -159,7 +159,7 @@ beforeEach(async () => {
   vi.mocked(logDegraded).mockClear();
   await prisma.teacher.update({ where: { id: teacherId }, data: { paymentsPausedAt: null, currency: 'EUR' } });
   await seedConnection();
-  fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal', 'creditcard', 'klarna'] });
+  fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['ideal', 'creditcard', 'klarna'].map((id) => ({ id, description: null })) });
   fake.createPayment.mockImplementation(async () => molliePayment());
 });
 
@@ -327,7 +327,7 @@ describe('createAttempt', () => {
 
     it('an allowlisted method the teacher does not offer for this payment with PROCESSOR_METHOD_UNAVAILABLE', async () => {
       const { paymentId } = await freshPayment();
-      fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['creditcard'] });
+      fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['creditcard'].map((id) => ({ id, description: null })) });
       expect(refusalCode(await createAttempt(prisma, deps, { paymentId, studentId, method: 'ideal' }))).toBe('PROCESSOR_METHOD_UNAVAILABLE');
       expect(fake.createPayment).not.toHaveBeenCalled();
     });
