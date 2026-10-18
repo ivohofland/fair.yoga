@@ -30,6 +30,14 @@ describe('diagnoseMollieConfig', () => {
     expect(d.config.testmode).toBe(false);
     expect(d.config.tokenKey.length).toBe(32);
   });
+  it('drops trailing slashes from the app URL', () => {
+    const d = diagnoseMollieConfig({ ...full, NEXT_PUBLIC_APP_URL: 'https://fair.yoga//' });
+    if (!d.ok) throw new Error(`expected ok, got ${d.reason}`);
+    expect(d.config.appUrl).toBe('https://fair.yoga');
+  });
+  it('still refuses an app URL that is only slashes', () => {
+    expect(diagnoseMollieConfig({ ...full, NEXT_PUBLIC_APP_URL: '/' })).toEqual({ ok: false, reason: 'app-url' });
+  });
   it('reads MOLLIE_TESTMODE=1 as test mode', () => {
     const d = diagnoseMollieConfig({ ...full, MOLLIE_TESTMODE: '1' });
     if (!d.ok) throw new Error(`expected ok, got ${d.reason}`);

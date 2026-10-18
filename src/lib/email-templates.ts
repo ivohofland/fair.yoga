@@ -15,6 +15,8 @@ import {
   STUDENT_BOOKINGS_LABEL,
   STUDENT_BOOKINGS_PATH,
   TEACHER_INVITATION_LABEL,
+  TEACHER_MOLLIE_LABEL,
+  TEACHER_MOLLIE_PATH,
   TEACHER_INVITATION_PATH,
   PAY_NOW_LABEL,
   isPaymentNotification,
@@ -206,6 +208,7 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
 const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: TEACHER_INVITATION_LABEL, path: TEACHER_INVITATION_PATH },
   class_reminder: { label: 'Open your schedule', path: '/schedule' },
+  processor_disconnected: { label: TEACHER_MOLLIE_LABEL, path: TEACHER_MOLLIE_PATH },
 };
 
 export interface NotificationEmailInput {

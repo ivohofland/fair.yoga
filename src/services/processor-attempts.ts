@@ -4,6 +4,7 @@ import {
   Prisma,
   ProcessorPaymentStatus,
   type ProcessorRefundStatus,
+  type Currency,
   type PaymentStatus,
   type PrismaClient,
   type RefundOutcome,
@@ -558,8 +559,7 @@ export async function syncAttempt(
     let result = decision.result;
     const amount = formatMoney(current.amount, current.currency);
     const method = view.method ?? current.method;
-    const chargedBackAmount =
-      view.amountChargedBack === null ? amount : formatMoney(new Prisma.Decimal(view.amountChargedBack.value), current.currency);
+    const chargedBackAmount = chargedBackLine(view.amountChargedBack, current.currency, amount, attempt.id);
 
     if (result !== 'unchanged') {
       await tx.processorPayment.update({
@@ -696,6 +696,20 @@ async function releaseAfterDashboardRefunds(
 
 function completes(decision: RefundSyncDecision): boolean {
   return decision.kind === 'status' && decision.complete;
+}
+
+/**
+ * The charged-back amount as the teacher's notice names it: Mollie's figure
+ * in the attempt's currency, or, when Mollie gives none or names another
+ * currency (logged), the attempt's own amount.
+ */
+function chargedBackLine(chargedBack: MollieAmount | null, currency: Currency, attemptAmount: string, attemptId: string): string {
+  if (chargedBack === null) return attemptAmount;
+  if (chargedBack.currency !== currency) {
+    log.warn({ attemptId, currency, chargedBackCurrency: chargedBack.currency }, 'Mollie reported a chargeback in another currency; the notice names the attempt’s amount');
+    return attemptAmount;
+  }
+  return formatMoney(new Prisma.Decimal(chargedBack.value), currency);
 }
 
 /** Mollie's `paidAt` when it parses, else `now`. */
