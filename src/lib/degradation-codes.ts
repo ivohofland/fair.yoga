@@ -72,6 +72,12 @@ export const DEGRADATION_CODES = {
       'A charged registration on a completed class had no payment although completion creates one for each. The student pay page answered not found.',
     contextKeys: ['classId', 'registrationId'],
   },
+  MOLLIE_UNAVAILABLE: {
+    level: 'warn',
+    description:
+      'Mollie could not be reached or answered unexpectedly. The pay page showed the teacher’s other payment rows without Mollie’s, or a webhook was answered 503 for Mollie to retry.',
+    contextKeys: ['connectionId', 'operation', 'status'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }
