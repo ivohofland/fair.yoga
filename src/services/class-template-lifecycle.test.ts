@@ -182,8 +182,8 @@ describe('updateClassTemplate (DB)', () => {
 
   /**
    * Pins the clock at 12:00 UTC on today's UTC date, for the probe cases whose
-   * answer depends on today's occurrence surviving. `Date` only: the database
-   * client and its pool keep their real timers.
+   * answer turns on what happens to today's occurrence. `Date` only: the
+   * database client and its pool keep their real timers.
    */
   function clockAtNoonToday(): void {
     const today = new Date();
@@ -578,12 +578,13 @@ describe('updateClassTemplate (DB)', () => {
    * and adding the generator's reason without adding the probe's third read
    * would have reproduced it exactly.
    *
-   * The clock is pinned at 12:00 UTC today and the template starts at `23:59`
-   * UTC. The probe judges at the next sweep's instant, 13:00, and both today's
-   * start and its auto-cancel check (21:59, two hours before) come later, so
-   * neither the past-start filter nor the `past_cancel_check` decline drops
-   * today's occurrence: only the holder can. Both halves asserted: the week it
-   * IS and the week it is NOT.
+   * The clock is pinned at 12:00 UTC today, and the template starts at `23:59`
+   * UTC with its auto-cancel check set to `HOURS_2`. The probe judges at the
+   * next sweep's instant, one `CLASS_GENERATION_INTERVAL_MS` after the pin,
+   * and both today's start and its 21:59 check come later, so neither the
+   * past-start filter nor the `past_cancel_check` decline drops today's
+   * occurrence: only the holder can. Both halves asserted: the week it IS and
+   * the week it is NOT.
    */
   it('declines a date a live studio class holds, and names the week after', async () => {
     clockAtNoonToday();
@@ -607,6 +608,7 @@ describe('updateClassTemplate (DB)', () => {
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
+        autoCancelCheck: 'HOURS_2',
       },
     });
 
@@ -645,8 +647,8 @@ describe('updateClassTemplate (DB)', () => {
     // both families use, on the entry, and it is the constraint's own partial
     // predicate. Widen the pre-check past liveness and this goes red.
     //
-    // Pinned at 12:00 UTC today, as the case above: the probe judges at 13:00,
-    // before both the `23:58` start and its 21:58 auto-cancel check, so
+    // Pinned at 12:00 UTC today, as the case above: the probe's instant falls
+    // before both the `23:58` start and its `HOURS_2` check at 21:58, so
     // today's occurrence is the answer unless the cancelled holder blocks it.
     clockAtNoonToday();
     const solo = await seedTeacher('cross-family-probe-cancelled');
@@ -669,6 +671,7 @@ describe('updateClassTemplate (DB)', () => {
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
+        autoCancelCheck: 'HOURS_2',
       },
     });
 
@@ -712,10 +715,10 @@ describe('updateClassTemplate (DB)', () => {
    * direction, and #194's original failure. The two now decide with the same
    * function.
    *
-   * Pinned at 12:00 UTC today with the template at `23:59`, as the two cases
-   * above: the probe judges at 13:00, before both today's start and its
-   * auto-cancel check, so neither the past-start filter nor the
-   * `past_cancel_check` decline moves the answer a week.
+   * The clock is pinned as in the two cases above, with the template at
+   * `23:59` and a `HOURS_2` check: the probe's instant falls before both
+   * today's start and its auto-cancel check, so neither the past-start filter
+   * nor the `past_cancel_check` decline moves the answer a week.
    * The holder at `23:30` runs into it from behind — 23:30–00:30 against
    * 23:59–00:59 — so the spans overlap and the start times differ, which is
    * the whole of the case.
@@ -742,6 +745,7 @@ describe('updateClassTemplate (DB)', () => {
         targetRate: 20,
         minStudents: 2,
         maxStudents: 8,
+        autoCancelCheck: 'HOURS_2',
       },
     });
 
@@ -796,17 +800,19 @@ describe('updateClassTemplate (DB)', () => {
    * The arrangement is deliberate on all three inputs and none of them can
    * drift with the calendar:
    *
-   *   - `dayOfWeek` is TODAY's UTC weekday, so today is the first occurrence
-   *     `probeHorizon` enumerates — unless the next sweep's instant has
-   *     already crossed UTC midnight, and then the enumeration starts after
-   *     today. Either way today is not named.
+   *   - `dayOfWeek` is TODAY's UTC weekday and the clock is pinned at 12:00
+   *     UTC, so today is the first occurrence `probeHorizon` enumerates.
    *   - `startTime` is `'00:00'` and the teacher's zone is UTC, so
    *     `classStartInstant` for today is today's midnight UTC, which is never
    *     strictly after the next sweep's instant. Today is dropped on every
-   *     run, at every hour, rather than only after some cutoff.
+   *     run, rather than only after some cutoff.
    *   - No `Class` row exists for this template, so `heldWeeks` is empty and
-   *     the answer is simply the first surviving candidate's week. Nothing
-   *     else can be responsible for the difference.
+   *     the answer is simply the first surviving candidate's week.
+   *
+   * The filter is not the only thing dropping today here: a class's
+   * auto-cancel check always precedes its start, so `past_cancel_check`
+   * declines today's occurrence too. This case pins the answer both reasons
+   * agree on, not the filter in isolation.
    *
    * Both halves are asserted — the week it IS and the week it is NOT — because
    * the failure is off by exactly one week and `not.toBe` alone would pass for
@@ -819,6 +825,7 @@ describe('updateClassTemplate (DB)', () => {
    * one day in seven when today is a Thursday.
    */
   it('drops an occurrence whose start has already passed, exactly as the sweep does', async () => {
+    clockAtNoonToday();
     const solo = await seedTeacher('past-start');
     const todaySchemaDay = (new Date().getUTCDay() + 6) % 7;
     const template = await prisma.classTemplate.create({
