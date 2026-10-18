@@ -121,6 +121,22 @@ describe('MollieConnectionSection', () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://my.mollie.com/x'));
   });
 
+  it.each([
+    ['no authorize URL', {}],
+    ['an authorize URL that is not a string', { authorizeUrl: 42 }],
+    ['an authorize URL that is not https', { authorizeUrl: 'http://my.mollie.com/oauth2/authorize' }],
+    ['an authorize URL that does not parse', { authorizeUrl: 'not a url' }],
+  ])('stays on the page, shows Mollie as unavailable and frees the button for an answer with %s', async (_label, data) => {
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', { value: { assign }, writable: true });
+    fetchMock.mockResolvedValue(ok(data));
+    show({ kind: 'none' });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect Mollie' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Mollie couldn’t be reached. Try connecting again in a moment.');
+    expect(screen.getByRole('button', { name: 'Connect Mollie' })).toBeEnabled();
+    expect(assign).not.toHaveBeenCalled();
+  });
+
   it('disconnects after a confirmation, dropping the return status from the URL', async () => {
     fetchMock.mockResolvedValue(ok({ connected: false }));
     show(CONNECTED, { status: 'connected' });
