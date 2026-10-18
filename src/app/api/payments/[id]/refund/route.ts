@@ -6,13 +6,15 @@ import {
 import type { Payment, ProcessorRefundStatus } from '@/lib/prisma-client';
 import { refundSchema } from '@/lib/schemas';
 import { mollieDeps } from '@/services/mollie-deps';
-import { refundAttempt } from '@/services/processor-refunds';
+import { RefundNotRecorded, refundAttempt, type RefundResult } from '@/services/processor-refunds';
 import { loadOwnedPayment } from '../shared';
 
 /**
  * Refunds one Mollie attempt of the teacher's own payment in full, and answers
  * the refund's status and the payment as it now stands; an attempt already
- * refunded answers `unchanged`.
+ * refunded answers `unchanged`. A refund Mollie may have made, or made but
+ * fair.yoga could not record (`RefundNotRecorded`), answers 503 with copy that
+ * says so, rather than inviting a second refund.
  */
 export const POST = withErrorHandler(async (
   request: NextRequest,
@@ -27,7 +29,13 @@ export const POST = withErrorHandler(async (
   const owned = await loadOwnedPayment(id, session.teacherId);
   if (!owned.ok) return owned.response;
 
-  const result = await refundAttempt(prisma, mollieDeps(), { paymentId: id, attemptId: body.data.attemptId, choice: body.data.choice });
+  let result: RefundResult;
+  try {
+    result = await refundAttempt(prisma, mollieDeps(), { paymentId: id, attemptId: body.data.attemptId, choice: body.data.choice });
+  } catch (err) {
+    if (!(err instanceof RefundNotRecorded)) throw err;
+    return respondError('Mollie accepted the refund; fair.yoga will finish recording it shortly.', 503, 'PROCESSOR_UNAVAILABLE');
+  }
   switch (result.kind) {
     case 'requested': {
       const payment = await prisma.payment.findUniqueOrThrow({ where: { id } });
@@ -47,6 +55,12 @@ export const POST = withErrorHandler(async (
       return respondRefusal(result.refusal);
     case 'unavailable':
       return respondError('Mollie can’t be reached right now. Try the refund again in a moment.', 503, 'PROCESSOR_UNAVAILABLE');
+    case 'unconfirmed':
+      return respondError(
+        'Mollie didn’t confirm the refund. fair.yoga will check again; don’t refund in Mollie meanwhile.',
+        503,
+        'PROCESSOR_UNAVAILABLE',
+      );
     default: {
       const unhandled: never = result;
       throw new Error(`unhandled refund result: ${String((unhandled as { kind?: unknown }).kind)}`);

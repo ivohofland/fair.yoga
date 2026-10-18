@@ -18,11 +18,15 @@ vi.mock('@/lib/auth/session', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/auth/session')>()),
   validateSession: m.validateSession,
 }));
-vi.mock('@/services/processor-refunds', () => ({ refundAttempt: m.refundAttempt }));
+vi.mock('@/services/processor-refunds', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/processor-refunds')>()),
+  refundAttempt: m.refundAttempt,
+}));
 vi.mock('@/services/mollie-deps', () => ({ mollieDeps: m.mollieDeps }));
 vi.mock('@/lib/log', () => ({ log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
 
 const { POST } = await import('./route');
+const { RefundNotRecorded } = await import('@/services/processor-refunds');
 
 const TEACHER: SessionUser = { sessionId: 's1', accountId: 'acct-1', teacherId: 't-1', defaultTimezone: 'UTC', studentId: null };
 const STUDENT: SessionUser = { sessionId: 's1', accountId: 'acct-1', teacherId: null, studentId: 'stu-1' };
@@ -88,6 +92,32 @@ describe('POST /api/payments/[id]/refund', () => {
   it('answers 503 PROCESSOR_UNAVAILABLE when Mollie cannot be reached', async () => {
     m.refundAttempt.mockResolvedValue({ kind: 'unavailable' });
     await expectRefusal(await POST(request(), ctx), 'PROCESSOR_UNAVAILABLE');
+  });
+
+  it('answers 503 PROCESSOR_UNAVAILABLE saying not to refund in Mollie when Mollie could not confirm the refund', async () => {
+    m.refundAttempt.mockResolvedValue({ kind: 'unconfirmed' });
+    const res = await POST(request(), ctx);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 'PROCESSOR_UNAVAILABLE',
+        message: 'Mollie didn’t confirm the refund. fair.yoga will check again; don’t refund in Mollie meanwhile.',
+      },
+    });
+  });
+
+  it('answers 503 PROCESSOR_UNAVAILABLE saying Mollie accepted the refund when recording it failed', async () => {
+    m.refundAttempt.mockRejectedValue(new RefundNotRecorded(new Error('lock timeout')));
+    const res = await POST(request(), ctx);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: { code: 'PROCESSOR_UNAVAILABLE', message: 'Mollie accepted the refund; fair.yoga will finish recording it shortly.' },
+    });
+  });
+
+  it('answers 500 for any other throw', async () => {
+    m.refundAttempt.mockRejectedValue(new Error('boom'));
+    expect((await POST(request(), ctx)).status).toBe(500);
   });
 
   it("answers 403 for another teacher's payment, without refunding", async () => {

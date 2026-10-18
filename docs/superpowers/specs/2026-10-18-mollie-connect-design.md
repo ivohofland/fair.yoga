@@ -483,7 +483,9 @@ irreversible part:
    attempt's amount and currency, is adopted as this request's (one not
    `failed` or `canceled` when there is one); with none,
    the row is withdrawn and the request answers 503; when that fetch fails
-   too, the row is kept, logged at error, and the request answers 503. An
+   too, the row is kept, logged as `MOLLIE_UNAVAILABLE` (`operation`
+   `createRefund`), and the request answers 503 saying Mollie didn't confirm
+   the refund and not to refund in Mollie meanwhile. An
    accepted or adopted refund's id and status are stored in one transaction.
    Only when that status is already `refunded` does the refund complete in it
    (§5's *refunds changed* row: the `outcome` applies — `paid → not_charged`
@@ -492,7 +494,8 @@ irreversible part:
    `failed`, the teacher gets `refund_failed`. Otherwise the payment stays
    `paid`, its attempt still settling, and the webhook completes the refund
    when Mollie reports it `refunded`. When that transaction fails, Mollie's
-   refund id is logged at error and the request answers 500; the row, still
+   refund id is logged at error and the request answers 503 saying Mollie
+   accepted the refund and fair.yoga will finish recording it; the row, still
    without the id, is adopted by a later sync (§5) or reconciled by the next
    request (step 1). "Ask again" reopens through `reopenPayment`'s body with
    the refunded attempt named, which is the one reopen Decision 17 allows,
