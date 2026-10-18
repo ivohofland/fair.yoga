@@ -57,8 +57,7 @@ export function takesMolliePayments(
 /**
  * `takesMolliePayments`, on a server running in `config`'s mode: a connection
  * made in the other mode (its `testmode`) takes none here until a reconnect
- * stores one made in this mode. Every check made with a Mollie config uses
- * this one.
+ * stores one made in this mode.
  */
 export function takesMolliePaymentsIn(
   row: {
@@ -75,8 +74,9 @@ export const ATTEMPT_GRANT_SELECT = { connection: { select: { revokedAt: true } 
 /**
  * Whether fair.yoga can still refund an attempt through Mollie: the attempt
  * still has its connection (an erased teacher's attempts have none) and that
- * connection's grant is not revoked. Decision 17 holds only while this does
- * (`docs/superpowers/specs/2026-10-18-mollie-connect-design.md`).
+ * connection's grant is not revoked. Decision 17 ("A payment Mollie settled
+ * cannot be reopened", `docs/superpowers/specs/2026-10-18-mollie-connect-design.md`,
+ * Decisions) holds only while this does.
  */
 export function canRefundThroughGrant(attempt: { connection: { revokedAt: Date | null } | null }): boolean {
   return attempt.connection !== null && attempt.connection.revokedAt === null;
