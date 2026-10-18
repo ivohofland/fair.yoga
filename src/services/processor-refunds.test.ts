@@ -248,7 +248,9 @@ describe('refundAttempt', () => {
       expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(false);
       expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
       // The intent's transaction locks the payment alone; the completing one takes the link first.
-      expect(transactions[0]!.filter((s) => s.includes('FOR UPDATE')).every((s) => s.includes('"Payment"'))).toBe(true);
+      const intentLocks = transactions[0]!.filter((s) => s.includes('FOR UPDATE'));
+      expect(intentLocks).toHaveLength(1);
+      expect(intentLocks.every((s) => s.includes('"Payment"'))).toBe(true);
       const completing = transactions[transactions.length - 1]!;
       const link = completing.findIndex((s) => s.includes('"TeacherStudent"'));
       const paymentLock = completing.findIndex((s) => s.includes('"Payment"') && s.includes('FOR UPDATE'));
@@ -571,6 +573,55 @@ describe('refundAttempt: an intent is resolved, never stranded', () => {
       expect.objectContaining({ attemptId: c.attempt.id, refundId: kept.id, mollieRefundId: mollieId, refundStatus: 'queued' }),
       expect.any(String),
     );
+  });
+
+  describe('when the intent changes while Mollie is called', () => {
+    it.each([
+      ['waive', 'not_charged'],
+      ['ask_again', 'pending'],
+    ] as const)('leaves a refund a sync adopted first as the sync applied it (%s): one notice, one outcome', async (choice, after) => {
+      const c = await settledAttempt();
+      const mollieId = reId();
+      fake.createRefund.mockImplementation(async () => {
+        // A sync adopts the intent once it is old enough, and completes it, before this call stores Mollie's answer.
+        await prisma.processorRefund.updateMany({ where: { attemptId: c.attempt.id }, data: { requestedAt: new Date(Date.now() - ADOPT_AFTER_MS - MINUTE) } });
+        fake.getPayment.mockResolvedValue(view(c.attempt.processorPaymentId, [{ id: mollieId, status: 'refunded', amount: { value: '10.00', currency: 'EUR' } }]));
+        expect(await syncAttempt(prisma, deps, c.attempt.processorPaymentId)).not.toBe('unavailable');
+        return created('refunded', mollieId);
+      });
+
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice });
+
+      expect(result).toEqual({ kind: 'requested', refundStatus: 'refunded', outcomeApplied: false });
+      const rows = await prisma.processorRefund.findMany({ where: { attemptId: c.attempt.id } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ processorRefundId: mollieId, status: 'refunded' });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+      expect(payment.status).toBe(after);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(1);
+    });
+
+    it('logs Mollie’s refund id and applies nothing when the intent row is gone', async () => {
+      const error = vi.spyOn(log, 'error');
+      onTestFinished(() => error.mockRestore());
+      const c = await settledAttempt();
+      const mollieId = reId();
+      fake.createRefund.mockImplementation(async () => {
+        await prisma.processorRefund.deleteMany({ where: { attemptId: c.attempt.id } });
+        return created('refunded', mollieId);
+      });
+      const before = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+
+      const result = await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'ask_again' });
+
+      expect(result).toEqual({ kind: 'requested', refundStatus: 'refunded', outcomeApplied: false });
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: c.paymentId } });
+      expect(payment.status).toBe('paid');
+      expect(payment.updatedAt).toEqual(before.updatedAt);
+      expect((await prisma.processorPayment.findUniqueOrThrow({ where: { id: c.attempt.id } })).settledPayment).toBe(true);
+      expect(await notes('payment_refunded', c.classId)).toHaveLength(0);
+      expect(error).toHaveBeenCalledWith(expect.objectContaining({ attemptId: c.attempt.id, mollieRefundId: mollieId }), expect.any(String));
+    });
   });
 
   describe('with an earlier intent still awaiting its Mollie id', () => {
