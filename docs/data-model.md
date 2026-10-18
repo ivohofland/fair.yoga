@@ -965,7 +965,7 @@ The mechanism — lock modes, order, and which writers are not gated yet — is
 | not_charged_at | datetime, nullable | Set when the teacher waives the payment (grace policy) |
 | updated_at | datetime | |
 
-Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: a Mollie attempt (`ProcessorPayment`, below) settles it by webhook and a refund can send it back. Failed payment retry policy is an open question for Level 2.
+Level 1: teacher marks payment as received manually (cash, bank transfer). Level 2: a Mollie attempt (`ProcessorPayment`, below) settles it, through a webhook or the student's return from Mollie, and a refund can send it back. Failed payment retry policy is an open question for Level 2.
 
 `student_reported_at` is a claim, not a status: it never makes a payment `paid`, only the teacher's confirmation does, and a row with a standing claim stays `pending` or `overdue` (`OUTSTANDING_STATUSES`). `POST` and `DELETE /api/payments/[id]/sent` set and clear it for the student who owns the registration (`reportPaymentSent`, `withdrawPaymentReport`), answering with the student's view of the row (`StudentPaymentView`, `src/app/api/payments/[id]/shared.ts`), never the reminder stamp; no pause check, since a claim moves no money. `POST /api/payments/[id]/not-received` is the teacher's door (`rejectPaymentReport`): in one transaction it clears the claim, stamps `reminder_sent_at` and sends the student one `reminder` notification ("Payment not seen yet"); a paused teacher is refused `PAYMENTS_PAUSED` and the write rolls back. `markPaymentNotCharged` and the student-archive waive clear the claim; `markPaymentPaid` and `reopenPayment` leave it. A standing claim silences the automatic overdue reminder (`readDuePayments` and its stamp swap in `sendPaymentReminders`) and `resumePayments`'s reminder; a manual reminder is still the teacher's to send. `markOverduePayments` ignores the claim, so a claimed payment still goes overdue. Erasure keeps the column with the payment.
 
@@ -993,7 +993,7 @@ Level 1: teacher marks payment as received manually (cash, bank transfer). Level
 | revoke_after | datetime, nullable | When the tokens of a disconnected row may next be revoked at Mollie: set by the disconnect to the latest expiry among its unexpired open attempts (or then), and moved a day on each time the revoke finds an attempt still `open`, `pending` or `authorized` or a refund still live, since their webhooks need the token; from 30 days after the disconnect the grant is revoked regardless (`revokeDueConnection`) |
 | revoked_at | datetime, nullable | Set when the tokens were revoked and nulled. `revoked_at` and `revoke_after` are set only on a disconnected row (a `CHECK`) |
 
-**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect, and on a refresh answered `invalid_grant` that newly disconnects), with the masked organization id and the profile's name as before and after.
+**Live** is `disconnected_at IS NULL AND profile_id IS NOT NULL` (`livePayoutIdentity`, `src/lib/processor-liveness.ts`); a row with no profile is mid-connect and offers nothing. A live connection takes payments only while its grant also holds every requested scope (`takesMolliePayments`, same module). The payout identity is the live connection's (organization, profile) pair, and each time it becomes a new pair a `PayoutChangeEvent` of kind `processor_connected` or `processor_changed` is written (`processor_disconnected` on a disconnect, and on a refresh answered `invalid_grant` that newly disconnects), with the masked organization id and the profile's name as before and after.
 
 ### OAuthState (a connect in flight, #896)
 
@@ -1039,7 +1039,7 @@ Single use: the callback deletes the row as it consumes it, and the daily auth c
 | outcome | enum `RefundOutcome`, nullable | `waived` or `reopened` for a refund of the settling attempt (the teacher's choice, applied when the refund reaches `refunded`); null for a duplicate |
 | requested_at, updated_at | datetime | |
 
-At most one non-failed refund exists per attempt (a partial unique index), so a second click cannot refund twice. A student's export carries each payment's attempts with their refunds' amounts and statuses; a teacher's carries their connection without its tokens (`src/services/gdpr.ts`).
+At most one live refund exists per attempt — neither `failed` nor `canceled` (`ProcessorRefund_one_live_per_attempt`, the statuses `refundEndedAtMollie` names in `src/lib/processor-refund-status.ts`) — so a second click cannot refund twice. A student's export carries each payment's attempts with their refunds' amounts and statuses; a teacher's carries their connection without its tokens (`src/services/gdpr.ts`).
 
 ---
 
