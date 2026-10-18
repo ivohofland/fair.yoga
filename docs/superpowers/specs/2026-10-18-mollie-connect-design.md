@@ -359,7 +359,8 @@ call and leaves the connection alone.
   on a test connection), keeps the ids that pass `isAllowedMollieMethod`,
   orders them by the allowlist, and caches for 60 s. It answers
   `{ kind: 'methods', offered, excluded }`; `excluded` is what the settings
-  section lists. A 422 for an unsupported currency answers empty, unlogged
+  section lists, each as `{ id, description }` with Mollie's own description
+  from `/v2/methods`, shown in place of the id when Mollie gives one. A 422 for an unsupported currency answers empty, unlogged
   (Decision 4). Any other failure answers `{ kind: 'unavailable' }` and calls
   `logDegraded` with a new code.
 - `PaymentMethod` gains `{ kind: 'processor'; method: AllowedMollieMethod }`;

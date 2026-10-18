@@ -25,7 +25,9 @@ export type MollieAmount = { value: string; currency: string };
 export type TokenGrant = { accessToken: string; refreshToken: string; expiresInSeconds: number; scopes: string[] };
 export type TokenAnswer = { kind: 'granted'; grant: TokenGrant } | { kind: 'invalid_grant' };
 export type MollieProfile = { id: string; name: string; mode: 'live' | 'test'; status: string };
-export type MethodsAnswer = { kind: 'methods'; ids: string[] } | { kind: 'unsupported' };
+/** One enabled method as `/v2/methods` lists it: its id and Mollie's own name for it, when given. */
+export type MollieMethod = { id: string; description: string | null };
+export type MethodsAnswer = { kind: 'methods'; methods: MollieMethod[] } | { kind: 'unsupported' };
 export type MollieRefundView = { id: string; status: string; amount: MollieAmount };
 export type MolliePaymentView = {
   id: string;
@@ -88,7 +90,7 @@ const paymentSchema = z.object({
   _embedded: z.object({ refunds: z.array(refundSchema).nullish() }).nullish(),
   _links: z.object({ checkout: z.object({ href: z.string() }).nullish() }).nullish(),
 });
-const methodsSchema = z.object({ _embedded: z.object({ methods: z.array(z.object({ id: z.string() })) }) });
+const methodsSchema = z.object({ _embedded: z.object({ methods: z.array(z.object({ id: z.string(), description: z.string().nullish() })) }) });
 const orgSchema = z.object({ id: z.string(), name: z.string() });
 const profilesSchema = z.object({
   _embedded: z.object({
@@ -243,7 +245,8 @@ export function createMollieClient(
       const res = await v2(accessToken, `/v2/methods?${params.toString()}`);
       if (res.status === 422) return { kind: 'unsupported' };
       if (!res.ok) throw unavailable(res);
-      return { kind: 'methods', ids: (await parse(methodsSchema, res))._embedded.methods.map((m) => m.id) };
+      const { methods } = (await parse(methodsSchema, res))._embedded;
+      return { kind: 'methods', methods: methods.map((m) => ({ id: m.id, description: m.description ?? null })) };
     },
 
     async createPayment(accessToken, input) {

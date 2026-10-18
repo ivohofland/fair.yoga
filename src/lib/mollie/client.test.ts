@@ -44,10 +44,19 @@ describe('refresh', () => {
 });
 
 describe('listMethods', () => {
-  it('asks for the profile, amount and test mode, and answers the ids', async () => {
-    const { fetchImpl, mollie } = client([json(200, { _embedded: { methods: [{ id: 'ideal' }, { id: 'klarna' }] } })]);
+  it('asks for the profile, amount and test mode, and answers the ids with Mollie’s descriptions', async () => {
+    const { fetchImpl, mollie } = client([
+      json(200, { _embedded: { methods: [{ id: 'ideal', description: 'iDEAL' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'klarna' }] } }),
+    ]);
     const answer = await mollie.listMethods('tok', { profileId: 'pfl_1', amount: { value: '12.50', currency: 'EUR' }, testmode: true });
-    expect(answer).toEqual({ kind: 'methods', ids: ['ideal', 'klarna'] });
+    expect(answer).toEqual({
+      kind: 'methods',
+      methods: [
+        { id: 'ideal', description: 'iDEAL' },
+        { id: 'banktransfer', description: 'Bank transfer' },
+        { id: 'klarna', description: null },
+      ],
+    });
     const url = new URL(String(fetchImpl.mock.calls[0]![0]));
     expect(url.pathname).toBe('/v2/methods');
     expect(url.searchParams.get('profileId')).toBe('pfl_1');

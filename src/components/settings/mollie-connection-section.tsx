@@ -132,9 +132,9 @@ function ConnectedBody({
             <div className="flex flex-col gap-2">
               <h3 className="type-label">Not offered</h3>
               <ul className="flex flex-col">
-                {view.excluded.map((id) => (
+                {view.excluded.map(({ id, description }) => (
                   <li key={id} className={listRowClass({ className: 'flex flex-col justify-center' })}>
-                    <span className="type-body">{id}</span>
+                    <span className="type-body">{description ?? id}</span>
                     <span className="type-caption">{EXCLUSION_COPY[exclusionReason(id)]}</span>
                   </li>
                 ))}

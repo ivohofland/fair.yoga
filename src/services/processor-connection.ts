@@ -13,7 +13,7 @@ import { log } from '@/lib/log';
 import type { FireAndForget } from '@/lib/fire-and-forget';
 import type { MollieDeps } from './mollie-deps';
 import { getAccessToken, sealGrant } from './processor-token';
-import { forgetOfferedMethods } from './processor-methods-cache';
+import { forgetOfferedMethods, type ExcludedMethod } from './processor-methods-cache';
 import { listOfferedMethods } from './processor-methods-offer';
 
 export { MOLLIE_SCOPES, type LiveIdentity } from '@/lib/processor-liveness';
@@ -500,7 +500,7 @@ export type ConnectionView =
       testmode: boolean;
       profiles: { id: string; name: string }[];
       offered: AllowedMollieMethod[];
-      excluded: string[];
+      excluded: ExcludedMethod[];
       missingScopes: string[];
     }
   | { kind: 'unavailable' };

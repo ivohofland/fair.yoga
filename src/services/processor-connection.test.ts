@@ -782,7 +782,7 @@ describe('revokeConnection', () => {
 
 describe('readConnectionView', () => {
   beforeEach(() => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal', 'klarna', 'wero'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['ideal', 'klarna', 'wero'].map((id) => ({ id, description: null })) });
   });
 
   it('is none without a connection, or after a disconnect', async () => {
@@ -808,7 +808,7 @@ describe('readConnectionView', () => {
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
       kind: 'connected', organizationName: ORG_A.name, profileId: P1.id, profileName: P1.name, testmode: false,
       profiles: [{ id: P1.id, name: P1.name }, { id: P2.id, name: P2.name }],
-      offered: ['ideal', 'wero'], excluded: ['klarna'], missingScopes: [],
+      offered: ['ideal', 'wero'], excluded: [{ id: 'klarna', description: null }], missingScopes: [],
     });
     expect(fake.listMethods).toHaveBeenCalledWith('access_1', { profileId: P1.id, amount: { value: '10.00', currency: 'EUR' }, testmode: false });
   });

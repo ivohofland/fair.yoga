@@ -14,7 +14,8 @@ import { sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
 import { getAccessToken } from './processor-token';
 import type { MollieDeps } from './mollie-deps';
-import { forgetOfferedMethods, listOfferedMethods } from './processor-methods-offer';
+import { listOfferedMethods } from './processor-methods-offer';
+import { forgetOfferedMethods } from './processor-methods-cache';
 import { offerCache } from './processor-methods-cache';
 
 const prisma = createPrismaClient();
@@ -77,15 +78,26 @@ afterAll(async () => {
 
 describe('listOfferedMethods', () => {
   it('offers allowlisted methods in allowlist order and reports the rest', async () => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['twint', 'klarna', 'ideal'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['twint', 'klarna', 'ideal'].map((id) => ({ id, description: null })) });
     expect(await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('12.50'), 'EUR'))
-      .toEqual({ kind: 'methods', offered: ['ideal', 'twint'], excluded: ['klarna'] });
+      .toEqual({ kind: 'methods', offered: ['ideal', 'twint'], excluded: [{ id: 'klarna', description: null }] });
     expect(fake.listMethods).toHaveBeenCalledWith('access_plain', { profileId: conn.profileId, amount: { value: '12.50', currency: 'EUR' }, testmode: true });
   });
+  it('carries Mollie’s own description on each method it does not offer', async () => {
+    fake.listMethods.mockResolvedValue({
+      kind: 'methods',
+      methods: [{ id: 'ideal', description: 'iDEAL' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'klarna', description: null }],
+    });
+    expect(await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('7.00'), 'EUR')).toEqual({
+      kind: 'methods',
+      offered: ['ideal'],
+      excluded: [{ id: 'banktransfer', description: 'Bank transfer' }, { id: 'klarna', description: null }],
+    });
+  });
   it('drops an id the processor returns that the allowlist does not hold', async () => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['brandnewcredit'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['brandnewcredit'].map((id) => ({ id, description: null })) });
     expect(await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR'))
-      .toEqual({ kind: 'methods', offered: [], excluded: ['brandnewcredit'] });
+      .toEqual({ kind: 'methods', offered: [], excluded: [{ id: 'brandnewcredit', description: null }] });
   });
   it('answers empty for an unsupported currency, without a degradation', async () => {
     fake.listMethods.mockResolvedValue({ kind: 'unsupported' });
@@ -105,13 +117,13 @@ describe('listOfferedMethods', () => {
   });
   it('does not cache an unavailable answer', async () => {
     fake.listMethods.mockRejectedValueOnce(new MollieUnavailable('down', 503));
-    fake.listMethods.mockResolvedValueOnce({ kind: 'methods', ids: ['ideal'] });
+    fake.listMethods.mockResolvedValueOnce({ kind: 'methods', methods: ['ideal'].map((id) => ({ id, description: null })) });
     const five = new Prisma.Decimal('5.00');
     expect(await listOfferedMethods(prisma, deps, conn, five, 'EUR', 1_000)).toEqual({ kind: 'unavailable' });
     expect(await listOfferedMethods(prisma, deps, conn, five, 'EUR', 1_001)).toEqual({ kind: 'methods', offered: ['ideal'], excluded: [] });
   });
   it('caches for 60 s per connection, currency and amount', async () => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['ideal'].map((id) => ({ id, description: null })) });
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000);
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000 + 59_999);
     expect(fake.listMethods).toHaveBeenCalledTimes(1);
@@ -121,7 +133,7 @@ describe('listOfferedMethods', () => {
     expect(fake.listMethods).toHaveBeenCalledTimes(3);
   });
   it('keys the cache by currency', async () => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['ideal'].map((id) => ({ id, description: null })) });
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000);
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'GBP', 1_000);
     expect(fake.listMethods).toHaveBeenCalledTimes(2);
@@ -131,7 +143,7 @@ describe('listOfferedMethods', () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
   it('drops expired entries when another amount is written', async () => {
-    fake.listMethods.mockResolvedValue({ kind: 'methods', ids: ['ideal'] });
+    fake.listMethods.mockResolvedValue({ kind: 'methods', methods: ['ideal'].map((id) => ({ id, description: null })) });
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('5.00'), 'EUR', 1_000);
     await listOfferedMethods(prisma, deps, conn, new Prisma.Decimal('6.00'), 'EUR', 1_000 + 60_000);
     expect(fake.listMethods).toHaveBeenCalledTimes(2);

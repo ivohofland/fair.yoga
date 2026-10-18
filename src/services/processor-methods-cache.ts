@@ -1,6 +1,9 @@
 import type { AllowedMollieMethod } from '@/lib/processor-methods';
 
-export type CachedOffer = { kind: 'methods'; offered: AllowedMollieMethod[]; excluded: string[] };
+/** A method Mollie lists that fair.yoga does not offer: its id, and Mollie's own name for it when given. */
+export type ExcludedMethod = { id: string; description: string | null };
+
+export type CachedOffer = { kind: 'methods'; offered: AllowedMollieMethod[]; excluded: ExcludedMethod[] };
 export const METHODS_CACHE_MS = 60_000;
 
 export const offerCache = new Map<string, { at: number; value: CachedOffer }>();
