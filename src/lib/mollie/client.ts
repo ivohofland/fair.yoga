@@ -78,13 +78,13 @@ const refundSchema = z.object({ id: z.string(), status: z.string(), amount: amou
 const paymentSchema = z.object({
   id: z.string(),
   status: z.string(),
-  method: z.string().nullable().optional(),
+  method: z.string().nullish(),
   amount: amountSchema,
-  expiresAt: z.string().nullable().optional(),
-  paidAt: z.string().nullable().optional(),
-  amountChargedBack: amountSchema.optional(),
-  _embedded: z.object({ refunds: z.array(refundSchema).optional() }).optional(),
-  _links: z.object({ checkout: z.object({ href: z.string() }).optional() }).optional(),
+  expiresAt: z.string().nullish(),
+  paidAt: z.string().nullish(),
+  amountChargedBack: amountSchema.nullish(),
+  _embedded: z.object({ refunds: z.array(refundSchema).nullish() }).nullish(),
+  _links: z.object({ checkout: z.object({ href: z.string() }).nullish() }).nullish(),
 });
 const methodsSchema = z.object({ _embedded: z.object({ methods: z.array(z.object({ id: z.string() })) }) });
 const orgSchema = z.object({ id: z.string(), name: z.string() });
@@ -172,10 +172,9 @@ export function createMollieClient(
   }
 
   async function v2(accessToken: string, path: string, init: RequestInit = {}): Promise<Response> {
-    const res = await send(`${API}${path}`, {
-      ...init,
-      headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${accessToken}` },
-    });
+    const headers = new Headers(init.headers);
+    headers.set('Authorization', `Bearer ${accessToken}`);
+    const res = await send(`${API}${path}`, { ...init, headers });
     if (res.status >= 500 || res.status === 401 || res.status === 403) throw unavailable(res);
     return res;
   }
