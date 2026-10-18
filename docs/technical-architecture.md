@@ -1472,8 +1472,10 @@ hits besides those two are the tests and the vitest seam described below):
 Lint (`@typescript-eslint/no-restricted-imports`, `eslint.config.mjs`) holds
 this: `@prisma/client` and every subpath of it are refused everywhere, and the
 generated output (`@/generated/*`, `**/generated/prisma`,
-`**/generated/prisma/*`) is refused everywhere except the modules in the
-rule's `ignores`, which are those two.
+`**/generated/prisma/*`) and the pool's packages (`pg`, `pg/*`,
+`@prisma/adapter-pg`, #885) are refused everywhere except the modules in the
+rule's `ignores`, which are those two. `prisma-enums.ts` is exempt from the
+pool group too; its import pin (below) is what keeps the pool out of it.
 Type-only imports are included. It does not see an inline
 `import('@prisma/client')` type query or a dynamic `import()` expression,
 neither of which is an import declaration. The rule covers every `.ts`,
@@ -1487,8 +1489,8 @@ in `tests/setup/undefined-filter-guard.ts`, with its `vi.doUnmock` counterpart
 in `src/lib/e2e-prisma-factory.test.ts`. The mock names the generated client
 module because that is the module the factory constructs `PrismaClient` from;
 a mock left on any other specifier no longer reaches it.
-`src/lib/prisma-client.test.ts` pins each of the two modules to its one
-specifier and asserts that they return the same enum object. Every remaining mention of
+`src/lib/prisma-client.test.ts` pins both modules' imports ("prisma funnel
+imports") and asserts that they return the same enum object. Every remaining mention of
 the package is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 
 `next build` bundles the generated client and `@prisma/adapter-pg`. The
@@ -1513,7 +1515,9 @@ plus the probe.
 `engineType = "client"`: queries are planned by Prisma's TypeScript client
 engine (its query compiler) and run through the `@prisma/adapter-pg` driver
 adapter, which owns a `pg.Pool`. `createPrismaClient` builds
-`new PrismaClient({ adapter: new PrismaPg(poolConfigFor(options)), errorFormat, log })`.
+`new PrismaClient({ adapter: new PrismaPg(pool), transactionOptions: transactionOptionsFor(pool), errorFormat, log })`
+with `pool = poolConfigFor(options)`; `transactionOptionsFor` sets the
+client's default `maxWait` to the pool bound ("Database errors").
 It never passes `datasources` or `datasourceUrl`: Prisma refuses either beside
 an adapter at construction, with `PrismaClientInitializationError: Custom
 datasource configuration is not compatible with Prisma Driver Adapters`. The
@@ -1586,8 +1590,9 @@ anything, so the defaults are unit-tested on their own
 - **A missing or empty URL throws at construction**:
   `createPrismaClient: no url given and DATABASE_URL is not set`. pg would
   read an empty `connectionString` as "libpq defaults" (localhost as the OS
-  user) rather than refuse. A `poolMax` that is not a positive integer throws
-  `RangeError`.
+  user) rather than refuse. A `poolMax` or `connectionTimeoutMs` that is not
+  a positive integer throws `RangeError`: pg reads a `connectionTimeoutMillis`
+  of 0 as "wait forever", which the `maxWait` copied from it cannot mirror.
 
 Nothing in the client loads `.env`. Next, vitest (`vitest.config.ts`),
 Playwright (`playwright.config.ts`) and the Prisma CLI (`prisma.config.ts`)
@@ -1622,9 +1627,14 @@ from the root.
 ### Database errors
 
 `src/lib/pg-error.ts` is the one module that knows where the pg driver adapter
-(`@prisma/adapter-pg`) puts Postgres's fields. Every matcher reads a database
-refusal through it; none reads Prisma's or the engine's framing, and the
-SQLSTATE always comes from a structured field.
+(`@prisma/adapter-pg`) puts Postgres's fields. Every read of a SQLSTATE or a
+constraint name goes through it, and the SQLSTATE always comes from a
+structured field. What remains of Prisma's framing is its own codes
+(`P2002`, `P2025`, `P2028`, `P2034`), matched on the typed
+`PrismaClientKnownRequestError` only. So a raw call's `23505`, which arrives
+as `P2010`, meets no `P2002` check: `classifyApiError`'s 409 `UNIQUE_CONFLICT`
+fallback answers a typed `P2002` only, and a raw `23505` that escapes its
+route answers 500 by design.
 
 **`pgErrorOf(err)`** answers a `PgError` (`sqlState`, `message`, optional
 `constraint`) or `null`. It is shallow: it reads `err` itself and never
@@ -1772,6 +1782,15 @@ readers above, never from text:
 
 - `sqlState` is `pgErrorOf(err).sqlState`; `constraint` is its `constraint`
   when the name is `[A-Za-z0-9_]+`;
+- `constraintUnparsed: true` when `sqlState` is one whose name
+  `CONSTRAINT_SOURCE` reads from the primary message
+  (`namesConstraintInMessage`) and none was parsed, and no `trigger` was
+  recognised either. It is the operator's signal for the exposure in "Locale
+  and Postgres major": a localised or reworded message, where every name
+  match on that SQLSTATE misses. A `23514` raised by a trigger outside
+  `TERMINAL_TRIGGER_TAILS` (the currency guards) carries it too, since its
+  message names no constraint; on a `23514` it therefore means "neither a
+  constraint nor a known trigger";
 - `trigger` and `rowIds` come from the Postgres primary message
   (`pgErrorOf(err).message`) of a `23514` that names no constraint, and never
   from `detail`;
@@ -1789,7 +1808,10 @@ an error the serializer does not withhold (`new Error('…', { cause })`). Its
 `Failing row contains (…)`. So an object carrying a string `originalCode` or
 `originalMessage` is withheld too, as `Driver adapter error (detail withheld
 from the log)`, whether or not it has a `message` (a `23505` cause has none,
-and would otherwise be passed through unserialized).
+and would otherwise be passed through unserialized). Its `type` is
+`DriverAdapterCause`, and its facets (`sqlState`, `constraint`,
+`constraintUnparsed`, `adapterKind`) are lifted from the object itself through
+`pgErrorOfCause` / `adapterKindOfCause`; the matchers never read a bare cause.
 
 A produced `DriverAdapterError` is an instance of the adapter's own class
 (`constructor.name` and `name` both `DriverAdapterError`) with no own `code`.

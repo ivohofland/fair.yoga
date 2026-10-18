@@ -1623,9 +1623,8 @@ export async function updateClass(
   > = true;
   void _splitMatchesEntryFields;
 
-  // A key whose value is `undefined` is not an edit, and Prisma agrees: given
-  // a `data` object whose every value is undefined it sends no UPDATE, only a
-  // read of the ids its filter matches, and answers their count. So a no-op
+  // A key whose value is `undefined` is not an edit, and an all-undefined
+  // `data` writes nothing yet still answers a count. So a no-op
   // compare-and-swap reports a write that never happened, or a miss that is
   // no lost race. Hence the test on defined *values*, as `sentEconomic` above
   // does, never on key presence.

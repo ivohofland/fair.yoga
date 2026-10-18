@@ -1007,9 +1007,7 @@ export async function deleteStudentAccount(
     // at the pool's bound while the erasure is still running: the pool can
     // give up before the transaction does. Survivable rather than fine —
     // `api-errors.ts` classifies that wait as the transient `pool_exhausted`
-    // and answers it with retry advice — and reachable at the old ceiling
-    // too, since `waitingCount >= 8` already bought the same 20s. New here is
-    // only that every erasure gets it, and that anyone has written it down.
+    // and answers it with retry advice.
     // The pool's size and its bound: `docs/technical-architecture.md`, "Where
     // Prisma comes from".
     //

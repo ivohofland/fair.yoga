@@ -18,9 +18,9 @@ import { expect } from 'vitest';
 export const CEILING_STACK = '200kB';
 
 /**
- * A parent set larger than a page: a read that loads it unpaged binds more
- * parameters in one statement than any paged read can, and its row-value
- * tuples overflow `CEILING_STACK`.
+ * A parent set larger than a page: a relation load over it unpaged binds more
+ * parameters in one statement than any paged read can, and a `$queryRaw`
+ * row-value list of it overflows `CEILING_STACK`.
  */
 export const CEILING_ROWS = 1000;
 

@@ -883,7 +883,9 @@ It passes only when that line's `err.type` is `PrismaClientKnownRequestError`
 and its `err.code` is `ENETUNREACH`: the bundle constructed a client, the
 client handed the query to the adapter, and pg tried the network. It reads
 `type` and `code` because the log withholds a Prisma error's message. Measured
-on the arm64 runner image, 2026-10-18.
+on the arm64 runner image, 2026-10-18. CI's `docker-build` job, which builds
+amd64, ran the same probe under `--network none` on PR #904's first CI run
+(2026-10-18, run 39095238055), and it passed with `ENETUNREACH`.
 
 A module missing from the bundle is recognised differently, because the error
 it raises carries no code. The bundler wraps the failed load in its own
