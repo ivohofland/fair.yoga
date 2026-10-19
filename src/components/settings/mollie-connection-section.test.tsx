@@ -68,12 +68,16 @@ describe('MollieConnectionSection', () => {
   it('shows each profile’s website under its name', () => {
     show({ kind: 'choose_profile', profiles: [{ id: 'pfl_a', name: 'Studio', website: 'https://anna.example', choosable: true }] });
     expect(screen.getByText('https://anna.example')).toBeInTheDocument();
+    const radio = screen.getByRole('radio', { name: 'Studio' });
+    expect(radio).toHaveAccessibleName('Studio');
+    expect(radio).toHaveAccessibleDescription('https://anna.example');
   });
 
   it('disables an unverified profile, says why, and explains what Mollie checks', () => {
     show({ kind: 'choose_profile', profiles: [PROFILES[0]!, { id: 'pfl_new', name: 'Fresh', website: null, choosable: false }] });
-    const fresh = screen.getByRole('radio', { name: /Fresh/ });
+    const fresh = screen.getByRole('radio', { name: 'Fresh' });
     expect(fresh).toBeDisabled();
+    expect(fresh).toHaveAccessibleName('Fresh');
     expect(fresh).toHaveAccessibleDescription('Mollie hasn’t verified this profile yet.');
     expect(screen.getByRole('radio', { name: /Studio Anna/ })).toBeEnabled();
     expect(screen.getByText(/Mollie checks each profile by hand/)).toBeInTheDocument();
@@ -219,6 +223,14 @@ describe('MollieConnectionSection', () => {
     expect(screen.getByLabelText('Studio Anna')).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Change profile' })).toHaveFocus();
+  });
+
+  it('focuses the first choosable profile when the current one is unchoosable, and shows the guidance', () => {
+    const profiles = [{ id: 'pfl_one', name: 'Studio Anna', website: null, choosable: false }, PROFILES[1]!];
+    show({ ...CONNECTED, profiles });
+    fireEvent.click(screen.getByRole('button', { name: 'Change profile' }));
+    expect(screen.getByRole('radio', { name: 'Retreats' })).toHaveFocus();
+    expect(screen.getByText(/Mollie checks each profile by hand/)).toBeInTheDocument();
   });
 
   it('gives its text triggers a 44px tap height', () => {
