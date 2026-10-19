@@ -255,7 +255,7 @@ function ProfilePicker({
 
   useEffect(() => {
     if (!autoFocus) return;
-    const target = fieldsetRef.current?.querySelector<HTMLInputElement>('input:checked') ?? fieldsetRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)');
+    const target = fieldsetRef.current?.querySelector<HTMLInputElement>('input:checked:not(:disabled)') ?? fieldsetRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)');
     target?.focus();
   }, [autoFocus]);
 
@@ -295,13 +295,17 @@ function ProfilePicker({
               value={profile.id}
               checked={chosen === profile.id}
               disabled={!profile.choosable}
-              aria-describedby={profile.choosable ? undefined : `${name}-${profile.id}-unverified`}
+              aria-labelledby={`${name}-${profile.id}-name`}
+              aria-describedby={[
+                profile.website !== null ? `${name}-${profile.id}-website` : null,
+                profile.choosable ? null : `${name}-${profile.id}-unverified`,
+              ].filter((id) => id !== null).join(' ') || undefined}
               onChange={() => setChosen(profile.id)}
               className="w-5 h-5 accent-teal"
             />
             <span className="flex flex-col">
-              <span className="type-body">{profile.name}</span>
-              {profile.website !== null && <span className="type-caption">{profile.website}</span>}
+              <span id={`${name}-${profile.id}-name`} className="type-body">{profile.name}</span>
+              {profile.website !== null && <span id={`${name}-${profile.id}-website`} className="type-caption">{profile.website}</span>}
               {!profile.choosable && (
                 <span id={`${name}-${profile.id}-unverified`} className="type-caption">Mollie hasn’t verified this profile yet.</span>
               )}
