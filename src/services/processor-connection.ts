@@ -162,7 +162,7 @@ export async function completeConnect(
     try {
       org = await deps.client.organization(grant.accessToken);
       operation = 'profiles';
-      profiles = usableProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
+      profiles = listedProfiles(await deps.client.profiles(grant.accessToken), deps.config.testmode);
     } catch (err) {
       if (!(err instanceof MollieUnavailable)) throw err;
       mollieUnavailable(err, null, operation, 'Mollie could not be read for a new grant; nothing was stored and the grant is revoked');
@@ -272,8 +272,8 @@ function mollieUnavailable(
   );
 }
 
-/** Profiles listed to the teacher here: never a blocked one, and in live mode only live ones. */
-function usableProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
+/** The profiles shown to the teacher: never a blocked one, and in live mode only live-mode ones. */
+function listedProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
   return profiles.filter((p) => p.status !== 'blocked' && (testmode || p.mode === 'live'));
 }
 
@@ -353,7 +353,7 @@ export async function chooseProfile(
   if (token.kind === 'unavailable') return { kind: 'unavailable' };
   let profiles: MollieProfile[];
   try {
-    profiles = usableProfiles(await deps.client.profiles(token.accessToken), deps.config.testmode);
+    profiles = listedProfiles(await deps.client.profiles(token.accessToken), deps.config.testmode);
   } catch (err) {
     if (!(err instanceof MollieUnavailable)) throw err;
     mollieUnavailable(err, row.id, 'profiles', 'Mollie could not list the profiles; the profile was not changed');
@@ -583,7 +583,7 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
   if (profilesRead.status === 'rejected') return unreadable('profiles', profilesRead.reason);
   const org = orgRead.value;
   const { testmode } = deps.config;
-  const profiles = profileOptions(usableProfiles(profilesRead.value, testmode), testmode);
+  const profiles = profileOptions(listedProfiles(profilesRead.value, testmode), testmode);
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
 
   const profileId = row.profileId;
