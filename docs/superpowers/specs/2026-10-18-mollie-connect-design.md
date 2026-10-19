@@ -290,15 +290,19 @@ re-reads and uses the winner's token.
   exchanged immediately; `/v2/organizations/me` and `/v2/profiles` are read.
   Under the teacher lock the connection is rewritten, and its `profileId` is
   decided against the row's live identity read before the write:
-  - **One usable profile:** it is chosen. When the (organization, profile)
+  - **One listed profile that is choosable** (`isChoosableProfile`: in live
+    mode, one Mollie has verified): it is chosen. When the (organization, profile)
     pair differs from the row's live identity, the `PayoutChangeEvent` is
     written (Data); the same pair writes none (a re-authorization for new
     scopes).
   - **Several:** when the organization is unchanged and the row's previous
-    live profile is still in the list, that `profileId` is kept: the row stays
+    live profile is still in the list and choosable, that `profileId` is kept: the row stays
     live and no event is written. Otherwise `profileId` is set null — the row is
     not live, so no money can flow — no event is written, and the teacher is
     sent to a picker on the settings section.
+  A listed profile that is not choosable is shown in the picker disabled, and
+  `PUT …/processor/profile` refuses it with 409 `PROCESSOR_PROFILE_UNVERIFIED`
+  (#908).
   After commit, an event that was written gets `deliverPayoutChangedNotice`
   (#786's alert and *This wasn't me* link, unchanged).
 - **Choosing a profile:** `PUT /api/teachers/[id]/processor/profile` sets the

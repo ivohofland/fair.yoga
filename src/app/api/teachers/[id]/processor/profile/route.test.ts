@@ -66,6 +66,12 @@ describe('PUT /api/teachers/[id]/processor/profile', () => {
     expect(m.deliverPayoutChangedNotice).not.toHaveBeenCalled();
   });
 
+  it('refuses PROCESSOR_PROFILE_UNVERIFIED for a profile Mollie has not verified', async () => {
+    m.chooseProfile.mockResolvedValue({ kind: 'unverified_profile' });
+    await expectRefusal(await PUT(request(), ctx), 'PROCESSOR_PROFILE_UNVERIFIED');
+    expect(m.deliverPayoutChangedNotice).not.toHaveBeenCalled();
+  });
+
   it('answers 503 PROCESSOR_UNAVAILABLE when Mollie cannot be reached', async () => {
     m.chooseProfile.mockResolvedValue({ kind: 'unavailable' });
     await expectRefusal(await PUT(request(), ctx), 'PROCESSOR_UNAVAILABLE');
