@@ -65,6 +65,37 @@ describe('MollieConnectionSection', () => {
     expect(JSON.parse(init.body as string)).toEqual({ profileId: 'pfl_two' });
   });
 
+  it('shows each profile’s website under its name', () => {
+    show({ kind: 'choose_profile', profiles: [{ id: 'pfl_a', name: 'Studio', website: 'https://anna.example', choosable: true }] });
+    expect(screen.getByText('https://anna.example')).toBeInTheDocument();
+  });
+
+  it('disables an unverified profile, says why, and explains what Mollie checks', () => {
+    show({ kind: 'choose_profile', profiles: [PROFILES[0]!, { id: 'pfl_new', name: 'Fresh', website: null, choosable: false }] });
+    const fresh = screen.getByRole('radio', { name: /Fresh/ });
+    expect(fresh).toBeDisabled();
+    expect(fresh).toHaveAccessibleDescription('Mollie hasn’t verified this profile yet.');
+    expect(screen.getByRole('radio', { name: /Studio Anna/ })).toBeEnabled();
+    expect(screen.getByText(/Mollie checks each profile by hand/)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'What Mollie checks' });
+    expect(link).toHaveAttribute('href', 'https://help.mollie.com/hc/en-us/articles/211745545');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('shows no guidance when every profile is choosable', () => {
+    show({ kind: 'choose_profile', profiles: PROFILES });
+    expect(screen.queryByText(/Mollie checks each profile by hand/)).toBeNull();
+    expect(screen.queryByRole('link', { name: 'What Mollie checks' })).toBeNull();
+  });
+
+  it('cannot submit when the only profile is unverified', () => {
+    show({ kind: 'choose_profile', profiles: [{ id: 'pfl_new', name: 'Fresh', website: null, choosable: false }] });
+    expect(screen.getByRole('radio', { name: /Fresh/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Use this profile' })).toBeDisabled();
+    expect(screen.getByText(/Mollie checks each profile by hand/)).toBeInTheDocument();
+  });
+
   it('says to create a profile first when Mollie lists none, and offers to connect again', async () => {
     const assign = vi.fn();
     Object.defineProperty(window, 'location', { value: { assign }, writable: true });

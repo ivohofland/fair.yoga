@@ -7,7 +7,7 @@ import { listRowClass } from '@/components/ui/list-row';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { EXCLUSION_COPY, MOLLIE_METHODS, exclusionReason } from '@/lib/processor-methods';
 import type { MollieReturn } from '@/lib/mollie-return';
-import type { ConnectionView } from '@/services/processor-connection';
+import type { ConnectionView, ProfileOption } from '@/services/processor-connection';
 import { RemoveControl } from './remove-control';
 
 interface MollieConnectionSectionProps {
@@ -204,7 +204,7 @@ function ConnectButton({ teacherId, label }: { teacherId: string; label: string 
  */
 function ChangeProfileControl({
   teacherId, profiles, current, onChosen,
-}: { teacherId: string; profiles: { id: string; name: string }[]; current: string; onChosen: () => void }) {
+}: { teacherId: string; profiles: ProfileOption[]; current: string; onChosen: () => void }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef(false);
@@ -241,7 +241,7 @@ function ProfilePicker({
   teacherId, profiles, current, autoFocus = false, onChosen, onCancel,
 }: {
   teacherId: string;
-  profiles: { id: string; name: string }[];
+  profiles: ProfileOption[];
   current: string | null;
   autoFocus?: boolean;
   onChosen: () => void;
@@ -255,7 +255,7 @@ function ProfilePicker({
 
   useEffect(() => {
     if (!autoFocus) return;
-    const target = fieldsetRef.current?.querySelector<HTMLInputElement>('input:checked') ?? fieldsetRef.current?.querySelector<HTMLInputElement>('input');
+    const target = fieldsetRef.current?.querySelector<HTMLInputElement>('input:checked') ?? fieldsetRef.current?.querySelector<HTMLInputElement>('input:not(:disabled)');
     target?.focus();
   }, [autoFocus]);
 
@@ -294,13 +294,27 @@ function ProfilePicker({
               name={name}
               value={profile.id}
               checked={chosen === profile.id}
+              disabled={!profile.choosable}
+              aria-describedby={profile.choosable ? undefined : `${name}-${profile.id}-unverified`}
               onChange={() => setChosen(profile.id)}
               className="w-5 h-5 accent-teal"
             />
-            <span className="type-body">{profile.name}</span>
+            <span className="flex flex-col">
+              <span className="type-body">{profile.name}</span>
+              {profile.website !== null && <span className="type-caption">{profile.website}</span>}
+              {!profile.choosable && (
+                <span id={`${name}-${profile.id}-unverified`} className="type-caption">Mollie hasn’t verified this profile yet.</span>
+              )}
+            </span>
           </label>
         ))}
       </fieldset>
+      {profiles.some((p) => !p.choosable) && (
+        <p className="type-caption">
+          Mollie checks each profile by hand before it can take payments. Teaching in person without a website? In Mollie, choose the option for businesses without a website, describe your classes, and link your fair.yoga page or your social media.{' '}
+          <a href="https://help.mollie.com/hc/en-us/articles/211745545" target="_blank" rel="noopener noreferrer" className="underline">What Mollie checks</a>
+        </p>
+      )}
       {error && <p role="alert" className="type-caption text-danger">{error}</p>}
       <div className="flex gap-3">
         <Button type="submit" variant="secondary" disabled={saving || chosen === null || chosen === current}>
