@@ -39,7 +39,7 @@
 
 **Files:**
 - Modify: `src/lib/mollie/client.ts` (`MollieProfile`, `profilesSchema`, the `profiles()` mapping near line 232)
-- Modify: `src/services/processor-connection.ts` (`usableProfiles` ~276, `initialProfile` ~285, callback use ~165–200, `ChooseProfileOutcome` ~312, `chooseProfile` ~336–344, `ConnectionView` ~511, `readConnectionView` ~565)
+- Modify: `src/services/processor-connection.ts` (`listedProfiles` ~276, `initialProfile` ~285, callback use ~165–200, `ChooseProfileOutcome` ~312, `chooseProfile` ~336–344, `ConnectionView` ~511, `readConnectionView` ~565)
 - Modify: `src/lib/api-error-codes.ts`
 - Modify: `src/app/api/teachers/[id]/processor/profile/route.ts`
 - Modify: `docs/superpowers/specs/2026-10-18-mollie-connect-design.md` (the "One usable profile" / "Several" bullets, ~293–301)
@@ -88,7 +88,7 @@ function initialProfile(
 }
 ```
 
-  Rename nothing else: `usableProfiles` keeps its job (what is listed) — update its docblock to say "listed" rather than "can take payments". Pass `deps.config.testmode` to `initialProfile` at its call site. In `chooseProfile`, after the existing `unknown_profile` check:
+  Rename `usableProfiles` to `listedProfiles` (what is listed) and have its docblock say so. Pass `deps.config.testmode` to `initialProfile` at its call site. In `chooseProfile`, after the existing `unknown_profile` check:
 
 ```ts
   const picked = profiles.find((p) => p.id === input.profileId);
@@ -96,7 +96,7 @@ function initialProfile(
   if (!isChoosableProfile(picked, deps.config.testmode)) return { kind: 'unverified_profile' };
 ```
 
-  In `readConnectionView`, `profiles` becomes `profileOptions(usableProfiles(…), deps.config.testmode)`; `profileName` lookup unchanged.
+  In `readConnectionView`, `profiles` becomes `profileOptions(listedProfiles(…), deps.config.testmode)`; `profileName` lookup unchanged.
 
 - [ ] **Step 4: Route and code.** Add `PROCESSOR_PROFILE_UNVERIFIED: 409,` to `api-error-codes.ts` in alphabetical position. In the profile route's switch add:
 

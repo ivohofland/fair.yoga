@@ -315,6 +315,14 @@ describe('outgoing v2 requests', () => {
     const profiles = await mollie.profiles('tok');
     expect(profiles.map((p) => p.website)).toEqual(['https://zwem.men', null]);
   });
+  it('profiles reads an empty, blank, non-string or null website as null and still parses the list', async () => {
+    const base = { id: 'pfl_1', name: 'Shop', mode: 'live', status: 'verified' };
+    const { mollie } = client([json(200, { _embedded: { profiles: [
+      { ...base, website: '' }, { ...base, id: 'pfl_2', website: '  ' }, { ...base, id: 'pfl_3', website: 123 }, { ...base, id: 'pfl_4', website: null }, { ...base, id: 'pfl_5', website: 'https://a.example' },
+    ] } })]);
+    const profiles = await mollie.profiles('tok');
+    expect(profiles.map((p) => [p.id, p.website])).toEqual([['pfl_1', null], ['pfl_2', null], ['pfl_3', null], ['pfl_4', null], ['pfl_5', 'https://a.example']]);
+  });
   it.each([403, 503])('a %i on a v2 call throws MollieUnavailable carrying that status', async (status) => {
     const { mollie } = client([json(status, {})]);
     await expect(mollie.organization('tok')).rejects.toMatchObject({ name: 'MollieUnavailable', status });

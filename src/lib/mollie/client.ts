@@ -94,7 +94,7 @@ const methodsSchema = z.object({ _embedded: z.object({ methods: z.array(z.object
 const orgSchema = z.object({ id: z.string(), name: z.string() });
 const profilesSchema = z.object({
   _embedded: z.object({
-    profiles: z.array(z.object({ id: z.string(), name: z.string(), mode: z.enum(['live', 'test']), status: z.string(), website: z.string().nullish() })),
+    profiles: z.array(z.object({ id: z.string(), name: z.string(), mode: z.enum(['live', 'test']), status: z.string(), website: z.string().nullish().catch(null) })),
   }),
 });
 
@@ -232,7 +232,7 @@ export function createMollieClient(
     async profiles(accessToken) {
       const res = await v2(accessToken, '/v2/profiles?limit=250');
       if (!res.ok) throw unavailable(res);
-      return (await parse(profilesSchema, res))._embedded.profiles.map((p) => ({ ...p, website: p.website ?? null }));
+      return (await parse(profilesSchema, res))._embedded.profiles.map((p) => ({ ...p, website: p.website?.trim() ? p.website : null }));
     },
 
     async listMethods(accessToken, q) {
