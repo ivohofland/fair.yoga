@@ -41,6 +41,8 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: Params
       return respondError('Mollie isn’t connected. Connect it again from Settings.', 409, 'PROCESSOR_NOT_CONNECTED');
     case 'unknown_profile':
       return respondError('That profile isn’t in your Mollie account.', 400);
+    case 'unverified_profile':
+      return respondError('Mollie hasn’t verified that profile yet.', 409, 'PROCESSOR_PROFILE_UNVERIFIED');
     case 'unavailable':
       return respondError('Mollie isn’t available right now.', 503, 'PROCESSOR_UNAVAILABLE');
     default: {

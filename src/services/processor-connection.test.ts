@@ -26,6 +26,7 @@ import {
   REVOKE_DEFER_CAP_MS,
   REVOKE_RETRY_MS,
   chooseProfile,
+  isChoosableProfile,
   completeConnect,
   disconnect,
   payoutIdentityLabel,
@@ -44,9 +45,12 @@ const later = (ms: number) => new Date(now.getTime() + ms);
 
 const ORG_A = { id: 'org_aaaa1111', name: 'Anna Yoga' };
 const ORG_B = { id: 'org_bbbb2222', name: 'Other Org' };
-const P1: MollieProfile = { id: 'pfl_one11111', name: 'Studio Anna', mode: 'live', status: 'verified' };
-const P2: MollieProfile = { id: 'pfl_two22222', name: 'Retreats', mode: 'live', status: 'verified' };
-const P_TEST: MollieProfile = { id: 'pfl_test3333', name: 'Sandbox', mode: 'test', status: 'verified' };
+const P1: MollieProfile = { id: 'pfl_one11111', name: 'Studio Anna', mode: 'live', status: 'verified', website: null };
+const P2: MollieProfile = { id: 'pfl_two22222', name: 'Retreats', mode: 'live', status: 'verified', website: 'https://retreats.example' };
+const P_UNVERIFIED: MollieProfile = { id: 'pfl_unve4444', name: 'Newcomer', mode: 'live', status: 'unverified', website: 'https://zwem.men' };
+const P_TEST: MollieProfile = { id: 'pfl_test3333', name: 'Sandbox', mode: 'test', status: 'verified', website: null };
+const OPTION_P1 = { id: P1.id, name: P1.name, website: null, choosable: true };
+const OPTION_P2 = { id: P2.id, name: P2.name, website: 'https://retreats.example', choosable: true };
 const FULL_GRANT: TokenGrant = { accessToken: 'access_1', refreshToken: 'refresh_1', expiresInSeconds: 3600, scopes: [...MOLLIE_SCOPES] };
 
 const real = createMollieClient({ clientId: 'app_client', clientSecret: 'secret' });
@@ -242,6 +246,16 @@ describe('startConnect', () => {
   });
 });
 
+describe('isChoosableProfile', () => {
+  it.each([
+    ['live', 'verified', true],
+    ['live', 'unverified', false],
+    ['test', 'unverified', true],
+  ] as const)('in %s mode a %s profile is choosable: %s', (mode, status, expected) => {
+    expect(isChoosableProfile({ status }, mode === 'test')).toBe(expected);
+  });
+});
+
 describe('completeConnect', () => {
   it('with one profile connects it, seals the grant, records the connection and consumes the state', async () => {
     const t = await freshTeacher();
@@ -284,6 +298,35 @@ describe('completeConnect', () => {
   it('in test mode offers test profiles too, so the same list asks for a choice', async () => {
     const t = await freshTeacher();
     expect((await connect(t, ORG_A, [P_TEST, P1], testDeps)).kind).toBe('choose_profile');
+  });
+
+  it('in live mode lands on the picker when the only listed profile is unverified, and writes no event', async () => {
+    const t = await freshTeacher();
+    expect(await connect(t, ORG_A, [P_UNVERIFIED])).toEqual({ kind: 'choose_profile', teacherId: t.teacherId });
+    expect((await connectionOf(t.teacherId)).profileId).toBeNull();
+    expect(await eventsOf(t.teacherId)).toEqual([]);
+  });
+
+  it('in test mode still chooses the only listed profile when it is unverified', async () => {
+    const t = await freshTeacher();
+    expect((await connect(t, ORG_A, [P_UNVERIFIED], testDeps)).kind).toBe('connected');
+    expect((await connectionOf(t.teacherId)).profileId).toBe(P_UNVERIFIED.id);
+  });
+
+  it('in live mode does not pick the one verified profile among several listed', async () => {
+    const t = await freshTeacher();
+    expect((await connect(t, ORG_A, [P1, P_UNVERIFIED])).kind).toBe('choose_profile');
+    expect((await connectionOf(t.teacherId)).profileId).toBeNull();
+  });
+
+  it('reconnecting to the same organization does not keep a previous profile that is now unverified', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P2]);
+    await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P1.id });
+    const before = await eventsOf(t.teacherId);
+    expect((await connect(t, ORG_A, [{ ...P1, status: 'unverified' }, P2])).kind).toBe('choose_profile');
+    expect((await connectionOf(t.teacherId)).profileId).toBeNull();
+    expect(await eventsOf(t.teacherId)).toEqual(before);
   });
 
   it('with two profiles and no live identity before asks for a choice and writes no event', async () => {
@@ -519,6 +562,14 @@ describe('chooseProfile', () => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1, P2]);
     expect(await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: 'pfl_nope0000' })).toEqual({ kind: 'unknown_profile' });
+    expect((await connectionOf(t.teacherId)).profileId).toBeNull();
+    expect(await eventsOf(t.teacherId)).toEqual([]);
+  });
+
+  it('answers unverified_profile for a listed unverified profile in live mode, and writes nothing', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P_UNVERIFIED]);
+    expect(await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P_UNVERIFIED.id })).toEqual({ kind: 'unverified_profile' });
     expect((await connectionOf(t.teacherId)).profileId).toBeNull();
     expect(await eventsOf(t.teacherId)).toEqual([]);
   });
@@ -814,7 +865,17 @@ describe('readConnectionView', () => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1, P2]);
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
-      kind: 'choose_profile', profiles: [{ id: P1.id, name: P1.name }, { id: P2.id, name: P2.name }],
+      kind: 'choose_profile', profiles: [OPTION_P1, OPTION_P2],
+    });
+  });
+
+  it('lists an unverified profile as not choosable with its website, and leaves a blocked one out', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P_UNVERIFIED]);
+    fake.profiles.mockResolvedValue([P1, P_UNVERIFIED, { ...P2, status: 'blocked' }]);
+    expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
+      kind: 'choose_profile',
+      profiles: [OPTION_P1, { id: P_UNVERIFIED.id, name: P_UNVERIFIED.name, website: 'https://zwem.men', choosable: false }],
     });
   });
 
@@ -824,7 +885,7 @@ describe('readConnectionView', () => {
     await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P1.id });
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
       kind: 'connected', organizationName: ORG_A.name, profileId: P1.id, profileName: P1.name, testmode: false,
-      profiles: [{ id: P1.id, name: P1.name }, { id: P2.id, name: P2.name }],
+      profiles: [OPTION_P1, OPTION_P2],
       offered: ['ideal', 'wero'], excluded: [{ id: 'klarna', description: null }], takesPayments: true,
     });
     expect(fake.listMethods).toHaveBeenCalledWith('access_1', { profileId: P1.id, amount: { value: '10.00', currency: 'EUR' }, testmode: false });

@@ -24,7 +24,7 @@ export class MollieUnavailable extends Error {
 export type MollieAmount = { value: string; currency: string };
 export type TokenGrant = { accessToken: string; refreshToken: string; expiresInSeconds: number; scopes: string[] };
 export type TokenAnswer = { kind: 'granted'; grant: TokenGrant } | { kind: 'invalid_grant' };
-export type MollieProfile = { id: string; name: string; mode: 'live' | 'test'; status: string };
+export type MollieProfile = { id: string; name: string; mode: 'live' | 'test'; status: string; website: string | null };
 /** One enabled method as `/v2/methods` lists it: its id and Mollie's own name for it, when given. */
 export type MollieMethod = { id: string; description: string | null };
 export type MethodsAnswer = { kind: 'methods'; methods: MollieMethod[] } | { kind: 'unsupported' };
@@ -94,7 +94,7 @@ const methodsSchema = z.object({ _embedded: z.object({ methods: z.array(z.object
 const orgSchema = z.object({ id: z.string(), name: z.string() });
 const profilesSchema = z.object({
   _embedded: z.object({
-    profiles: z.array(z.object({ id: z.string(), name: z.string(), mode: z.enum(['live', 'test']), status: z.string() })),
+    profiles: z.array(z.object({ id: z.string(), name: z.string(), mode: z.enum(['live', 'test']), status: z.string(), website: z.string().nullish() })),
   }),
 });
 
@@ -232,7 +232,7 @@ export function createMollieClient(
     async profiles(accessToken) {
       const res = await v2(accessToken, '/v2/profiles?limit=250');
       if (!res.ok) throw unavailable(res);
-      return (await parse(profilesSchema, res))._embedded.profiles;
+      return (await parse(profilesSchema, res))._embedded.profiles.map((p) => ({ ...p, website: p.website ?? null }));
     },
 
     async listMethods(accessToken, q) {

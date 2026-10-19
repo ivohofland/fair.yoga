@@ -303,10 +303,17 @@ describe('outgoing v2 requests', () => {
   it('profiles reads /v2/profiles with a bearer token', async () => {
     const profile = { id: 'pfl_1', name: 'Shop', mode: 'live', status: 'verified' };
     const { fetchImpl, mollie } = client([json(200, { _embedded: { profiles: [profile] } })]);
-    expect(await mollie.profiles('tok')).toEqual([profile]);
+    expect(await mollie.profiles('tok')).toEqual([{ ...profile, website: null }]);
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(String(url)).toBe('https://api.mollie.com/v2/profiles?limit=250');
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer tok');
+  });
+  it('profiles carries the website Mollie lists, and null when it lists none', async () => {
+    const withSite = { id: 'pfl_1', name: 'Shop', mode: 'live', status: 'verified', website: 'https://zwem.men' };
+    const without = { id: 'pfl_2', name: 'Other', mode: 'live', status: 'unverified' };
+    const { mollie } = client([json(200, { _embedded: { profiles: [withSite, without] } })]);
+    const profiles = await mollie.profiles('tok');
+    expect(profiles.map((p) => p.website)).toEqual(['https://zwem.men', null]);
   });
   it.each([403, 503])('a %i on a v2 call throws MollieUnavailable carrying that status', async (status) => {
     const { mollie } = client([json(status, {})]);

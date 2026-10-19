@@ -177,7 +177,7 @@ export async function completeConnect(
       });
       const previousLive = livePayoutIdentity(previous);
       const replacedRefresh = previous === null ? null : unrevokedRefresh(previous, deps);
-      const profile = initialProfile(profiles, org.id, previousLive);
+      const profile = initialProfile(profiles, org.id, previousLive, deps.config.testmode);
       const data = {
         processor: 'mollie' as const,
         organizationId: org.id,
@@ -272,7 +272,7 @@ function mollieUnavailable(
   );
 }
 
-/** Profiles that can take payments here: never a blocked one, and in live mode only live ones. */
+/** Profiles listed to the teacher here: never a blocked one, and in live mode only live ones. */
 function usableProfiles(profiles: readonly MollieProfile[], testmode: boolean): MollieProfile[] {
   return profiles.filter((p) => p.status !== 'blocked' && (testmode || p.mode === 'live'));
 }
@@ -281,11 +281,28 @@ function sameIdentity(a: LiveIdentity | null, b: LiveIdentity): boolean {
   return a !== null && a.organizationId === b.organizationId && a.profileId === b.profileId;
 }
 
-/** The profile a callback lands on: the only one, or the previous live one when the organization is unchanged and still lists it. */
-function initialProfile(profiles: readonly MollieProfile[], organizationId: string, previousLive: LiveIdentity | null): MollieProfile | null {
-  if (profiles.length === 1) return profiles[0] ?? null;
+/** Whether a listed profile may take this connection's payments: in live mode only one Mollie has verified. */
+export function isChoosableProfile(p: Pick<MollieProfile, 'status'>, testmode: boolean): boolean {
+  return testmode || p.status === 'verified';
+}
+
+export type ProfileOption = { id: string; name: string; website: string | null; choosable: boolean };
+
+function profileOptions(profiles: readonly MollieProfile[], testmode: boolean): ProfileOption[] {
+  return profiles.map((p) => ({ id: p.id, name: p.name, website: p.website, choosable: isChoosableProfile(p, testmode) }));
+}
+
+/** The profile a callback lands on: the only one listed, or the previous live one when the organization is unchanged and still lists it — either only when choosable. */
+function initialProfile(
+  profiles: readonly MollieProfile[],
+  organizationId: string,
+  previousLive: LiveIdentity | null,
+  testmode: boolean,
+): MollieProfile | null {
+  const pick = (p: MollieProfile | undefined) => (p !== undefined && isChoosableProfile(p, testmode) ? p : null);
+  if (profiles.length === 1) return pick(profiles[0]);
   if (previousLive === null || previousLive.organizationId !== organizationId) return null;
-  return profiles.find((p) => p.id === previousLive.profileId) ?? null;
+  return pick(profiles.find((p) => p.id === previousLive.profileId));
 }
 
 /** Writes the event for a live identity that has just become `next`. */
@@ -314,6 +331,7 @@ export type ChooseProfileOutcome =
   | { kind: 'unchanged' }
   | { kind: 'not_connected' }
   | { kind: 'unknown_profile' }
+  | { kind: 'unverified_profile' }
   | { kind: 'unavailable' };
 
 /**
@@ -341,7 +359,9 @@ export async function chooseProfile(
     mollieUnavailable(err, row.id, 'profiles', 'Mollie could not list the profiles; the profile was not changed');
     return { kind: 'unavailable' };
   }
-  if (!profiles.some((p) => p.id === input.profileId)) return { kind: 'unknown_profile' };
+  const picked = profiles.find((p) => p.id === input.profileId);
+  if (picked === undefined) return { kind: 'unknown_profile' };
+  if (!isChoosableProfile(picked, deps.config.testmode)) return { kind: 'unverified_profile' };
 
   const outcome = await db.$transaction(async (tx): Promise<ChooseProfileOutcome> => {
     if (!(await lockTeacherForNoKeyUpdate(tx, input.teacherId))) return { kind: 'not_connected' };
@@ -510,14 +530,14 @@ export function revokeConnection(db: PrismaClient, deps: MollieDeps, connectionI
 
 export type ConnectionView =
   | { kind: 'none' }
-  | { kind: 'choose_profile'; profiles: { id: string; name: string }[] }
+  | { kind: 'choose_profile'; profiles: ProfileOption[] }
   | {
       kind: 'connected';
       organizationName: string;
       profileId: string;
       profileName: string;
       testmode: boolean;
-      profiles: { id: string; name: string }[];
+      profiles: ProfileOption[];
       offered: AllowedMollieMethod[];
       excluded: ExcludedMethod[];
       /** `takesMolliePaymentsIn` for this row on this server; false asks the teacher to reconnect. */
@@ -562,7 +582,7 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
   if (orgRead.status === 'rejected') return unreadable('organization', orgRead.reason);
   if (profilesRead.status === 'rejected') return unreadable('profiles', profilesRead.reason);
   const org = orgRead.value;
-  const profiles = usableProfiles(profilesRead.value, deps.config.testmode).map(({ id, name }) => ({ id, name }));
+  const profiles = profileOptions(usableProfiles(profilesRead.value, deps.config.testmode), deps.config.testmode);
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
 
   const profileId = row.profileId;

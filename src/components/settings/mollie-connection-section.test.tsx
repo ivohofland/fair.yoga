@@ -14,7 +14,10 @@ afterEach(() => {
   Object.defineProperty(window, 'location', { value: realLocation, writable: true });
 });
 
-const PROFILES = [{ id: 'pfl_one', name: 'Studio Anna' }, { id: 'pfl_two', name: 'Retreats' }];
+const PROFILES = [
+  { id: 'pfl_one', name: 'Studio Anna', website: null, choosable: true },
+  { id: 'pfl_two', name: 'Retreats', website: null, choosable: true },
+];
 const CONNECTED: Extract<ConnectionView, { kind: 'connected' }> = {
   kind: 'connected', organizationName: 'Anna Yoga', profileId: 'pfl_one', profileName: 'Studio Anna', testmode: false,
   profiles: [PROFILES[0]!], offered: ['ideal', 'creditcard'], excluded: [{ id: 'klarna', description: 'Pay later.' }, { id: 'banktransfer', description: 'Bank transfer' }, { id: 'giropay', description: null }], takesPayments: true,
