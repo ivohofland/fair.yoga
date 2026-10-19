@@ -52,19 +52,19 @@ export function MollieConnectionSection({ teacherId, view, status }: MollieConne
   }
 
   // The choose line invites a choice the picker below cannot offer when nothing is choosable.
-  const nothingToChoose = view.kind === 'choose_profile' && view.profiles.length > 0 && view.profiles.every((p) => !p.choosable);
-  const showStatus = status !== null && !(status === 'choose' && nothingToChoose);
+  const noneChoosable = view.kind === 'choose_profile' && view.profiles.length > 0 && view.profiles.every((p) => !p.choosable);
+  const showStatus = status !== null && !(status === 'choose' && noneChoosable);
 
   return (
     <section className="mt-10 pt-6 border-t border-border flex flex-col gap-4">
       <h2 ref={headingRef} tabIndex={-1} className="type-subtitle focus:outline-none">Mollie</h2>
       {showStatus && status !== null && <p role="status" className={`type-caption ${RETURN_COPY[status].tone}`}>{RETURN_COPY[status].text}</p>}
-      <ViewBody teacherId={teacherId} view={view} onChanged={changed} />
+      <ViewBody teacherId={teacherId} view={view} noneChoosable={noneChoosable} onChanged={changed} />
     </section>
   );
 }
 
-function ViewBody({ teacherId, view, onChanged }: { teacherId: string; view: ConnectionView; onChanged: () => void }) {
+function ViewBody({ teacherId, view, noneChoosable, onChanged }: { teacherId: string; view: ConnectionView; noneChoosable: boolean; onChanged: () => void }) {
   switch (view.kind) {
     case 'none':
       return (
@@ -86,7 +86,7 @@ function ViewBody({ teacherId, view, onChanged }: { teacherId: string; view: Con
             </>
           ) : (
             <>
-              {view.profiles.every((p) => !p.choosable) && (
+              {noneChoosable && (
                 <p className="type-body">Mollie hasn’t verified any of your profiles yet. Once it has, come back here to choose one.</p>
               )}
               <ProfilePicker teacherId={teacherId} profiles={view.profiles} current={null} onChosen={onChanged} />
@@ -246,7 +246,11 @@ function ChangeProfileControl({
   );
 }
 
-/** A radio list of the organization's profiles and the button that PUTs the choice. */
+/**
+ * A radio list of the organization's profiles and the button that PUTs the
+ * choice. A profile that is not choosable is shown disabled with its reason,
+ * and the verification guidance appears while any is.
+ */
 function ProfilePicker({
   teacherId, profiles, current, autoFocus = false, onChosen, onCancel,
 }: {

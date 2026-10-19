@@ -574,6 +574,29 @@ describe('chooseProfile', () => {
     expect(await eventsOf(t.teacherId)).toEqual([]);
   });
 
+  it('in test mode chooses a listed unverified profile', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P_UNVERIFIED], testDeps);
+    expect((await chooseProfile(prisma, testDeps, { teacherId: t.teacherId, profileId: P_UNVERIFIED.id })).kind).toBe('chosen');
+    expect((await connectionOf(t.teacherId)).profileId).toBe(P_UNVERIFIED.id);
+  });
+
+  it('refuses an unverified profile on a live row, leaving the profile and events as they were', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    fake.profiles.mockResolvedValue([P1, P_UNVERIFIED]);
+    expect(await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P_UNVERIFIED.id })).toEqual({ kind: 'unverified_profile' });
+    expect((await connectionOf(t.teacherId)).profileId).toBe(P1.id);
+    expect(await eventsOf(t.teacherId)).toHaveLength(1);
+  });
+
+  it('refuses the current profile once it is listed unverified, rather than answering unchanged', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1]);
+    fake.profiles.mockResolvedValue([{ ...P1, status: 'unverified' }, P2]);
+    expect(await chooseProfile(prisma, liveDeps, { teacherId: t.teacherId, profileId: P1.id })).toEqual({ kind: 'unverified_profile' });
+  });
+
   it('answers unknown_profile for a test profile in live mode', async () => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1, P2]);
@@ -866,6 +889,15 @@ describe('readConnectionView', () => {
     await connect(t, ORG_A, [P1, P2]);
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({
       kind: 'choose_profile', profiles: [OPTION_P1, OPTION_P2],
+    });
+  });
+
+  it('in test mode marks an unverified profile choosable', async () => {
+    const t = await freshTeacher();
+    await connect(t, ORG_A, [P1, P_UNVERIFIED], testDeps);
+    expect(await readConnectionView(prisma, testDeps, t.teacherId)).toEqual({
+      kind: 'choose_profile',
+      profiles: [OPTION_P1, { id: P_UNVERIFIED.id, name: P_UNVERIFIED.name, website: 'https://zwem.men', choosable: true }],
     });
   });
 

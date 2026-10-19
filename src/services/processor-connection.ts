@@ -281,18 +281,19 @@ function sameIdentity(a: LiveIdentity | null, b: LiveIdentity): boolean {
   return a !== null && a.organizationId === b.organizationId && a.profileId === b.profileId;
 }
 
-/** Whether a listed profile may take this connection's payments: in live mode only one Mollie has verified. */
+/** Whether a listed profile may be chosen: test mode accepts any listed profile, live mode only one Mollie has verified (Mollie takes only test payments on an unverified one). */
 export function isChoosableProfile(p: Pick<MollieProfile, 'status'>, testmode: boolean): boolean {
   return testmode || p.status === 'verified';
 }
 
+/** A listed profile as the picker shows it: `choosable` is `isChoosableProfile`'s answer, `website` is null when Mollie gives none. */
 export type ProfileOption = { id: string; name: string; website: string | null; choosable: boolean };
 
 function profileOptions(profiles: readonly MollieProfile[], testmode: boolean): ProfileOption[] {
   return profiles.map((p) => ({ id: p.id, name: p.name, website: p.website, choosable: isChoosableProfile(p, testmode) }));
 }
 
-/** The profile a callback lands on: the only one listed, or the previous live one when the organization is unchanged and still lists it — either only when choosable. */
+/** The profile a callback lands on, or null for the picker: the only profile listed, or the previous live profile when the organization is unchanged and still lists it. Neither is returned unless it is choosable. */
 function initialProfile(
   profiles: readonly MollieProfile[],
   organizationId: string,
@@ -336,7 +337,8 @@ export type ChooseProfileOutcome =
 
 /**
  * Sets the connection's profile from the picker, or switches it on a live
- * row. The profile list is fetched before the transaction, so no lock is held
+ * row. A listed profile that is not choosable is refused (`unverified_profile`),
+ * before the already-set check. The profile list is fetched before the transaction, so no lock is held
  * across a Mollie call; under the teacher lock the row must still be the one
  * that list was fetched for, which refuses a choice that raced a disconnect
  * and reconnect.

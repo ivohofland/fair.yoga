@@ -112,6 +112,18 @@ describe('MollieConnectionSection', () => {
     expect(screen.queryByText(/hasn’t verified any of your profiles/)).toBeNull();
   });
 
+  it('renders no website line and no description for a choosable profile without a website', () => {
+    show({ kind: 'choose_profile', profiles: [PROFILES[0]!] });
+    expect(screen.getByRole('radio', { name: 'Studio Anna' })).toHaveAccessibleDescription('');
+    expect(document.querySelectorAll('label .type-caption')).toHaveLength(0);
+  });
+
+  it('keeps the choose line over a mixed list', () => {
+    show({ kind: 'choose_profile', profiles: [PROFILES[0]!, { id: 'pfl_new', name: 'Fresh', website: null, choosable: false }] }, { status: 'choose' });
+    expect(screen.getByText(/Choose which Mollie profile/)).toBeInTheDocument();
+    expect(screen.queryByText(/hasn’t verified any of your profiles/)).toBeNull();
+  });
+
   it('says to create a profile first when Mollie lists none, and offers to connect again', async () => {
     const assign = vi.fn();
     Object.defineProperty(window, 'location', { value: { assign }, writable: true });

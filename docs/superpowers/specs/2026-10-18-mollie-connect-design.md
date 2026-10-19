@@ -129,7 +129,7 @@ the numbering here is this spec's.
 | The Methods API gives the account's enabled methods for an amount and currency | Holds. `/v2/methods` lists enabled methods only (`/methods/all` is everything); with OAuth `profileId` is required; without `amount` it returns EUR methods only. Pay-later ids come back by name (`klarna`, `in3`, `riverty`, `billie`, `billink`, `alma`). |
 | A single `method` opens that method directly | Holds, with a side effect: a student who cancels is redirected to our `redirectUrl` and **no webhook fires**. |
 | A revoked grant shows as disconnected | **Only when we next refresh.** Mollie sends no revocation webhook; the next refresh answers `invalid_grant`. Access tokens live 60 min; refresh tokens don't expire. |
-| `processorAccountId` comes from the OAuth grant | **Partly.** The token response carries no ids; `/v2/organizations/me` gives the organization, `/v2/profiles` its profiles, and a teacher with several picks one. |
+| `processorAccountId` comes from the OAuth grant | **Partly.** The token response carries no ids; `/v2/organizations/me` gives the organization, `/v2/profiles` its profiles, and a teacher with several picks one (an unverified profile is never picked automatically, lone or previous). |
 | The payment's own currency (#758) | **Wrong.** `Payment` has no `currency`; it reads its class's (`Class.currency`). |
 | "Methods that cost the student extra" need deciding | **Moot.** The Payments API has no surcharge field; a surcharge exists only in Mollie's shop plugins. |
 | Erasure nulls `processorAccountId` | Holds (`src/services/gdpr.ts:1626`), and it is the column's only writer. |
@@ -301,9 +301,9 @@ re-reads and uses the winner's token.
     event is written. Otherwise `profileId` is set null — the row is not live,
     so no money can flow — no event is written, and the teacher is sent to a
     picker on the settings section.
-  Whichever of those applies, a listed profile that is not choosable is shown in the picker disabled, and
-  `PUT …/processor/profile` refuses it with 409 `PROCESSOR_PROFILE_UNVERIFIED`
-  (#908).
+  In both cases, a listed profile that is not choosable is shown in the
+  picker disabled, and `PUT …/processor/profile` refuses it with 409
+  `PROCESSOR_PROFILE_UNVERIFIED` (#908).
   After commit, an event that was written gets `deliverPayoutChangedNotice`
   (#786's alert and *This wasn't me* link, unchanged).
 - **Choosing a profile:** `PUT /api/teachers/[id]/processor/profile` sets the
@@ -637,7 +637,8 @@ chargeback, so an attempt keeps `chargedBackAt` once stamped); a retry policy
   - *Services*, unit tier against the real test database with the client
     injected (as `dispatchPushes(db, { send })` takes its sender): connect
     with one and several profiles (a kept previous profile and a cleared one
-    both write no event); choosing a profile writes the event; state reuse
+    both write no event, and an unverified profile, lone or previous, is never
+    picked automatically); choosing a profile writes the event; state reuse
     and cross-session state refused; the overlap with a pay-later id enabled; unsupported currency
     and Mollie down answer the Level 1 rows; attempt reuse; each webhook row;
     a repeat webhook `unchanged`; double payment; a chargeback and its
