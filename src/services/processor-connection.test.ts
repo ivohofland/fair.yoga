@@ -861,7 +861,7 @@ describe('readConnectionView', () => {
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({ kind: 'none' });
   });
 
-  it('lists the usable profiles of a row awaiting one', async () => {
+  it('lists the listed profiles of a row awaiting one', async () => {
     const t = await freshTeacher();
     await connect(t, ORG_A, [P1, P2]);
     expect(await readConnectionView(prisma, liveDeps, t.teacherId)).toEqual({

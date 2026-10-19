@@ -51,10 +51,14 @@ export function MollieConnectionSection({ teacherId, view, status }: MollieConne
     router.replace(SETTINGS_PATH);
   }
 
+  // The choose line invites a choice the picker below cannot offer when nothing is choosable.
+  const nothingToChoose = view.kind === 'choose_profile' && view.profiles.length > 0 && view.profiles.every((p) => !p.choosable);
+  const showStatus = status !== null && !(status === 'choose' && nothingToChoose);
+
   return (
     <section className="mt-10 pt-6 border-t border-border flex flex-col gap-4">
       <h2 ref={headingRef} tabIndex={-1} className="type-subtitle focus:outline-none">Mollie</h2>
-      {status !== null && <p role="status" className={`type-caption ${RETURN_COPY[status].tone}`}>{RETURN_COPY[status].text}</p>}
+      {showStatus && status !== null && <p role="status" className={`type-caption ${RETURN_COPY[status].tone}`}>{RETURN_COPY[status].text}</p>}
       <ViewBody teacherId={teacherId} view={view} onChanged={changed} />
     </section>
   );
@@ -81,7 +85,12 @@ function ViewBody({ teacherId, view, onChanged }: { teacherId: string; view: Con
               <ConnectButton teacherId={teacherId} label="Connect again" />
             </>
           ) : (
-            <ProfilePicker teacherId={teacherId} profiles={view.profiles} current={null} onChosen={onChanged} />
+            <>
+              {view.profiles.every((p) => !p.choosable) && (
+                <p className="type-body">Mollie hasn’t verified any of your profiles yet. Once it has, come back here to choose one.</p>
+              )}
+              <ProfilePicker teacherId={teacherId} profiles={view.profiles} current={null} onChosen={onChanged} />
+            </>
           )}
           <DisconnectControl teacherId={teacherId} onDisconnected={onChanged} />
         </>
@@ -200,7 +209,8 @@ function ConnectButton({ teacherId, label }: { teacherId: string; label: string 
 
 /**
  * The Change profile trigger, then the picker in its place. Opening focuses
- * the current profile's radio; Cancel hands focus back to the trigger.
+ * the current profile's radio, or the first choosable one when the current is
+ * not choosable; Cancel hands focus back to the trigger.
  */
 function ChangeProfileControl({
   teacherId, profiles, current, onChosen,
