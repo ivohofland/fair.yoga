@@ -582,7 +582,8 @@ export async function readConnectionView(db: PrismaClient, deps: MollieDeps, tea
   if (orgRead.status === 'rejected') return unreadable('organization', orgRead.reason);
   if (profilesRead.status === 'rejected') return unreadable('profiles', profilesRead.reason);
   const org = orgRead.value;
-  const profiles = profileOptions(usableProfiles(profilesRead.value, deps.config.testmode), deps.config.testmode);
+  const { testmode } = deps.config;
+  const profiles = profileOptions(usableProfiles(profilesRead.value, testmode), testmode);
   if (row.profileId === null) return { kind: 'choose_profile', profiles };
 
   const profileId = row.profileId;
