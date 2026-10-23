@@ -667,6 +667,10 @@ moderate: 1, high: 4, critical: 0 }`, summing to **5** — this figure agrees
 with the npm-era measurement's production count exactly (1 moderate + 4
 high), even though the whole-tree number moved.
 
+Measured 2026-10-23, after the `next` 16.4.1 / `sharp` 0.35.5 bump: whole
+tree `{ low: 4, moderate: 15, high: 15, critical: 0 }`; `--prod` `{ high: 1 }`
+— `deepmerge-ts` alone, the table below.
+
 **`--prod` is a proxy for "could plausibly execute at runtime somewhere", not
 a description of any image this repo builds.** Neither of the two stages
 that ship matches it:
@@ -707,31 +711,28 @@ standalone-image check above confirms it: `browserslist` never reaches the
 image that actually ships. It is exactly the situation this section already
 warns about, from a fresh package.
 
-**In the production dependency tree** — none is a direct *production*
-dependency; all four packages arrive through one:
+**In the production dependency tree** — it is not a direct *production*
+dependency; it arrives through one:
 
 | Package | Reached through | Forward fix |
 |---|---|---|
 | `deepmerge-ts` | `@prisma/client` → `prisma` → `@prisma/config` (also directly via the `prisma` devDependency) | **None.** `@prisma/config@6.19.3` pins `deepmerge-ts` to the **exact** version `7.1.5` (no range), and the patched version is `>=8.0.0` — no lockfile refresh can satisfy an exact pin |
-| `nanoid` | `postcss` (pulled in by `@tailwindcss/postcss`, `next`, and `vite`) | `pnpm update nanoid` — `postcss` declares `nanoid: ^3.3.16`, and the patched `3.3.18` satisfies that range; the committed lockfile is simply stale |
-| `browserslist` | `next` → `styled-jsx` → `@babel/core` (optional peer) → `@babel/helper-compilation-targets`; also via `update-browserslist-db` | `pnpm update browserslist` — both dependents' declared ranges (`^4.24.0`, `>=4.21.0`) already admit the patched `4.28.7` |
-| `baseline-browser-mapping` | `next` (direct) | `pnpm update baseline-browser-mapping` — `next` declares `^2.9.19`, which admits the patched `2.11.0` |
 
 Re-derive the "reached through" column with `pnpm why <package> --prod`, and
 the dev-only paragraph below with `pnpm why <package> --dev` — these edges
-rot faster than the totals do, and this table has already replaced one
-entirely (the `prisma`-rooted trio is gone; `browserslist` is new here).
+rot faster than the totals do.
 
-The last three are stale lockfile resolutions, not constrained versions, and
-the distinction decides the fix, same as it did under npm — only `pnpm audit`
-carries no `fixAvailable` object to read that distinction off directly, so it
-is re-derived by hand: compare each dependent's declared range (from its own
-`package.json` inside `node_modules/.pnpm`) against the advisory's
-`patched_versions`. `deepmerge-ts` is the one case where that comparison
-fails — an exact pin, not a range — which is what makes it, alone among the
-four, a "no forward fix" entry. An `overrides` block would work for the other
-three and is the wrong tool regardless: heavier, and pinned against a range
-that will drift.
+Most production findings are stale lockfile resolutions, not constrained
+versions, and the distinction decides the fix, same as it did under npm —
+only `pnpm audit` carries no `fixAvailable` object to read that distinction
+off directly, so it is re-derived by hand: compare each dependent's declared
+range (from its own `package.json` inside `node_modules/.pnpm`) against the
+advisory's `patched_versions`. Where the range admits the patched version,
+`pnpm update <package> --depth 99` clears it. `deepmerge-ts` is the case where
+that comparison fails — an exact pin, not a range — which is what makes it a
+"no forward fix" entry. An `overrides` block would work for a range and is the
+wrong tool regardless: heavier, and pinned against a range that will drift.
+Every version that update resolves still has to clear `minimumReleaseAge`.
 
 **Dev-only** — `brace-expansion` (two resolved major versions, both entirely
 inside the eslint/typescript-eslint toolchain), `@humanfs/node` (through
@@ -739,7 +740,8 @@ inside the eslint/typescript-eslint toolchain), `@humanfs/node` (through
 `vitest` (a direct devDependency) and `@vitest/mocker` (not one: it arrives
 through `vitest` and `@vitest/coverage-v8`, which are), the last two sharing
 one advisory — a path-traversal / arbitrary-file-read via `@vitest/mocker`'s
-redirect mock, GHSA-82fw-gwwq-j7x9. They run against
+redirect mock, GHSA-82fw-gwwq-j7x9; `vite` (through `vitest`), `undici`
+(through `jsdom`) and `fast-copy` (through `pino-pretty`). They run against
 this repo's own source on a developer's machine and on CI, and every advisory
 among them needs hostile input fed to the tool — which here would mean this
 repo's own files. Mostly denial-of-service, though not only:
