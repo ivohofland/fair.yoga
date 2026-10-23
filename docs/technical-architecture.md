@@ -10,7 +10,7 @@
 | ORM | Prisma | Type-safe queries generated from schema. Strict TypeScript integration. Easy for volunteers to understand. |
 | Auth | Custom (magic link + passkeys) | Magic links via email. WebAuthn/passkeys for returning users. No passwords, no SMS (cost). Tokens are `crypto.randomBytes`, hashed with `@oslojs/crypto` before storage — nothing is signed. `@simplewebauthn/server` handles passkey verification. |
 | Email | Lettermint (HTTP API, EU-hosted) | Transactional email for magic links, invitations, payment reminders, class reminders, notification fallback. The provider sits behind `sendEmail` (`src/lib/email.ts`); only `src/lib/email-lettermint.ts` talks to it. |
-| Payments | Mollie (EU) / Stripe (US) | Level 1 doesn't need these (manual tracking). Level 2 uses payment links — no card-on-file, no subscriptions. |
+| Payments | Mollie (EU) / Stripe (US) | Level 1 doesn't need these (manual tracking). Level 2 uses the Mollie Payments API with one method per payment — no card-on-file, no subscriptions. |
 | Styling | Tailwind CSS | Utility-first, matches the warm minimalist design brief. No custom CSS files to maintain. |
 | Testing | Vitest + Playwright | Vitest for the projects in `vitest.config.ts`, Playwright for e2e. Test-first development — tests are written before implementation. The database-backed unit tiers run against a dedicated `ethical_yoga_test` database, auto-provisioned via `DATABASE_URL_TEST` (see `docs/test-database.md`). |
 | Deployment | Single VPS (Docker) | One container running Next.js. PostgreSQL alongside or managed. Nginx reverse proxy. SSL via Let's Encrypt. |
@@ -164,6 +164,24 @@ precede the IIFE: a statement placed before it throws synchronously into the
 caller, escaping the `.catch` entirely.
 
 `grep -rn '): FireAndForget' src/` lists every function under this rule.
+
+### Processor token cipher (`lib/processor-token-cipher.ts`)
+
+A teacher's Mollie access and refresh tokens are sealed with AES-256-GCM before
+they reach `ProcessorConnection`, in their own table so that no `Teacher` read
+can carry them. `sealToken` lays the buffer out `[version][iv][tag][ciphertext]`
+and authenticates the version byte; `openToken` refuses an unknown version, a
+short buffer or a failed tag with `TokenCipherError`. The key is
+`PROCESSOR_TOKEN_KEY`, 32 bytes as base64; `diagnoseMollieConfig`
+(`src/lib/mollie/config.ts`) is the one reader and turns Mollie off, logging the
+reason once, for any of its `MollieConfigProblem` reasons: none of the three
+Mollie variables set (`unset`, a warning), only some of them (`partial`), a key
+that does not decode to 32 bytes (`token-key-length`), or a
+`NEXT_PUBLIC_APP_URL` that is missing or not an http(s) URL (`app-url`). It
+drops the app URL's trailing slashes. Replacing the key makes every
+stored token unreadable, so a teacher reconnects; the version byte names the
+layout a later key rotation would read both of. Only server code imports the module
+(`server-only`), which `pnpm run build` is what checks.
 
 ### Email (`lib/email.ts`)
 
@@ -989,11 +1007,11 @@ bounded by the IP rate limit. Find others with
 
 ### Unauthenticated API routes
 
-`find src/app/api -name route.ts` finds **82** routes. **15** carry no session
+`find src/app/api -name route.ts` finds **92** routes. **16** carry no session
 guard; **10** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 `student-signup`, `teacher-signup`, `slug-available`,
 `passkey/authenticate/options`, `payout-pause`, `unsubscribe`, `passkey-revoke`,
-`csp-report`), leaving **5** with neither:
+`csp-report`), leaving **6** with neither (16 - 10 = 6):
 
 | route | why that is correct |
 |---|---|
@@ -1001,7 +1019,14 @@ guard; **10** of those are rate-limited (`magic-link/claim`, `magic-link/send`,
 | `ping` | Public reachability probe: touches no database and answers only the server's clock. |
 | `auth/magic-link/verify` | Token is `crypto.randomBytes(32)` — 256 bits, stored hashed, 15-minute TTL. Brute force is infeasible. |
 | `auth/passkey/authenticate/verify` | Gated on a one-time 5-minute challenge plus WebAuthn signature verification; `redirect` is `relativePath.optional()` in `passkeyAuthVerifySchema`. |
+| `webhooks/mollie` | Mollie's classic webhook, whose body is only a payment id. An id that is not a `tr_` id, or that no attempt holds, costs at most one indexed read and answers 200 with no Mollie call. A known id's status is never read from the request: it is fetched from Mollie with the attempt's own teacher's token, and only that answer is applied. A repeated or forged call therefore changes nothing a fetch would not. |
 | `teacher-photos/[photoId]` | Public by design (#46): the teacher's public page shows the photo to signed-out visitors. The id is a per-upload `randomUUID`, regenerated on every upload and replace, and the route answers 404 once a photo is replaced or its teacher erased. |
+
+`processor/mollie/callback` is not a row: it calls `requireTeacher` and so
+prints a guard in the loop below. A visitor without a teacher session is sent to
+sign in, and the single-use `OAuthState` it consumes is bound to the session
+that started the connect, so a forged or replayed link refuses without
+changing anything.
 
 Re-derive with:
 
@@ -2187,8 +2212,14 @@ EMAIL_REPLY_TO=             # Platform mail's Reply-To; default hello@fair.yoga
 OPERATOR_EMAIL=             # Receives the daily degradation digest
 EMAIL_FROM=                 # e.g. "noreply@ethicalyoga.app"
 
-# Payments (Level 2, added later)
-MOLLIE_API_KEY=
+# Mollie Connect: all three unset turns Mollie off; some set is a logged misconfiguration.
+# It also needs NEXT_PUBLIC_APP_URL (below), an http(s) URL: Mollie's redirect, return and webhook URLs are built on it
+MOLLIE_CLIENT_ID=           # The Mollie app's client id (OAuth)
+MOLLIE_CLIENT_SECRET=
+PROCESSOR_TOKEN_KEY=        # 32 bytes, base64 (`openssl rand -base64 32`); encrypts stored tokens (Processor token cipher)
+MOLLIE_TESTMODE=            # "1" creates test-mode payments
+
+# Payments (Stripe, added later)
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 
@@ -2215,4 +2246,4 @@ These are deferred, not forgotten:
 - **Rate limiting / abuse prevention.** Needed before public launch, but not for initial development.
 - **Log-based monitoring / observability.** A fallback that substitutes a value is recorded as a `DegradationEvent` row by `logDegraded` and emailed to `OPERATOR_EMAIL` in a daily digest, and `/api/health` carries the aggregate for a request with the cron secret (Cron Jobs → Degradation events). Every other log line stays on stdout. A log backend (Grafana/Loki or similar) remains deferred until logs leave the box. Errors logged through `@/lib/log` are allowlisted (`src/lib/log-serializers.ts`, #739): every `Error` at the top level of a log call's first argument, any error-like value under `err`, and the `msg` pino falls back to; a value that cannot be serialized is replaced by a placeholder, never logged raw. Only named fields survive, and a cause appears under `err.cause` rather than folded into the message. A Prisma query error's message is withheld, since it renders row values; any other error's message is kept as written. Shipping logs still needs the rest of the stdout stream accounted for. Next prints an error a page or route throws outside `withErrorHandler` through `console.error`, with its message, stack, enumerable properties and cause chain; an `onRequestError` hook in `src/instrumentation.ts` would run beside that print, not instead of it, so that stream needs handling outside the app. Third-party text the app copies into its own messages is kept verbatim: the email provider's error message carried in `SendResult.reason` and in the errors `lib/email.ts`'s wrappers throw, `reason: error.message` strings, the push failure `cause` string `lib/push/send.ts` builds, and the push service's response body. Values copied out of an error into sibling keys (`constraint: pgErrorOf(err)?.constraint`) bypass the allowlist. An error nested below the top level of a log object, passed in the message position, passed as a format argument, or bound with `log.child` under any key but `err` is written by pino as its own enumerable properties, without the allowlist. And dry-run email mode logs only the subject from `sendEmail`; the `[DEV]` console lines, which print on any dry run (a production build with `EMAIL_DRY_RUN=1` included), print the magic link and the invitation sign-in URL together with the address.
 - **GDPR tooling.** Data export and account deletion endpoints. Required before launch, designed later.
-- **Level 2 payment retry logic.** Open question — parked for now.
+- **Level 2 payment retry logic.** Open question — parked for now. There is no automatic charging to retry; a student whose Mollie payment failed or expired pays again from the pay page.

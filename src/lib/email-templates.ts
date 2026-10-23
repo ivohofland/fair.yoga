@@ -15,6 +15,8 @@ import {
   STUDENT_BOOKINGS_LABEL,
   STUDENT_BOOKINGS_PATH,
   TEACHER_INVITATION_LABEL,
+  TEACHER_MOLLIE_LABEL,
+  TEACHER_MOLLIE_PATH,
   TEACHER_INVITATION_PATH,
   PAY_NOW_LABEL,
   isPaymentNotification,
@@ -151,6 +153,11 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   teacher_invitation: 'A teacher would like to connect with you.',
   walk_in_added: 'Your teacher added you to a class.',
   class_reminder: 'Your class is coming up.',
+  payment_refunded: 'Your teacher refunded a payment.',
+  processor_disconnected: 'Your teacher disconnected a payment processor.',
+  payment_paid_twice: 'A payment was made twice.',
+  payment_charged_back: 'A payment was charged back.',
+  refund_failed: 'A refund did not go through.',
 };
 
 const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
@@ -160,6 +167,10 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
   payment_request: 'A class has been priced.',
   reminder: 'A gentle reminder.',
   class_reminder: 'You have a class coming up.',
+  processor_disconnected: 'Your Mollie connection was disconnected.',
+  payment_paid_twice: 'A student paid the same payment twice.',
+  payment_charged_back: 'A payment was charged back.',
+  refund_failed: 'A refund did not go through.',
 };
 
 /**
@@ -197,6 +208,7 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
 const TEACHER_ACTION_LINKS: Partial<Record<NotificationType, { label: string; path: string }>> = {
   teacher_invitation: { label: TEACHER_INVITATION_LABEL, path: TEACHER_INVITATION_PATH },
   class_reminder: { label: 'Open your schedule', path: '/schedule' },
+  processor_disconnected: { label: TEACHER_MOLLIE_LABEL, path: TEACHER_MOLLIE_PATH },
 };
 
 export interface NotificationEmailInput {
@@ -211,7 +223,7 @@ export interface NotificationEmailInput {
   relatedClassId?: string | null;
   /**
    * What the class's teacher lets a student do about paying, read at send
-   * time (`payGuidanceFor`). A student payment notification gets its Pay now
+   * time (`payGuidanceForTeacher`). A student payment notification gets its Pay now
    * button only when this is `'methods'`.
    */
   payGuidance?: PayGuidance;
@@ -447,6 +459,9 @@ export const PAYOUT_CHANGE_PHRASES = {
   payment_link_added: 'A payment link was added',
   payment_link_changed: 'A payment link was changed',
   payment_link_removed: 'A payment link was removed',
+  processor_connected: 'Mollie connected',
+  processor_changed: 'Mollie account changed',
+  processor_disconnected: 'Mollie disconnected',
 } as const satisfies Record<PayoutChangeKind, string>;
 
 /** The kinds that have both a before and an after to mask alike. */
@@ -460,6 +475,7 @@ type PayoutChangedKind = Extract<PayoutChangeKind, `${string}_changed`>;
 const PAYOUT_MASKS_ALIKE_WARNING = {
   bank_account_changed: "The bank details changed, though the account number's last digits look the same. Check the full details in your settings.",
   payment_link_changed: 'The new link looks like the old one here, but it is a different link. Check it in full in your settings.',
+  processor_changed: 'The new Mollie account looks like the old one here, but it is a different account. Check it in full in your settings.',
 } as const satisfies Record<PayoutChangedKind, string>;
 
 function isChangedKind(kind: PayoutChangeKind): kind is PayoutChangedKind {

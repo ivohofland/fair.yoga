@@ -534,7 +534,7 @@ describe('POST /api/payments/[id]/remind', () => {
 });
 
 const UNKNOWN_PAYMENT_ID = '00000000-0000-4000-8000-000000000000';
-const paid = (token: string | null, id: string, body: unknown = { method: 'cash' }) =>
+const paid = (token: string | null, id: string, body: unknown = { method: 'manual' }) =>
   fetch(`${BASE_URL}/api/payments/${id}/paid`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? cookie(token) : {}) },
@@ -559,7 +559,6 @@ const PAYMENT_ROW_KEYS = [
   'method',
   'notChargedAt',
   'paidAt',
-  'processorRef',
   'registrationId',
   'reminderSentAt',
   'status',
@@ -599,7 +598,7 @@ describe('POST /api/payments/[id]/paid', () => {
 
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.status).toBe('paid');
-    expect(stamped.method).toBe('cash');
+    expect(stamped.method).toBe('manual');
     expect(stamped.paidAt).not.toBeNull();
   });
 
@@ -608,11 +607,11 @@ describe('POST /api/payments/[id]/paid', () => {
 
     const res = await paid(teacherToken, paymentId);
     const data = (await expectUnchanged(res)) as { status: string; method: string | null };
-    expect(data).toMatchObject({ status: 'paid', method: 'cash' });
+    expect(data).toMatchObject({ status: 'paid', method: 'manual' });
 
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(after.status).toBe('paid');
-    expect(after.method).toBe('cash');
+    expect(after.method).toBe('manual');
     expect(after.paidAt).toEqual(before.paidAt);
     expect(after.updatedAt).toEqual(before.updatedAt);
   });
@@ -622,14 +621,16 @@ describe('POST /api/payments/[id]/paid', () => {
     await expectForbidden(res);
   });
 
-  it('refuses a mark with another method: PAYMENT_ALREADY_PAID', async () => {
+  // A teacher marks by hand only; 'mollie' is the webhook's to write. The
+  // different-method refusal itself is `markPaymentPaid`'s unit test.
+  it.each(['mollie', 'cash'])('400s a mark with method %s, writing nothing', async (method) => {
     const before = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
 
-    const res = await paid(teacherToken, paymentId, { method: 'bank_transfer' });
-    await expectRefusal(res, 'PAYMENT_ALREADY_PAID');
+    const res = await paid(teacherToken, paymentId, { method });
+    expect(res.status).toBe(400);
 
     const after = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    expect(after.method).toBe('cash');
+    expect(after.method).toBe('manual');
     expect(after.updatedAt).toEqual(before.updatedAt);
   });
 
@@ -835,7 +836,6 @@ describe('the student payment claim: /sent and /not-received', () => {
         paidAt: null,
         notChargedAt: null,
         studentReportedAt: null,
-        processorRef: null,
         ...data,
       },
     });
@@ -886,16 +886,16 @@ describe('the student payment claim: /sent and /not-received', () => {
     expect(row.studentReportedAt).toBeNull();
   });
 
-  /** What the student doors answer with, sorted: none of the teacher's bookkeeping, `processorRef` above all. */
+  /** What the student doors answer with, sorted: none of the teacher's bookkeeping, `reminderSentAt` among them. */
   const STUDENT_VIEW_KEYS = ['id', 'notChargedAt', 'paidAt', 'status', 'studentReportedAt'];
 
   it('marks sent, answers a repeat unchanged, withdraws, answers a repeat withdrawal unchanged', async () => {
-    await reset({ processorRef: 'tr_student_must_not_see' });
+    await reset({ reminderSentAt: new Date('2026-09-02T10:00:00.000Z') });
 
     const first = (await expectApplied(await sent(studentToken, paymentId, 'POST'))) as Record<string, unknown>;
     expect(first.studentReportedAt).not.toBeNull();
     expect(Object.keys(first).sort()).toEqual(STUDENT_VIEW_KEYS);
-    expect(first).not.toHaveProperty('processorRef');
+    expect(first).not.toHaveProperty('reminderSentAt');
     const stamped = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
     expect(stamped.studentReportedAt).not.toBeNull();
 

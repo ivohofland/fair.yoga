@@ -4,6 +4,7 @@ import { Currency } from '@/lib/prisma-client';
 import type { PaymentQr } from '@/components/student/payment-qr';
 import { SCHEME_FOR_CURRENCY } from '@/lib/bank-details';
 import { log } from '@/lib/log';
+import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 import {
   EPC_QR_CURRENCY,
   PAYMENT_METHOD_COPY,
@@ -13,6 +14,7 @@ import {
   nonBlank,
   paymentMethodsFor,
   payGuidanceFor,
+  payGuidanceForTeacher,
   paymentMethodsForTeacher,
   type PaymentMethod,
   type PaymentMethodKind,
@@ -211,6 +213,40 @@ describe('payGuidanceFor', () => {
     expect(payGuidanceFor({ kind: 'paused' })).toBe('hold_off');
     expect(payGuidanceFor({ kind: 'methods', methods: [LINK_METHOD] })).toBe('methods');
     expect(payGuidanceFor({ kind: 'methods', methods: [] })).toBe('directly');
+  });
+});
+
+describe('payGuidanceForTeacher', () => {
+  const live = { organizationId: 'org_x', profileId: 'pfl_x', disconnectedAt: null, scopes: [...MOLLIE_SCOPES], testmode: false };
+  const none = { id: TEACHER_ID, paymentLink: null, paymentsPausedAt: null, bankAccounts: [] };
+  const liveMode = { testmode: false };
+  const testMode = { testmode: true };
+
+  it('answers methods for a teacher whose only way to be paid is Mollie, in the server\'s mode', () => {
+    expect(payGuidanceForTeacher({ ...none, processorConnection: live }, 'EUR', liveMode)).toBe('methods');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, testmode: true } }, 'EUR', testMode)).toBe('methods');
+  });
+  it('answers directly for a Mollie-only teacher whose connection was made in the other mode', () => {
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, testmode: true } }, 'EUR', liveMode)).toBe('directly');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: live }, 'EUR', testMode)).toBe('directly');
+  });
+  it('reads no mode when Mollie is not configured', () => {
+    expect(payGuidanceForTeacher({ ...none, processorConnection: live }, 'EUR', null)).toBe('methods');
+    expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, testmode: true } }, 'EUR', null)).toBe('methods');
+  });
+  it('answers directly with no manual method and no connection that takes payments', () => {
+    for (const mode of [liveMode, null]) {
+      expect(payGuidanceForTeacher({ ...none, processorConnection: null }, 'EUR', mode)).toBe('directly');
+      expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, disconnectedAt: new Date() } }, 'EUR', mode)).toBe('directly');
+      expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, profileId: null } }, 'EUR', mode)).toBe('directly');
+      expect(payGuidanceForTeacher({ ...none, processorConnection: { ...live, scopes: ['payments.read'] } }, 'EUR', mode)).toBe('directly');
+    }
+  });
+  it('answers methods for a manual method', () => {
+    expect(payGuidanceForTeacher({ ...none, paymentLink: LINK, processorConnection: null }, 'EUR', liveMode)).toBe('methods');
+  });
+  it('answers hold off while paused, even with Mollie connected', () => {
+    expect(payGuidanceForTeacher({ ...none, paymentsPausedAt: new Date(), processorConnection: live }, 'EUR', liveMode)).toBe('hold_off');
   });
 });
 

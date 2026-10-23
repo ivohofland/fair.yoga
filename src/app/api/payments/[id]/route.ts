@@ -8,6 +8,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { projectStudentForTeacher, studentVisibilitySelect } from '@/lib/student-visibility';
+import { TEACHER_ATTEMPT_SELECT } from '@/lib/processor-attempt-view';
 import { PAYMENT_GONE, type TeacherPaymentRow } from '@/services/payments';
 import { respondPaymentRefusal } from './shared';
 
@@ -35,6 +36,7 @@ export const GET = withErrorHandler(async (
           },
         },
       },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
     },
   });
 

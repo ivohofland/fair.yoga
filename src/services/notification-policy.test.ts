@@ -21,6 +21,7 @@ describe('essential types', () => {
     expect([...ESSENTIAL_NOTIFICATION_TYPES].sort()).toEqual([
       'booking_removed',
       'class_cancelled',
+      'payment_refunded',
       'payment_request',
       'spot_available',
       'spot_taken',
@@ -218,6 +219,10 @@ describe('unsubscribe classification', () => {
       payment_request: true,
       teacher_invitation: true,
       class_reminder: true,
+      processor_disconnected: true,
+      payment_paid_twice: true,
+      payment_charged_back: true,
+      refund_failed: true,
     } as const satisfies Record<TeacherNotificationType, true>;
     for (const type of Object.keys(teacherTypes) as TeacherNotificationType[]) {
       const dependsOnPreference = shouldEmailTeacher(type, on) !== shouldEmailTeacher(type, off);

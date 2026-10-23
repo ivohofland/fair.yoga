@@ -6,7 +6,7 @@
  * "I've sent it" claim, and queries.
  */
 
-import type { PrismaClient, Payment, RegistrationStatus } from '@/lib/prisma-client';
+import type { Prisma, PrismaClient, Payment, RegistrationStatus } from '@/lib/prisma-client';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { createBulkNotifications } from './notifications';
 import {
@@ -15,8 +15,12 @@ import {
   type TeacherVisibleStudent,
 } from '@/lib/student-visibility';
 import { OUTSTANDING_STATUSES, isOutstanding } from '@/lib/payment-status';
+import { inProgressFirst } from '@/lib/payment-claim';
 import { studentPaymentNotSeenBody, studentPaymentReminderBody } from '@/lib/payment-request-copy';
-import { payGuidanceFor, paymentMethodsForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
+import { TEACHER_ATTEMPT_SELECT, type TeacherAttempt } from '@/lib/processor-attempt-view';
+import { ATTEMPT_GRANT_SELECT, canRefundThroughGrant } from '@/lib/processor-liveness';
 import { lockTeacherStudentLink } from './roster-link';
 import { setLockTimeout } from '@/lib/db-locks';
 import { log } from '@/lib/log';
@@ -43,9 +47,17 @@ export type PaymentRefusal = Extract<
       | 'PAYMENTS_PAUSED'
       | 'PAYMENT_ALREADY_PAID'
       | 'PAYMENT_SETTLED'
+      | 'PAYMENT_SETTLED_BY_PROCESSOR'
       | 'PAYMENT_WAIVED';
   }
 >;
+
+/**
+ * What `Payment.method` holds once paid: `manual` when the teacher marked it,
+ * `mollie` when a Mollie attempt settled it. The specific Mollie method is on
+ * the attempt (`ProcessorPayment`).
+ */
+export type PaidMethod = 'manual' | 'mollie';
 
 /**
  * What a payment action did. `applied`: this call wrote the row.
@@ -122,6 +134,7 @@ export type TeacherPaymentRow = Payment & {
     student: TeacherVisibleStudent;
     class: { classType: string; date: Date };
   };
+  processorAttempts: TeacherAttempt[];
 };
 
 // ---------------------------------------------------------------------------
@@ -129,19 +142,22 @@ export type TeacherPaymentRow = Payment & {
 // ---------------------------------------------------------------------------
 
 /**
- * Mark a payment as paid with the given method (e.g. 'bank_transfer', 'cash').
- * Sets status to 'paid', records the method, and timestamps paidAt.
+ * Mark a payment as paid by `method` (`PaidMethod`). Sets status to 'paid',
+ * records the method, and timestamps paidAt.
  *
  * Applies from 'pending' or 'overdue'. A payment already paid with the same
  * method is `unchanged`; with another method it is refused, because answering
  * "done" would discard the method this call carries.
  *
+ * `db` may be a transaction client; the write then joins that transaction
+ * and any row lock it holds.
+ *
  * `studentReportedAt` is kept as the student's half of the record.
  */
 export async function markPaymentPaid(
-  db: PrismaClient,
+  db: PrismaClient | Prisma.TransactionClient,
   paymentId: string,
-  method: string,
+  method: PaidMethod,
 ): Promise<PaymentOutcome> {
   // Conditional update: the status guard lives in the WHERE clause so a
   // double submission cannot both pass a pre-check and clobber method/paidAt.
@@ -228,13 +244,17 @@ export async function markPaymentOverdue(
  * One function for both settled states because they reverse identically: both
  * mean "this is no longer owed", and undoing either means "it is owed again".
  *
- * Reopening makes the payment outstanding again, so it un-archives the
- * student's link with this teacher too (`docs/data-model.md`, TeacherStudent)
- * — an outstanding payment is not "nothing live". The link's row lock is
- * taken before the payment's CAS, in the order `docs/lock-order.md` fixes.
- * A missing link (student never on the roster, or unlinked since) writes
- * nothing, and an applied reopen on one is logged; an `unchanged` reopen leaves the link exactly as it was, since
- * nothing about the payment newly became live.
+ * A payment a Mollie attempt settled (`settledPayment`) is refused
+ * `PAYMENT_SETTLED_BY_PROCESSOR` while fair.yoga can still refund through
+ * that attempt (`canRefundThroughGrant`): the money is in the teacher's
+ * balance, so a refund is how it leaves `paid`. Once the attempt's grant is
+ * revoked, or its connection gone, or the attempt no longer has
+ * `settledPayment`, this reopen applies again; what releases an attempt is
+ * `docs/data-model.md`, "A payment Mollie settled cannot be reopened by
+ * hand".
+ *
+ * Reopening also un-archives the student's link with this teacher; that and
+ * the lock order are `reopenInTransaction`'s.
  *
  * `studentReportedAt` is left as it is: reopen is also the Undo after Mark
  * paid, and the student's claim is not the teacher's to lose by a mis-tap.
@@ -243,60 +263,124 @@ export async function reopenPayment(
   db: PrismaClient,
   paymentId: string,
 ): Promise<PaymentOutcome> {
-  // `unlinked`: the pair, when the reopen applied with no link row to show it on.
-  type Reopened = { outcome: PaymentOutcome; unlinked: { teacherId: string; studentId: string } | null };
-  const reopened = await db.$transaction(async (tx): Promise<Reopened> => {
-    await setLockTimeout(tx);
-    const found = await tx.payment.findUnique({
-      where: { id: paymentId },
-      select: {
-        registration: {
-          select: {
-            studentId: true,
-            class: { select: { calendarEntry: { select: { teacherId: true } } } },
-          },
+  const reopened = await db.$transaction((tx) => reopenWithin(tx, paymentId, {}));
+  logUnlinked(paymentId, reopened);
+  return reopened.outcome;
+}
+
+/**
+ * `reopenPayment`'s transaction body, in the caller's transaction. With
+ * `refundAttemptId` it is a completed refund's "ask again": that attempt is
+ * left out of the `PAYMENT_SETTLED_BY_PROCESSOR` check and, when the reopen
+ * applies, stops settling the payment.
+ *
+ * Reopening makes the payment outstanding again, so it un-archives the
+ * student's link with this teacher too (`docs/data-model.md`, TeacherStudent)
+ * — an outstanding payment is not "nothing live". It locks the link's row and
+ * then the payment's, in the order `docs/lock-order.md` fixes ("The `Payment`
+ * row is a Mollie sync's gate"), so a caller that already holds the payment's
+ * row lock must have taken the link's before it. A missing link (student
+ * never on the roster, or unlinked since) writes nothing, and an applied
+ * reopen on one is logged; an `unchanged` reopen leaves the link exactly as it
+ * was, since nothing about the payment newly became live.
+ */
+export async function reopenInTransaction(
+  tx: Prisma.TransactionClient,
+  paymentId: string,
+  opts: { refundAttemptId?: string } = {},
+): Promise<PaymentOutcome> {
+  const reopened = await reopenWithin(tx, paymentId, opts);
+  logUnlinked(paymentId, reopened);
+  return reopened.outcome;
+}
+
+/** `unlinked`: the pair, when the reopen applied with no link row to show it on. */
+type Reopened = { outcome: PaymentOutcome; unlinked: { teacherId: string; studentId: string } | null };
+
+const SETTLED_BY_PROCESSOR: PaymentRefusal = codedRefusal(
+  'PAYMENT_SETTLED_BY_PROCESSOR',
+  'Mollie confirmed this payment. Refund it instead.',
+);
+
+async function reopenWithin(
+  tx: Prisma.TransactionClient,
+  paymentId: string,
+  opts: { refundAttemptId?: string },
+): Promise<Reopened> {
+  await setLockTimeout(tx);
+  const found = await tx.payment.findUnique({
+    where: { id: paymentId },
+    select: {
+      registration: {
+        select: {
+          studentId: true,
+          class: { select: { calendarEntry: { select: { teacherId: true } } } },
         },
       },
-    });
-    if (!found) return { outcome: { kind: 'refused', refusal: PAYMENT_GONE }, unlinked: null };
+    },
+  });
+  if (!found) return { outcome: { kind: 'refused', refusal: PAYMENT_GONE }, unlinked: null };
 
-    const pair = {
-      teacherId: found.registration.class.calendarEntry.teacherId,
-      studentId: found.registration.studentId,
-    };
-    const link = await lockTeacherStudentLink(tx, pair);
+  const pair = {
+    teacherId: found.registration.class.calendarEntry.teacherId,
+    studentId: found.registration.studentId,
+  };
+  const link = await lockTeacherStudentLink(tx, pair);
+  // Locked before the count, so a `syncAttempt` settling this payment has
+  // either committed its `settledPayment` before the count reads, or waits
+  // for this transaction.
+  await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${paymentId} FOR UPDATE`;
 
-    const result = await tx.payment.updateMany({
-      where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
-      data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
-    });
+  const settlingOtherwise = await tx.processorPayment.findMany({
+    where: {
+      paymentId,
+      settledPayment: true,
+      ...(opts.refundAttemptId === undefined ? {} : { id: { not: opts.refundAttemptId } }),
+    },
+    select: ATTEMPT_GRANT_SELECT,
+  });
+  if (settlingOtherwise.some(canRefundThroughGrant)) {
+    return { outcome: { kind: 'refused', refusal: SETTLED_BY_PROCESSOR }, unlinked: null };
+  }
 
-    if (result.count === 0) {
-      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
-      const outcome: PaymentOutcome = !payment
-        ? { kind: 'refused', refusal: PAYMENT_GONE }
-        // Both outstanding statuses are "unpaid" to the teacher, and
-        // `markOverduePayments` may have turned a reopened 'pending' into
-        // 'overdue' before this call arrived.
-        : isOutstanding(payment.status)
-          ? { kind: 'unchanged', payment }
-          : { kind: 'refused', refusal: PAYMENT_CHANGED };
-      return { outcome, unlinked: null };
-    }
-
-    if (link?.isArchived) {
-      await tx.teacherStudent.update({ where: { id: link.id }, data: { isArchived: false } });
-    }
-
-    const updated = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
-    return { outcome: { kind: 'applied', payment: updated }, unlinked: link ? null : pair };
+  const result = await tx.payment.updateMany({
+    where: { id: paymentId, status: { in: ['paid', 'not_charged'] } },
+    data: { status: 'pending', method: null, paidAt: null, notChargedAt: null },
   });
 
-  // Owed again with no link to show it on: traceable from the log alone.
+  if (result.count === 0) {
+    const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+    const outcome: PaymentOutcome = !payment
+      ? { kind: 'refused', refusal: PAYMENT_GONE }
+      // Both outstanding statuses are "unpaid" to the teacher, and
+      // `markOverduePayments` may have turned a reopened 'pending' into
+      // 'overdue' before this call arrived.
+      : isOutstanding(payment.status)
+        ? { kind: 'unchanged', payment }
+        : { kind: 'refused', refusal: PAYMENT_CHANGED };
+    return { outcome, unlinked: null };
+  }
+
+  if (opts.refundAttemptId !== undefined) {
+    await tx.processorPayment.updateMany({
+      where: { id: opts.refundAttemptId, paymentId },
+      data: { settledPayment: false },
+    });
+  }
+
+  if (link?.isArchived) {
+    await tx.teacherStudent.update({ where: { id: link.id }, data: { isArchived: false } });
+  }
+
+  const updated = await tx.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  return { outcome: { kind: 'applied', payment: updated }, unlinked: link ? null : pair };
+}
+
+/** Owed again with no link to show it on: traceable from the log alone. */
+function logUnlinked(paymentId: string, reopened: Reopened): void {
   if (reopened.unlinked) {
     log.info({ paymentId, ...reopened.unlinked }, 'payment reopened for a student not linked to its teacher');
   }
-  return reopened.outcome;
 }
 
 /**
@@ -305,7 +389,9 @@ export async function reopenPayment(
  * state like `paid` — no longer outstanding, never dunned — that differs from
  * it in the one respect that matters to the money: nothing arrived.
  * `reopenPayment` is the reversal. A payment already not charged is
- * `unchanged`; a paid one is refused, because waiving it would be a refund.
+ * `unchanged`; a paid one is refused here. Waiving after a real refund is
+ * `completeRefund`'s, called from a transaction that records the refund
+ * `refunded`.
  *
  * `reminderSentAt` is deliberately left alone. A reminder that was sent was
  * sent, and the row's history stays true. A standing claim
@@ -493,9 +579,7 @@ function remindInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
       },
     });
 
-    const guidance = payGuidanceFor(
-      paymentMethodsForTeacher(registration.class.calendarEntry.teacher, registration.class.currency),
-    );
+    const guidance = payGuidanceForTeacher(registration.class.calendarEntry.teacher, registration.class.currency, configuredMollieMode());
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED);
 
     await createBulkNotifications(tx, [
@@ -697,7 +781,7 @@ function rejectInTransaction(db: PrismaClient, paymentId: string): Promise<Payme
     });
 
     const { calendarEntry, currency } = registration.class;
-    const guidance = payGuidanceFor(paymentMethodsForTeacher(calendarEntry.teacher, currency));
+    const guidance = payGuidanceForTeacher(calendarEntry.teacher, currency, configuredMollieMode());
     if (guidance === 'hold_off') throw new RefusedInTransaction(PAYMENTS_PAUSED_NOT_RECEIVED);
 
     await createBulkNotifications(tx, [
@@ -738,11 +822,12 @@ export async function countOutstandingPaymentsForStudent(
 }
 
 /**
- * Get all outstanding (pending or overdue) payments for a teacher.
+ * Get all outstanding (pending or overdue) payments for a teacher, those in
+ * progress first (`inProgressFirst`).
  *
  * Follows the relation chain: Payment → Registration → Class → Teacher.
  * Includes registration with the teacher-visible student projection and
- * class type/date.
+ * class type/date, and the payment's Mollie attempts (`TEACHER_ATTEMPT_SELECT`).
  */
 export async function getOutstandingPayments(
   db: PrismaClient,
@@ -766,10 +851,11 @@ export async function getOutstandingPayments(
           class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
     },
   });
 
-  return rows.map((row) => ({
+  return inProgressFirst(rows, (row) => row).map((row) => ({
     ...row,
     registration: {
       ...row.registration,
@@ -793,9 +879,9 @@ export async function getOutstandingPayments(
  * under the *caller's* privacy flags, which is more misleading than a raw
  * leak, not safer.
  *
- * Includes registration with the teacher-visible student projection and the
- * class's type/date — the previous version selected no `class` fields at
- * all.
+ * Includes registration with the teacher-visible student projection, the
+ * class's type/date, and the payment's Mollie attempts
+ * (`TEACHER_ATTEMPT_SELECT`).
  */
 export async function getPaymentsForClass(
   db: PrismaClient,
@@ -817,6 +903,7 @@ export async function getPaymentsForClass(
           class: { select: { calendarEntry: { select: { classType: true, date: true } } } },
         },
       },
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
     },
   });
 

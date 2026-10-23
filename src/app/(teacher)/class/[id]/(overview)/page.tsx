@@ -30,8 +30,9 @@ import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
 import { offlineSnapshotStamp } from '@/lib/offline-snapshot-props';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
 import { latePublishState, latePublishRefreshInstants, latePublishInstants } from '@/lib/late-publish';
-import { claimedFirst } from '@/lib/payment-claim';
+import { inProgressFirst } from '@/lib/payment-claim';
 import { claimDay } from '@/lib/payment-claim.server';
+import { TEACHER_ATTEMPT_SELECT, toAttemptView } from '@/lib/processor-attempt-view';
 
 export default async function ClassDetailPage({
   params,
@@ -53,7 +54,7 @@ export default async function ClassDetailPage({
       registrations: {
         include: {
           student: { select: studentNameSelect(session.teacherId) },
-          payment: true,
+          payment: { include: { processorAttempts: { select: TEACHER_ATTEMPT_SELECT } } },
         },
         orderBy: { registeredAt: 'asc' },
       },
@@ -136,7 +137,7 @@ export default async function ClassDetailPage({
     }));
 
   const tz = cls.calendarEntry.teacher.defaultTimezone;
-  const paymentItems: PaymentItem[] = claimedFirst(
+  const paymentItems: PaymentItem[] = inProgressFirst(
     cls.registrations.filter((r) => r.status !== 'cancelled' && r.payment),
     (r) => r.payment!,
   ).map((r) => ({
@@ -147,6 +148,7 @@ export default async function ClassDetailPage({
     status: r.payment!.status,
     reminderSentAt: r.payment!.reminderSentAt,
     studentReportedOn: claimDay(r.payment!.studentReportedAt, tz),
+    processorAttempts: r.payment!.processorAttempts.map(toAttemptView),
   }));
 
   // Actual tier prices for completed class pricing breakdown

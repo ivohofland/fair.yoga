@@ -40,6 +40,9 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   'spot_available',
   'spot_taken',
   'payment_request',
+  // The student's own money, sent back by their teacher: a service message
+  // about their payment, as `payment_request` is.
+  'payment_refunded',
 ]);
 
 export function isEssential(type: NotificationType): boolean {
@@ -111,7 +114,11 @@ export type TeacherNotificationType =
   | 'class_cancelled'
   | 'payment_request'
   | 'teacher_invitation'
-  | 'class_reminder';
+  | 'class_reminder'
+  | 'processor_disconnected'
+  | 'payment_paid_twice'
+  | 'payment_charged_back'
+  | 'refund_failed';
 
 /**
  * The teacher's notification settings. `TEACHER_EMAIL_POLICY` reads only those
@@ -139,6 +146,11 @@ const TEACHER_EMAIL_POLICY = {
   // Never by fallback, whatever the preferences; why is in `docs/data-model.md`
   // (Notification, `email_sent`).
   class_reminder: () => false,
+  // Money; always emailed, whatever the settings.
+  processor_disconnected: () => true,
+  payment_paid_twice: () => true,
+  payment_charged_back: () => true,
+  refund_failed: () => true,
 } satisfies Record<TeacherNotificationType, (prefs: TeacherNotificationPrefs) => boolean>;
 
 export function isTeacherNotificationType(type: NotificationType): type is TeacherNotificationType {
@@ -168,6 +180,10 @@ const TEACHER_UNSUBSCRIBE = {
   payment_request: 'teacher_class_completed',
   teacher_invitation: 'teacher_invitations',
   class_reminder: null,
+  processor_disconnected: null,
+  payment_paid_twice: null,
+  payment_charged_back: null,
+  refund_failed: null,
 } as const satisfies Record<TeacherNotificationType, Exclude<UnsubscribeKind, 'invitation'> | null>;
 
 export function teacherUnsubscribeKind(

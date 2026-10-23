@@ -97,7 +97,7 @@ describe('resumePayments behind a bank-account save in flight', () => {
     accountIds.push(t.accountId);
     const sessionId = hashToken(crypto.randomBytes(32).toString('hex'));
     await prisma.session.create({ data: { id: sessionId, accountId: t.accountId, expiresAt: new Date(now.getTime() + 86_400_000) } });
-    const shown = payoutFingerprint(t);
+    const shown = payoutFingerprint({ ...t, processorIdentity: null });
 
     const holder = createPrismaClient();
     const held = latch();
@@ -185,7 +185,7 @@ describe('resumePayments against a student erasure on two completed classes', ()
     teacherAccountId = t.accountId;
     const sessionId = hashToken(crypto.randomBytes(32).toString('hex'));
     await prisma.session.create({ data: { id: sessionId, accountId: t.accountId, expiresAt: new Date(now.getTime() + 86_400_000) } });
-    const shown = payoutFingerprint(t);
+    const shown = payoutFingerprint({ ...t, processorIdentity: null });
 
     const room = await prisma.room.create({
       data: {

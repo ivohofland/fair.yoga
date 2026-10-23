@@ -5,6 +5,7 @@ import { requireCronAuth } from '@/lib/cron-auth';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
 import { cleanupExpiredAuth } from '@/services/auth-cleanup';
+import { revokeDueConnections } from '@/services/processor-revocation';
 import { reapClosedWaitlistEntries } from '@/services/waitlist-retention';
 import { reapExpiredNotifications } from '@/services/notification-retention';
 import { reapStalePushSubscriptions } from '@/services/push-subscription-retention';
@@ -20,7 +21,7 @@ import { auditTeacherTimezones } from '@/services/timezone-audit';
  * STATUS CONTRACT below and nothing else; the WIRING is deliberately uncovered.
  * `grep -rn "daily-cleanup\|auth-cleanup" tests/` still returns nothing — the
  * integration and e2e tiers do not touch this route, for the reason two
- * paragraphs down. One of the five `/api/cron/*` routes does have coverage
+ * paragraphs down. One of the `/api/cron/*` routes does have coverage
  * there, though:
  * `tests/e2e/recurring.spec.ts`'s `'the generation cron is idempotent over
  * the already-filled window'` test drives `/api/cron/generate-classes` from
@@ -68,15 +69,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   //
   // THE STATUS IS THE VERDICT, AND A 2xx FROM THIS ROUTE MEANS EVERY SWEEP RAN.
   // If any failed the answer is non-2xx and the body still carries every
-  // outcome — read `data.auth.ok`, `data.waitlistRetention.ok`,
-  // `data.notificationRetention.ok`, `data.pushSubscriptionRetention.ok`,
-  // `data.degradationDigest.ok`, and
-  // `data.timezoneAudit.ok` to see which
-  // one did not. Partial failure counts:
+  // outcome — read `data.<sweep>.ok` for every key of `data` (the `settle`
+  // calls below) to see which one did not. Partial failure counts:
   // one sweep succeeding does not make the request as a whole a success,
   // because for an HTTP caller a 2xx means "what you asked for happened", and
   // if a sweep did not run, it did not.
   const auth = await settle(() => cleanupExpiredAuth(prisma));
+  const processorRevocation = await settle(() => revokeDueConnections(prisma));
   const waitlistRetention = await settle(() => reapClosedWaitlistEntries(prisma));
   const notificationRetention = await settle(() => reapExpiredNotifications(prisma));
   const pushSubscriptionRetention = await settle(() => reapStalePushSubscriptions(prisma));
@@ -87,9 +86,10 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // the report, the status the verdict, so a failed sweep answers with every
   // outcome rather than trading the report for the status.
   return respondOk(
-    { auth, waitlistRetention, notificationRetention, pushSubscriptionRetention, degradationDigest, timezoneAudit },
+    { auth, processorRevocation, waitlistRetention, notificationRetention, pushSubscriptionRetention, degradationDigest, timezoneAudit },
     worstStatus([
       auth,
+      processorRevocation,
       waitlistRetention,
       notificationRetention,
       pushSubscriptionRetention,

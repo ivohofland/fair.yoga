@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { Currency, PaymentStatus } from '@/lib/prisma-client';
+import type { Currency, PaymentStatus, ProcessorPaymentStatus } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
@@ -9,22 +9,27 @@ import { PaymentDetails } from '@/components/student/payment-details';
 import { PaymentLinkPanel } from '@/components/student/payment-link-panel';
 import { PaymentQr } from '@/components/student/payment-qr';
 import { MarkSentControl } from '@/components/student/mark-sent-control';
+import { ProcessorPayButton } from '@/components/pay/processor-pay-button';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, formatMoney } from '@/lib/format';
-import { studentPaymentStateText } from '@/lib/payment-claim';
+import { attemptProcessing, isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
 import { log } from '@/lib/log';
 import { chargeNoteFor } from '@/lib/charge-note';
-import { markedPaidLine, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
+import { markedPaidLine, offersSentClaim, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
 import {
   PAYMENTS_PAUSED_COPY,
   PAYMENT_METHOD_COPY,
+  paymentMethodLabel,
   paymentMethodsForTeacher,
-  teacherPaymentSelect,
+  paymentReference,
   type PaymentMethod,
   type PaymentMethodsAnswer,
 } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
+import { MOLLIE_METHODS } from '@/lib/processor-methods';
+import { payPageMethods, payPageTeacherSelect } from '@/services/pay-page-methods';
+import { mollieDeps } from '@/services/mollie-deps';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,11 +39,13 @@ function MethodPanel({
   amount,
   currency,
   reference,
+  paymentId,
 }: {
   method: PaymentMethod;
   amount: number;
   currency: Currency;
   reference: string;
+  paymentId: string;
 }) {
   switch (method.kind) {
     case 'bank_transfer':
@@ -71,6 +78,8 @@ function MethodPanel({
           reference={reference}
         />
       );
+    case 'processor':
+      return <ProcessorPayButton paymentId={paymentId} method={method.method} label={MOLLIE_METHODS[method.method].label} />;
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
       const unhandled: never = method;
@@ -80,19 +89,55 @@ function MethodPanel({
   }
 }
 
+/**
+ * What the student is told on coming back from Mollie, from the attempt's
+ * status as last synced; nothing for one still `open`. Only a paid attempt
+ * speaks once the payment is settled, since the others point at the rows a
+ * settled payment no longer shows.
+ */
+function attemptBanner(status: ProcessorPaymentStatus, outstanding: boolean): string | null {
+  switch (status) {
+    case 'paid':
+      return 'Paid — thank you.';
+    case 'pending':
+    case 'authorized':
+      return outstanding ? 'Processing — we’ll let you know.' : null;
+    case 'canceled':
+    case 'expired':
+    case 'failed':
+      return outstanding ? 'That payment didn’t go through. You can try again below.' : null;
+    case 'open':
+      return null;
+    default: {
+      // A status added to `ProcessorPaymentStatus` without a banner fails the build here.
+      const unhandled: never = status;
+      log.error({ status: String(unhandled) }, 'pay page: unhandled attempt status');
+      return null;
+    }
+  }
+}
+
 // One class's payment for the signed-in student: how to pay it, or that it
-// is settled.
-export default async function PayPage({ params }: { params: Promise<{ classId: string }> }) {
+// is settled. `?attempt=` names the Mollie attempt the student just came back
+// from.
+export default async function PayPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ classId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session?.studentId) redirectNonStudent(session);
   const { classId } = await params;
+  const { attempt: attemptParam } = await searchParams;
 
   // Keyed by the session's own student: another student's class finds no
   // row, and answers exactly as a class that does not exist.
   const registration = await prisma.registration.findUnique({
     where: { classId_studentId: { classId, studentId: session.studentId } },
     include: {
-      payment: true,
+      payment: { include: { processorAttempts: { select: { id: true, status: true } } } },
       class: {
         include: {
           calendarEntry: {
@@ -104,7 +149,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
                   defaultTimezone: true,
                   // Includes every bank account: the one in the class's currency is picked
                   // below, since this query cannot filter on a sibling column.
-                  ...teacherPaymentSelect,
+                  ...payPageTeacherSelect,
                 },
               },
             },
@@ -129,9 +174,19 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
   const entry = cls.calendarEntry;
   const teacher = entry.teacher;
   const amount = Number(payment.amount);
-  const reference = `${entry.classType} ${formatDayHeader(entry.date)}`;
-  const methods = paymentMethodsForTeacher(teacher, cls.currency);
-  const state = studentPaymentStateText(payment);
+  const reference = paymentReference(entry);
+  // Only an outstanding payment shows its methods, so only it asks Mollie.
+  const methods = isOutstanding(payment.status)
+    ? await payPageMethods(prisma, mollieDeps(), teacher, cls.currency, payment.amount)
+    : paymentMethodsForTeacher(teacher, cls.currency);
+  // A Mollie payment on its way reads as the claim does: the money is moving.
+  const state =
+    attemptProcessing(payment) && !isClaimStanding(payment)
+      ? { label: 'Processing', className: 'text-brown' }
+      : studentPaymentStateText(payment);
+  const returnedFrom =
+    typeof attemptParam === 'string' ? payment.processorAttempts.find((a) => a.id === attemptParam) : undefined;
+  const banner = returnedFrom === undefined ? null : attemptBanner(returnedFrom.status, isOutstanding(payment.status));
   // A waived payment is not charged, so it gets no line saying it still is.
   const chargeNote = payment.status === 'not_charged' ? null : chargeNoteFor(registration.status);
   const breakdown = resolveReportedPaymentBreakdown(
@@ -167,6 +222,11 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         </div>
         {chargeNote !== null && <p className="type-caption mt-1">{chargeNote}</p>}
       </div>
+      {banner !== null && (
+        <p role="status" data-testid="attempt-banner" className="type-body mb-6 bg-sand-soft border border-border rounded-card p-4">
+          {banner}
+        </p>
+      )}
       <PayBody
         status={payment.status}
         methods={methods}
@@ -176,6 +236,7 @@ export default async function PayPage({ params }: { params: Promise<{ classId: s
         teacherFirstName={teacher.firstName}
         paymentId={payment.id}
         paidAt={payment.paidAt}
+        paidMethod={payment.method}
         reportedAt={payment.studentReportedAt}
         timeZone={teacher.defaultTimezone}
       />
@@ -195,6 +256,7 @@ function PayBody({
   teacherFirstName,
   paymentId,
   paidAt,
+  paidMethod,
   reportedAt,
   timeZone,
 }: {
@@ -206,6 +268,7 @@ function PayBody({
   teacherFirstName: string;
   paymentId: string;
   paidAt: Date | null;
+  paidMethod: string | null;
   reportedAt: Date | null;
   timeZone: string;
 }) {
@@ -217,7 +280,7 @@ function PayBody({
   );
   switch (status) {
     case 'paid':
-      return <p className="type-body mb-6">{markedPaidLine(paidAt, timeZone, paymentId)}</p>;
+      return <p className="type-body mb-6">{markedPaidLine(paidAt, paidMethod, timeZone, paymentId)}</p>;
     case 'not_charged':
       return <p className="type-body mb-6">{`${teacherFirstName} isn’t charging for this class.`}</p>;
     case 'pending':
@@ -244,19 +307,23 @@ function PayBody({
             <div className="border-t border-border">
               {methods.methods.map((method) => (
                 // A shared `name` makes the rows exclusive: opening one closes the others.
-                <details key={method.kind} name="pay-method" className="border-b border-border">
+                <details
+                  key={`${method.kind}:${method.kind === 'processor' ? method.method : ''}`}
+                  name="pay-method"
+                  className="border-b border-border"
+                >
                   <summary className="min-h-14 py-3 cursor-pointer">
-                    <span className="text-base text-ink">{PAYMENT_METHOD_COPY[method.kind].label}</span>
+                    <span className="text-base text-ink">{paymentMethodLabel(method)}</span>
                     <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
                   </summary>
                   <div className="pb-4">
-                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} />
+                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} paymentId={paymentId} />
                   </div>
                 </details>
               ))}
             </div>
           </section>
-          {sentControl}
+          {offersSentClaim(methods.methods, reportedAt) && sentControl}
         </>
       );
     default: {

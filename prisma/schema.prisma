@@ -51,11 +51,6 @@ enum ReminderChannel {
   inbox_and_email
 }
 
-enum PaymentLevel {
-  LEVEL_1
-  LEVEL_2
-}
-
 enum ProcessorType {
   mollie
   stripe
@@ -130,6 +125,11 @@ enum NotificationType {
   teacher_invitation
   walk_in_added
   class_reminder
+  processor_disconnected
+  payment_paid_twice
+  payment_charged_back
+  refund_failed
+  payment_refunded
 }
 
 enum InvitationStatus {
@@ -239,9 +239,6 @@ model Teacher {
   pushClassReminders    Boolean                     @default(false)
   pushInvitations       Boolean                     @default(false)
   skippedOnboarding     OnboardingStep[]            @default([])
-  paymentLevel          PaymentLevel                @default(LEVEL_1)
-  processorType         ProcessorType?
-  processorAccountId    String?
   deletedAt             DateTime?
   paymentsPausedAt      DateTime?
   paymentsResumedAt     DateTime?
@@ -250,20 +247,22 @@ model Teacher {
   createdAt             DateTime                    @default(now())
   updatedAt             DateTime                    @updatedAt
 
-  account           Account              @relation(fields: [accountId], references: [id])
-  teacherRooms      TeacherRoom[]
-  calendarEntries   CalendarEntry[]
-  announcements     Announcement[]
-  studentPrivacy    StudentPrivacy[]
-  createdRooms      Room[]               @relation("RoomCreator")
-  teacherStudents   TeacherStudent[]
-  invitations       Invitation[]
-  teacherBlocks     TeacherBlock[]
-  scheduleRules     ScheduleRule[]
-  photo             TeacherPhoto?
-  bankAccounts      TeacherBankAccount[]
-  payoutChanges     PayoutChangeEvent[]
-  payoutPauseTokens PayoutPauseToken[]
+  account             Account              @relation(fields: [accountId], references: [id])
+  teacherRooms        TeacherRoom[]
+  calendarEntries     CalendarEntry[]
+  announcements       Announcement[]
+  studentPrivacy      StudentPrivacy[]
+  createdRooms        Room[]               @relation("RoomCreator")
+  teacherStudents     TeacherStudent[]
+  invitations         Invitation[]
+  teacherBlocks       TeacherBlock[]
+  scheduleRules       ScheduleRule[]
+  photo               TeacherPhoto?
+  bankAccounts        TeacherBankAccount[]
+  payoutChanges       PayoutChangeEvent[]
+  payoutPauseTokens   PayoutPauseToken[]
+  processorConnection ProcessorConnection?
+  oauthStates         OAuthState[]
 }
 
 /// A teacher's bank account in one currency. The columns its currency's scheme
@@ -294,6 +293,9 @@ enum PayoutChangeKind {
   payment_link_added
   payment_link_changed
   payment_link_removed
+  processor_connected
+  processor_changed
+  processor_disconnected
 }
 
 /// One change to where a teacher's students pay. `before`/`after` are masked
@@ -1239,7 +1241,6 @@ model Payment {
   vatAmount         Decimal       @default(0) @db.Decimal(10, 2)
   status            PaymentStatus @default(pending)
   method            String?
-  processorRef      String?
   reminderSentAt    DateTime?
   paidAt            DateTime?
   notChargedAt      DateTime?
@@ -1247,7 +1248,8 @@ model Payment {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
-  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  registration      Registration       @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  processorAttempts ProcessorPayment[]
 
   @@index([status, createdAt])
 }
@@ -1335,6 +1337,7 @@ model Session {
   /// The passkey this session signed in with; null for a magic-link session.
   passkeyCredentialId String?
   passkeyCredential   PasskeyCredential? @relation(fields: [passkeyCredentialId], references: [id], onDelete: SetNull)
+  oauthStates         OAuthState[]
 
   @@index([accountId])
 }
@@ -1387,4 +1390,119 @@ model RemovedPasskey {
   removedAt           DateTime @default(now())
 
   @@index([accountId])
+}
+
+enum ProcessorPaymentStatus {
+  open
+  pending
+  authorized
+  paid
+  canceled
+  expired
+  failed
+}
+
+enum ProcessorRefundStatus {
+  queued
+  pending
+  processing
+  refunded
+  failed
+  canceled
+}
+
+enum RefundOutcome {
+  waived
+  reopened
+}
+
+/// A teacher's OAuth connection to their payment processor. `accessToken` and
+/// `refreshToken` are ciphertexts from `src/lib/processor-token-cipher.ts`.
+/// Live means `disconnectedAt IS NULL AND profileId IS NOT NULL`.
+/// Hand-written in the migration: `ProcessorConnection_tokens_present_check`,
+/// `ProcessorConnection_tokens_absent_check`, `ProcessorConnection_revoke_check`.
+model ProcessorConnection {
+  id                   String        @id @default(uuid())
+  teacherId            String        @unique
+  processor            ProcessorType
+  organizationId       String
+  profileId            String?
+  accessToken          Bytes?
+  accessTokenExpiresAt DateTime?
+  refreshToken         Bytes?
+  scopes               String[]
+  testmode             Boolean
+  connectedAt          DateTime      @default(now())
+  disconnectedAt       DateTime?
+  revokeAfter          DateTime?
+  revokedAt            DateTime?
+
+  teacher  Teacher            @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  attempts ProcessorPayment[]
+}
+
+/// One charge attempt at the processor for a `Payment`. `currency` is what the
+/// processor charged and is never relabelled. `profileId` and `testmode` are
+/// the connection's when the attempt was made. `chargedBackAt` is when the
+/// processor first reported a chargeback on it. Hand-written in the migration:
+/// `ProcessorPayment_one_settling_per_payment` (partial unique on `paymentId`
+/// where `settledPayment`).
+model ProcessorPayment {
+  id                 String                 @id @default(uuid())
+  paymentId          String
+  connectionId       String?
+  processorPaymentId String                 @unique
+  profileId          String
+  testmode           Boolean
+  method             String
+  status             ProcessorPaymentStatus
+  amount             Decimal                @db.Decimal(10, 2)
+  currency           Currency
+  checkoutUrl        String?
+  expiresAt          DateTime?
+  paidAt             DateTime?
+  settledPayment     Boolean                @default(false)
+  chargedBackAt      DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  payment    Payment              @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  connection ProcessorConnection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  refunds    ProcessorRefund[]
+
+  @@index([paymentId])
+  @@index([connectionId])
+}
+
+/// A full refund of one attempt. `processorRefundId` is null until the
+/// processor accepts it. Hand-written in the migration:
+/// `ProcessorRefund_one_live_per_attempt` (partial unique on `attemptId` where
+/// the status is neither `failed` nor `canceled`).
+model ProcessorRefund {
+  id                String                @id @default(uuid())
+  attemptId         String
+  processorRefundId String?               @unique
+  amount            Decimal               @db.Decimal(10, 2)
+  status            ProcessorRefundStatus
+  outcome           RefundOutcome?
+  requestedAt       DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  attempt ProcessorPayment @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+}
+
+/// The `state` of one OAuth authorize round trip, bound to the session that
+/// started it. `stateHash` is sha256 of 32 random bytes (`hashToken`).
+model OAuthState {
+  id        String   @id @default(uuid())
+  stateHash String   @unique
+  teacherId String
+  sessionId String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 }

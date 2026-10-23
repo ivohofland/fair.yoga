@@ -1,13 +1,14 @@
 import type { Currency, PaymentStatus, PayoutChangeKind, Prisma, PrismaClient } from '@/lib/prisma-client';
 import { lockTeacherForNoKeyUpdate } from '@/lib/db-locks';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
+import { livePayoutIdentity, type LiveIdentity } from '@/lib/processor-liveness';
 import {
   bankAccountDataSelect,
-  payGuidanceFor,
-  paymentMethodsForTeacher,
+  payGuidanceForTeacher,
   teacherPaymentSelect,
   type BankAccountData,
 } from '@/lib/payment-methods';
+import { configuredMollieMode } from './mollie-deps';
 import { studentPaymentReminderBody } from '@/lib/payment-request-copy';
 import { OUTSTANDING_STATUSES } from '@/lib/payment-status';
 import { studentNameSelect, teacherVisibleName } from '@/lib/student-visibility';
@@ -116,7 +117,7 @@ export interface ResumeReview {
   events: ReviewEvent[];
   outstanding: ReviewPayment[];
   settled: ReviewPayment[];
-  details: { paymentLink: string | null; bankAccounts: BankAccountData[] };
+  details: PayoutDetails;
   fingerprint: string;
   passkeyRequired: boolean;
   sessionSatisfiesPasskey: boolean;
@@ -169,16 +170,31 @@ function toReviewPayment(row: ReviewPaymentRow, teacherId: string): ReviewPaymen
   };
 }
 
-/** The teacher's payout details, read whole: every account in every currency, and the link. */
-async function readPayoutDetails(
+/** What `payoutFingerprint` digests, as `readPayoutDetails` reads it. */
+export interface PayoutDetails {
+  paymentLink: string | null;
+  bankAccounts: BankAccountData[];
+  processorIdentity: LiveIdentity | null;
+}
+
+/**
+ * The teacher's payout details, read whole: every account in every currency,
+ * the link, and the Mollie connection's organization and profile while it is
+ * live.
+ */
+export async function readPayoutDetails(
   db: PrismaClient | Prisma.TransactionClient,
   teacherId: string,
-): Promise<{ paymentLink: string | null; bankAccounts: BankAccountData[] }> {
+): Promise<PayoutDetails> {
   const t = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
-    select: { paymentLink: true, bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } } },
+    select: {
+      paymentLink: true,
+      bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } },
+      processorConnection: { select: { organizationId: true, profileId: true, disconnectedAt: true } },
+    },
   });
-  return { paymentLink: t.paymentLink, bankAccounts: t.bankAccounts };
+  return { paymentLink: t.paymentLink, bankAccounts: t.bankAccounts, processorIdentity: livePayoutIdentity(t.processorConnection) };
 }
 
 /**
@@ -337,7 +353,7 @@ export async function resumePayments(
     if (unclaimedOwed.length > 0) {
       const notifications: CreateNotificationInput[] = unclaimedOwed.map((p) => {
         const cls = p.registration.class;
-        const guidance = payGuidanceFor(paymentMethodsForTeacher(resumed, cls.currency));
+        const guidance = payGuidanceForTeacher(resumed, cls.currency, configuredMollieMode());
         return {
           recipientType: 'student',
           recipientId: p.registration.studentId,

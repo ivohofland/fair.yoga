@@ -8,24 +8,43 @@
  * cleanup activates from `globals: true` in the root config, so no teardown
  * is wired here.
  *
- * The router mock returns both `refresh` and `push`, because components use
- * both: `refresh()` to re-render the page they are on (the template buttons,
- * and `OutstandingPaymentRow` after a successful Undo), `push()` to navigate
- * away (the room and student buttons). Not an exhaustive roster — see the note
- * above about numbers going stale. Tests that assert on either import them from
- * here.
+ * The router mock returns `refresh`, `push` and `replace`, because components
+ * use each: `refresh()` to re-render the page they are on (the template
+ * buttons, and `OutstandingPaymentRow` after a successful Undo), `push()` to
+ * navigate away (the room and student buttons), `replace()` to re-render
+ * without a query parameter that no longer applies (the Mollie section). Not
+ * an exhaustive roster — see the note above about numbers going stale. Tests
+ * that assert on any of them import them from here.
  */
 import '@testing-library/jest-dom/vitest';
 import { vi, beforeEach } from 'vitest';
 
 export const routerRefresh = vi.fn();
 export const routerPush = vi.fn();
+export const routerReplace = vi.fn();
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh: routerRefresh, push: routerPush }),
+  useRouter: () => ({ refresh: routerRefresh, push: routerPush, replace: routerReplace }),
 }));
 
 beforeEach(() => {
   routerRefresh.mockClear();
   routerPush.mockClear();
+  routerReplace.mockClear();
 });
+
+/**
+ * jsdom has `HTMLDialogElement` without `showModal`/`close`. These stand in
+ * for the attribute half of each: `open` set or removed, `close` fired. The
+ * top layer, the focus trap and Escape are the browser's and are not
+ * simulated; a test dispatches the dialog's `cancel` event itself.
+ */
+if (typeof HTMLDialogElement !== 'undefined' && typeof HTMLDialogElement.prototype.showModal !== 'function') {
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+}

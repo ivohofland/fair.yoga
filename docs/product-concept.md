@@ -238,11 +238,12 @@ A student who has paid can tell the teacher with "I've sent it" on the pay page,
 
 **Level 2: Integrated Payment (teacher connects Mollie or Stripe)**
 
-Teachers who want automated payment processing can connect their own Mollie or Stripe account. The platform sends payment requests through the teacher's account. Money goes directly from student to teacher — the platform never touches it.
+Teachers who want automated payment processing can connect their own Mollie account (Stripe follows separately, #386). The platform creates each payment in the teacher's account, one method per payment. Money goes directly from student to teacher — the platform never touches it.
 
-- iDEAL, credit card, and other payment methods supported by the processor
-- Automatic charging after class
-- Automatic payment tracking (no manual marking needed)
+- Only methods on fair.yoga's allowlist are offered, and only those the teacher's Mollie account has enabled: iDEAL, Wero, cards, Apple Pay, Bancontact, EPS, BLIK, Przelewy24, TWINT and PayPal. The line is "no method whose product is deferred payment": cards are fine, pay-later credit is not. An allowlist means a pay-later product Mollie adds tomorrow stays excluded until a reviewed change adds it. PayPal is on it by the project owner's decision because it matters in some countries; PayPal's own pay-later offers can appear inside PayPal's checkout, which fair.yoga cannot turn off. Bank transfer through Mollie is not offered: it duplicates the direct bank transfer and stays open for days
+- No automatic charging after class: the student chooses to pay on the pay page, one payment at a time. Recurring payments are a later concept decision (consent, notice, the SEPA refund right), not part of this
+- Automatic payment tracking: a Mollie payment marks itself paid (no manual marking needed)
+- The teacher can refund a Mollie payment in full. When the refunded payment is the one that settled the class payment, the teacher chooses to waive it or to ask the student again; the choice applies once Mollie reports the refund done. A Mollie-confirmed payment cannot be marked unpaid by hand: a refund is how it leaves paid, until a chargeback
 - Teacher pays processor fees from their own account
 - Net payout (after fees) is clearly shown to the teacher
 
@@ -253,7 +254,7 @@ The teacher owns the payment account and the relationship with the processor. Th
 **Payment reminders:** Level 1 teachers can send a payment reminder manually at any time, one tap per outstanding payment. The system also sends a single gentle reminder once a payment goes overdue, repeated at most once a week — a quiet nudge, never a barrage. A manual send resets that weekly clock, so frequent manual reminders replace the automatic one rather than stacking on top of it. A student who has marked a payment as sent is not chased: neither the automatic reminder nor the one that goes out when the teacher resumes paused payments is sent for it, until the claim is cleared. The teacher's "Not received" note counts as a reminder and resets the same clock.
 
 **Open questions:**
-- How to handle failed payments in Level 2? Retry policy? (parked — v1 Level 2 is payment links, not automated charging)
+- How to handle failed payments in Level 2? Retry policy? (parked — v1 Level 2 has no automatic charging, so there is nothing to retry; the student pays again from the pay page)
 
 ### 8. Studio Class Tracking
 

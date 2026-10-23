@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { timeZoneOptions } from '@/lib/timezone-options';
@@ -8,11 +9,20 @@ import { DataAndDeletion } from '@/components/account/data-and-deletion';
 import { AccountSecurity } from '@/components/account/account-security';
 import { BankAccountForm } from '@/components/settings/bank-account-form';
 import { PaymentLinkForm } from '@/components/settings/payment-link-form';
+import { MollieConnectionPanel, MollieConnectionFallback } from '@/components/settings/mollie-connection-panel';
 import { bankAccountDataSelect, accountInCurrency } from '@/lib/payment-methods';
 import { maskedIdentifier } from '@/lib/bank-details';
+import { parseMollieReturn } from '@/lib/mollie-return';
+import { mollieDeps } from '@/services/mollie-deps';
 
-export default async function ProfilePage() {
+interface ProfilePageProps {
+  searchParams: Promise<{ mollie?: string | string[] }>;
+}
+
+export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const session = await requireTeacherSession();
+  const { mollie } = await searchParams;
+  const deps = mollieDeps();
 
   const teacher = await prisma.teacher.findUniqueOrThrow({
     where: { id: session.teacherId },
@@ -65,6 +75,12 @@ export default async function ProfilePage() {
       />
 
       <PaymentLinkForm teacherId={teacher.id} initial={teacher.paymentLink ?? ''} hasLink={teacher.paymentLink !== null} />
+
+      {deps !== null && (
+        <Suspense fallback={<MollieConnectionFallback />}>
+          <MollieConnectionPanel teacherId={teacher.id} deps={deps} status={parseMollieReturn(mollie)} />
+        </Suspense>
+      )}
 
       <section className="mt-10 pt-6 border-t border-border">
         <h2 className="type-subtitle mb-3">Sign-in</h2>

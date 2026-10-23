@@ -29,6 +29,7 @@ describe('PaymentChecklist', () => {
     status: 'paid',
     reminderSentAt: null,
     studentReportedOn: null,
+    processorAttempts: [],
   };
 
   const appeared: PaymentItem = {
@@ -39,6 +40,7 @@ describe('PaymentChecklist', () => {
     status: 'overdue',
     reminderSentAt: null,
     studentReportedOn: null,
+    processorAttempts: [],
   };
 
   const fetchMock = vi.fn();
@@ -53,6 +55,7 @@ describe('PaymentChecklist', () => {
           studentId: `stu-${i}`,
           reminderSentAt: null,
           studentReportedOn: null,
+    processorAttempts: [],
           ...item,
         }))}
       />,
@@ -89,6 +92,7 @@ describe('PaymentChecklist', () => {
       status: 'pending',
       reminderSentAt: null,
       studentReportedOn: null,
+    processorAttempts: [],
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
@@ -110,6 +114,7 @@ describe('PaymentChecklist', () => {
       status: 'pending',
       reminderSentAt: null,
       studentReportedOn: null,
+    processorAttempts: [],
     };
     const paidItem: PaymentItem = {
       paymentId: 'pay-paid',
@@ -119,6 +124,7 @@ describe('PaymentChecklist', () => {
       status: 'paid',
       reminderSentAt: null,
       studentReportedOn: null,
+    processorAttempts: [],
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem, paidItem]} />);
 
@@ -147,6 +153,7 @@ describe('PaymentChecklist', () => {
       status: 'pending',
       reminderSentAt: null,
       studentReportedOn: null,
+    processorAttempts: [],
     };
     render(<PaymentChecklist currency="EUR" items={[pendingItem]} />);
 
@@ -182,8 +189,8 @@ describe('PaymentChecklist', () => {
        
         currency="GBP"
         items={[
-          { paymentId: 'p1', studentId: 'stu-1', studentName: 'Anna Smith', status: 'pending', amount: 15, reminderSentAt: null, studentReportedOn: null },
-          { paymentId: 'p2', studentId: 'stu-2', studentName: 'Bo Jansen', status: 'paid', amount: 18, reminderSentAt: null, studentReportedOn: null },
+          { paymentId: 'p1', studentId: 'stu-1', studentName: 'Anna Smith', status: 'pending', amount: 15, reminderSentAt: null, studentReportedOn: null, processorAttempts: [] },
+          { paymentId: 'p2', studentId: 'stu-2', studentName: 'Bo Jansen', status: 'paid', amount: 18, reminderSentAt: null, studentReportedOn: null, processorAttempts: [] },
         ]}
       />,
     );
@@ -263,6 +270,29 @@ describe('PaymentChecklist', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent('Payments are paused.');
       expect(screen.getByText('Says paid · 12 Oct')).toBeInTheDocument();
+    });
+  });
+
+  describe('a payment Mollie settled (Decision 17)', () => {
+    const settling = {
+      id: 'att-1', method: 'ideal', status: 'paid' as const, settledPayment: true, chargedBackAt: null, grantHeld: true, amount: 12, currency: 'EUR' as const, refunds: [],
+    };
+
+    it('offers Refund on the paid row', () => {
+      renderChecklist([{ paymentId: 'pay-1', studentName: 'Ana', status: 'paid', amount: 12, processorAttempts: [settling] }]);
+      expect(screen.getByRole('button', { name: /^Refund iDEAL €12\.00 — Ana/ })).toBeInTheDocument();
+    });
+
+    it('offers no Refund once the settling attempt’s grant is gone', () => {
+      renderChecklist([{ paymentId: 'pay-1', studentName: 'Ana', status: 'paid', amount: 12, processorAttempts: [{ ...settling, grantHeld: false }] }]);
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
+    });
+
+    it('offers no Refund once the student’s bank took it back', () => {
+      renderChecklist([
+        { paymentId: 'pay-1', studentName: 'Ana', status: 'paid', amount: 12, processorAttempts: [{ ...settling, settledPayment: false, chargedBackAt: new Date() }] },
+      ]);
+      expect(screen.queryByRole('button', { name: /^Refund/ })).not.toBeInTheDocument();
     });
   });
 });

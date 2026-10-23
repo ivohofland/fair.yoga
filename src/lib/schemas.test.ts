@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Currency } from '@/lib/prisma-client';
 import type { Prisma } from '@/lib/prisma-client';
 import * as schemas from './schemas';
+import { MOLLIE_METHODS } from './processor-methods';
 import {
   transitionClassSchema,
   magicLinkSendSchema,
@@ -51,7 +52,6 @@ import {
   EQUIPMENT_ITEM_MAX,
   EQUIPMENT_ITEMS_MAX,
   LONG_TEXT_MAX,
-  PAYMENT_METHOD_MAX,
   EMAIL_MAX,
   PAGE_SLUG_MAX,
   DURATION_MAX_MINUTES,
@@ -1473,7 +1473,6 @@ describe('text caps (#769)', () => {
       (s): Case => [`${s}.equipment[*]`, fieldAt(s, 'equipment[*]'), EQUIPMENT_ITEM_MAX],
     ),
     ...LONG_TEXT_FIELDS.map(([s, p]): Case => [`${s}.${p}`, fieldAt(s, p), LONG_TEXT_MAX]),
-    ['markPaidSchema.method', fieldAt('markPaidSchema', 'method'), PAYMENT_METHOD_MAX],
     ['pageSlugField', pageSlugField, PAGE_SLUG_MAX],
     ['teacherProfileSchema.pageSlug', fieldAt('teacherProfileSchema', 'pageSlug'), PAGE_SLUG_MAX],
     ['updateTeacherSchema.pageSlug', fieldAt('updateTeacherSchema', 'pageSlug'), PAGE_SLUG_MAX],
@@ -2026,5 +2025,11 @@ describe('vatPercent on the four class and template schemas (#819)', () => {
     const r = schema.safeParse(base);
     expect(r.success).toBe(true);
     expect(r.data?.vatPercent).toBeUndefined();
+  });
+});
+
+describe('processorAttemptSchema', () => {
+  it.each(Object.keys(MOLLIE_METHODS))('accepts the allowlisted method %s', (method) => {
+    expect(schemas.processorAttemptSchema.safeParse({ method }).success).toBe(true);
   });
 });

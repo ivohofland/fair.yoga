@@ -72,6 +72,42 @@ export const DEGRADATION_CODES = {
       'A charged registration on a completed class had no payment although completion creates one for each. The student pay page answered not found.',
     contextKeys: ['classId', 'registrationId'],
   },
+  MOLLIE_UNAVAILABLE: {
+    level: 'warn',
+    description:
+      'Mollie could not be reached or answered unexpectedly. The pay page showed the teacher’s other payment rows without Mollie’s, a student’s Mollie payment could not be started, a webhook was answered 503 for Mollie to retry, a grant could not be revoked, a teacher’s connect or profile change was told Mollie could not be reached, or the settings section showed Mollie as unreachable.',
+    contextKeys: ['connectionId', 'operation', 'status'],
+  },
+  PROCESSOR_DISCONNECTED: {
+    level: 'warn',
+    description:
+      'Mollie refused a teacher’s refresh token. The connection was disconnected, the teacher told, and students see their other payment options.',
+    contextKeys: ['connectionId'],
+  },
+  PROCESSOR_PAYMENT_UNCONFIRMED: {
+    level: 'warn',
+    description:
+      'A Mollie payment fair.yoga holds could not be read back: its teacher was erased, its connection was revoked, Mollie no longer knew it, Mollie reported a status fair.yoga does not know, or its attempt or payment row was gone by the time the sync locked it. Nothing was applied and the webhook was answered 200, so Mollie does not retry; money Mollie took may be unrecorded here.',
+    contextKeys: ['attemptId', 'connectionId', 'processorPaymentId', 'reason', 'mollieStatus'],
+  },
+  PROCESSOR_REFUND_UNRECORDED: {
+    level: 'error',
+    description:
+      'A refund Mollie reported was not recorded as Mollie reported it: its intent row was gone, storing it failed, or Mollie gave it a status fair.yoga does not know. Money Mollie returned may be missing from the payment, or the refund shown pending when it is not.',
+    contextKeys: ['attemptId', 'refundId', 'processorRefundId', 'reason', 'refundStatus', 'mollieStatus'],
+  },
+  PROCESSOR_CHARGEBACK_CURRENCY_MISMATCH: {
+    level: 'warn',
+    description:
+      'Mollie reported a chargeback in a currency other than its payment’s. The teacher’s notice named the attempt’s whole amount instead of the amount taken back.',
+    contextKeys: ['attemptId', 'currency', 'chargedBackCurrency'],
+  },
+  PROCESSOR_TOKEN_UNREADABLE: {
+    level: 'error',
+    description:
+      'A stored Mollie token could not be opened with the configured key. The pay page showed the teacher’s other payment rows without Mollie’s.',
+    contextKeys: ['connectionId'],
+  },
 } as const satisfies Record<
   string,
   { level: 'warn' | 'error'; description: string; contextKeys: readonly string[] }

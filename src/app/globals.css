@@ -24,7 +24,7 @@
   --color-border: #D4C9B8;
   --color-danger: #A24E4E;
   --color-danger-tint: #F5E9E9;
-  --color-scrim: rgba(45, 45, 45, 0.4); /* ink 40% — reserved for future Sheet */
+  --color-scrim: rgba(45, 45, 45, 0.4); /* ink 40% — Sheet's backdrop */
 
   /* Type families */
   --font-heading: Georgia, 'Times New Roman', serif;

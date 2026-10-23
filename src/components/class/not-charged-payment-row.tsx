@@ -2,6 +2,8 @@ import type { Currency } from '@/lib/prisma-client';
 import { formatClassContext, formatDateShort, formatMoney, paymentStateText } from '@/lib/format';
 import { startOfLocalDay } from '@/lib/timezone';
 import { MarkUnpaidButton } from '@/components/class/mark-unpaid-button';
+import { OtherAttempts } from '@/components/payments/attempt-refund';
+import type { AttemptView } from '@/lib/processor-attempt-view';
 import { ListRow } from '@/components/ui/list-row';
 
 interface NotChargedPaymentRowProps {
@@ -18,6 +20,8 @@ interface NotChargedPaymentRowProps {
   timeZone: string;
   amount: number;
   currency: Currency;
+  /** The payment's Mollie attempts (`TEACHER_ATTEMPT_SELECT`). */
+  processorAttempts: AttemptView[];
 }
 
 /**
@@ -36,6 +40,7 @@ export function NotChargedPaymentRow({
   timeZone,
   amount,
   currency,
+  processorAttempts,
 }: NotChargedPaymentRowProps) {
   const classContext = formatClassContext(classType, classDate, startTime);
   const stateText = paymentStateText('not_charged');
@@ -47,6 +52,12 @@ export function NotChargedPaymentRow({
           {classContext}
           {notChargedAt && <> · {formatDateShort(startOfLocalDay(notChargedAt, timeZone))}</>}
         </p>
+        <OtherAttempts
+          paymentId={paymentId}
+          attempts={processorAttempts}
+          studentName={studentName}
+          classContext={classContext}
+        />
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <span className={`type-caption ${stateText.className}`}>{stateText.label}</span>

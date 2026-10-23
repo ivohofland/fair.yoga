@@ -73,6 +73,15 @@ export const TEACHER_INVITATION_PATH = '/inbox/invitations';
 /** The label for that action on the email's button. */
 export const TEACHER_INVITATION_LABEL = 'Review the invitation';
 
+/**
+ * Where a `processor_disconnected` sends the teacher: the Mollie section of
+ * their profile settings, where they reconnect. The row names no class.
+ */
+export const TEACHER_MOLLIE_PATH = '/settings/profile';
+
+/** The label for that action on the email's button. */
+export const TEACHER_MOLLIE_LABEL = 'Reconnect Mollie';
+
 /** The shape both student surfaces already select. */
 export interface StudentNotificationTarget {
   type: NotificationType;
@@ -128,5 +137,6 @@ export function teacherNotificationHref(notification: {
   relatedClassId: string | null;
 }): string | null {
   if (notification.type === 'teacher_invitation') return TEACHER_INVITATION_PATH;
+  if (notification.type === 'processor_disconnected') return TEACHER_MOLLIE_PATH;
   return notification.relatedClassId ? `/class/${notification.relatedClassId}` : null;
 }

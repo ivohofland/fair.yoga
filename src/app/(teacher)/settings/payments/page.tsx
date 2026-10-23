@@ -10,8 +10,9 @@ import { ReceivedPaymentRow } from '@/components/class/received-payment-row';
 import { NotChargedPaymentRow } from '@/components/class/not-charged-payment-row';
 import { teacherVisibleName, studentNameSelect } from '@/lib/student-visibility';
 import { isOutstanding } from '@/lib/payment-status';
-import { claimedFirst } from '@/lib/payment-claim';
+import { inProgressFirst } from '@/lib/payment-claim';
 import { claimDay } from '@/lib/payment-claim.server';
+import { TEACHER_ATTEMPT_SELECT, toAttemptView } from '@/lib/processor-attempt-view';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,7 @@ export default async function PaymentsOverviewPage() {
     where: { registration: { class: { calendarEntry: { teacherId: session.teacherId } } } },
     orderBy: { createdAt: 'desc' },
     include: {
+      processorAttempts: { select: TEACHER_ATTEMPT_SELECT },
       registration: {
         select: {
           student: { select: studentNameSelect(session.teacherId) },
@@ -40,7 +42,7 @@ export default async function PaymentsOverviewPage() {
     },
   });
 
-  const outstanding = claimedFirst(payments.filter((p) => isOutstanding(p.status)), (p) => p);
+  const outstanding = inProgressFirst(payments.filter((p) => isOutstanding(p.status)), (p) => p);
   const receivedAll = payments.filter((p) => p.status === 'paid');
   const received = receivedAll.slice(0, 30);
   const notCharged = payments.filter((p) => p.status === 'not_charged').slice(0, 30);
@@ -98,6 +100,7 @@ export default async function PaymentsOverviewPage() {
               status={p.status}
               reminderSentAt={p.reminderSentAt}
               studentReportedOn={claimDay(p.studentReportedAt, session.defaultTimezone)}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))
         )}
@@ -120,6 +123,7 @@ export default async function PaymentsOverviewPage() {
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
               currency={p.registration.class.currency}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))
         )}
@@ -140,6 +144,7 @@ export default async function PaymentsOverviewPage() {
               timeZone={session.defaultTimezone}
               amount={Number(p.amount)}
               currency={p.registration.class.currency}
+              processorAttempts={p.processorAttempts.map(toAttemptView)}
             />
           ))}
         </section>

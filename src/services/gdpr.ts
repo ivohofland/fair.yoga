@@ -19,6 +19,10 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { completeClass } from './class-lifecycle';
+import { mollieDeps, type MollieDeps } from './mollie-deps';
+import { revokeDroppedGrant } from './processor-connection';
+import { openToken, TokenCipherError } from '@/lib/processor-token-cipher';
+import { logDegraded } from '@/lib/degradation';
 import { handleSpotFreed, reorderWaitingEntries, SpotFreedError, spotFreedLoss } from './waitlist';
 import {
   CLASS_TO_ENTRY_JOIN,
@@ -133,7 +137,34 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
               },
             },
           },
-          payment: { select: { amount: true, vatAmount: true, status: true, method: true, paidAt: true, studentReportedAt: true } },
+          payment: {
+            select: {
+              amount: true,
+              vatAmount: true,
+              status: true,
+              method: true,
+              paidAt: true,
+              studentReportedAt: true,
+              // The student's own payments through the teacher's processor and
+              // the refunds of them. Selected field by field: the processor's
+              // identifiers, the profile and the checkout link are not the
+              // student's data and are not exported.
+              processorAttempts: {
+                select: {
+                  method: true,
+                  status: true,
+                  amount: true,
+                  currency: true,
+                  paidAt: true,
+                  refunds: {
+                    select: { amount: true, status: true, requestedAt: true },
+                    orderBy: { requestedAt: 'asc' },
+                  },
+                },
+                orderBy: { createdAt: 'asc' },
+              },
+            },
+          },
         },
       },
       waitlistEntries: {
@@ -280,6 +311,17 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
       announcements: true,
       photo: { select: { bytes: true } },
       bankAccounts: { select: bankAccountDataSelect, orderBy: { currency: 'asc' } },
+      // Field by field, never the row: it holds the sealed tokens.
+      processorConnection: {
+        select: {
+          processor: true,
+          organizationId: true,
+          profileId: true,
+          testmode: true,
+          connectedAt: true,
+          disconnectedAt: true,
+        },
+      },
       payoutChanges: {
         select: { kind: true, accountCurrency: true, before: true, after: true, createdAt: true },
         orderBy: { createdAt: 'asc' },
@@ -318,6 +360,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         : null,
     },
     bankAccounts: teacher.bankAccounts,
+    processorConnection: teacher.processorConnection,
     payoutChanges: teacher.payoutChanges,
     rooms: teacher.teacherRooms.map((tr) => ({
       venue: tr.room.venueName,
@@ -845,6 +888,26 @@ export async function deleteStudentAccount(
         },
         data: { body: 'A student (account since deleted) booked this class.' },
       });
+      // The processor notices that open with the student's first name,
+      // scrubbed the same way and for the same classes.
+      await tx.notification.updateMany({
+        where: {
+          recipientType: 'teacher',
+          type: 'payment_paid_twice',
+          relatedClassId: { in: bookedClassIds },
+          body: { startsWith: `${student.firstName} also paid ` },
+        },
+        data: { body: 'A student (account since deleted) paid twice. You can refund it from the payment.' },
+      });
+      await tx.notification.updateMany({
+        where: {
+          recipientType: 'teacher',
+          type: 'payment_charged_back',
+          relatedClassId: { in: bookedClassIds },
+          body: { startsWith: `${student.firstName} disputed ` },
+        },
+        data: { body: 'A student (account since deleted) disputed a payment with their bank and it was taken back.' },
+      });
     }
 
     // A teacher's `Announcement` rows record who each send notified, and this
@@ -1168,6 +1231,7 @@ const CANCELLABLE_STATUSES_SQL = statusInList(CANCELLABLE_STATUSES);
 export async function deleteTeacherAccount(
   db: PrismaClient,
   teacherId: string,
+  deps: MollieDeps | null = mollieDeps(),
 ): Promise<ErasureOutcome> {
   const teacher = await db.teacher.findUniqueOrThrow({
     where: { id: teacherId },
@@ -1241,7 +1305,7 @@ export async function deleteTeacherAccount(
     }
   }
 
-  const skippedClassIds = await unlessAlreadyErased(db.$transaction(
+  const committed = await unlessAlreadyErased(db.$transaction(
     async (tx) => {
       // Collected, not logged, inside this transaction — see the loop below
       // this call for why the diagnostic that explains each id cannot run
@@ -1622,8 +1686,6 @@ export async function deleteTeacherAccount(
           bio: '',
           pageSlug: `deleted-${teacherId}`,
           customDomain: null,
-          processorType: null,
-          processorAccountId: null,
           paymentLink: null,
           ...TEACHER_PUSH_ERASED,
           deletedAt: new Date(),
@@ -1643,7 +1705,27 @@ export async function deleteTeacherAccount(
       await tx.payoutPauseToken.deleteMany({ where: { teacherId } });
       await tx.payoutChangeEvent.deleteMany({ where: { teacherId } });
 
-      return skipped;
+      // The Mollie connection goes last, after the `TeacherStudent` delete
+      // above, and its place is held by a test. Deleting it nulls
+      // `connectionId` on the teacher's attempts; placed before the
+      // `TeacherStudent` delete, it would hold those attempts and then wait
+      // on a link. Why that wait could close a cycle: `docs/lock-order.md`,
+      // "The `ProcessorConnection` row is a leaf lock (#896)".
+      //
+      // Read and removed in one statement, so the sealed refresh token
+      // returned is the one deleted. Nothing is sent to Mollie in this
+      // transaction; the grant is revoked after commit.
+      const connection = await tx.processorConnection.findUnique({ where: { teacherId }, select: { id: true } });
+      const droppedGrant =
+        connection === null
+          ? null
+          : await tx.processorConnection.delete({
+              where: { id: connection.id },
+              select: { id: true, refreshToken: true, revokedAt: true },
+            });
+      await tx.oAuthState.deleteMany({ where: { teacherId } });
+
+      return { skipped, droppedGrant };
     },
     // `isActive`/`isArchived` live on `ScheduleRule` now (issue 298); the
     // ordered `FOR UPDATE OF ct`/`FOR UPDATE OF sct` pre-locks above the two
@@ -1670,7 +1752,33 @@ export async function deleteTeacherAccount(
     // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
   ));
-  if (skippedClassIds === null) return { erased: false, reason: 'already-erased' };
+  if (committed === null) return { erased: false, reason: 'already-erased' };
+  const { skipped: skippedClassIds, droppedGrant } = committed;
+
+  // After commit, not awaited: the connection row is gone, so a failure has
+  // nothing to retry from and is logged by `revokeDroppedGrant`.
+  if (droppedGrant !== null && droppedGrant.revokedAt === null && droppedGrant.refreshToken !== null) {
+    if (deps === null) {
+      log.warn(
+        { connectionId: droppedGrant.id },
+        'teacher erasure: Mollie is not configured, so the erased teacher’s grant stays authorized at Mollie',
+      );
+    } else {
+      let refreshToken: string | null = null;
+      try {
+        refreshToken = openToken(droppedGrant.refreshToken, deps.config.tokenKey);
+      } catch (err) {
+        if (!(err instanceof TokenCipherError)) throw err;
+        logDegraded(
+          'PROCESSOR_TOKEN_UNREADABLE',
+          { connectionId: droppedGrant.id },
+          'the erased teacher’s stored processor token could not be opened, so it was not revoked',
+          err,
+        );
+      }
+      if (refreshToken !== null) revokeDroppedGrant(deps, refreshToken, droppedGrant.id);
+    }
+  }
 
   // The cause of each skipped cancel, read AFTER the commit.
   //

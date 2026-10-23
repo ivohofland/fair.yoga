@@ -4,9 +4,8 @@ import { type Currency, type PaymentStatus } from '@/lib/prisma-client';
 import { hashToken } from '@/lib/auth/magic-link';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { payoutFingerprint } from '@/lib/payout-fingerprint';
-import { bankAccountDataSelect } from '@/lib/payment-methods';
 import { sendPaymentReminders } from './payment-reminders';
-import { PAUSE_PASSKEY_FALLBACK_DAYS, readResumeReview, resumePayments } from './payout-resume';
+import { PAUSE_PASSKEY_FALLBACK_DAYS, readPayoutDetails, readResumeReview, resumePayments } from './payout-resume';
 import { createClassFixture } from '../../tests/class-fixtures';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import { uniqueSuffix } from '../../tests/helpers';
@@ -86,11 +85,18 @@ async function passkey(accountId: string, createdAt: Date): Promise<string> {
 }
 
 async function currentFingerprint(teacherId: string): Promise<string> {
-  const t = await prisma.teacher.findUniqueOrThrow({
-    where: { id: teacherId },
-    select: { paymentLink: true, bankAccounts: { select: bankAccountDataSelect } },
+  return payoutFingerprint(await readPayoutDetails(prisma, teacherId));
+}
+
+/** A Mollie connection row for the teacher; its tokens are placeholders no test opens. */
+async function mollieConnection(teacherId: string, data: { profileId: string | null; disconnectedAt?: Date | null }) {
+  await prisma.processorConnection.create({
+    data: {
+      teacherId, processor: 'mollie', organizationId: 'org_resume1234', scopes: [], testmode: true,
+      accessToken: new Uint8Array([1]), refreshToken: new Uint8Array([1]), accessTokenExpiresAt: daysAfter(NOW, 1),
+      profileId: data.profileId, disconnectedAt: data.disconnectedAt ?? null,
+    },
   });
-  return payoutFingerprint(t);
 }
 
 async function classFor(teacherId: string, currency: Currency = 'EUR', date = new Date('2026-06-01')) {
@@ -194,6 +200,25 @@ describe('readResumeReview', () => {
       { currency: 'GBP', holderName: 'Anna de Vries', iban: null, bic: null, sortCode: '200000', accountNumber: '55779911', routingNumber: null, bankCode: null },
     ]);
     expect(review?.fingerprint).toBe(await currentFingerprint(t.teacherId));
+  });
+
+  it('shows the live Mollie organization and profile as a payout detail', async () => {
+    const t = await pausedTeacher();
+    await mollieConnection(t.teacherId, { profileId: 'pfl_resume5678' });
+    const review = await readResumeReview(prisma, t.teacherId, await session(t.accountId), NOW);
+    expect(review?.details.processorIdentity).toEqual({ organizationId: 'org_resume1234', profileId: 'pfl_resume5678' });
+    expect(review?.fingerprint).toBe(payoutFingerprint({ paymentLink: null, bankAccounts: [], processorIdentity: { organizationId: 'org_resume1234', profileId: 'pfl_resume5678' } }));
+  });
+
+  it.each([
+    ['has no profile yet', { profileId: null }],
+    ['is disconnected', { profileId: 'pfl_resume5678', disconnectedAt: daysBefore(NOW, 1) }],
+  ] as const)('counts a connection that %s as no connection', async (_name, data) => {
+    const t = await pausedTeacher();
+    await mollieConnection(t.teacherId, data);
+    const review = await readResumeReview(prisma, t.teacherId, await session(t.accountId), NOW);
+    expect(review?.details.processorIdentity).toBeNull();
+    expect(review?.fingerprint).toBe(payoutFingerprint({ paymentLink: null, bankAccounts: [], processorIdentity: null }));
   });
 
   it('says whether a passkey is required, whether this session has it, and when the fallback opens', async () => {
@@ -317,6 +342,18 @@ describe('resumePayments', () => {
     expect(outcome).toEqual({ status: 'not_paused' });
     const state = await prisma.teacher.findUniqueOrThrow({ where: { id: t.teacherId }, select: { paymentsResumedAt: true } });
     expect(state.paymentsResumedAt).toBeNull();
+  });
+
+  it('refuses when the Mollie profile was switched after the screen was read', async () => {
+    const t = await pausedTeacher();
+    await mollieConnection(t.teacherId, { profileId: 'pfl_resume5678' });
+    const sessionId = await session(t.accountId);
+    const review = await readResumeReview(prisma, t.teacherId, sessionId, NOW);
+    if (review === null) throw new Error('expected a review');
+    await prisma.processorConnection.update({ where: { teacherId: t.teacherId }, data: { profileId: 'pfl_other0000' } });
+
+    expect(await resumePayments(prisma, { teacherId: t.teacherId, sessionId, fingerprint: review.fingerprint, now: NOW }))
+      .toEqual({ status: 'details_changed' });
   });
 
   it('refuses when another currency\'s account changed after the screen was read', async () => {

@@ -42,6 +42,8 @@ in it cannot be regenerated without consequences (the VAPID row below).
 | `PASSKEY_RP_ID` | your bare domain. Never change it once passkeys exist: each is bound to it |
 | `ADMIN_HOST` | `.env.example` ships a local value; delete the line to keep the admin surface off, or set `admin.<domain>` per §8 Admin access |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | generate the keys with `pnpm run vapid:keys`; `VAPID_SUBJECT` must be a `mailto:` or `https://` URL; unset disables push, and rotating the pair silently orphans every existing subscription (browsers re-subscribe only when the user turns push on again) |
+| `MOLLIE_CLIENT_ID` / `MOLLIE_CLIENT_SECRET` / `PROCESSOR_TOKEN_KEY` | from a Mollie app whose redirect URL is exactly `<NEXT_PUBLIC_APP_URL>/api/processor/mollie/callback`; generate the key with `openssl rand -base64 32` (it must decode to 32 bytes). Any of the three unset, or a key of the wrong length, turns Mollie off rather than failing. Replacing the key makes every stored token unreadable, so every connected teacher must reconnect: keep a copy outside the VPS |
+| `MOLLIE_TESTMODE` | leave unset in production. `1` creates test-mode payments; a connection made in test mode counts as needing a reconnect once it is unset |
 
 ### Email provider
 

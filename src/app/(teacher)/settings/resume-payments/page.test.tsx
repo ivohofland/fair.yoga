@@ -36,7 +36,7 @@ function review(overrides: Partial<ResumeReview> = {}): ResumeReview {
     events: [],
     outstanding: [],
     settled: [],
-    details: { paymentLink: null, bankAccounts: [] },
+    details: { paymentLink: null, bankAccounts: [], processorIdentity: null },
     fingerprint: 'fp',
     passkeyRequired: false,
     sessionSatisfiesPasskey: false,
@@ -157,11 +157,27 @@ describe('the resume-payments change list', () => {
           currency: 'AUD', holderName: 'Anna', iban: null, bic: null, sortCode: null,
           routingNumber: null, bankCode: '062000', accountNumber: '12345678',
         }],
+        processorIdentity: null,
       },
     }));
     render(await ResumePaymentsPage());
     expect(screen.getByText('BSB')).toBeInTheDocument();
     expect(screen.queryByText('Bank code')).toBeNull();
+  });
+
+  it('shows the live Mollie organization and profile among the details, masked as the events mask them', async () => {
+    readResumeReview.mockResolvedValue(review({
+      details: { paymentLink: null, bankAccounts: [], processorIdentity: { organizationId: 'org_abcd1234', profileId: 'pfl_wxyz5678' } },
+    }));
+    render(await ResumePaymentsPage());
+    expect(screen.getByRole('heading', { name: 'Mollie' })).toBeInTheDocument();
+    expect(screen.getByText('org_…1234 · pfl_…5678')).toBeInTheDocument();
+  });
+
+  it('shows no Mollie detail when no connection is live', async () => {
+    readResumeReview.mockResolvedValue(review());
+    render(await ResumePaymentsPage());
+    expect(screen.queryByRole('heading', { name: 'Mollie' })).toBeNull();
   });
 
   // #898. A claim made while payouts may have pointed elsewhere is what the

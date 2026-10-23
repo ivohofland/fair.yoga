@@ -236,8 +236,8 @@ public page at their `pageSlug`. See [Non-Goals](non-goals.md).
 - Connect Mollie or Stripe account
 - Account status: connected / not connected
 - Fee transparency: show processor fee rates
-- Toggle between Level 1 and Level 2
-- *Accessible from:* Settings
+- Mollie's methods appear beside the bank and link methods while the connection is live; there is no level to toggle
+- *Accessible from:* Settings → Profile (the Mollie section)
 
 ---
 

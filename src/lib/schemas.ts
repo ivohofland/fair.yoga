@@ -26,7 +26,6 @@ import {
   EQUIPMENT_ITEM_MAX,
   EQUIPMENT_ITEMS_MAX,
   LONG_TEXT_MAX,
-  PAYMENT_METHOD_MAX,
   EMAIL_MAX,
   PAGE_SLUG_MAX,
   DURATION_MAX_MINUTES,
@@ -369,6 +368,14 @@ export const bankAccountSchema = z.object({
 export const paymentLinkSchema = z.object({
   paymentLink: singleLineCharacters(z.string().trim(), PAYMENT_LINK_MAX * 2).max(PAYMENT_LINK_MAX * 2),
 }).strict();
+
+/** The Mollie profile a teacher picks: an id as Mollie writes it. */
+export const processorProfileSchema = z.object({
+  profileId: z.string().regex(/^pfl_[A-Za-z0-9]+$/).max(64),
+}).strict();
+
+/** The method a student starts a Mollie payment with, an id as Mollie writes it. */
+export const processorAttemptSchema = z.object({ method: z.string().min(1).max(32).regex(/^[a-z0-9]+$/) }).strict();
 
 /**
  * `POST /api/account/onboarding`'s wire shape. `z.enum(OnboardingStep)`
@@ -759,9 +766,19 @@ export const claimWaitlistSchema = z.object({
 // PAYMENTS
 // ============================================================================
 
+/** `POST /api/payments/[id]/paid`: the teacher's own mark, so the only method it records is `'manual'`. */
 export const markPaidSchema = z.object({
-  method: singleLineText(PAYMENT_METHOD_MAX).min(1),
+  method: z.literal('manual'),
 });
+
+/**
+ * `POST /api/payments/[id]/refund`: the attempt to refund in full, and what
+ * becomes of the payment it settled. `choice` is null for an attempt that
+ * did not settle the payment; the service decides which applies.
+ */
+export const refundSchema = z
+  .object({ attemptId: z.string().uuid(), choice: z.enum(['waive', 'ask_again']).nullable() })
+  .strict();
 
 // ============================================================================
 // NOTIFICATIONS & ANNOUNCEMENTS

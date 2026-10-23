@@ -11,7 +11,6 @@ const payment: Payment = {
   vatAmount: new Prisma.Decimal(0),
   status: 'paid',
   method: 'cash',
-  processorRef: null,
   reminderSentAt: null,
   paidAt: new Date('2026-09-01T10:00:00.000Z'),
   notChargedAt: null,
@@ -48,6 +47,7 @@ describe('respondPaymentOutcome', () => {
     PAYMENTS_PAUSED: true,
     PAYMENT_ALREADY_PAID: true,
     PAYMENT_SETTLED: true,
+    PAYMENT_SETTLED_BY_PROCESSOR: true,
     PAYMENT_WAIVED: true,
   } as const satisfies Record<Exclude<PaymentRefusal['code'], 'NOT_FOUND'>, true>;
 
@@ -68,7 +68,6 @@ describe('respondStudentPaymentOutcome', () => {
     status: 'pending',
     method: null,
     paidAt: null,
-    processorRef: 'tr_123',
     reminderSentAt: new Date('2026-09-02T10:00:00.000Z'),
     studentReportedAt: new Date('2026-09-03T10:00:00.000Z'),
   };

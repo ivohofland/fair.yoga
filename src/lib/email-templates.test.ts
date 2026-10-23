@@ -103,6 +103,15 @@ describe('email templates', () => {
     expect(student.html).toContain('Your booking is confirmed.');
   });
 
+  it('gives a lost Mollie connection a button to the settings where it is reconnected', () => {
+    const { html } = renderNotificationEmail(
+      { type: 'processor_disconnected', title: 'Mollie disconnected', body: 'Reconnect in Settings → Profile.', recipientType: 'teacher' },
+      'https://fair.yoga',
+    );
+    expect(html).toContain('Reconnect Mollie');
+    expect(html).toContain('https://fair.yoga/settings/profile');
+  });
+
   it('wraps everything in the branded shell', () => {
     const { html } = renderNotificationEmail({
       type: 'reminder',
