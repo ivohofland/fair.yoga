@@ -53,10 +53,12 @@ export default async function TeacherBookingPage({
 
   // `cancelledAt: null` beside `status: 'open'` (#327): a cancelled class
   // keeps its `open` status, and this page is the public booking list — it is
-  // the one place a cancelled class must never appear.
+  // the one place a cancelled class must never appear, nor a
+  // private one (#910), which is booked by its own link.
   const classes = await prisma.class.findMany({
     where: {
       status: 'open',
+      isPrivate: false,
       calendarEntry: { teacherId: teacher.id, cancelledAt: null, date: { gte: today } },
     },
     orderBy: [{ calendarEntry: { date: 'asc' } }, { calendarEntry: { startTime: 'asc' } }],

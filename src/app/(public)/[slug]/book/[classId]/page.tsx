@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
@@ -20,6 +21,21 @@ import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
+
+// A private class is booked by its link alone, so it stays out of search
+// indexes; whether the class exists is the page body's call, not this one's.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string; classId: string }>;
+}): Promise<Metadata> {
+  const { classId } = await params;
+  const cls = await prisma.class.findUnique({
+    where: { id: classId },
+    select: { isPrivate: true },
+  });
+  return cls?.isPrivate ? { robots: { index: false } } : {};
+}
 
 // Tier selection + confirmation — the most philosophically important screen.
 export default async function BookClassPage({
@@ -160,6 +176,9 @@ export default async function BookClassPage({
       <p className="type-body mt-1">
         {formatDayHeader(entry.date)} &middot; {timeToHHmm(entry.startTime)} &middot; {entry.durationMinutes} min
       </p>
+      {cls.isPrivate && (
+        <p className="type-caption mt-1">Shared by link — not on {entry.teacher.firstName}&apos;s public schedule.</p>
+      )}
       <p className="type-caption mt-0.5">
         {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
       </p>
