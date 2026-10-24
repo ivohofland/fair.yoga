@@ -56,7 +56,9 @@ class, a trial for a few people, a class for a workshop group or a company.
 ### Data
 
 - `Class.isPrivate Boolean @default(false)` and
-  `ClassTemplate.isPrivate Boolean @default(false)`, in one migration. Every
+  `ClassTemplate.isPrivate Boolean @default(false)`, in two migrations, one per
+  family: the `ClassTemplate` partition pin requires its column and its
+  classification to land together. Every
   existing row backfills to `false`, so nothing that is listed today stops
   being listed.
 - Child-side only, not `CalendarEntry` or `ScheduleRule`. The parents hold

@@ -550,6 +550,8 @@ export function TemplateForm(props: TemplateFormProps) {
           router.push(RECURRING_LIST_PATH);
         }
       } else {
+        setPrivacyChanged(form.isPrivate !== edit?.initial.isPrivate);
+
         // Nothing to count: since #194 an edit changes the template row and
         // no generated class, so there is no arrival, delete or kept tally to
         // report. What there IS to say is WHEN — the service probes for the
@@ -578,8 +580,6 @@ export function TemplateForm(props: TemplateFormProps) {
         // safe to say about a template whose state we do not know. A cast
         // would hand an unknown string to an exhaustive `switch` that throws
         // on it — an unhandled error where a teacher expects a confirmation.
-        setPrivacyChanged(form.isPrivate !== edit?.initial.isPrivate);
-
         let rawJson: unknown;
         try {
           rawJson = await res.json();
