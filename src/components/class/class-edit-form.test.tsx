@@ -55,6 +55,7 @@ describe('ClassEditForm', () => {
     minStudents: 4,
     maxStudents: 12,
     vatPercent: 0,
+    isPrivate: false,
   };
 
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
@@ -81,6 +82,7 @@ describe('ClassEditForm', () => {
       minStudents: 4,
       maxStudents: 12,
       vatPercent: 0,
+      isPrivate: false,
     });
   });
 
@@ -99,10 +101,24 @@ describe('ClassEditForm', () => {
    * differ. It would be testing the mechanism rather than what is sent, which
    * is why this file does not.
    */
+  it('keeps the Private checkbox enabled on a locked class and sends the toggle (#910)', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
+    const box = screen.getByRole('checkbox', { name: /private class/i });
+    expect(box).toBeEnabled();
+    expect(screen.getByLabelText('Max students')).toBeDisabled();
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls[0] ?? [];
+    expect(JSON.parse((options as { body: string }).body)).toHaveProperty('isPrivate', true);
+  });
+
   it('omits the economic fields and the schedule when settings are locked', async () => {
     const body = await saveWith(true);
     expect(Object.keys(body).sort()).toEqual([
-      'classType', 'description', 'durationMinutes',
+      'classType', 'description', 'durationMinutes', 'isPrivate',
     ]);
     for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents', 'vatPercent', 'date', 'startTime']) {
       expect(body).not.toHaveProperty(f);
@@ -640,6 +656,7 @@ describe('ClassEditForm, late-move notice', () => {
     minStudents: 4,
     maxStudents: 12,
     vatPercent: 0,
+    isPrivate: false,
   };
   const warning: MoveWarning = {
     timeZone: 'Europe/Amsterdam',

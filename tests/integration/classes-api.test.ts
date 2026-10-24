@@ -1174,6 +1174,25 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.vatPercent.toNumber()).toBe(21);
   });
 
+  it('an isPrivate edit on a locked class -> 200, the flag persists (#910)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(before.settingsLocked).toBe(true);
+    const res = await put(ownerToken, lockedClassId, { isPrivate: !before.isPrivate });
+    expect(res.status).toBe(200);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(after.isPrivate).toBe(!before.isPrivate);
+    await prisma.class.update({ where: { id: lockedClassId }, data: { isPrivate: before.isPrivate } });
+  });
+
+  it('an edit body without isPrivate leaves the stored flag alone (#910)', async () => {
+    await prisma.class.update({ where: { id: economicsClassId }, data: { isPrivate: true } });
+    const res = await put(ownerToken, economicsClassId, { description: 'still private' });
+    expect(res.status).toBe(200);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(after.isPrivate).toBe(true);
+    await prisma.class.update({ where: { id: economicsClassId }, data: { isPrivate: false } });
+  });
+
   it('locked class: a vatPercent edit is refused with SETTINGS_LOCKED and writes nothing (#819)', async () => {
     const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
     expect(before.settingsLocked).toBe(true);
@@ -1664,6 +1683,34 @@ describe('POST /api/classes', () => {
     const created = await prisma.class.findUniqueOrThrow({ where: { id: data.id }, include: { calendarEntry: true } });
     expect(created.calendarEntry.teacherId).toBe(ownerId);
     expect(created.calendarEntry.scheduleRuleId).toBeNull();
+  });
+
+  describe('isPrivate on create (#910)', () => {
+    it('creates a private class when isPrivate is sent, a public one when omitted', async () => {
+      const privRes = await post(ownerToken, { ...baseBody(), date: '2099-11-01', isPrivate: true });
+      const pubRes = await post(ownerToken, { ...baseBody(), date: '2099-11-02' });
+      expect(privRes.status).toBe(201);
+      expect(pubRes.status).toBe(201);
+      const priv = await prisma.class.findUniqueOrThrow({ where: { id: ((await privRes.json()) as { data: { id: string } }).data.id } });
+      const pub = await prisma.class.findUniqueOrThrow({ where: { id: ((await pubRes.json()) as { data: { id: string } }).data.id } });
+      expect(priv.isPrivate).toBe(true);
+      expect(pub.isPrivate).toBe(false);
+    });
+
+    it('publishing a private draft keeps it private', async () => {
+      const res = await post(ownerToken, { ...baseBody(), date: '2099-11-03', isPrivate: true });
+      expect(res.status).toBe(201);
+      const { data } = (await res.json()) as { data: { id: string } };
+      const publish = await fetch(`${BASE_URL}/api/classes/${data.id}/transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(ownerToken) },
+        body: JSON.stringify({ status: 'open' }),
+      });
+      expect(publish.status).toBe(200);
+      const published = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(published.status).toBe('open');
+      expect(published.isPrivate).toBe(true);
+    });
   });
 
   describe('the VAT % a class is created with (#819)', () => {

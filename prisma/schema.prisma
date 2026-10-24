@@ -684,6 +684,7 @@ model Class {
   /// live class may not sit in an archived room" unrepresentable rather than
   /// merely guarded (issue 339).
   entryLive            Boolean         @default(true)
+  isPrivate            Boolean         @default(false)
   roomArchived         Boolean         @default(false)
   description          String?         @db.Text
   currency             Currency

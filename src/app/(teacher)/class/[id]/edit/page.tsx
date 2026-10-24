@@ -63,6 +63,7 @@ export default async function ClassEditPage({
           minStudents: cls.minStudents,
           maxStudents: cls.maxStudents,
           vatPercent: cls.vatPercent.toNumber(),
+          isPrivate: cls.isPrivate,
         }}
       />
     </div>

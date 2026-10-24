@@ -92,6 +92,7 @@ export function classRow(
     // in this fixture).
     entryLive: overrides?.cancelled !== true,
     roomArchived: false,
+    isPrivate: false,
     description: null,
     currency: 'EUR' as const,
     roomCost: new Prisma.Decimal(20),
