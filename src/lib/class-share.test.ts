@@ -17,6 +17,9 @@ describe('classShareState', () => {
   it('asks a draft to publish first', () => {
     expect(classShareState({ status: 'draft', cancelled: false, start }, new Date(0))).toBe('publish_first');
   });
+  it('offers a draft whose start has passed nothing, since it can no longer be published', () => {
+    expect(classShareState({ status: 'draft', cancelled: false, start }, start)).toBe('none');
+  });
   it('offers nothing on a cancelled class', () => {
     expect(classShareState({ status: 'open', cancelled: true, start }, new Date(0))).toBe('none');
     expect(classShareState({ status: 'draft', cancelled: true, start }, new Date(0))).toBe('none');

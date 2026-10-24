@@ -9,14 +9,16 @@ export type ClassShareState = 'share' | 'publish_first' | 'none';
 
 /**
  * What the class page offers for sharing its link. The start instant ends
- * it, not the status: an open class stays `open` until the sweep moves it on.
+ * it, not the status: an open class stays `open` until the sweep moves it on,
+ * and a draft that has started can no longer be published.
  */
 export function classShareState(
   cls: { status: ClassStatus; cancelled: boolean; start: Date },
   now: Date,
 ): ClassShareState {
   if (cls.cancelled) return 'none';
-  if (cls.status === 'open' && now.getTime() < cls.start.getTime()) return 'share';
+  if (now.getTime() >= cls.start.getTime()) return 'none';
+  if (cls.status === 'open') return 'share';
   if (cls.status === 'draft') return 'publish_first';
   return 'none';
 }
