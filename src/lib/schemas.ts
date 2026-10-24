@@ -597,6 +597,7 @@ export const createClassSchema = z.object({
   vatPercent: vatPercentField().optional(),
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
+  isPrivate: z.boolean().optional(),
 })
   .superRefine((d, ctx) => {
     for (const v of economicsViolations(d)) {
@@ -618,6 +619,7 @@ export const updateClassSchema = z.object({
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   vatPercent: vatPercentField().optional(),
+  isPrivate: z.boolean().optional(),
 }).strict();
 // Cross-field economics are checked on the merged row by the update service (economicsViolations).
 

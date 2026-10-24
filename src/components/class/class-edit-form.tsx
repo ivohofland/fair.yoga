@@ -48,6 +48,7 @@ export interface ClassEditInitial {
   minStudents: number;
   maxStudents: number;
   vatPercent: number;
+  isPrivate: boolean;
 }
 
 type UpdateClassWire = z.infer<typeof updateClassSchema>;
@@ -421,6 +422,19 @@ export function ClassEditForm({
           />
         </div>
       </section>
+
+      <label className="flex items-center gap-3 min-h-[44px]">
+        <input
+          type="checkbox"
+          checked={form.isPrivate}
+          onChange={(e) => set('isPrivate', e.target.checked)}
+          className="w-5 h-5 accent-teal"
+        />
+        <span className="flex flex-col">
+          <span className="text-base text-ink">Private class</span>
+          <span className="type-caption">Not listed on your public page. Anyone with the link can book.</span>
+        </span>
+      </label>
 
       <div>
         <LatePublishNotice

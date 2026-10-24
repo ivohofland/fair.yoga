@@ -14,6 +14,7 @@ function makePreviewClass(overrides: Partial<PricingPreviewCls> = {}): PricingPr
     kind: 'regular',
     teacherRoomId: 'tr-1',
     entryLive: true,
+    isPrivate: false,
     roomArchived: false,
     description: null,
     currency: 'EUR',

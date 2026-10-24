@@ -68,6 +68,7 @@ interface FormData {
   // Step 3: Policies
   cancelDeadline: string;
   autoCancelCheck: string;
+  isPrivate: boolean;
 }
 
 type CreateClassWire = z.infer<typeof createClassSchema>;
@@ -127,6 +128,7 @@ const INITIAL_FORM: FormData = {
   vatPercent: 0,
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
+  isPrivate: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -702,6 +704,19 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
               </option>
             ))}
           </Select>
+
+          <label className="flex items-center gap-3 min-h-[44px]">
+            <input
+              type="checkbox"
+              checked={form.isPrivate}
+              onChange={(e) => updateField('isPrivate', e.target.checked)}
+              className="w-5 h-5 accent-teal"
+            />
+            <span className="flex flex-col">
+              <span className="text-base text-ink">Private class</span>
+              <span className="type-caption">Not listed on your public page. Anyone with the link can book.</span>
+            </span>
+          </label>
         </div>
       )}
 
@@ -771,6 +786,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <div className="py-2 border-b border-border">
             <span className="type-label">Auto-cancel check</span>
             <p className="text-base text-ink">{formatAutoCancelLabel(form.autoCancelCheck)}</p>
+          </div>
+
+          <div className="py-2 border-b border-border">
+            <span className="type-label">Visibility</span>
+            <p className="text-base text-ink">{form.isPrivate ? 'Private — link only' : 'Listed on your public page'}</p>
           </div>
 
           {submitError && (

@@ -174,6 +174,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         minStudents: body.minStudents,
         maxStudents: body.maxStudents,
         vatPercent: body.vatPercent ?? teacher.defaultVatPercent,
+        isPrivate: body.isPrivate ?? false,
         cancelDeadline: body.cancelDeadline,
         autoCancelCheck: body.autoCancelCheck,
         status: 'draft',

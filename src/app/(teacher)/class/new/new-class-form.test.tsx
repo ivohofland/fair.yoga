@@ -182,7 +182,39 @@ describe('NewClassPage', () => {
       vatPercent: 0,
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
+      isPrivate: false,
     });
+  });
+
+  it('a ticked Private class is reviewed as link-only and sent as isPrivate: true (#910)', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /private class/i }));
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    expect(await screen.findByText('Private — link only')).toBeInTheDocument();
+    const { body } = await submit();
+    expect(body.isPrivate).toBe(true);
+  });
+
+  it('an untouched wizard reviews as listed and sends isPrivate: false (#910)', async () => {
+    stubFetch();
+    render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+    fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+    expect(await screen.findByText('Listed on your public page')).toBeInTheDocument();
+    const { body } = await submit();
+    expect(body.isPrivate).toBe(false);
   });
 
   it('seeds the VAT % from defaultVatPercent, and the pricing labels follow it (#819)', async () => {

@@ -12,6 +12,7 @@ function makeClass(overrides: Partial<Class> = {}): Class {
     kind: 'regular',
     teacherRoomId: 'tr-1',
     entryLive: true,
+    isPrivate: false,
     roomArchived: false,
     description: null,
     currency: 'EUR',
