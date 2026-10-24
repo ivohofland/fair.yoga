@@ -84,10 +84,19 @@ class, a trial for a few people, a class for a workshop group or a company.
 
 ### Teacher UI
 
-- A **Private** switch on the class create form, the class edit form and the
-  template form, with helper text: "Not listed on your public page. Anyone with
-  the link can book." On the edit form it is never disabled by
-  `settingsLocked`.
+- A **Private class** checkbox with helper text: "Not listed on your public
+  page. Anyone with the link can book." It's a native checkbox in the codebase's
+  existing pattern (`edit-room-form.tsx`: `w-5 h-5 accent-teal` in a 44px
+  label row). There is no switch primitive and this adds none. Placement:
+  - **Create wizard** (`new-class-form.tsx`): last field of step 3
+    *Policies*, after Auto-cancel check. It's a rule about who reaches the
+    class, beside the other booking policies. Step 4 *Review* echoes it as a
+    row ("Listed on your public page" / "Private — link only").
+  - **Template form** (`template-form.tsx`): after Auto-cancel check, the
+    same position relative to the same fields.
+  - **Class edit form** (`class-edit-form.tsx`): after the Economics block,
+    before Save. It is never disabled by `settingsLocked`, and it stays in the
+    payload when the form strips the locked keys.
 - **Share link on class detail.** `ShareBookingLink` takes the URL path it
   shares instead of building `/{slug}` itself. The two call sites:
   - Class detail passes `/{slug}/book/{classId}`, with share title "Book
