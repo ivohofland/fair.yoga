@@ -1212,6 +1212,46 @@ describe('generateClassInstances (DB)', () => {
     });
   });
 
+  describe('isPrivate on generated classes (#910)', () => {
+    const from = new Date('2026-04-06T00:00:00.000Z');
+
+    const generatedClasses = () =>
+      prisma.class.findMany({
+        where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } },
+      });
+
+    beforeEach(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    });
+
+    afterEach(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.classTemplate.update({ where: { id: templateId }, data: { isPrivate: false } });
+    });
+
+    it("stamps the template's isPrivate onto every class it generates", async () => {
+      await prisma.classTemplate.update({ where: { id: templateId }, data: { isPrivate: true } });
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+      expect(result.created).toBe(4);
+
+      const generated = await generatedClasses();
+      expect(generated).toHaveLength(4);
+      expect(generated.every((c) => c.isPrivate)).toBe(true);
+    });
+
+    it('a template isPrivate flip leaves already-generated classes as they are (#194)', async () => {
+      const result = await generateInstancesForTemplate(prisma, await freshTemplate(), from);
+      expect(result.created).toBe(4);
+
+      const flipped = await updateClassTemplate(prisma, templateId, teacherId, { isPrivate: true });
+      expect(flipped.ok).toBe(true);
+
+      const after = await generatedClasses();
+      expect(after).toHaveLength(4);
+      expect(after.every((c) => c.isPrivate === false)).toBe(true);
+    });
+  });
+
   describe('roomArchived on generated classes (#339)', () => {
     /**
      * The safe half of the pairing (issue 339): a PAUSED template's `ruleLive`

@@ -661,6 +661,7 @@ calendar-shaped, through this row.
 | **Policies** | | |
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | Student cancellation window |
 | auto_cancel_check | enum: 4h, 2h, 1h | When to check min_students threshold |
+| is_private | boolean, default false | Stamped onto each generated Class; changing it touches no existing class (#194, #910) |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |

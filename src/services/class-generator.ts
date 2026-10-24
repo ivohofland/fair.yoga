@@ -86,6 +86,7 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
         vatPercent: template.vatPercent,
         cancelDeadline: template.cancelDeadline,
         autoCancelCheck: template.autoCancelCheck,
+        isPrivate: template.isPrivate,
         // Inserted inside its own check window, or after its start has passed:
         // the generator is not asking the auto-cancel sweep to judge a class
         // that was never given the chance to fill. Judged and stamped at `at`,
