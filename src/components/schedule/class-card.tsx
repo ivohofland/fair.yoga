@@ -107,6 +107,7 @@ export function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: bool
         caption={
           <p className="type-caption mt-0.5">
             {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+            {cls.isPrivate && ' · Private'}
             <PaymentRollup cls={cls} />
           </p>
         }

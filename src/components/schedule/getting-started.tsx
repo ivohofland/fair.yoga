@@ -29,7 +29,7 @@ export function GettingStarted({ pageSlug, ...input }: GettingStartedProps) {
           Share your booking page so students can find you.
         </p>
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-          <ShareBookingLink pageSlug={pageSlug} />
+          <ShareBookingLink path={`/${pageSlug}`} title="Book a class" />
           <OnboardingSkipButton
             step="share"
             ariaLabel="Dismiss the getting started card"

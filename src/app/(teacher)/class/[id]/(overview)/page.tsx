@@ -17,6 +17,7 @@ import { CheckinGate } from '@/components/class/checkin-gate';
 import type { AttendanceItem, AttendanceStatus } from '@/components/class/attendance-list';
 import type { PaymentItem } from '@/components/class/payment-checklist';
 import { classStartInstant } from '@/lib/timezone';
+import { bookingPath, classShareState } from '@/lib/class-share';
 import { classEndInstant, classPageClock, formatClockInZone } from '@/lib/finish-window';
 import { CancelClassButton } from '@/components/class/cancel-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
@@ -169,6 +170,7 @@ export default async function ClassDetailPage({
     status: cls.status,
     cancelled,
   });
+  const share = classShareState({ status: cls.status, cancelled, start }, new Date(now));
 
   // A draft warns when publishing now would land inside its cancellation
   // window, and refreshes at the instants that warning can change.
@@ -264,9 +266,13 @@ export default async function ClassDetailPage({
           {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
           {!cancelled && (
             <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
-              {cls.status === 'open' && (
-                <ShareBookingLink pageSlug={cls.calendarEntry.teacher.pageSlug} />
+              {share === 'share' && (
+                <ShareBookingLink
+                  path={bookingPath(cls.calendarEntry.teacher.pageSlug, cls.id)}
+                  title={`Book ${cls.calendarEntry.classType}`}
+                />
               )}
+              {share === 'publish_first' && <p className="type-caption">Publish to share the link</p>}
               {activeRegistrations.length > 0 && (
                 <SendAnnouncement classId={cls.id} recipientHint="everyone in this class" />
               )}
