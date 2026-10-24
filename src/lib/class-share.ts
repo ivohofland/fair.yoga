@@ -8,9 +8,8 @@ export function bookingPath(pageSlug: string, classId: string): string {
 export type ClassShareState = 'share' | 'publish_first' | 'none';
 
 /**
- * What the class page offers for sharing its link. The start instant ends
- * it, not the status: an open class stays `open` until the sweep moves it on,
- * and a draft that has started can no longer be published.
+ * Whether a class's booking link is offered for sharing. The start instant
+ * ends it, whatever the status still reads.
  */
 export function classShareState(
   cls: { status: ClassStatus; cancelled: boolean; start: Date },

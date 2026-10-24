@@ -56,9 +56,10 @@ class, a trial for a few people, a class for a workshop group or a company.
 ### Data
 
 - `Class.isPrivate Boolean @default(false)` and
-  `ClassTemplate.isPrivate Boolean @default(false)`, in two migrations, one per
-  family: the `ClassTemplate` partition pin requires its column and its
-  classification to land together. Every
+  `ClassTemplate.isPrivate Boolean @default(false)`, one migration per table,
+  each in the commit that adds the column: `ClassTemplate`'s partition pin
+  fails the build until a new column is classified, so the column and its
+  classification land together. Every
   existing row backfills to `false`, so nothing that is listed today stops
   being listed.
 - Child-side only, not `CalendarEntry` or `ScheduleRule`. The parents hold
@@ -137,7 +138,7 @@ class, a trial for a few people, a class for a workshop group or a company.
   - The `Private` label on `ClassCard`.
   - The template form's notice appears only when the flag changed.
 - **Each guard broken on purpose to prove it fails**, with the error text
-  recorded in the plan:
+  recorded in the PR body:
   - drop the `isPrivate: false` filter;
   - drop the generator stamp;
   - add `isPrivate` to `LOCKED_FIELDS`;
@@ -151,6 +152,6 @@ class, a trial for a few people, a class for a workshop group or a company.
 - In-app "Send to students" (decision 3).
 - The booking page showing a just-started class as bookable for up to one
   sweep interval. The registration POST refuses on the clock
-  (`registrations/route.ts:265-274`, 409 `CLASS_NOT_BOOKABLE`), so nobody is
+  (its start-instant check, 409 `CLASS_NOT_BOOKABLE`), so nobody is
   booked into a started class. That stays as is. The share button above is
   based on the start instant so it doesn't add to the gap.
