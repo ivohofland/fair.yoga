@@ -27,6 +27,10 @@ describe('private classes — public side', () => {
   let publicClassId = '';
   let privateClassId = '';
   let fullPrivateClassId = '';
+  let draftPrivateClassId = '';
+  let otherTeacherId = '';
+  let otherTeacherAccountId = '';
+  const otherSlug = `private-classes-other-${suffix}`;
   let studentId = '';
   let studentAccountId = '';
   let studentToken = '';
@@ -92,6 +96,40 @@ describe('private classes — public side', () => {
     privateClassId = (await make('Private Fixture', 11, true, 10)).id;
     fullPrivateClassId = (await make('Full Private Fixture', 12, true, 1)).id;
     fillerIds = await fillSeats(prisma, fullPrivateClassId, 1, `private-${suffix}`);
+    draftPrivateClassId = (
+      await createClassFixture(prisma, {
+        teacherId,
+        teacherRoomId,
+        classType: 'Draft Private Fixture',
+        date: daysAhead(13),
+        startTime: hhmmToTime('09:00'),
+        durationMinutes: 60,
+        roomCost: 20,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 1,
+        maxStudents: 10,
+        status: 'draft',
+        isPrivate: true,
+      })
+    ).id;
+
+    // A real second teacher, so a wrong slug reaches the page's slug check
+    // rather than stopping at an unknown teacher.
+    const otherEmail = `private-classes-other-${suffix}@test.local`;
+    const other = await prisma.teacher.create({
+      data: {
+        firstName: 'Other',
+        lastName: 'Teacher',
+        email: otherEmail,
+        bio: 'Wrong-slug fixture teacher',
+        pageSlug: otherSlug,
+        account: { create: { email: otherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    otherTeacherId = other.id;
+    otherTeacherAccountId = other.accountId;
 
     const mkStudent = async (tag: string) => {
       const studentEmail = `private-classes-${tag}-${suffix}@test.local`;
@@ -141,6 +179,7 @@ describe('private classes — public side', () => {
     await teardownStudent(prisma, waiterId, waiterAccountId);
     await teardownStudent(prisma, bookedId, bookedAccountId);
     await teardownTeacher(prisma, teacherId, teacherAccountId);
+    await teardownTeacher(prisma, otherTeacherId, otherTeacherAccountId);
     await prisma.$disconnect();
   });
 
@@ -164,6 +203,16 @@ describe('private classes — public side', () => {
     const html = await (await fetch(`${BASE_URL}/${slug}/book/${publicClassId}`, { headers: freshIp() })).text();
     expect(html).not.toMatch(/<meta name="robots" content="noindex/);
     expect(html).not.toContain('Shared by link');
+  });
+
+  it('a private class booked under another teacher\'s slug, or still a draft, is a 404 that names nothing', async () => {
+    for (const path of [`/${otherSlug}/book/${privateClassId}`, `/${slug}/book/${draftPrivateClassId}`]) {
+      const res = await fetch(`${BASE_URL}${path}`, { headers: freshIp() });
+      expect(res.status, path).toBe(404);
+      const html = await res.text();
+      expect(html, path).not.toContain('Shared by link');
+      expect(html, path).not.toContain('Private Fixture');
+    }
   });
 
   it('a student books a private class through POST /api/registrations', async () => {

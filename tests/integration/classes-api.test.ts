@@ -1541,6 +1541,16 @@ describe('PUT /api/classes/[id]', () => {
     expect(after.calendarEntry.date.toISOString().slice(0, 10)).toBe('2099-06-01');
   });
 
+  // `isPrivate` is never locked (#910), but a terminal class still freezes it.
+  it('completed and cancelled classes refuse an isPrivate edit with CLASS_TERMINAL (#910)', async () => {
+    for (const id of [completedClassId, cancelledTerminalClassId]) {
+      const before = await prisma.class.findUniqueOrThrow({ where: { id } });
+      await expectRefusal(await put(ownerToken, id, { isPrivate: !before.isPrivate }), 'CLASS_TERMINAL');
+      const after = await prisma.class.findUniqueOrThrow({ where: { id } });
+      expect(after.isPrivate).toBe(before.isPrivate);
+    }
+  });
+
   // Each freeze's own sentence is pinned in `src/app/api/classes/[id]/route.test.ts`,
   // against the function the route words it with.
   it('cancelled class: the edit is refused with CLASS_TERMINAL and the stored date does not move (#247)', async () => {
