@@ -33,6 +33,9 @@ describe('private classes — public side', () => {
   let waiterId = '';
   let waiterAccountId = '';
   let waiterToken = '';
+  let bookedId = '';
+  let bookedAccountId = '';
+  let bookedToken = '';
   let fillerIds: string[] = [];
 
   beforeAll(async () => {
@@ -114,6 +117,13 @@ describe('private classes — public side', () => {
     waiterId = waiter.id;
     waiterAccountId = waiter.accountId;
     waiterToken = waiter.token;
+    const booked = await mkStudent('booked');
+    bookedId = booked.id;
+    bookedAccountId = booked.accountId;
+    bookedToken = booked.token;
+    await prisma.registration.create({
+      data: { classId: privateClassId, studentId: bookedId, tierAtBooking: 3 },
+    });
 
     // `next dev` compiles each route lazily on its first request.
     await fetch(`${BASE_URL}/${slug}`).catch(() => {});
@@ -129,6 +139,7 @@ describe('private classes — public side', () => {
     for (const id of fillerIds) await teardownStudent(prisma, id);
     await teardownStudent(prisma, studentId, studentAccountId);
     await teardownStudent(prisma, waiterId, waiterAccountId);
+    await teardownStudent(prisma, bookedId, bookedAccountId);
     await teardownTeacher(prisma, teacherId, teacherAccountId);
     await prisma.$disconnect();
   });
@@ -175,8 +186,9 @@ describe('private classes — public side', () => {
 
   it('a booked private class still renders for its student', async () => {
     const res = await fetch(`${BASE_URL}/${slug}/book/${privateClassId}`, {
-      headers: { ...cookie(studentToken), ...freshIp() },
+      headers: { ...cookie(bookedToken), ...freshIp() },
     });
     expect(res.status).toBe(200);
+    expect(await res.text()).toContain('booked for this class');
   });
 });
