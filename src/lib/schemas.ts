@@ -611,6 +611,8 @@ export const updateClassSchema = z.object({
   date: isoDate.optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: durationMinutesField().optional(),
+  // Not economic and never locked (#910); see LOCKED_FIELDS in src/lib/class-fields.ts.
+  isPrivate: z.boolean().optional(),
   // Economic fields — only accepted when settings not locked (enforced by
   // updateClass in src/services/class-lifecycle.ts)
   roomCost: moneyField().optional(),
@@ -619,7 +621,6 @@ export const updateClassSchema = z.object({
   minStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   vatPercent: vatPercentField().optional(),
-  isPrivate: z.boolean().optional(),
 }).strict();
 // Cross-field economics are checked on the merged row by the update service (economicsViolations).
 

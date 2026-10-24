@@ -757,10 +757,10 @@ child, and the reverse does not.
 | **Policies** | | |
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | |
 | auto_cancel_check | enum: 4h, 2h, 1h | |
+| is_private | boolean, default false | Left off the teacher's public page (/[slug]); bookable by direct link. Never locked: not one of `LOCKED_FIELDS` (#910) |
 | **State** | | |
 | status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration; freezes `LOCKED_FIELDS` (`src/lib/class-fields.ts`) |
-| is_private | boolean, default false | Left off the teacher's public page (/[slug]); bookable by direct link. Never locked: not one of `LOCKED_FIELDS` (#910) |
 | spot_broadcast_at | datetime, nullable | When the first-come-first-claimed broadcast last went out for the seat that is currently free (#220) |
 | auto_cancel_decided_at | datetime, nullable | When the auto-cancel decision was made; set means never judged again |
 | teacher_reminder_sent_at | datetime, nullable | Set when the teacher's reminder for this class is claimed, before it is delivered; a failed email leaves it set (at most once) |
