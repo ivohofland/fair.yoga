@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { elementsOf } from '../../../../../../tests/react-tree';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
+import { RefreshAt } from '@/components/class/refresh-at';
 
 const { requireTeacherSession, findUnique, waitlistCount } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),
@@ -88,6 +89,15 @@ describe('ClassDetailPage', () => {
       expect(shares).toHaveLength(1);
       expect(shares[0]?.props).toMatchObject({ path: '/anna/book/c-7', title: 'Book Hatha' });
       expect(captions).toHaveLength(0);
+    });
+
+    it('reloads an open class page at its start, when the share button goes', async () => {
+      requireTeacherSession.mockResolvedValue(session);
+      findUnique.mockResolvedValue(classOn('open', '2099-01-05'));
+      const tree = await ClassDetailPage({ params: Promise.resolve({ id: 'c-7' }) });
+      const refresh = [...elementsOf(tree)].filter((el) => el.type === RefreshAt);
+      expect(refresh).toHaveLength(1);
+      expect((refresh[0]?.props as { instants: string[] }).instants).toContain('2099-01-05T10:00:00.000Z');
     });
 
     it('asks a draft to be published first', async () => {

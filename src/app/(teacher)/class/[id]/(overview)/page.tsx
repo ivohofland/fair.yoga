@@ -182,7 +182,10 @@ export default async function ClassDetailPage({
         autoCancelCheck: cls.autoCancelCheck,
       })
     : null;
-  const pageRefreshInstants = lateInstants ? latePublishRefreshInstants(lateInstants) : refreshInstants;
+  // An open class offers its link until the start, so the page reloads then.
+  const pageRefreshInstants = lateInstants
+    ? latePublishRefreshInstants(lateInstants)
+    : [...refreshInstants, ...(share === 'share' ? [start] : [])];
 
   const stamp = offlineSnapshotStamp(session, new Date(now));
 
@@ -263,7 +266,7 @@ export default async function ClassDetailPage({
             </div>
           )}
 
-          {/* Actions: share while bookable, announce while it has students, cancel while upcoming */}
+          {/* Actions: share the booking link until the class starts, announce while it has students, cancel while upcoming */}
           {!cancelled && (
             <div className="mt-8 pt-6 border-t border-border flex flex-col items-start gap-5">
               {share === 'share' && (
