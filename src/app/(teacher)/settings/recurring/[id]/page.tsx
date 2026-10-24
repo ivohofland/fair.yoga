@@ -53,6 +53,7 @@ export default async function EditTemplatePage({
           vatPercent: template.vatPercent.toNumber(),
           cancelDeadline: template.cancelDeadline,
           autoCancelCheck: template.autoCancelCheck,
+          isPrivate: template.isPrivate,
         }}
       />
 

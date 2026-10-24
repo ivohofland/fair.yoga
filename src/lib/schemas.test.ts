@@ -458,6 +458,7 @@ describe('updateClassTemplateSchema', () => {
       'dayOfWeek',
       'description',
       'durationMinutes',
+      'isPrivate',
       'maxStudents',
       'minRate',
       'minStudents',

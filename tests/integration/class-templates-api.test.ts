@@ -323,6 +323,36 @@ describe('POST /api/class-templates', () => {
     }
   });
 
+  // #910. 18:00 on a weekday of its own per case: no other case in this file
+  // holds 18:00, so none of these can collide with a sibling's slot.
+  it('persists isPrivate on the template and stamps it onto the window, defaulting to false (#910)', async () => {
+    const post = async (body: Record<string, unknown>) => {
+      const res = await fetch(`${BASE_URL}/api/class-templates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+        body: JSON.stringify(body),
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { data: { id: string } }).data.id;
+    };
+    const privateId = await post({ ...templateBody('Private Flow', '18:00', ALT_DAY_1), isPrivate: true });
+    const defaultId = await post(templateBody('Listed Flow', '18:00', ALT_DAY_2));
+
+    const readBack = async (id: string) => ({
+      template: await prisma.classTemplate.findUniqueOrThrow({ where: { id } }),
+      classes: await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } } }),
+    });
+    const priv = await readBack(privateId);
+    expect(priv.template.isPrivate).toBe(true);
+    expect(priv.classes.length).toBeGreaterThan(0);
+    expect(priv.classes.every((c) => c.isPrivate)).toBe(true);
+
+    const listed = await readBack(defaultId);
+    expect(listed.template.isPrivate).toBe(false);
+    expect(listed.classes.length).toBeGreaterThan(0);
+    expect(listed.classes.every((c) => !c.isPrivate)).toBe(true);
+  });
+
   it('a generation failure rolls the whole create back — no template, no instances', async () => {
     const before = await prisma.classTemplate.count({ where: { scheduleRule: { teacherId } } });
 
@@ -1435,6 +1465,26 @@ describe('PUT /api/class-templates/[id]', () => {
         teacherRoomId: c.teacherRoomId,
       })),
     );
+  });
+
+  it('a PUT of isPrivate changes the template and leaves generated classes as they are (#910, #194)', async () => {
+    const id = await createTemplate('Flip Flow', '18:00', ALT_DAY_5);
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } }, orderBy: { id: 'asc' } });
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((c) => c.isPrivate === false)).toBe(true);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ isPrivate: true }),
+    });
+    expect(res.status).toBe(200);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(template.isPrivate).toBe(true);
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } }, orderBy: { id: 'asc' } });
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.every((c) => c.isPrivate === false)).toBe(true);
   });
 
   it('returns 404 for a well-formed id that does not exist', async () => {

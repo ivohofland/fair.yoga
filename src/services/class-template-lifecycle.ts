@@ -153,7 +153,8 @@ type TeacherEditableClassTemplateField =
   | 'maxStudents'
   | 'vatPercent'
   | 'cancelDeadline'
-  | 'autoCancelCheck';
+  | 'autoCancelCheck'
+  | 'isPrivate';
 
 /**
  * Compile-time pin (forward): every field the schema routes to `ClassTemplate`
@@ -1071,6 +1072,7 @@ export async function createClassTemplate(
           vatPercent: input.vatPercent ?? teacher.defaultVatPercent,
           cancelDeadline: input.cancelDeadline,
           autoCancelCheck: input.autoCancelCheck,
+          isPrivate: input.isPrivate ?? false,
         },
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });

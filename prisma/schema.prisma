@@ -596,6 +596,7 @@ model ClassTemplate {
   vatPercent      Decimal         @default(0) @db.Decimal(6, 3)
   cancelDeadline  CancelDeadline  @default(HOURS_24)
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
+  isPrivate       Boolean         @default(false)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

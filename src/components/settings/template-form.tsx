@@ -71,6 +71,7 @@ interface TemplateFormValues {
   vatPercent: number;
   cancelDeadline: CancelDeadline;
   autoCancelCheck: AutoCancelCheck;
+  isPrivate: boolean;
 }
 
 type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
@@ -218,6 +219,7 @@ const INITIAL_VALUES: TemplateFormValues = {
   vatPercent: 0,
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
+  isPrivate: false,
 };
 
 export function TemplateForm(props: TemplateFormProps) {
@@ -238,6 +240,9 @@ export function TemplateForm(props: TemplateFormProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [late, setLate] = useState<LateFirstClass | null>(null);
+  // A saved edit that changed Private leaves the classes already generated as
+  // they were; this is the line that says so.
+  const [privacyChanged, setPrivacyChanged] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
   // The filter below keys off this prop rather than `form.teacherRoomId` so
@@ -317,6 +322,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
+    setPrivacyChanged(false);
   }
 
   function handleRoomChange(teacherRoomId: string) {
@@ -336,6 +342,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
+    setPrivacyChanged(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -384,6 +391,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
+    setPrivacyChanged(false);
 
     try {
       const url = edit
@@ -570,6 +578,8 @@ export function TemplateForm(props: TemplateFormProps) {
         // safe to say about a template whose state we do not know. A cast
         // would hand an unknown string to an exhaustive `switch` that throws
         // on it — an unhandled error where a teacher expects a confirmation.
+        setPrivacyChanged(form.isPrivate !== edit?.initial.isPrivate);
+
         let rawJson: unknown;
         try {
           rawJson = await res.json();
@@ -806,8 +816,22 @@ export function TemplateForm(props: TemplateFormProps) {
         ))}
       </Select>
 
+      <label className="flex items-center gap-3 min-h-[44px]">
+        <input
+          type="checkbox"
+          checked={form.isPrivate}
+          onChange={(e) => update('isPrivate', e.target.checked)}
+          className="w-5 h-5 accent-teal"
+        />
+        <span className="flex flex-col">
+          <span className="text-base text-ink">Private class</span>
+          <span className="type-caption">Not listed on your public page. Anyone with the link can book.</span>
+        </span>
+      </label>
+
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
+      {privacyChanged && <p className="type-caption">Classes already on your schedule keep their own setting.</p>}
       {late && mode === 'create' && <LateFirstClassNotice late={late} when="added" />}
       {/* The response type is the full `LateFirstClass` union, but an edit's
           answer can only be `past_deadline` (`UpdateRuleResult.lateFirstClass`,

@@ -41,6 +41,7 @@ describe('TemplateForm', () => {
     vatPercent: 0,
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
+    isPrivate: false,
   } as const;
 
   function stubFetch() {
@@ -101,6 +102,7 @@ describe('TemplateForm', () => {
     vatPercent: 0,
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
+    isPrivate: false,
   };
 
   /**
@@ -412,7 +414,7 @@ describe('TemplateForm', () => {
     expect(method).toBe('POST');
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
-      'durationMinutes', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
+      'durationMinutes', 'isPrivate', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
       'startTime', 'targetRate', 'teacherRoomId', 'vatPercent',
     ]);
   });
@@ -2136,6 +2138,63 @@ describe('TemplateForm', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /save/i })).toBeEnabled());
       expect(screen.queryByText(/may be added after its cancellation deadline/)).not.toBeInTheDocument();
       expect(await screen.findByText(/^Template updated\./)).toBeInTheDocument();
+    });
+  });
+
+  describe('Private class (#910)', () => {
+    const NOTICE = 'Classes already on your schedule keep their own setting.';
+
+    it('sends isPrivate: true on an edit that ticks Private, and says existing classes keep theirs', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByLabelText(/Private class/));
+      const { body } = await submit();
+      expect(body.isPrivate).toBe(true);
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    });
+
+    it('shows no notice when the edit leaves Private as it loaded', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.change(await screen.findByLabelText(/^Class type/), { target: { value: 'Yin' } });
+      const { body } = await submit();
+      expect(body.classType).toBe('Yin');
+      expect(body.isPrivate).toBe(false);
+      await screen.findByText(/^Template updated\./);
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it('shows no notice when Private is ticked and unticked back to what loaded', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      const box = await screen.findByLabelText(/Private class/);
+      fireEvent.click(box);
+      fireEvent.click(box);
+      await submit();
+      await screen.findByText(/^Template updated\./);
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it('shows the notice when an edit clears Private, which loaded ticked', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, isPrivate: true }} />);
+      fireEvent.click(await screen.findByLabelText(/Private class/));
+      const { body } = await submit();
+      expect(body.isPrivate).toBe(false);
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    });
+
+    it('create sends isPrivate and never shows the notice', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_A } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Yin' } });
+      fireEvent.click(screen.getByLabelText(/Private class/));
+      const { url, method, body } = await submit();
+      expect(url).toBe('/api/class-templates');
+      expect(method).toBe('POST');
+      expect(body.isPrivate).toBe(true);
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
     });
   });
 });
