@@ -68,6 +68,16 @@ describe('ClassCard', () => {
     const link = screen.getByRole('link');
     expect(link.classList.contains('opacity-70')).toBe(true);
   });
+
+  it('says Private in the caption of a private class, and nothing otherwise', () => {
+    const { unmount } = render(
+      <ClassCard cls={{ ...classRow('cls-1', 'open', []), isPrivate: true }} isPast={false} />,
+    );
+    expect(screen.getByText(/· Private$/)).toBeTruthy();
+    unmount();
+    render(<ClassCard cls={classRow('cls-1', 'open', [])} isPast={false} />);
+    expect(screen.queryByText(/Private/)).toBeNull();
+  });
 });
 
 describe('ClassCardSkeleton', () => {

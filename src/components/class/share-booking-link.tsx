@@ -5,20 +5,21 @@ import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 
 interface ShareBookingLinkProps {
-  pageSlug: string;
+  path: string;
+  title: string;
 }
 
-// Shares the teacher's public booking page. Uses the native share sheet
+// Shares a booking page, given as a path on this origin. Uses the native share sheet
 // where available (the one-handed phone case), clipboard otherwise.
-export function ShareBookingLink({ pageSlug }: ShareBookingLinkProps) {
+export function ShareBookingLink({ path, title }: ShareBookingLinkProps) {
   const [copied, setCopied] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState('');
 
   async function handleShare() {
-    const url = `${window.location.origin}/${pageSlug}`;
+    const url = `${window.location.origin}${path}`;
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'Book a class', url });
+        await navigator.share({ title, url });
         return;
         // eslint-disable-next-line no-restricted-syntax -- the share sheet was dismissed or refused; fall through to the clipboard
       } catch {}
