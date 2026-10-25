@@ -34,7 +34,8 @@ named there never runs — confirm it appears in the run's output):
 **#836 describe** (`src/services/class-lifecycle.test.ts`, "the auto-cancel
 decision (#836)"): fake only `Date` in a `beforeEach`, fixed to an instant clear
 of either DST transition (as `class-generator.test.ts` does for its boundary
-test), restore real timers in an `afterEach`. Slot offsets and assertions stay
+test), and have it restore real timers when each test ends, through
+`pinDateClear()`'s `onTestFinished`. Slot offsets and assertions stay
 as they are. Verified before planning: on these paths every `now` is a JS
 `new Date()`; the only database clock reads (`CURRENT_DATE` in
 `20261006130000_currency_frozen_guards`) fire on `UPDATE OF currency`, which no
@@ -77,10 +78,9 @@ fail (`expected { ok: true … } to deeply equal { ok: false, reason:
 UTC on the last Sunday of October.
 
 **Change.** Each of the two tests fakes only `Date`, fixed to an instant clear
-of either DST transition, and restores real timers even when it fails (the
-file's `#836` block uses `beforeEach`/`afterEach`; a per-test
-`onTestFinished(() => vi.useRealTimers())` or `try`/`finally` is equally fine
-— pick what reads best beside these tests). The slot stays "30 minutes ago in
+of either DST transition, and restores real timers even when it fails: both
+tests call the file's shared `pinDateClear()`, as the `#836` block's
+`beforeEach` does. The slot stays "30 minutes ago in
 Amsterdam" and the UTC-misreading precondition stays: the tests still prove
 what #249 pinned. Verify the fixed instant keeps the precondition true (Amsterdam
 ahead of UTC at that instant, so the misread is in the future). On the
@@ -91,8 +91,10 @@ for the publish path (`transitionClass`) the same way it was checked for
 **Prove the guards bite** (record exact output):
 1. Before the change, a per-test `beforeEach` faking `Date` to
    `2026-10-25T00:45:00Z` (one-off, reverted) fails both tests as measured
-   above. A module-top `vi.useFakeTimers` is NOT a valid probe — the `#836`
-   block's `afterEach` restores real timers for everything after it.
+   above. A module-top `vi.useFakeTimers` is NOT a valid probe — the
+   `transitionClass (DB)` describe's `afterEach` calls `vi.useRealTimers()`, and
+   `pinDateClear()` restores real timers when each test ends, so a fake set at
+   module top does not survive into the tests it was meant to reach.
 2. After the change, the same one-off probe → both pass.
 3. Make the zone read hardcode `'UTC'` in the guard each test protects
    (one-off, reverted) → each test fails. This is the #249 regression they

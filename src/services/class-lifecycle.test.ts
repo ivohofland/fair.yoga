@@ -125,7 +125,8 @@ function localWallClockMinutesAgo(minutes: number, timeZone: string) {
  * Fakes only `Date`, at an instant clear of either DST transition of its year,
  * and restores real timers when the calling test ends, passed or failed.
  * Whatever builds a wall-clock slot from the clock needs it: on a real one,
- * the slot is unrepresentable or misread for an hour a year.
+ * the slot is unrepresentable or misread in the repeated hour of an autumn
+ * clock change.
  */
 function pinDateClear() {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -2268,7 +2269,7 @@ describe('updateClass (DB)', () => {
 
     // The slots below are `wallSlotAt` of now plus an offset, and `wallSlotAt`
     // refuses an instant in a repeated wall-clock hour, so a real clock would
-    // fail for an hour a year.
+    // fail in the repeated hour of an autumn clock change.
     beforeEach(pinDateClear);
 
     it('stamps the decision when a reschedule puts the start inside the check window', async () => {
