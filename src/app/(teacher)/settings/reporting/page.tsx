@@ -1,20 +1,14 @@
-import type { Currency, Prisma } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { requireTeacherSession } from '@/lib/session';
 import { teacherCurrency } from '@/lib/teacher-currency.server';
 import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
-import { formatMonthLabel, formatMoneyCents } from '@/lib/format';
-import { teacherEarningsCents } from '@/lib/teacher-earnings';
-import { orZero, totalsByCurrency, type MoneyTotals } from '@/lib/money-totals';
+import { formatMoneyCents } from '@/lib/format';
+import type { MoneyTotals } from '@/lib/money-totals';
+import { buildReport } from '@/lib/reporting';
 
 export const dynamic = 'force-dynamic';
-
-function monthKey(date: Date): string {
-  const d = new Date(date);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth()).padStart(2, '0')}`;
-}
 
 /** One line per currency, right-aligned, where a single figure used to stand. */
 function MoneyLines({ totals, className }: { totals: MoneyTotals; className: string }) {
@@ -54,6 +48,9 @@ export default async function ReportingPage() {
       where: { calendarEntry: { teacherId: session.teacherId }, status: 'completed' },
       select: {
         currency: true,
+        pricingMode: true,
+        donationTotal: true,
+        vatPercent: true,
         totalRevenue: true,
         vatTotal: true,
         roomCost: true,
@@ -95,75 +92,10 @@ export default async function ReportingPage() {
     (s) => classStartInstant(s.calendarEntry, session.defaultTimezone) <= now,
   );
 
-  const toCents = (val: Prisma.Decimal | number | string | null | undefined): number =>
-    Math.round(Number(val ?? 0) * 100);
+  const report = buildReport(completedClasses, completedStudioClasses, currency);
+  const hasDonationClass = completedClasses.some((c) => c.pricingMode === 'donation');
 
-  const classEarningsCents = (c: (typeof completedClasses)[number]) =>
-    teacherEarningsCents({
-      totalCents: toCents(c.totalRevenue),
-      roomCents: toCents(c.roomCost),
-      vatCents: toCents(c.vatTotal),
-    });
-  const studioEarningsCents = (s: (typeof completedStudioClasses)[number]) =>
-    Math.round((toCents(s.hourlyRate) * s.calendarEntry.durationMinutes) / 60);
-
-  // Every figure below is a list of per-currency totals: an amount is never
-  // added to one in another currency (`money-totals.ts`).
-  const classEarnings = completedClasses.map((c) => ({
-    currency: c.currency,
-    amount: classEarningsCents(c) / 100,
-  }));
-  const studioEarnings = completedStudioClasses.map((s) => ({
-    currency: s.currency,
-    amount: studioEarningsCents(s) / 100,
-  }));
-  const totalClassEarnings = orZero(totalsByCurrency(classEarnings, currency), currency);
-  const totalStudioEarnings = orZero(totalsByCurrency(studioEarnings, currency), currency);
-  const totalEarnings = orZero(totalsByCurrency([...classEarnings, ...studioEarnings], currency), currency);
-  const totalRoomCosts = orZero(
-    totalsByCurrency(
-      completedClasses.map((c) => ({ currency: c.currency, amount: toCents(c.roomCost) / 100 })),
-      currency,
-    ),
-    currency,
-  );
-
-  // Accumulate classes, students, and earnings by month key (YYYY-MM)
-  const byMonth = new Map<
-    string,
-    { classes: number; students: number; earnings: { currency: Currency; amount: number }[] }
-  >();
-  for (const c of completedClasses) {
-    const key = monthKey(c.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [] };
-    entry.classes += 1;
-    entry.students += c.totalStudents ?? 0;
-    entry.earnings.push({ currency: c.currency, amount: classEarningsCents(c) / 100 });
-    byMonth.set(key, entry);
-  }
-  for (const s of completedStudioClasses) {
-    const key = monthKey(s.calendarEntry.date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [] };
-    entry.classes += 1;
-    entry.students += s.studentCount ?? 0;
-    entry.earnings.push({ currency: s.currency, amount: studioEarningsCents(s) / 100 });
-    byMonth.set(key, entry);
-  }
-  // Last six calendar months, newest first
-  const months = [...byMonth.entries()]
-    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-    .slice(0, 6)
-    .map(([key, v]) => {
-      const [year, month] = key.split('-');
-      return {
-        label: formatMonthLabel(Number(year), Number(month)),
-        classes: v.classes,
-        students: v.students,
-        earnings: orZero(totalsByCurrency(v.earnings, currency), currency),
-      };
-    });
-
-  const nothingYet = completedClasses.length === 0 && completedStudioClasses.length === 0;
+  const nothingYet = report.classCount === 0;
 
   return (
     <div>
@@ -172,19 +104,19 @@ export default async function ReportingPage() {
       {nothingYet ? (
         <EmptyState
           title="Nothing to report yet"
-          body="Completed classes and what they charged appear here."
+          body="Completed classes and what they earned appear here."
         />
       ) : (
         <>
           <div className="bg-teal-tint rounded-card p-5 text-center">
-            <p className="type-label">Total charged for teaching</p>
-            {totalEarnings.map((t) => (
+            <p className="type-label">Earned from teaching</p>
+            {report.total.map((t) => (
               <p key={t.currency} data-testid="report-total" className="type-number text-[28px] leading-[1.25] mt-1">
                 {formatMoneyCents(t.cents, t.currency)}
               </p>
             ))}
             <p className="type-caption mt-0.5">
-              {completedClasses.length + completedStudioClasses.length} classes · {distinctStudents.length}{' '}
+              {report.classCount} classes · {distinctStudents.length}{' '}
               {distinctStudents.length === 1 ? 'student' : 'students'} reached
             </p>
           </div>
@@ -192,28 +124,39 @@ export default async function ReportingPage() {
           <div className="mt-4">
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Your classes</span>
-              <MoneyLines totals={totalClassEarnings} className="type-number" />
+              <MoneyLines totals={report.tiered} className="type-number" />
             </div>
+            {hasDonationClass && (
+              <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
+                <div>
+                  <span className="type-body">Donation classes</span>
+                  {report.unrecordedDonationCount > 0 && (
+                    <p className="type-caption">{report.unrecordedDonationCount} without a recorded total</p>
+                  )}
+                </div>
+                <MoneyLines totals={report.donation} className="type-number" />
+              </div>
+            )}
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Studio classes</span>
-              <MoneyLines totals={totalStudioEarnings} className="type-number" />
+              <MoneyLines totals={report.studio} className="type-number" />
             </div>
             <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
               <span className="type-body">Room costs paid</span>
-              <MoneyLines totals={totalRoomCosts} className="tabular-nums text-brown" />
+              <MoneyLines totals={report.roomCosts} className="tabular-nums text-brown" />
             </div>
           </div>
 
-          {months.length > 0 && (
+          {report.months.length > 0 && (
             <section className="mt-8">
               <h2 className="type-subtitle mb-1">By month</h2>
               <div className="flex items-center justify-between gap-2 py-2 border-b border-border text-[12px] font-medium text-teal">
                 <span className="flex-1">MONTH</span>
                 <span className="w-20 text-right">CLASSES</span>
                 <span className="w-20 text-right">STUDENTS</span>
-                <span className="w-24 text-right">CHARGED</span>
+                <span className="w-24 text-right">EARNED</span>
               </div>
-              {months.map((m) => (
+              {report.months.map((m) => (
                 <div
                   key={m.label}
                   className="flex items-center justify-between gap-2 min-h-12 py-2 border-b border-border last:border-b-0"
