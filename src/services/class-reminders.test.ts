@@ -21,6 +21,21 @@ import { createPrismaClient } from '@/lib/prisma-client';
 const deliverMock = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/email-lettermint', () => ({ deliverViaLettermint: deliverMock }));
 
+const linkLookup = vi.hoisted(() => ({ failNext: false }));
+vi.mock('./video-link-for-email', async (importActual) => {
+  const actual = await importActual<typeof import('./video-link-for-email')>();
+  return {
+    ...actual,
+    videoLinkForEmail: (...args: Parameters<typeof actual.videoLinkForEmail>) => {
+      if (linkLookup.failNext) {
+        linkLookup.failNext = false;
+        return Promise.reject(new Error('link lookup down'));
+      }
+      return actual.videoLinkForEmail(...args);
+    },
+  };
+});
+
 vi.mock('@/lib/log', () => ({
   log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -530,6 +545,23 @@ describe('processClassReminders (DB)', () => {
       const mail = mailTo(student.email);
       expect(mail.html).toContain(`href="${LINK}"`);
       expect(mail.html).toContain('>Join the class</a>');
+    });
+
+    it('still sends the reminder, without the Join button, when the link lookup fails', async () => {
+      const f = await seed({ classReminder: 'off' }, { online: { videoUrl: LINK } });
+      const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'email' });
+      linkLookup.failNext = true;
+
+      const result = await run(f, MORNING);
+
+      const mail = mailTo(student.email);
+      expect(mail.html).not.toContain(LINK);
+      expect(mail.html).not.toContain('Join the class');
+      expect(result.emailFailures).toBe(0);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ classId: f.classId, recipientId: student.id }),
+        expect.stringContaining('link'),
+      );
     });
 
     it('emails the link the class holds when the reminder goes out', async () => {
