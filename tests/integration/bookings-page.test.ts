@@ -1370,3 +1370,100 @@ describe('GET /bookings (page) — past-class payment breakdown', () => {
     expect(html).not.toContain('€44.70');
   });
 });
+
+/**
+ * #911: an online class's link is a button on a live booking only. With no
+ * link yet the booking says one is coming; a late-cancelled booking, which has
+ * given up its seat, shows neither.
+ */
+describe('GET /bookings (page) — an online class (#911)', () => {
+  const LINK = `https://example.invalid/online-911-bookings-${suffix}`;
+  let teacherId = '';
+  let teacherAccountId = '';
+  let studentId = '';
+  let studentAccountId = '';
+  let studentToken = '';
+  let body = '';
+
+  async function onlineClass(classType: string, videoUrl: string | null, daysAhead: number) {
+    const day = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
+    return createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: null,
+      format: 'online',
+      videoUrl,
+      classType,
+      date: new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate())),
+      startTime: hhmmToTime('18:00'),
+      durationMinutes: 60,
+      roomCost: 0,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open',
+    });
+  }
+
+  beforeAll(async () => {
+    const teacherEmail = `bookings-online-teacher-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Online',
+        lastName: 'Teacher',
+        email: teacherEmail,
+        bio: 'Online bookings fixture',
+        pageSlug: `bookings-online-${suffix}`,
+        defaultTimezone: 'UTC',
+        account: { create: { email: teacherEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    teacherAccountId = teacher.accountId;
+
+    const studentEmail = `bookings-online-student-${suffix}@test.local`;
+    const student = await prisma.student.create({
+      data: {
+        firstName: 'Online',
+        lastName: 'Student',
+        email: studentEmail,
+        claimedAt: new Date(),
+        account: { create: { email: studentEmail } },
+      },
+      select: { id: true, accountId: true },
+    });
+    studentId = student.id;
+    studentAccountId = student.accountId as string;
+    studentToken = await seedSession(prisma, studentAccountId);
+
+    const pending = await onlineClass(`Pending Link ${suffix}`, null, 5);
+    const lateCancelled = await onlineClass(`Late Cancelled ${suffix}`, LINK, 6);
+    await prisma.registration.create({ data: { classId: pending.id, studentId, status: 'registered', tierAtBooking: 3 } });
+    await prisma.registration.create({ data: { classId: lateCancelled.id, studentId, status: 'late_cancel', tierAtBooking: 3 } });
+
+    const res = await fetch(`${BASE_URL}/bookings`, { headers: cookie(studentToken) });
+    expect(res.status).toBe(200);
+    body = await res.text();
+  }, 20_000);
+
+  afterAll(async () => {
+    await prisma.registration.deleteMany({ where: { studentId } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.session.deleteMany({ where: { accountId: { in: [teacherAccountId, studentAccountId] } } });
+    await prisma.student.deleteMany({ where: { id: studentId } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    await prisma.account.deleteMany({ where: { id: { in: [teacherAccountId, studentAccountId] } } });
+  });
+
+  it('says the link is coming when the class has none yet', () => {
+    expect(body).toContain(`Pending Link ${suffix}`);
+    expect(body).toContain('Your teacher will share the video link before class.');
+  });
+
+  it('shows a late-cancelled booking no link', () => {
+    expect(body).toContain(`Late Cancelled ${suffix}`);
+    expect(body).not.toContain(LINK);
+    expect(body).not.toContain('Join the class');
+  });
+});

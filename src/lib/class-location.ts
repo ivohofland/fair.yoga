@@ -16,12 +16,36 @@ export type ClassLocation =
   | { format: 'online'; videoUrl: string | null };
 
 /**
- * A location with no `videoUrl` member at all. Public and pre-booking pages
- * accept only this, so handing them the link is a compile error.
+ * A location that cannot hold the link. Public and pre-booking pages accept
+ * only this. `videoUrl?: never` rather than leaving the member out: structural
+ * typing lets an object with an extra member through, so without it a
+ * `ClassLocation` would be assignable here and its link would ride along.
  */
 export type PublicClassLocation =
   | { format: 'in_person'; room: RoomPlace }
-  | { format: 'online' };
+  | { format: 'online'; videoUrl?: never };
+
+/** The label of the button that opens an online class's link, in the app and in email. */
+export const JOIN_CLASS_LABEL = 'Join the class';
+
+/** What a booked student reads where the link will be, while the class has none. */
+export const VIDEO_LINK_PENDING_COPY = 'Your teacher will share the video link before class.';
+
+/** Appended to a teacher's class reminder for an online class with no link. */
+export const TEACHER_REMINDER_NO_LINK_COPY = ' No video link yet — add one so your students can join.';
+
+/** Whether a class is online and has no link yet. */
+export function isVideoLinkPending(row: { format: ClassFormat; videoUrl: string | null }): boolean {
+  return row.format === 'online' && row.videoUrl === null;
+}
+
+/**
+ * The pending sentence, with its leading space, for a notification body about
+ * a class of this shape; empty unless `isVideoLinkPending`.
+ */
+export function videoLinkPendingSuffix(row: { format: ClassFormat; videoUrl: string | null }): string {
+  return isVideoLinkPending(row) ? ` ${VIDEO_LINK_PENDING_COPY}` : '';
+}
 
 /** The columns `classLocation` reads, from a `Class` or a `ClassTemplate`. */
 export type LocationRow = {

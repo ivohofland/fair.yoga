@@ -118,7 +118,13 @@ describe('processClassReminders (DB)', () => {
       classReminderChannel: ReminderChannel;
       defaultTimezone: string;
     }> = {},
-    classOverrides: Partial<{ status: ClassStatus; cancelledAt: Date; startTime: string }> = {},
+    classOverrides: Partial<{
+      status: ClassStatus;
+      cancelledAt: Date;
+      startTime: string;
+      /** An online class, with this link (or none yet), instead of one in a room. */
+      online: { videoUrl: string | null };
+    }> = {},
   ): Promise<Fixture> {
     const k = n++;
     const teacherEmail = `classrem-teacher-${uniqueSuffix}-${k}@test.local`;
@@ -152,14 +158,16 @@ describe('processClassReminders (DB)', () => {
       data: { teacherId: teacher.id, roomId: room.id, capacityOverride: 15, rentalRate: 30 },
     });
 
+    const place = classOverrides.online === undefined
+      ? { teacherRoomId: teacherRoom.id, roomCost: 20 }
+      : { teacherRoomId: null, format: 'online' as const, videoUrl: classOverrides.online.videoUrl, roomCost: 0 };
     const cls = await createClassFixture(prisma, {
       teacherId: teacher.id,
-      teacherRoomId: teacherRoom.id,
+      ...place,
       classType: 'Flow',
       date: new Date('2099-06-10'),
       startTime: hhmmToTime(classOverrides.startTime ?? '18:00'),
       durationMinutes: 60,
-      roomCost: 20,
       minRate: 15,
       targetRate: 25,
       minStudents: 1,
@@ -505,6 +513,72 @@ describe('processClassReminders (DB)', () => {
     expect(second.teacherReminders).toBe(0);
     expect(await teacherRows(f.teacherId)).toHaveLength(1);
     expect(sendsTo(f.teacherEmail)).toBe(1);
+  });
+
+  describe('an online class (#911)', () => {
+    const LINK = `https://example.invalid/online-911-${uniqueSuffix}`;
+
+    it("emails the student the class's link, and keeps it out of the inbox row", async () => {
+      const f = await seed({ classReminder: 'off' }, { online: { videoUrl: LINK } });
+      const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+
+      await run(f, MORNING);
+
+      const [row] = await studentRows(student.id);
+      expect(row!.body).toBe('Your Flow on Wednesday, 10 Jun at 18:00 with Remy.');
+      expect(row!.title).not.toContain(LINK);
+      const mail = mailTo(student.email);
+      expect(mail.html).toContain(`href="${LINK}"`);
+      expect(mail.html).toContain('>Join the class</a>');
+    });
+
+    it('emails the link the class holds when the reminder goes out', async () => {
+      const f = await seed({ classReminder: 'off' }, { online: { videoUrl: LINK } });
+      const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'email' });
+      const replaced = `${LINK}-replaced`;
+      await prisma.class.update({ where: { id: f.classId }, data: { videoUrl: replaced } });
+
+      await run(f, MORNING);
+
+      expect(mailTo(student.email).html).toContain(`href="${replaced}"`);
+    });
+
+    it('tells the student the link is still to come when the class has none', async () => {
+      const f = await seed({ classReminder: 'off' }, { online: { videoUrl: null } });
+      const { student } = await book(f, { classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' });
+
+      await run(f, MORNING);
+
+      const [row] = await studentRows(student.id);
+      expect(row!.body).toBe(
+        'Your Flow on Wednesday, 10 Jun at 18:00 with Remy. Your teacher will share the video link before class.',
+      );
+      expect(mailTo(student.email).html).not.toContain('Join the class');
+    });
+
+    it('ends the teacher reminder with the no-link sentence when the class has no link', async () => {
+      const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' }, { online: { videoUrl: null } });
+      await book(f, { classReminder: 'off' });
+
+      await run(f, MORNING);
+
+      const [row] = await teacherRows(f.teacherId);
+      expect(row!.body).toBe(
+        'Flow on Wednesday, 10 Jun at 18:00 — 1 registered so far. No video link yet — add one so your students can join.',
+      );
+      expect(mailTo(f.teacherEmail).html).not.toContain('Join the class');
+    });
+
+    it('leaves the teacher reminder as it is when the class has a link, and never emails the teacher the link', async () => {
+      const f = await seed({ classReminder: 'morning_of', classReminderChannel: 'inbox_and_email' }, { online: { videoUrl: LINK } });
+      await book(f, { classReminder: 'off' });
+
+      await run(f, MORNING);
+
+      const [row] = await teacherRows(f.teacherId);
+      expect(row!.body).toBe('Flow on Wednesday, 10 Jun at 18:00 — 1 registered so far.');
+      expect(mailTo(f.teacherEmail).html).not.toContain(LINK);
+    });
   });
 
   it('reminds the teacher once when two sweeps overlap on the same class', async () => {

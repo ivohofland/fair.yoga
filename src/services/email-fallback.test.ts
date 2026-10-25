@@ -1039,3 +1039,138 @@ describe('processEmailFallback (DB)', () => {
     });
   });
 });
+
+/**
+ * #911: the video link reaches a student's email only as the class holds it at
+ * send time, and only while the student holds a live registration on it.
+ */
+describe('processEmailFallback — the video link (DB)', () => {
+  const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const LINK = `https://example.invalid/online-911-${suffix}`;
+  const savedToken = process.env.LETTERMINT_API_TOKEN;
+  const savedDryRun = process.env.EMAIL_DRY_RUN;
+  const studentIds: string[] = [];
+  let teacherId = '';
+  let accountId = '';
+  let classId = '';
+  let k = 0;
+
+  async function student(): Promise<{ id: string; email: string }> {
+    const email = `fallback-vlink-${suffix}-${k++}@test.local`;
+    const s = await prisma.student.create({ data: { firstName: 'Vid', lastName: 'Student', email } });
+    studentIds.push(s.id);
+    return { id: s.id, email };
+  }
+
+  async function sweepOne(recipientId: string, type: 'booking_confirmed' | 'waitlist_promoted' | 'spot_available') {
+    const n = await prisma.notification.create({
+      data: {
+        recipientType: 'student',
+        recipientId,
+        type,
+        title: `Fallback ${type}`,
+        body: 'Body without the link',
+        createdAt: new Date(Date.now() - 45 * 60 * 1000),
+        relatedClassId: classId,
+      },
+    });
+    await processEmailFallback(scopeSweep(prisma, { Notification: { id: { in: [n.id] } } }).db);
+  }
+
+  function mailTo(email: string): { html: string; text: string } {
+    const calls = deliverMock.mock.calls.filter(([args]) => args.to === email);
+    expect(calls).toHaveLength(1);
+    return calls[0]![0] as { html: string; text: string };
+  }
+
+  beforeAll(async () => {
+    process.env.LETTERMINT_API_TOKEN = 'lm_test_dummy';
+    delete process.env.EMAIL_DRY_RUN;
+    const email = `fallback-vlink-teacher-${suffix}@test.local`;
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Vid',
+        lastName: 'Teacher',
+        email,
+        account: { create: { email } },
+        bio: 'Video link fallback',
+        pageSlug: `fallback-vlink-${suffix}`,
+        defaultTimezone: 'UTC',
+      },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId ?? '';
+    const cls = await createClassFixture(prisma, {
+      teacherId,
+      teacherRoomId: null,
+      format: 'online',
+      videoUrl: LINK,
+      classType: 'Online Flow',
+      date: new Date('2099-06-10'),
+      startTime: hhmmToTime('18:00'),
+      durationMinutes: 60,
+      roomCost: 0,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 10,
+      status: 'open',
+    });
+    classId = cls.id;
+  });
+
+  beforeEach(() => {
+    deliverMock.mockReset();
+    deliverMock.mockResolvedValue({ ok: true });
+  });
+
+  afterAll(async () => {
+    if (savedToken === undefined) delete process.env.LETTERMINT_API_TOKEN;
+    else process.env.LETTERMINT_API_TOKEN = savedToken;
+    if (savedDryRun === undefined) delete process.env.EMAIL_DRY_RUN;
+    else process.env.EMAIL_DRY_RUN = savedDryRun;
+    await prisma.notification.deleteMany({ where: { recipientId: { in: studentIds } } });
+    await prisma.waitlistEntry.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.registration.deleteMany({ where: { studentId: { in: studentIds } } });
+    await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    await prisma.student.deleteMany({ where: { id: { in: studentIds } } });
+    await prisma.teacher.deleteMany({ where: { id: teacherId } });
+    if (accountId) await prisma.account.deleteMany({ where: { id: accountId } });
+  });
+
+  it('emails a registered student the class’s current link as a Join the class button', async () => {
+    const s = await student();
+    await prisma.registration.create({ data: { classId, studentId: s.id, status: 'registered', tierAtBooking: 3 } });
+
+    await sweepOne(s.id, 'booking_confirmed');
+
+    const mail = mailTo(s.email);
+    expect(mail.html).toContain(`href="${LINK}"`);
+    expect(mail.html).toContain('>Join the class</a>');
+  });
+
+  it('emails no link to a student who cancelled between the notice and the sweep', async () => {
+    const s = await student();
+    await prisma.registration.create({ data: { classId, studentId: s.id, status: 'cancelled', tierAtBooking: 3 } });
+
+    await sweepOne(s.id, 'booking_confirmed');
+
+    const mail = mailTo(s.email);
+    expect(mail.html).not.toContain(LINK);
+    expect(mail.text).not.toContain(LINK);
+    expect(mail.html).not.toContain('Join the class');
+  });
+
+  it('emails a waitlisted student’s spot_available with no link, and their waitlist_promoted with it once promoted', async () => {
+    const s = await student();
+    await prisma.waitlistEntry.create({ data: { classId, studentId: s.id, position: 1 } });
+
+    await sweepOne(s.id, 'spot_available');
+    expect(mailTo(s.email).html).not.toContain(LINK);
+
+    deliverMock.mockClear();
+    await prisma.registration.create({ data: { classId, studentId: s.id, status: 'registered', tierAtBooking: 3 } });
+    await sweepOne(s.id, 'waitlist_promoted');
+    expect(mailTo(s.email).html).toContain(`href="${LINK}"`);
+  });
+});

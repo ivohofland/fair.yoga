@@ -14,6 +14,7 @@
  * `resolveInvitationOnLink` is never called here: it deletes the block, and a
  * teacher's act must not lift a student's refusal.
  */
+import { VIDEO_LINK_PENDING_COPY } from '@/lib/class-location';
 import type { InvitationStatus, Prisma } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { requireNormalised, type createInvitationSchema } from '@/lib/schemas';
@@ -55,6 +56,8 @@ export interface WalkInNotice {
   readonly teacherName: string;
   readonly classType: string;
   readonly dateLabel: string;
+  /** The class is online with no link yet (`isVideoLinkPending`). */
+  readonly videoLinkPending: boolean;
 }
 
 interface SubjectContact {
@@ -215,7 +218,7 @@ export async function completeWalkIn(
     recipientId: resolved.studentId,
     type: 'walk_in_added',
     title: `You're in ${input.notice.classType}`,
-    body: `${input.notice.teacherName} added you to ${input.notice.classType} on ${input.notice.dateLabel}. Your price is calculated after class.`,
+    body: `${input.notice.teacherName} added you to ${input.notice.classType} on ${input.notice.dateLabel}. Your price is calculated after class.${input.notice.videoLinkPending ? ` ${VIDEO_LINK_PENDING_COPY}` : ''}`,
     relatedClassId: input.classId,
   }]);
 }

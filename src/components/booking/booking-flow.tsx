@@ -10,6 +10,7 @@ import { TIER_INFO, TIER_PROMPT, type IncomeTier } from '@/lib/tiers';
 import { formatMoney } from '@/lib/format';
 import { FREE_CANCEL_GRACE_MINUTES } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
+import type { PublicClassLocation } from '@/lib/class-location';
 import { PricingExplainer } from './pricing-explainer';
 
 interface BookingFlowProps {
@@ -47,6 +48,8 @@ interface BookingFlowProps {
    * whoever claims it first rather than to the head of the queue.
    */
   inClaimWindow: boolean;
+  /** Where the class happens, without its video link, which this page never carries (#911). */
+  location: PublicClassLocation;
 }
 
 type Phase = 'choose' | 'booked' | 'waitlisted';
@@ -65,6 +68,7 @@ export function BookingFlow({
   openPaymentsCount,
   waitlistPosition,
   inClaimWindow,
+  location,
 }: BookingFlowProps) {
   const router = useRouter();
   const [tier, setTier] = useState<IncomeTier | null>(currentTier);
@@ -139,7 +143,11 @@ export function BookingFlow({
     return (
       <div className="py-4">
         <p className="type-subtitle">You&apos;re booked for this class</p>
-        <p className="type-body mt-2">Find it under your bookings.</p>
+        <p className="type-body mt-2">
+          {location.format === 'online'
+            ? 'Find it, and the video link, under your bookings.'
+            : 'Find it under your bookings.'}
+        </p>
         <Link href="/bookings" className="inline-block mt-4 type-label text-teal no-underline">
           Go to your bookings
         </Link>

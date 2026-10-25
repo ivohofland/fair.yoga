@@ -11,7 +11,7 @@
  * drift on where an invitation goes, for either reader.
  */
 
-import type { ClassStatus, NotificationType } from '@/lib/prisma-client';
+import type { ClassFormat, ClassStatus, NotificationType } from '@/lib/prisma-client';
 import { STUDENT_PUSH_GROUP } from './push-policy';
 
 /**
@@ -51,6 +51,44 @@ const WAITLIST_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new Set(
 /** The email button's label for that action. */
 export const STUDENT_BOOKINGS_LABEL = 'Go to your bookings';
 
+/**
+ * Whether a type's email carries an online class's video link (#911), for
+ * every `NotificationType`: the `satisfies` makes a new type a compile error
+ * here until it is classified. A waitlist broadcast is not link-bearing: its
+ * reader holds no seat yet.
+ */
+const CARRIES_VIDEO_LINK = {
+  booking_confirmed: true,
+  booking_cancelled: false,
+  booking_removed: false,
+  class_cancelled: false,
+  payment_received: false,
+  payment_request: false,
+  waitlist_promoted: true,
+  spot_available: false,
+  spot_taken: false,
+  reminder: false,
+  announcement: false,
+  teacher_invitation: false,
+  walk_in_added: true,
+  class_reminder: true,
+  payment_refunded: false,
+  processor_disconnected: false,
+  payment_paid_twice: false,
+  payment_charged_back: false,
+  refund_failed: false,
+} as const satisfies Record<NotificationType, boolean>;
+
+/**
+ * The link-bearing types: their email shows the class's current link to a
+ * student who holds a live registration on it (`videoLinkForEmail`), and
+ * their inbox row about an online class opens `STUDENT_BOOKINGS_PATH`. The
+ * link itself is never written into a notification.
+ */
+export const VIDEO_LINK_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set(
+  (Object.keys(CARRIES_VIDEO_LINK) as NotificationType[]).filter((type) => CARRIES_VIDEO_LINK[type]),
+);
+
 /** The page where a student pays for one class. */
 export function payPagePath(classId: string): string {
   return `/bookings/${classId}/pay`;
@@ -88,6 +126,7 @@ export interface StudentNotificationTarget {
   relatedClass: {
     id: string;
     status: ClassStatus;
+    format: ClassFormat;
     /** The teacher and the cancellation both hang off the entry since #327. */
     calendarEntry: { cancelledAt: Date | null; teacher: { pageSlug: string } };
   } | null;
@@ -112,11 +151,17 @@ export interface StudentNotificationTarget {
  * refuses to render.
  *
  * A payment notification goes to its class's pay page whatever the payment's
- * state; the link does not depend on the payment's status.
+ * state; the link does not depend on the payment's status. A link-bearing
+ * notification about an online class goes to the student's bookings, the
+ * one student page that shows the link.
  */
 export function studentNotificationHref(notification: StudentNotificationTarget): string | null {
   if (notification.type === 'teacher_invitation') return STUDENT_INVITATION_PATH;
   if (WAITLIST_NOTIFICATION_TYPES.has(notification.type)) return STUDENT_BOOKINGS_PATH;
+  // The public booking page never shows the link; the booking does.
+  if (VIDEO_LINK_EMAIL_TYPES.has(notification.type) && notification.relatedClass?.format === 'online') {
+    return STUDENT_BOOKINGS_PATH;
+  }
   if (isPaymentNotification(notification.type)) {
     return notification.relatedClass ? payPagePath(notification.relatedClass.id) : null;
   }

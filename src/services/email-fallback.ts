@@ -27,6 +27,7 @@ import { logDegraded } from '@/lib/degradation';
 import { isPaymentNotification } from '@/lib/notification-links';
 import { payGuidanceForTeacher, teacherPaymentSelect, type PayGuidance } from '@/lib/payment-methods';
 import { configuredMollieMode } from './mollie-deps';
+import { videoLinkForEmail } from './video-link-for-email';
 
 /**
  * What the teacher of the class a student payment notification is about lets
@@ -345,6 +346,7 @@ export async function processEmailFallback(
           {
             ...notification,
             payGuidance: await studentPaymentEmailGuidance(db, notification),
+            videoLink: await videoLinkForEmail(db, notification),
           },
           undefined,
           UNREAD_FALLBACK_FOOTER,

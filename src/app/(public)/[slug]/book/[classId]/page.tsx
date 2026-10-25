@@ -220,6 +220,7 @@ export default async function BookClassPage({
           inClaimWindow={
             getWaitlistWindow(entry, entry.teacher.defaultTimezone) === 'first_come_first_claimed'
           }
+          location={location}
         />
       ) : guestTeacher ? (
         <JoinAsStudent firstName={guestTeacher.firstName} />

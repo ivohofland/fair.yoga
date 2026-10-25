@@ -208,6 +208,7 @@ export async function listNotificationPage(
         select: {
           id: true,
           status: true,
+          format: true,
           calendarEntry: {
             select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
           },

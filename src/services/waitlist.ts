@@ -8,6 +8,7 @@
  * 3. frozen — from start itself, no more promotions
  */
 
+import { videoLinkPendingSuffix } from '@/lib/class-location';
 import { Prisma } from '@/lib/prisma-client';
 import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@/lib/prisma-client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
@@ -768,7 +769,7 @@ export async function promoteNext(
         recipientId: nextEntry.studentId,
         type: 'waitlist_promoted',
         title: 'You are in',
-        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. ${cancelTerms}`,
+        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. ${cancelTerms}${videoLinkPendingSuffix(cls)}`,
         relatedClassId: classId,
       },
       ...(await teacherBookingNotice(tx, {
@@ -892,7 +893,7 @@ export async function claimSpot(
         recipientId: studentId,
         type: 'booking_confirmed',
         title: 'Spot claimed',
-        body: `You claimed the open spot in ${cls.calendarEntry.classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.`,
+        body: `You claimed the open spot in ${cls.calendarEntry.classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.${videoLinkPendingSuffix(cls)}`,
         relatedClassId: classId,
       },
       ...(await teacherBookingNotice(tx, {

@@ -321,6 +321,56 @@ describe('email templates', () => {
     expect(html).toContain('Sign in');
   });
 
+  describe('the video link (#911)', () => {
+    const LINK = 'https://example.invalid/online-911-room?pwd=a&b=1';
+
+    it('renders a Join the class button whose href is exactly the external link, not prefixed with the base URL', () => {
+      const { html, text } = renderNotificationEmail(
+        { type: 'booking_confirmed', title: 'Booking confirmed', body: 'b', recipientType: 'student', videoLink: LINK },
+        'https://example.test',
+      );
+      expect(html).toContain(`href="${escapeHtml(LINK)}"`);
+      expect(html).toContain('>Join the class</a>');
+      expect(html).not.toContain(`https://example.test${LINK}`);
+      expect(text).toContain(`Join the class: ${LINK}`);
+    });
+
+    it('keeps the type’s own action beside the link', () => {
+      const { html } = renderNotificationEmail(
+        { type: 'walk_in_added', title: 't', body: 'b', recipientType: 'student', videoLink: LINK },
+        'https://example.test',
+      );
+      expect(html).toContain(`href="${escapeHtml(LINK)}"`);
+      expect(html).toContain('href="https://example.test/login"');
+    });
+
+    it('renders no Join the class button when there is no link', () => {
+      for (const videoLink of [null, undefined]) {
+        const { html, text } = renderNotificationEmail(
+          { type: 'class_reminder', title: 'Class reminder', body: 'b', recipientType: 'student', videoLink },
+          'https://example.test',
+        );
+        expect(html).not.toContain('Join the class');
+        expect(text).not.toContain('Join the class');
+      }
+    });
+
+    it('renders no link for a type that does not carry one, or for a teacher reader', () => {
+      const broadcast = renderNotificationEmail(
+        { type: 'spot_available', title: 't', body: 'b', recipientType: 'student', videoLink: LINK },
+        'https://example.test',
+      );
+      const teacher = renderNotificationEmail(
+        { type: 'class_reminder', title: 't', body: 'b', recipientType: 'teacher', videoLink: LINK },
+        'https://example.test',
+      );
+      for (const { html, text } of [broadcast, teacher]) {
+        expect(html).not.toContain('example.invalid');
+        expect(text).not.toContain('example.invalid');
+      }
+    });
+  });
+
   it('magic-link email carries the link and the expiry note', () => {
     const { html } = renderMagicLinkEmail('https://example.test/verify?token=abc', SUMMER_EXPIRY, 'Europe/Amsterdam');
     expect(html).toContain('https://example.test/verify?token=abc');

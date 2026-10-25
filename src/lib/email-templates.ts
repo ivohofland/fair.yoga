@@ -19,9 +19,11 @@ import {
   TEACHER_MOLLIE_PATH,
   TEACHER_INVITATION_PATH,
   PAY_NOW_LABEL,
+  VIDEO_LINK_EMAIL_TYPES,
   isPaymentNotification,
   payPagePath,
 } from './notification-links';
+import { JOIN_CLASS_LABEL } from './class-location';
 import { logDegraded } from './degradation';
 import { isValidTimeZone } from './iana-timezone';
 
@@ -227,6 +229,13 @@ export interface NotificationEmailInput {
    * button only when this is `'methods'`.
    */
   payGuidance?: PayGuidance;
+  /**
+   * The class's video link as it stands at send time (`videoLinkForEmail`),
+   * for a student who holds a live registration on it. Rendered as the
+   * external href of a Join the class button, and only for a student reader
+   * of a link-bearing type.
+   */
+  videoLink?: string | null;
 }
 
 /**
@@ -281,6 +290,14 @@ export function renderNotificationEmail(
     { kind: 'paragraph', tone: 'intro', lines: [intro] },
     { kind: 'paragraph', lines: [notification.body] },
   ];
+  if (
+    notification.videoLink
+    && notification.recipientType !== 'teacher'
+    && VIDEO_LINK_EMAIL_TYPES.has(notification.type)
+  ) {
+    // The link is off-site: its href is used as it is, not under `baseUrl`.
+    blocks.push({ kind: 'button', label: JOIN_CLASS_LABEL, href: notification.videoLink });
+  }
   if (action) blocks.push({ kind: 'button', label: action.label, href: `${baseUrl}${action.path}` });
   return { subject: notification.title, ...wrapEmail(notification.title, blocks, footer, unsubscribeUrl) };
 }
