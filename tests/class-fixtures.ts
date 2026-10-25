@@ -1,4 +1,5 @@
 import type { CalendarEntry, Class, Currency, Prisma, PrismaClient, StudioClass } from '@/lib/prisma-client';
+import { readClassStart } from '@/lib/class-start';
 import { hhmmToTime } from '@/lib/time-of-day';
 
 /**
@@ -252,6 +253,11 @@ export function slotTime(totalMinutesFrom9am: number): string {
  * The `(date, startTime)` pair whose `classStartInstant` in `timeZone` is
  * `instant`, truncated to the minute. For a fixture that has to sit at a
  * given distance from now: a finish-window test cannot use a far-future date.
+ *
+ * Throws when the pair does not read back as `instant`. That is the earlier of
+ * a repeated wall-clock hour: `readClassStart` resolves the pair to the later,
+ * so no `(date, startTime)` can name the earlier, and returning the pair would
+ * hand the caller a class an hour away from the one it asked for.
  */
 export function wallSlotAt(instant: Date, timeZone: string): { date: Date; startTime: Date } {
   const parts = Object.fromEntries(
@@ -263,8 +269,17 @@ export function wallSlotAt(instant: Date, timeZone: string): { date: Date; start
       .formatToParts(instant)
       .map((p) => [p.type, p.value]),
   );
-  return {
+  const slot = {
     date: new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00Z`),
     startTime: hhmmToTime(`${parts.hour}:${parts.minute}`),
   };
+  const wanted = Math.floor(instant.getTime() / 60_000) * 60_000;
+  const read = readClassStart(slot, timeZone);
+  if (read.fault !== null || read.instant.getTime() !== wanted) {
+    throw new Error(
+      `wallSlotAt: ${instant.toISOString()} in ${timeZone} is the slot ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}, ` +
+        `which reads back as ${read.instant.toISOString()}${read.fault === null ? '' : ` (${read.fault} fault)`}`,
+    );
+  }
+  return slot;
 }

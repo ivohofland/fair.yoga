@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { type PrismaClient, ClassStatus, type Currency } from '@/lib/prisma-client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
@@ -2250,6 +2250,18 @@ describe('updateClass (DB)', () => {
 
   describe('the auto-cancel decision (#836)', () => {
     const MINUTE = 60_000;
+
+    // A fixed instant clear of either DST transition of its year: the slots
+    // below are `wallSlotAt` of now plus an offset, and `wallSlotAt` refuses
+    // an instant in a repeated wall-clock hour, so a real clock would fail
+    // for an hour a year. Only `Date` is faked; the decision reads no other clock.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2037-06-10T10:00:00.000Z'));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
     it('stamps the decision when a reschedule puts the start inside the check window', async () => {
       const cls = await makeClass(false, 'open');
