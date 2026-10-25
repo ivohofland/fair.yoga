@@ -1802,11 +1802,13 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
   }
 
   describe('a donation class corrected to attended after completion (#912)', () => {
-    // A completed class keeps its slot (see `makeAttendanceClass`), so each
-    // call starts at a random minute in the past, where check-in is open and
-    // a rerun is unlikely to land on a slot a previous run left taken.
+    // Two completed classes in one run keep their slots (see
+    // `makeAttendanceClass`), so each takes its own fixed past start, where
+    // check-in is open.
+    let donationClassCounter = 0;
     async function completedDonationClass() {
-      const minutesUntilStart = -(30 + Math.floor(Math.random() * 1300));
+      donationClassCounter += 1;
+      const minutesUntilStart = -(30 + 10 * donationClassCounter);
       const classId = await makeAttendanceClass(4, 'in_progress', minutesUntilStart);
       await prisma.class.update({
         where: { id: classId },
@@ -1838,6 +1840,39 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
         status: 'attended',
       });
       expect(await invitations(classId)).toBe(1);
+    });
+
+    it('an attended PUT on a completed tiered class neither invites nor waits on the class lock (#912)', async () => {
+      const classId = await makeAttendanceClass(4, 'in_progress', -(30 + 10 * 5));
+      onTestFinished(async () => {
+        await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+      });
+      const reg = await prisma.registration.create({
+        data: { classId, studentId: studentIds[0]!, status: 'no_show', tierAtBooking: 3 },
+      });
+      expect((await completeClass(prisma, classId, { sweepAt: new Date('2099-01-01T00:00:00Z') })).ok).toBe(true);
+
+      let releaseHolder = false;
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
+          while (!releaseHolder) await new Promise((r) => setTimeout(r, 25));
+        },
+        { timeout: 10_000 },
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      try {
+        // Answered while the class row is held: the claim's lock path is not taken.
+        expect(await expectApplied(await putStatus(attendanceToken, reg.id, 'attended'))).toEqual({
+          id: reg.id,
+          status: 'attended',
+        });
+      } finally {
+        releaseHolder = true;
+        await holder;
+      }
+      expect(await invitations(classId)).toBe(0);
+      expect((await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } })).donationInvitedAt).toBeNull();
     });
 
     it('a retry after a failed claim invites and answers applied, not unchanged (#912, Review Focus 1)', async () => {

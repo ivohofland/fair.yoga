@@ -1,5 +1,5 @@
 import { NextRequest, type NextResponse } from 'next/server';
-import type { RegistrationStatus } from '@/lib/prisma-client';
+import type { PricingMode, RegistrationStatus } from '@/lib/prisma-client';
 import { lockClassRow } from '@/lib/db-locks';
 import { prisma } from '@/lib/db';
 import {
@@ -25,6 +25,17 @@ import { CHECKIN_OPENS_MINUTES, checkinOpensAt } from '@/lib/finish-window';
 import { claimCorrectionInvitation } from '@/services/donations';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 import type { AttendanceBody } from '@/lib/api-types';
+
+/**
+ * Whether a correction to `attended` can ever invite, by pricing mode. Read
+ * before any lock: `pricingMode` is locked once the class is booked, and this
+ * registration exists. A pre-check on class STATUS would not be safe — it
+ * reopens the race with an uncommitted completion that the claim's lock closes.
+ */
+const MODE_CAN_INVITE = {
+  tiered: false,
+  donation: true,
+} as const satisfies Record<PricingMode, boolean>;
 
 /** A DELETE's response body, applied or unchanged. */
 type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
@@ -113,6 +124,7 @@ export const PUT = withErrorHandler(async (
     include: {
       class: {
         select: {
+          pricingMode: true,
           calendarEntry: {
             select: {
               teacherId: true,
@@ -203,6 +215,7 @@ export const PUT = withErrorHandler(async (
   // `registered -> late_cancel` (or the two-step via `attended`) would charge
   // a student who never cancelled.
   const requested = parsed.data.status;
+  const invitesOnAttended = requested === 'attended' && MODE_CAN_INVITE[registration.class.pricingMode];
   const updated = await prisma.registration.updateMany({
     where: {
       id,
@@ -245,7 +258,7 @@ export const PUT = withErrorHandler(async (
     if (current.status === requested) {
       // A retry after a claim that failed: the status holds, the invitation
       // may not. Inviting now is a change, so it is not "unchanged".
-      if (requested === 'attended' && (await claimCorrectionInvitation(prisma, id)) === 'invited') {
+      if (invitesOnAttended && (await claimCorrectionInvitation(prisma, id)) === 'invited') {
         return respondTyped<AttendanceBody>({ id, status: requested });
       }
       return respondUnchanged<AttendanceBody>({ id, status: requested });
@@ -287,7 +300,7 @@ export const PUT = withErrorHandler(async (
     }
   }
 
-  if (requested === 'attended') await claimCorrectionInvitation(prisma, id);
+  if (invitesOnAttended) await claimCorrectionInvitation(prisma, id);
 
   return respondTyped<AttendanceBody>({ id, status: requested });
 });
