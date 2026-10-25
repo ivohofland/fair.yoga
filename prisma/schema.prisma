@@ -144,6 +144,7 @@ enum NotificationType {
   refund_failed
   payment_refunded
   video_link_updated
+  donation_invitation
 }
 
 enum InvitationStatus {

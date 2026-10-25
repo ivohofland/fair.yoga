@@ -195,6 +195,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | site (file, function) | level | verdict | code or reason |
 |---|---|---|---|
 | `src/lib/email-templates.ts` (`studentAction`) | warn | degradation | `PAYMENT_NOTIFICATION_WITHOUT_CLASS` |
+| `src/lib/email-templates.ts` (`studentAction`) | warn | degradation | `DONATION_INVITATION_WITHOUT_CLASS` |
 | `src/lib/entry-conflict.ts` (`probeConflictingEntry`) | error | degradation | `ENTRY_CONFLICT_KIND_UNKNOWN` |
 | `src/lib/finish-window.ts` (`formatClockInZone`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
 | `src/lib/pay-page.server.ts` (`markedPaidLine`) | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
@@ -668,6 +669,32 @@ among the student's registrations. If it still exists, set `relatedClassId`
 to its id. If it is gone, what deleted it is the bug — no code path deletes a
 class with payments — and the student needs telling that the request no
 longer stands.
+
+### `DONATION_INVITATION_WITHOUT_CLASS`
+
+**What happened.** The email fallback rendered a student's `donation_invitation`
+notification whose `relatedClassId` is null. Every writer of one sets it, and
+`Notification.relatedClassId` goes null only when its class row is deleted
+(`onDelete: SetNull`). The email went out without a How to give button.
+
+**Where the bad value lives.** `Notification.relatedClassId` on the sample's
+`notificationId`. The invitation names a class that no longer exists, so
+there is no give page to send the student to.
+
+**Confirm.**
+
+```sql
+SELECT id, "recipientId", type, title, body, "createdAt"
+  FROM "Notification" WHERE id = '<notificationId>';
+SELECT id, "createdAt" FROM "Notification"
+ WHERE "recipientType" = 'student' AND type = 'donation_invitation'
+   AND "relatedClassId" IS NULL;
+```
+
+**Correct.** The body names the class type; the student's registrations show
+which class it was. If the class still exists, set `relatedClassId` to its
+id. If it is gone, what deleted it is the bug, and the invitation has
+nothing left to point at; the row can be deleted.
 
 ### `PAYMENT_PAID_WITHOUT_TIMESTAMP`
 

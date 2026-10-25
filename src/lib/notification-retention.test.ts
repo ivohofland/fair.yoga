@@ -19,6 +19,10 @@ describe('NOTIFICATION_RETENTION_DAYS', () => {
     expect(NOTIFICATION_RETENTION_DAYS.spot_available).toBe(SHORT_RETENTION_DAYS);
   });
 
+  it('keeps donation_invitation for 30 days (#912)', () => {
+    expect(NOTIFICATION_RETENTION_DAYS.donation_invitation).toBe(30);
+  });
+
   it('keeps waitlist_promoted for the full period', () => {
     expect(NOTIFICATION_RETENTION_DAYS.waitlist_promoted).toBe(STANDARD_RETENTION_DAYS);
   });

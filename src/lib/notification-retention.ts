@@ -41,4 +41,6 @@ export const NOTIFICATION_RETENTION_DAYS = {
   refund_failed: STANDARD_RETENTION_DAYS,
   payment_refunded: STANDARD_RETENTION_DAYS,
   video_link_updated: STANDARD_RETENTION_DAYS,
+  // The giving prompt hides itself on the same day.
+  donation_invitation: SHORT_RETENTION_DAYS,
 } as const satisfies Record<NotificationType, RetentionDays>;

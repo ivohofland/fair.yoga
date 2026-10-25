@@ -22,6 +22,7 @@ import { isExclusionConflictOn } from '@/lib/exclusion-conflict';
 import { isCheckViolationOn } from '@/lib/check-violation';
 import { billAtLeastMinimum } from '@/lib/tier-estimates';
 import { CHARGED_STATUSES } from '@/lib/registration-status';
+import { claimCompletionInvitations, donationCompletionNotice, donationInvitation } from './donations';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
 import { notifyVideoLinkChanged } from './video-link-notice';
 import { closeQueueOnStart } from './waitlist';
@@ -736,7 +737,9 @@ function completionClock(
 
 /**
  * Complete a class: validate transition, calculate pricing, update
- * registrations with prices, and create pending payments.
+ * registrations with prices, and create pending payments. A donation class
+ * (#912) is completed without pricing or payments: it stamps and invites the
+ * bookings that came instead.
  *
  * Wrapped in a transaction so that all DB mutations (class status,
  * registration prices, payment creation) succeed or fail atomically.
@@ -834,6 +837,31 @@ export async function completeClass(
     const chargedRegistrations = cls.registrations.filter((r) =>
       CHARGED_STATUSES.includes(r.status),
     );
+
+    switch (cls.pricingMode) {
+      case 'donation': {
+        // #912. No pricing engine, no Payment, no price write. The snapshot
+        // columns stay null, which `Class_vat_total_snapshot_check` allows.
+        await tx.class.update({
+          where: { id: classId },
+          data: { status: 'completed', totalStudents: chargedRegistrations.length },
+        });
+        // An erasure finishing the class asks nobody to give to an erased teacher.
+        const invited =
+          timing.finishedEarly === true ? [] : await claimCompletionInvitations(tx, classId, new Date());
+        await createBulkNotifications(tx, [
+          ...invited.map((r) => donationInvitation(r.studentId, cls)),
+          donationCompletionNotice(cls, invited.length),
+        ]);
+        return { ok: true, newStatus: 'completed' as ClassStatus };
+      }
+      case 'tiered':
+        break;
+      default: {
+        const unhandled: never = cls.pricingMode;
+        throw new Error(`completeClass: unhandled pricing mode ${String(unhandled)}`);
+      }
+    }
 
     if (chargedRegistrations.length === 0) {
       await tx.class.update({
@@ -1034,7 +1062,6 @@ void _entryUpdateFieldsAreSent;
  *                            list against BOTH tables' inputs
  *   - the financial totals → written only by `completeClass`, and
  *                            `donationTotal` only by `recordDonationTotal`
- *                            (`services/donations.ts`)
  * — because the compiler will not. For the columns above, the forbidden pin
  * below refuses the grant outright; for anything else, the judgement is yours.
  */

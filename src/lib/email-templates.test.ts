@@ -221,6 +221,29 @@ describe('email templates', () => {
     expect(html).not.toContain('href=');
   });
 
+  it('gives a student donation invitation the give page, never the pay page (#912)', () => {
+    const { text } = renderNotificationEmail(
+      { type: 'donation_invitation', title: 'Thank you for coming', body: 'Thank you.', recipientType: 'student', relatedClassId: 'c1' },
+      'https://example.test',
+    );
+    expect(text).toContain('/bookings/c1/give');
+    expect(text).not.toContain('/pay');
+  });
+
+  it('records a donation invitation without a class as DONATION_INVITATION_WITHOUT_CLASS (#912)', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const { html } = renderNotificationEmail(
+      { id: 'note-9', type: 'donation_invitation', title: 'T', body: 'B', recipientType: 'student', relatedClassId: null },
+      'https://example.test',
+    );
+    expect(html).not.toContain('href=');
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'DONATION_INVITATION_WITHOUT_CLASS', notificationId: 'note-9' }),
+      'donation invitation has no related class; emailed without a How to give button',
+    );
+    vi.restoreAllMocks();
+  });
+
   describe('a payment notification without a class', () => {
     afterEach(() => {
       vi.restoreAllMocks();

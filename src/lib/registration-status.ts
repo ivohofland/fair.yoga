@@ -101,5 +101,23 @@ export const CHARGED_STATUSES: readonly RegistrationStatus[] = Object.freeze([
   'late_cancel',
 ]);
 
+/**
+ * Whether a booking in this status came to the class, as a donation class's
+ * invitation counts it (#912): an unmarked booking counts as present.
+ * Exhaustive over the enum, so a new status is a compile error until decided.
+ */
+const CAME_TO_CLASS: Record<RegistrationStatus, boolean> = {
+  registered: true,
+  attended: true,
+  no_show: false,
+  late_cancel: false,
+  cancelled: false,
+};
+
+/** The statuses a donation class invites to give. Derived from `CAME_TO_CLASS`. */
+export const DONATION_INVITED_STATUSES: readonly RegistrationStatus[] = Object.freeze(
+  (Object.keys(CAME_TO_CLASS) as RegistrationStatus[]).filter((status) => CAME_TO_CLASS[status]),
+);
+
 /** A registration the attendance list can show: every status but `cancelled`. */
 export type AttendanceStatus = Exclude<RegistrationStatus, 'cancelled'>;

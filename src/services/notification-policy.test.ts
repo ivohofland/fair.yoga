@@ -138,6 +138,11 @@ describe('shouldEmailStudent', () => {
     expect(shouldEmailStudent('class_cancelled', false)).toBe(true);
   });
 
+  it('a donation invitation is optional: an opted-out student is not emailed (#912)', () => {
+    expect(shouldEmailStudent('donation_invitation', false)).toBe(false);
+    expect(shouldEmailStudent('donation_invitation', true)).toBe(true);
+  });
+
   it('optional types honor the opt-out', () => {
     expect(shouldEmailStudent('announcement', false)).toBe(false);
     expect(shouldEmailStudent('announcement', true)).toBe(true);
