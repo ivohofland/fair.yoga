@@ -624,6 +624,7 @@ Against each, the class its notifications carry:
 | `completeWalkIn` (`walk-ins.ts`) | one — the class being walked into, under the `lockClassRow` `POST /api/registrations` already holds |
 | `POST /api/announcements` | at most one — the class of a class-scoped send; an all-students or custom send names none (#196, #48) |
 | `POST /api/classes/[id]/cancel` | one — the class being cancelled, under `lockClassRow` (#327) |
+| `notifyVideoLinkChanged` (`video-link-notice.ts`) | one — the class `updateClass` is editing, under its `lockClassRow` (#911) |
 | `archiveOrUnarchiveTemplate` (`class-template-lifecycle.ts`) | **many** — every class the archive withdrew (#112) |
 | `resumePayments` (`payout-resume.ts`) | **many** — one reminder per outstanding payment its student has not marked sent, each carrying its completed class as `relatedClassId`, in ascending class id (the payment read's `orderBy`) |
 

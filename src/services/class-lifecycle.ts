@@ -23,6 +23,7 @@ import { isCheckViolationOn } from '@/lib/check-violation';
 import { billAtLeastMinimum } from '@/lib/tier-estimates';
 import { CHARGED_STATUSES } from '@/lib/registration-status';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
+import { notifyVideoLinkChanged } from './video-link-notice';
 import { closeQueueOnStart } from './waitlist';
 import { classStartInstant, startsInPast, isBeforeOpening, isoOrNull } from '@/lib/timezone';
 import {
@@ -1805,7 +1806,12 @@ export async function updateClass(
       // argument holding. Every other refusal in this transaction rolls back;
       // this one used to commit two writes and then report the row missing.
       if (!updated) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
-      return { ok: true, cls: updated, previousVideoUrl: previousVideoUrl === undefined ? updated.videoUrl : previousVideoUrl };
+      const previous = previousVideoUrl === undefined ? updated.videoUrl : previousVideoUrl;
+      // #911. In this transaction, so the booked students' notice commits or
+      // rolls back with the edit. Its inserts take `FOR KEY SHARE` on this
+      // class, a row the lock above already holds.
+      await notifyVideoLinkChanged(tx, { classId, previous, next: updated.videoUrl });
+      return { ok: true, cls: updated, previousVideoUrl: previous };
     });
   } catch (err) {
     if (err instanceof UpdateClassRefusal) return err.result;

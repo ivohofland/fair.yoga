@@ -1,4 +1,3 @@
-import { notifyVideoLinkChanged } from '@/services/video-link-notice';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/db';
 import {
@@ -95,17 +94,6 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateClass(prisma, id, data);
   if (result.ok) {
-    // The edit is committed, so a failed notice is logged and the teacher's
-    // answer is unchanged.
-    try {
-      await notifyVideoLinkChanged(prisma, {
-        classId: id,
-        previous: result.previousVideoUrl,
-        next: result.cls.videoUrl,
-      });
-    } catch (err) {
-      log.error({ err, classId: id }, 'video link notice failed after the edit committed');
-    }
     const { calendarEntry, ...updated } = result.cls;
     return respondOk({
       ...updated,
