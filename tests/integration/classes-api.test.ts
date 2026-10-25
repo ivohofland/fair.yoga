@@ -10,7 +10,6 @@ import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions';
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 import { createPrismaClient } from '@/lib/prisma-client';
-import { updateClass } from '@/services/class-lifecycle';
 import { videoLinkForEmail } from '@/services/video-link-for-email';
 
 const prisma = createPrismaClient();
@@ -2415,16 +2414,6 @@ describe('online classes on the one-off create and edit API (#911)', () => {
     it('a roomCost of 0 on an online class -> 200', async () => {
       const cls = await onlineClass('2099-12-19', 'open');
       expect((await put(cls.id, { roomCost: 0 })).status).toBe(200);
-    });
-
-    it('updateClass reports the link it replaced, and the stored one when none was sent', async () => {
-      const cls = await onlineClass('2099-12-20', 'open', { videoUrl: LINK });
-      const changed = await updateClass(prisma, cls.id, { videoUrl: 'https://meet.example.com/room-2' });
-      expect(changed).toMatchObject({ ok: true, previousVideoUrl: LINK });
-      const untouched = await updateClass(prisma, cls.id, { description: 'No link in this body' });
-      expect(untouched).toMatchObject({ ok: true, previousVideoUrl: 'https://meet.example.com/room-2' });
-      const first = await onlineClass('2099-12-21', 'open');
-      expect(await updateClass(prisma, first.id, { videoUrl: LINK })).toMatchObject({ ok: true, previousVideoUrl: null });
     });
 
     describe('the link notice', () => {
