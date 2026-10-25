@@ -206,6 +206,10 @@ void _templateAllowlistHasNoStaleFields;
  *                        maintains it, and the composite key refuses a row
  *                        that claims a value its rule does not hold. It is on
  *                        this list so a plain edit cannot start.
+ *   - `format`, `videoUrl` → the online shape (#911). No wire field routes
+ *                        either here, and a format change must move
+ *                        `teacherRoomId`, `roomCost` and `videoUrl` with it
+ *                        or `ClassTemplate_format_shape` refuses the row.
  *
  * `teacherId`, `isActive`, `isArchived`, `archivedAt` and `withdrawnCount`
  * left this model for `ScheduleRule` in issue 298 — see
@@ -225,6 +229,8 @@ type PlainUpdateForbiddenTemplateField =
   | 'kind'
   | 'roomArchived'
   | 'ruleLive'
+  | 'format'
+  | 'videoUrl'
   | 'createdAt'
   | 'updatedAt';
 

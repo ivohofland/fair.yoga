@@ -39,6 +39,7 @@ import { payGuidanceForTeacher, teacherPaymentSelect } from '@/lib/payment-metho
 import { configuredMollieMode } from './mollie-deps';
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { log } from '@/lib/log';
+import { classLocation, classLocationSelect, type ClassLocation } from '@/lib/class-location';
 import { redecideAfterMove, stampIfPastCancelCheck } from './auto-cancel-decision';
 
 export { ECONOMIC_FIELDS, LOCKED_FIELDS, type EconomicField, type LockedField };
@@ -317,7 +318,7 @@ export type TransitionDbResult<
 /**
  * The one sentence a teacher reads for `ROOM_ARCHIVED`, whichever of
  * `transitionClass`'s two doors answers it: the pre-check's read of
- * `teacherRoom.isArchived` before the transaction opens, or the catch around
+ * the room's `isArchived` before the transaction opens, or the catch around
  * the CAS below when `Class_live_needs_open_room` closes the window between
  * that read and the write (#339). A teacher who lost that race and a teacher
  * who never had it need the same thing done, so both sites share this
@@ -328,6 +329,10 @@ export const ROOM_ARCHIVED_MESSAGE = 'This room is archived. Unarchive it to pub
 
 /** The sentence a teacher reads for `TOO_EARLY`, exported for the same reason. */
 export const TOO_EARLY_MESSAGE = `This class can be started from ${WALK_IN_WINDOW_MINUTES} minutes before its start time.`;
+
+/** An online class has no room, so it is never in an archived one. */
+const isInArchivedRoom = (loc: ClassLocation): boolean =>
+  loc.format === 'in_person' && loc.roomArchived;
 
 /** The sentence a teacher reads for `STARTS_IN_PAST`, exported for the same reason. */
 export const STARTS_IN_PAST_MESSAGE = "This class's start time has already passed, so it can't be published.";
@@ -433,7 +438,7 @@ export async function transitionClass(
       where: { id: classId },
       select: {
         status: true,
-        teacherRoom: { select: { isArchived: true } },
+        ...classLocationSelect,
         // `date`, `startTime` and the teacher all hang off the entry since
         // #327 — one nested read rather than three columns on this row.
         calendarEntry: {
@@ -459,7 +464,7 @@ export async function transitionClass(
     if (
       cls &&
       sourceStatesFor(targetStatus).includes(cls.status) &&
-      cls.teacherRoom.isArchived
+      isInArchivedRoom(classLocation(cls))
     ) {
       // Logged for the same reason the `STARTS_IN_PAST` refusal below is:
       // `respondError` does not log and `withErrorHandler` logs only on
@@ -616,7 +621,7 @@ export async function transitionClass(
       return true;
     });
   } catch (e) {
-    // The pre-check above (`cls.teacherRoom.isArchived`) read the room OUTSIDE
+    // The pre-check above (`isInArchivedRoom`) read the room OUTSIDE
     // this transaction, and the CAS carries no predicate on the room at all —
     // so a room archived in that window is invisible to the pre-check and the
     // class would otherwise publish into it (#339, door 2). This is that

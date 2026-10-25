@@ -6,14 +6,15 @@ import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant, type BadgeVariant
 import { RegistrationProgress, RegistrationProgressSkeleton } from '@/components/ui/registration-progress';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { Icon, IconSkeleton } from '@/components/ui/icon';
-import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
+import { classLocation, locationLabel } from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 export type ClassWithDetails = Class & {
   /** The calendar identity both card kinds render from. */
   calendarEntry: CalendarEntry;
   _count: { registrations: number };
-  teacherRoom: TeacherRoom & { room: Room };
+  teacherRoom: (TeacherRoom & { room: Room }) | null;
   /** Charged registrations' payment states — powers the completed-card rollup. */
   registrations?: { payment: { status: PaymentStatus } | null }[];
 };
@@ -106,7 +107,7 @@ export function ClassCard({ cls, isPast }: { cls: ClassWithDetails; isPast: bool
         chevron={<Icon name="chevron-right" size={CHEVRON_SIZE} className="text-brown-light" />}
         caption={
           <p className="type-caption mt-0.5">
-            {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+            {locationLabel(classLocation(cls))}
             {cls.isPrivate && ' · Private'}
             <PaymentRollup cls={cls} />
           </p>

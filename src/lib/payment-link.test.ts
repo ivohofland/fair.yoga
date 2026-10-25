@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { parsePaymentLink, paymentLinkFromColumn, maskPaymentLink, PAYMENT_LINK_MESSAGES } from './payment-link';
-import { PAYMENT_LINK_MAX } from './input-bounds';
+import {
+  parsePaymentLink, parseHttpsLink, paymentLinkFromColumn, maskPaymentLink,
+  PAYMENT_LINK_MESSAGES, VIDEO_LINK_MESSAGES,
+} from './payment-link';
+import { PAYMENT_LINK_MAX, VIDEO_URL_MAX } from './input-bounds';
 
 describe('parsePaymentLink', () => {
   it('accepts an https link and shows its host without www', () => {
@@ -81,5 +84,34 @@ describe('maskPaymentLink', () => {
   it('reads an unparseable value as an unreadable link, echoing none of it', () => {
     expect(maskPaymentLink('http://revolut.me/teacher')).toBe('an unreadable link');
     expect(maskPaymentLink('not a link at all')).toBe('an unreadable link');
+  });
+});
+
+describe('parseHttpsLink', () => {
+  it('accepts a meeting link and keeps its query string', () => {
+    expect(parseHttpsLink('https://us02web.zoom.us/j/123?pwd=abc', VIDEO_URL_MAX)).toEqual({
+      ok: true, url: 'https://us02web.zoom.us/j/123?pwd=abc', host: 'us02web.zoom.us',
+    });
+  });
+  it('refuses http as not_https', () => {
+    expect(parseHttpsLink('http://meet.jit.si/room', VIDEO_URL_MAX)).toEqual({ ok: false, error: 'not_https' });
+  });
+  it('refuses userinfo as has_userinfo', () => {
+    expect(parseHttpsLink('https://zoom.us@evil.example/j/1', VIDEO_URL_MAX)).toEqual({ ok: false, error: 'has_userinfo' });
+  });
+  it('refuses one character past the bound as too_long', () => {
+    const prefix = 'https://meet.jit.si/';
+    const raw = prefix + 'a'.repeat(VIDEO_URL_MAX + 1 - prefix.length);
+    expect(raw).toHaveLength(VIDEO_URL_MAX + 1);
+    expect(parseHttpsLink(raw, VIDEO_URL_MAX)).toEqual({ ok: false, error: 'too_long' });
+  });
+  it('applies the bound it is given, not the payment one', () => {
+    expect(parseHttpsLink('https://meet.jit.si/abcdef', 20)).toEqual({ ok: false, error: 'too_long' });
+  });
+});
+
+describe('VIDEO_LINK_MESSAGES', () => {
+  it('has a message for every failure the payment messages name', () => {
+    expect(Object.keys(VIDEO_LINK_MESSAGES).sort()).toEqual(Object.keys(PAYMENT_LINK_MESSAGES).sort());
   });
 });

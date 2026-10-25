@@ -16,10 +16,10 @@
     "verifiedAt": "2026-10-13"
   },
   "public-page": {
-    "sourceSha256": "63ca4cc657e4717c9a3ec653c59e56fd9fb2998e9115d985daa805d56a7cdf68",
+    "sourceSha256": "74bea21da0616a9ec437cdf621f9276422a4a8bfe2e9298832be7b64eda2bb25",
     "baselineSha256": "c405c17f0442fd3639744797ccb1862397606368e1994c8ff757e793fc446be9",
-    "verifiedAt": "2026-10-24",
-    "note": "PR #914 review: the listing query's comment is reworded; no rendered change"
+    "verifiedAt": "2026-10-25",
+    "note": "#911: the location reads through publicClassLocation and the listing omits videoUrl; the fixture's classes are in person, so the page renders unchanged"
   },
   "schedule": {
     "sourceSha256": "4e385e13c2a7fde59e7b07c98b53ae382ed631fa72379552dabffc5baf8a43d1",

@@ -86,7 +86,9 @@ export function classRow(
       createdAt: AT,
       updatedAt: AT,
     },
+    format: 'in_person' as const,
     teacherRoomId: 'tr-1',
+    videoUrl: null,
     // MIRRORS (issue 339): `entryLive` copies the entry's generated `live`
     // above, `roomArchived` copies `teacherRoom.isArchived` (always `false`
     // in this fixture).

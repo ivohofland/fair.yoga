@@ -2,12 +2,13 @@ import type { CalendarEntry, Class, TeacherRoom, Room } from '@/lib/prisma-clien
 import { StatusBadge, StatusBadgeSkeleton, deriveBadgeVariant } from '@/components/ui/status-badge';
 import { SkeletonText } from '@/components/ui/skeleton';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
-import { formatRoomLocation, formatDateWithYear } from '@/lib/format';
+import { formatDateWithYear } from '@/lib/format';
+import { classLocation, locationLabel } from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 
 type ClassWithRoom = Class & {
   calendarEntry: CalendarEntry;
-  teacherRoom: TeacherRoom & { room: Room };
+  teacherRoom: (TeacherRoom & { room: Room }) | null;
 };
 
 // The block's frame, shared by ClassInfo and its skeleton.
@@ -83,7 +84,7 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         {formatDateWithYear(cls.calendarEntry.date)} &middot; {timeToHHmm(cls.calendarEntry.startTime)} &middot; {cls.calendarEntry.durationMinutes} min
       </p>
       <p className="type-body">
-        {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+        {locationLabel(classLocation(cls))}
       </p>
       <p className={`type-caption ${COUNT_LINE_GAP}`}>
         {registrationCount} registered

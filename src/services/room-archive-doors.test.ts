@@ -91,6 +91,20 @@ describe('transitionClass — door 2: publishing into an archived room', () => {
   });
 });
 
+describe('transitionClass — door 2 and an online class (#911)', () => {
+  it('publishes an online draft, which sits in no room, beside an archived one', async () => {
+    const f = await makeFixture();
+    await prisma.teacherRoom.update({ where: { id: f.linkId }, data: { isArchived: true } });
+    const { cls } = await fx.addOnlineRows(prisma, f, { daysAhead: 15, dayOfWeek: 4, classStatus: 'draft' });
+
+    const result = await transitionClass(prisma, cls.id, 'open');
+
+    expect(result.ok).toBe(true);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+    expect(after.status).toBe('open');
+  });
+});
+
 describe('pauseOrResumeTemplate — door 3: resuming into an archived room', () => {
   // (272) The refusal is the CHECK, not a service read. The resume's CAS flips
   // `isActive` to true, which recomputes `live` — and `live` on an archived

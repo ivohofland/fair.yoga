@@ -12,7 +12,8 @@ import { readVapidConfig } from '@/lib/push/config';
 import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { ClassPriceLine } from '@/components/booking/price-range';
-import { formatRoomLocation, formatDayHeader, formatMoney } from '@/lib/format';
+import { formatDayHeader, formatMoney } from '@/lib/format';
+import { publicClassLocation, locationLabel } from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { canClaimSpot, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
@@ -315,7 +316,7 @@ export default async function StudentBookingsPage() {
                   </div>
                   <p className="type-subtitle mt-1">{cls.calendarEntry.classType}</p>
                   <p className="type-caption mt-0.5">
-                    {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+                    {locationLabel(publicClassLocation(cls))}
                     {' · '}with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                   </p>
                   {cls.status === 'open' && !cancelled && (

@@ -122,6 +122,26 @@ describe('switchToSharedRoom — what moves and what stays', () => {
   });
 });
 
+describe('switchToSharedRoom — online rows (#911)', () => {
+  it('leaves the teacher\'s online class and template untouched', async () => {
+    const f = await makeFixture();
+    const shared = await addSharedTwin(f);
+    const inRoom = await addClass(f, 'open', 14);
+    const online = await fx.addOnlineRows(prisma, f, { daysAhead: 15, dayOfWeek: 4 });
+
+    const result = await run(f, shared.id);
+
+    expect(result).toMatchObject({ ok: true, action: 'switched', moved: { classes: 1, templates: 0 } });
+    if (!result.ok || result.action !== 'switched') throw new Error('unreachable');
+    const moved = await prisma.class.findUniqueOrThrow({ where: { id: inRoom.id } });
+    expect(moved.teacherRoomId).toBe(result.sharedTeacherRoomId);
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: online.cls.id } });
+    const tmpl = await prisma.classTemplate.findUniqueOrThrow({ where: { id: online.template.id } });
+    expect(cls).toMatchObject({ teacherRoomId: null, updatedAt: online.cls.updatedAt });
+    expect(tmpl).toMatchObject({ teacherRoomId: null, updatedAt: online.template.updatedAt });
+  });
+});
+
 describe('switchToSharedRoom — the shared link', () => {
   it('creates a link carrying the private rate, clamped to the shared maximum', async () => {
     const f = await makeFixture(); // private link: capacity 15, rate 30

@@ -32,6 +32,8 @@ export const BANK_FIELD_MAX = 64;
 export const HOLDER_NAME_MAX = 200;
 /** A teacher's payment link, as stored. */
 export const PAYMENT_LINK_MAX = 500;
+/** A class's or template's video link, as stored. */
+export const VIDEO_URL_MAX = 500;
 
 // ---------------------------------------------------------------------------
 // Number limits.
