@@ -68,7 +68,7 @@ describe('ClassEditForm', () => {
     return JSON.parse((options as { body: string }).body) as Record<string, unknown>;
   }
 
-  it('sends every editable field when settings are unlocked', async () => {
+  it('sends every editable field when settings are unlocked, Private only once changed', async () => {
     const body = await saveWith(false);
     expect(body).toEqual({
       classType: 'Vinyasa',
@@ -82,7 +82,6 @@ describe('ClassEditForm', () => {
       minStudents: 4,
       maxStudents: 12,
       vatPercent: 0,
-      isPrivate: false,
     });
   });
 
@@ -98,6 +97,43 @@ describe('ClassEditForm', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, options] = fetchMock.mock.calls[0] ?? [];
     expect(JSON.parse((options as { body: string }).body)).toHaveProperty('isPrivate', true);
+  });
+
+  /**
+   * #910. Private goes out only when it differs from the stored flag in
+   * `initial`, so a tab opened before the flag changed elsewhere does not send
+   * its old value back. A refresh moves an untouched box to the stored flag; a
+   * box the teacher changed is kept.
+   */
+  describe('a Private flag changed elsewhere while this tab is open (#910)', () => {
+    function renderForm(isPrivate: boolean) {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      return render(
+        <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate }} />,
+      );
+    }
+    async function save(): Promise<Record<string, unknown>> {
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [, options] = fetchMock.mock.calls.at(-1) ?? [];
+      return JSON.parse((options as { body: string }).body) as Record<string, unknown>;
+    }
+
+    it('an untouched box follows the refreshed flag and the save leaves it out', async () => {
+      const { rerender } = renderForm(false);
+      rerender(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: true }} />);
+      expect(screen.getByRole('checkbox', { name: /private class/i })).toBeChecked();
+      expect(await save()).not.toHaveProperty('isPrivate');
+    });
+
+    it('a box the teacher ticked survives a refresh that leaves the flag alone, and is sent', async () => {
+      const { rerender } = renderForm(false);
+      fireEvent.click(screen.getByRole('checkbox', { name: /private class/i }));
+      rerender(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: false, classType: 'Yin' }} />);
+      expect(screen.getByRole('checkbox', { name: /private class/i })).toBeChecked();
+      expect(await save()).toHaveProperty('isPrivate', true);
+    });
   });
 
   /**
@@ -118,7 +154,7 @@ describe('ClassEditForm', () => {
   it('omits the economic fields and the schedule when settings are locked', async () => {
     const body = await saveWith(true);
     expect(Object.keys(body).sort()).toEqual([
-      'classType', 'description', 'durationMinutes', 'isPrivate',
+      'classType', 'description', 'durationMinutes',
     ]);
     for (const f of ['roomCost', 'minRate', 'targetRate', 'minStudents', 'maxStudents', 'vatPercent', 'date', 'startTime']) {
       expect(body).not.toHaveProperty(f);

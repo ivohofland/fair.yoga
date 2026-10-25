@@ -100,6 +100,12 @@ class, a trial for a few people, a class for a workshop group or a company.
   - **Class edit form** (`class-edit-form.tsx`): after the Economics block,
     before Save. It is never disabled by `settingsLocked`, and it stays in the
     payload when the form strips the locked keys.
+  - **Both edit forms send `isPrivate` only as a change** from the stored
+    flag, and an untouched box follows the stored flag when a refresh brings
+    a new one: the pattern #685 gave the template form's room. A tab opened
+    before the flag changed elsewhere therefore neither shows nor resends its
+    old value, so a stale tab cannot list a class the teacher made private.
+    Create always sends it.
 - **Share link on class detail.** `ShareBookingLink` takes the URL path it
   shares instead of building `/{slug}` itself. The two call sites:
   - Class detail passes `/{slug}/book/{classId}`, with share title "Book
