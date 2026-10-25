@@ -14,6 +14,9 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+/** The same rule for a class with no room, where the most a rate can subsidize is nothing. */
+export const ONLINE_SUBSIDY_COPY = 'Min rate cannot be negative for an online class — prices would go negative';
+
 // ---------------------------------------------------------------------------
 // Distribution logic
 // ---------------------------------------------------------------------------
@@ -43,6 +46,7 @@ export function PricingPreviewTable({
   minStudents,
   maxStudents,
   vatPercent,
+  hideRoomCost = false,
 }: PricingPreviewInputs) {
   const effectiveMin = Math.max(1, minStudents);
   const effectiveMax = Math.max(effectiveMin, maxStudents);
@@ -93,7 +97,7 @@ export function PricingPreviewTable({
       <div className="py-2">
         {violations.map((v) => (
           <p key={v.rule} className="text-sm text-brown">
-            {ECONOMICS_COPY[v.rule]}
+            {hideRoomCost && v.rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[v.rule]}
           </p>
         ))}
       </div>
@@ -145,6 +149,7 @@ export function PricingPreviewTable({
         minStudents={lowest}
         maxStudents={highest}
         vatPercent={vatPercent}
+        hideRoomCost={hideRoomCost}
         distribution={distribution}
         distributionControl={
           <div className="flex items-center gap-2 mb-4">

@@ -39,7 +39,9 @@ export default async function EditTemplatePage({
         templateId={template.id}
         currency={scheduleRule.teacher.currency}
         initial={{
+          format: template.format,
           teacherRoomId: template.teacherRoomId ?? '',
+          videoUrl: template.videoUrl ?? '',
           classType: scheduleRule.classType,
           description: template.description ?? '',
           dayOfWeek: scheduleRule.dayOfWeek,

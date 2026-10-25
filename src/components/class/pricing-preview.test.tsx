@@ -182,3 +182,20 @@ describe('PricingPreview', () => {
     });
   });
 });
+
+describe('PricingPreview, online (#911)', () => {
+  it('shows the room cost line for a class in a room', () => {
+    render(<PricingPreview cls={makePreviewClass()} />);
+    expect(screen.getByText('Room cost')).toBeInTheDocument();
+  });
+
+  it('leaves the room cost line out for an online class', () => {
+    render(
+      <PricingPreview
+        cls={makePreviewClass({ format: 'online', teacherRoomId: null, roomCost: new Prisma.Decimal(0) })}
+      />,
+    );
+    expect(screen.queryByText('Room cost')).toBeNull();
+    expect(screen.getByText('Rate')).toBeInTheDocument();
+  });
+});

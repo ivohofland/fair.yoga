@@ -168,6 +168,7 @@ describe('NewClassPage', () => {
     expect(url).toBe('/api/classes');
     expect(method).toBe('POST');
     expect(body).toEqual({
+      format: 'in_person',
       teacherRoomId: ROOM_ID,
       classType: 'Vinyasa',
       description: null,
@@ -1211,5 +1212,128 @@ describe('NewClassPage', () => {
     // 15 + (45 − 15) × 13 / 26 = 30, plus the room's €20
     expect(screen.getByText('€30.00')).toBeTruthy();
     expect(screen.getByText('€50.00')).toBeTruthy();
+  });
+
+  describe('an online class (#911)', () => {
+    async function chooseOnline() {
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+    }
+
+    function fillBasics() {
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+    }
+
+    it('offers In a room and Online, starting in a room', async () => {
+      stubFetch();
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      expect(await screen.findByRole('radio', { name: 'In a room' })).toBeChecked();
+      expect(screen.getByRole('radio', { name: 'Online' })).not.toBeChecked();
+    });
+
+    it('drops the room picker and the room cost, and shows the video link with its one-off hint', async () => {
+      stubFetch();
+      await chooseOnline();
+      expect(screen.queryByLabelText('Room')).toBeNull();
+      expect(screen.getByLabelText('Video link (optional)')).toHaveAccessibleDescription(
+        'Only students who have booked see this link.',
+      );
+      fillBasics();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      await screen.findByLabelText(/min rate/i);
+      expect(screen.queryByLabelText(/room cost/i)).toBeNull();
+      expect(screen.queryByText(/^Room cost/)).toBeNull();
+    });
+
+    it('sends format online, no teacherRoomId, roomCost 0 and the normalised link', async () => {
+      stubFetch();
+      await chooseOnline();
+      fillBasics();
+      fireEvent.change(screen.getByLabelText('Video link (optional)'), {
+        target: { value: ' https://meet.example/room?pwd=1 ' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      expect(await screen.findByText('Online')).toBeInTheDocument();
+      const { body } = await submit();
+      expect(body).toEqual({
+        format: 'online',
+        classType: 'Vinyasa',
+        description: null,
+        date: '2026-08-10',
+        startTime: '09:00',
+        durationMinutes: 60,
+        roomCost: 0,
+        videoUrl: 'https://meet.example/room?pwd=1',
+        minRate: 15,
+        targetRate: 25,
+        minStudents: 4,
+        maxStudents: 12,
+        vatPercent: 0,
+        cancelDeadline: 'HOURS_24',
+        autoCancelCheck: 'HOURS_2',
+        isPrivate: false,
+      });
+    });
+
+    it('sends videoUrl null for an empty link', async () => {
+      stubFetch();
+      await chooseOnline();
+      fillBasics();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      const { body } = await submit();
+      expect(body.videoUrl).toBeNull();
+    });
+
+    it('refuses a link that is not https, on the field, before step 2', async () => {
+      stubFetch();
+      await chooseOnline();
+      fillBasics();
+      fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: 'http://meet.example/a' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      expect(await screen.findByText('Use a secure link — one that starts with https://')).toBeInTheDocument();
+      expect(screen.getByLabelText('Class type')).toBeInTheDocument();
+    });
+
+    it('does not clamp max students to a room capacity', async () => {
+      stubFetch();
+      await chooseOnline();
+      fillBasics();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.change(await screen.findByLabelText('Max students'), { target: { value: String(MAX_CLASS_SIZE + 1) } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      expect(await screen.findByText(`Max students cannot exceed ${MAX_CLASS_SIZE}`)).toBeInTheDocument();
+      expect(screen.queryByText(/room capacity/)).toBeNull();
+    });
+
+    it('lets a teacher with no rooms create an online class', async () => {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      expect(await screen.findByText('No rooms configured')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      expect(await screen.findByLabelText('Class type')).toBeInTheDocument();
+    });
+
+    it('returns to a room: the picker is back and the body is in person again', async () => {
+      stubFetch();
+      await chooseOnline();
+      fireEvent.click(screen.getByRole('radio', { name: 'In a room' }));
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+      fillBasics();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      const { body } = await submit();
+      expect(body.format).toBe('in_person');
+      expect(body.teacherRoomId).toBe(ROOM_ID);
+      expect(body.roomCost).toBe(20);
+      expect(body).not.toHaveProperty('videoUrl');
+    });
   });
 });

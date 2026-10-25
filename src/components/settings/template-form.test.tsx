@@ -27,6 +27,8 @@ describe('TemplateForm', () => {
   });
 
   const initial = {
+    format: 'in_person',
+    videoUrl: '',
     teacherRoomId: '11111111-1111-4111-8111-111111111111',
     classType: '  Vinyasa  ',
     description: '  Bring a mat.  ',
@@ -89,6 +91,7 @@ describe('TemplateForm', () => {
 
   /** What an edit of `initial` sends when the room and Private are left alone. */
   const EDIT_BODY_WITHOUT_ROOM = {
+    format: 'in_person',
     classType: 'Vinyasa',
     description: 'Bring a mat.',
     dayOfWeek: 2,
@@ -413,7 +416,7 @@ describe('TemplateForm', () => {
     expect(method).toBe('POST');
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
-      'durationMinutes', 'isPrivate', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
+      'durationMinutes', 'format', 'isPrivate', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
       'startTime', 'targetRate', 'teacherRoomId', 'vatPercent',
     ]);
   });
@@ -2215,6 +2218,149 @@ describe('TemplateForm', () => {
       expect(method).toBe('POST');
       expect(body.isPrivate).toBe(true);
       expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('an online template (#911)', () => {
+    const ONLINE = { ...initial, format: 'online', teacherRoomId: '', roomCost: 0 } as const;
+    const LINK = 'https://meet.example/weekly';
+    const TEMPLATE_HINT =
+      'Every class from this template gets this link. Use one that works each week, like a personal meeting room. If you make a new link for each class, leave this empty and add it to each class instead.';
+
+    /** Rooms for the mount fetch; the save answers with `saved`. */
+    function stubSaving(saved: Record<string, unknown>) {
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url.startsWith('/api/class-templates')
+            ? { ok: true, json: async () => ({ data: saved }) }
+            : roomsResponse([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B')]),
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+    }
+
+    it('create: Online drops the room picker and the room cost, and shows the link with the template hint', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      expect(await screen.findByRole('radio', { name: 'In a room' })).toBeChecked();
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      expect(screen.queryByLabelText('Room')).toBeNull();
+      expect(screen.queryByLabelText(/room cost/i)).toBeNull();
+      expect(screen.getByLabelText('Video link (optional)')).toHaveAccessibleDescription(TEMPLATE_HINT);
+    });
+
+    it('create: sends format online, no teacherRoomId, roomCost 0 and the normalised link', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Yin' } });
+      fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: ` ${LINK} ` } });
+      const { body } = await submit();
+      expect(body.format).toBe('online');
+      expect(body).not.toHaveProperty('teacherRoomId');
+      expect(body.roomCost).toBe(0);
+      expect(body.videoUrl).toBe(LINK);
+    });
+
+    it('create: lets a teacher with no rooms choose Online and save', async () => {
+      stubRooms([]);
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      expect(await screen.findByText('No rooms configured.')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      fireEvent.change(await screen.findByLabelText('Class type'), { target: { value: 'Yin' } });
+      const { body } = await submit();
+      expect(body.format).toBe('online');
+      expect(body.videoUrl).toBeNull();
+    });
+
+    it('refuses a link that is not https without sending', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Yin' } });
+      fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: 'http://meet.example/a' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+      expect(await screen.findByText('Use a secure link — one that starts with https://')).toBeInTheDocument();
+      expect(fetchMock.mock.calls.length).toBe(1);
+    });
+
+    it('edit: opens on Online with no room required, and sends only the change', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      expect(await screen.findByRole('radio', { name: 'Online' })).toBeChecked();
+      expect(screen.getByLabelText('Video link (optional)')).toHaveValue(LINK);
+      fireEvent.change(screen.getByLabelText(/^Class type/), { target: { value: 'Yin' } });
+      const { body } = await submit();
+      expect(body.classType).toBe('Yin');
+      expect(body.format).toBe('online');
+      expect(body).not.toHaveProperty('teacherRoomId');
+      expect(body).not.toHaveProperty('videoUrl');
+    });
+
+    it('edit: clearing the link sends videoUrl null', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      fireEvent.change(await screen.findByLabelText('Video link (optional)'), { target: { value: '' } });
+      const { body } = await submit();
+      expect(body.videoUrl).toBeNull();
+    });
+
+    it('edit: switching online to in person sends videoUrl null and the chosen room', async () => {
+      stubFetchTwoRooms();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'In a room' }));
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_B } });
+      const { body } = await submit();
+      expect(body.format).toBe('in_person');
+      expect(body.videoUrl).toBeNull();
+      expect(body.teacherRoomId).toBe(ROOM_B);
+    });
+
+    it('edit: switching online to in person with no room chosen is refused on the form', async () => {
+      stubFetchTwoRooms();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE }} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'In a room' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Select a room');
+      expect(fetchMock.mock.calls.length).toBe(1);
+    });
+
+    it('edit: switching in person to online sends teacherRoomId null and roomCost 0', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+      const { body } = await submit();
+      expect(body.format).toBe('online');
+      expect(body.teacherRoomId).toBeNull();
+      expect(body.roomCost).toBe(0);
+      expect(body).not.toHaveProperty('videoUrl');
+    });
+
+    it('edit: an in-person edit that stays in person sends no link', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.change(await screen.findByLabelText(/^Class type/), { target: { value: 'Yin' } });
+      const { body } = await submit();
+      expect(body).not.toHaveProperty('videoUrl');
+    });
+
+    it('shows the kept-link notice when the response says the link changed with classes scheduled', async () => {
+      stubSaving({ linkChangedWithScheduledClasses: true });
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      fireEvent.change(await screen.findByLabelText('Video link (optional)'), {
+        target: { value: 'https://meet.example/other' },
+      });
+      await submit();
+      expect(await screen.findByText('Classes already on your schedule keep their current link.')).toBeInTheDocument();
+    });
+
+    it('shows no kept-link notice when the response says nothing changed', async () => {
+      stubSaving({ linkChangedWithScheduledClasses: false });
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      fireEvent.change(await screen.findByLabelText(/^Class type/), { target: { value: 'Yin' } });
+      await submit();
+      await screen.findByText(/^Template updated\./);
+      expect(screen.queryByText('Classes already on your schedule keep their current link.')).toBeNull();
     });
   });
 });

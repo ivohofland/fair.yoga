@@ -94,10 +94,12 @@ export function PricingPreview({ cls }: PricingPreviewProps) {
       </div>
 
       <div className="mt-4">
-        <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
-          <span className="type-body">Room cost</span>
-          <span className="tabular-nums text-brown">{formatMoney(Number(cls.roomCost), cls.currency)}</span>
-        </div>
+        {cls.format === 'in_person' && (
+          <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
+            <span className="type-body">Room cost</span>
+            <span className="tabular-nums text-brown">{formatMoney(Number(cls.roomCost), cls.currency)}</span>
+          </div>
+        )}
         {chargesVat && (
           <div className="min-h-12 py-2 border-b border-border flex justify-between items-center">
             <span className="type-body">VAT</span>

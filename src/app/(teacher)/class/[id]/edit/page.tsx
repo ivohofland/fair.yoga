@@ -42,6 +42,7 @@ export default async function ClassEditPage({
       <h1 className="type-title mb-6">Edit class</h1>
       <ClassEditForm
         classId={cls.id}
+        format={cls.format}
         settingsLocked={cls.settingsLocked}
         currency={cls.currency}
         moveWarning={moveWarningFor({
@@ -64,6 +65,7 @@ export default async function ClassEditPage({
           maxStudents: cls.maxStudents,
           vatPercent: cls.vatPercent.toNumber(),
           isPrivate: cls.isPrivate,
+          videoUrl: cls.videoUrl ?? '',
         }}
       />
     </div>
