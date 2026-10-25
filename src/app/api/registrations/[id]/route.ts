@@ -22,6 +22,7 @@ import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { classStartInstant, isBeforeOpening, isoOrNull } from '@/lib/timezone';
 import { CHECKIN_OPENS_MINUTES, checkinOpensAt } from '@/lib/finish-window';
+import { claimCorrectionInvitation } from '@/services/donations';
 import { createNotification, type CreateNotificationInput } from '@/services/notifications';
 import type { AttendanceBody } from '@/lib/api-types';
 
@@ -187,6 +188,10 @@ export const PUT = withErrorHandler(async (
   // test pinning this as a product requirement. A teacher reaches it through
   // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //
+  // The `attended` write is followed by its invitation claim in its own
+  // transaction (`claimCorrectionInvitation`, `services/donations.ts`), so
+  // this handler's write still holds no class lock.
+  //
   // Class TIME is guarded above, not in this WHERE: the clock only moves
   // forward, so a check made before the write goes stale only through a
   // schedule edit committed in the gap, where a status can change under any
@@ -238,6 +243,11 @@ export const PUT = withErrorHandler(async (
       );
     }
     if (current.status === requested) {
+      // A retry after a claim that failed: the status holds, the invitation
+      // may not. Inviting now is a change, so it is not "unchanged".
+      if (requested === 'attended' && (await claimCorrectionInvitation(prisma, id)) === 'invited') {
+        return respondTyped<AttendanceBody>({ id, status: requested });
+      }
       return respondUnchanged<AttendanceBody>({ id, status: requested });
     }
     if (requested === 'late_cancel' && current.lateCancelledAt === null) {
@@ -276,6 +286,8 @@ export const PUT = withErrorHandler(async (
       }
     }
   }
+
+  if (requested === 'attended') await claimCorrectionInvitation(prisma, id);
 
   return respondTyped<AttendanceBody>({ id, status: requested });
 });

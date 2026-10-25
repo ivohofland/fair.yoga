@@ -189,6 +189,8 @@ export const LOCK_CONTENTION_TESTS = [
   // #885: holds row locks and pool connections to produce each transient
   // kind; its header carries the reason.
   'src/lib/db-transient-shapes.test.ts',
+  // #912: the class-lifecycle-lock-order.test.ts shape, for the correction's invitation claim.
+  'src/services/donation-correction-lock-order.test.ts',
 ] as const;
 
 // The two lists above have different reasons and are kept apart so neither

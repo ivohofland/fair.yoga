@@ -1,8 +1,9 @@
-import type { Prisma } from '@/lib/prisma-client';
+import type { Prisma, PrismaClient } from '@/lib/prisma-client';
+import { lockClassRow } from '@/lib/db-locks';
 import { DONATION_INVITED_STATUSES } from '@/lib/registration-status';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
-import type { CreateNotificationInput } from '@/services/notifications';
+import { createBulkNotifications, type CreateNotificationInput } from '@/services/notifications';
 
 export type InvitedRow = { id: string; studentId: string };
 
@@ -55,4 +56,40 @@ export function donationCompletionNotice(cls: DonationNoticeClass, invited: numb
       : `${lead} — ${invited} ${invited === 1 ? 'student' : 'students'} invited to give.`,
     relatedClassId: cls.id,
   };
+}
+
+/**
+ * Invites a booking a teacher has just corrected to `attended`, if this is the
+ * first time it has been invited (#912). The caller's status write has already
+ * committed and holds no class lock; the lock taken here is what closes the
+ * race with `completeClass`, which stamps from the statuses it can see. The
+ * argument is in `docs/lock-order.md` ("`Registration` status writers outside
+ * the class lock"), where the lock order this takes is also fixed.
+ */
+export async function claimCorrectionInvitation(
+  db: PrismaClient,
+  registrationId: string,
+): Promise<'invited' | 'not_invited'> {
+  return db.$transaction(async (tx) => {
+    const found = await tx.registration.findUnique({ where: { id: registrationId }, select: { classId: true } });
+    if (!found) return 'not_invited';
+    await lockClassRow(tx, found.classId);
+    const [row] = await tx.registration.updateManyAndReturn({
+      where: {
+        id: registrationId,
+        status: 'attended',
+        donationInvitedAt: null,
+        class: { status: 'completed', pricingMode: 'donation', calendarEntry: { cancelledAt: null } },
+      },
+      data: { donationInvitedAt: new Date() },
+      select: { studentId: true },
+    });
+    if (!row) return 'not_invited';
+    const cls = await tx.class.findUniqueOrThrow({
+      where: { id: found.classId },
+      select: { id: true, calendarEntry: { select: { classType: true } } },
+    });
+    await createBulkNotifications(tx, [donationInvitation(row.studentId, cls)]);
+    return 'invited';
+  });
 }
