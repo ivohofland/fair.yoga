@@ -5,22 +5,38 @@ import { useRouter } from 'next/navigation';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { ownedOutbox, readOutbox } from '@/lib/attendance-outbox';
 import { flushWithinWait } from '@/lib/attendance-sync';
+import type { PricingMode } from '@/lib/prisma-client';
 
 interface CompleteClassButtonProps {
   classId: string;
   chargedCount: number;
+  pricingMode: PricingMode;
+  /** Who completion will invite to give; read only by a donation class. */
+  invitedCount: number;
   /** The signed-in account, whose queued attendance changes are sent before finishing while this class has any. */
   ownerId: string;
 }
 
-function confirmCopy(chargedCount: number): string {
-  if (chargedCount === 0) {
-    return 'Finish class? No one is charged for this class.';
+function confirmCopy(pricingMode: PricingMode, chargedCount: number, invitedCount: number): string {
+  switch (pricingMode) {
+    case 'tiered':
+      if (chargedCount === 0) {
+        return 'Finish class? No one is charged for this class.';
+      }
+      if (chargedCount === 1) {
+        return 'Finish class? A payment request goes to 1 student now.';
+      }
+      return `Finish class? Payment requests go to ${chargedCount} students now.`;
+    case 'donation':
+      if (invitedCount === 0) {
+        return 'Finish class? No one to invite.';
+      }
+      return `Finish class? ${invitedCount} ${invitedCount === 1 ? 'student' : 'students'} will be invited to give.`;
+    default: {
+      const unhandled: never = pricingMode;
+      throw new Error(`confirmCopy: unhandled pricing mode ${String(unhandled)}`);
+    }
   }
-  if (chargedCount === 1) {
-    return 'Finish class? A payment request goes to 1 student now.';
-  }
-  return `Finish class? Payment requests go to ${chargedCount} students now.`;
 }
 
 /**
@@ -30,7 +46,7 @@ function confirmCopy(chargedCount: number): string {
  * if any of this class's are still unsent after the wait, the teacher is
  * asked again before finishing.
  */
-export function CompleteClassButton({ classId, chargedCount, ownerId }: CompleteClassButtonProps) {
+export function CompleteClassButton({ classId, chargedCount, pricingMode, invitedCount, ownerId }: CompleteClassButtonProps) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -142,7 +158,7 @@ export function CompleteClassButton({ classId, chargedCount, ownerId }: Complete
   if (confirming) {
     return (
       <div className="flex flex-col items-end gap-1">
-        <p className="type-caption text-right">{confirmCopy(chargedCount)}</p>
+        <p className="type-caption text-right">{confirmCopy(pricingMode, chargedCount, invitedCount)}</p>
         <div className="flex items-center gap-3">
           <button
             type="button"

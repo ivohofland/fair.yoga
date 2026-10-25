@@ -27,3 +27,9 @@ export const CLASS_NOT_ENDED_YET = codedRefusal(
   'CLASS_NOT_ENDED_YET',
   `You can finish this class from ${FINISH_GRACE_MINUTES} minutes before it ends, once it has started.`,
 );
+
+/** A donation-only door reached for a tiered class (#912). */
+export const DONATION_CLASS_REQUIRED = codedRefusal('DONATION_CLASS_REQUIRED', "This class isn't by donation.");
+
+/** A door that waits for completion, reached before it. */
+export const CLASS_NOT_COMPLETED = codedRefusal('CLASS_NOT_COMPLETED', 'Record what came in once the class is complete.');

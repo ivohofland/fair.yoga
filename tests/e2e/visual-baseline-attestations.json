@@ -1,9 +1,9 @@
 {
   "class-detail-open": {
-    "sourceSha256": "1ced6a4cedbd1a725ad14fec4828679f15629498f776f8e2737af79baf1efa5f",
+    "sourceSha256": "4d7b841b82caf8eaccf21c0cd8fe2bc9bb08ba47ec31d85ea7eec3b1a123636e",
     "baselineSha256": "8f75f38642fe726f91198351232762bffce03cf6c80a56f0be7072b19680462f",
-    "verifiedAt": "2026-10-24",
-    "note": "PR #914 review: the page reloads at the class start while it offers the share link, and an action comment is reworded; no rendered change"
+    "verifiedAt": "2026-10-25",
+    "note": "a donation class renders its own pricing section; the fixture's tiered class renders unchanged (#912)"
   },
   "inbox": {
     "sourceSha256": "32b1ba66f9143e9bdd77423e8e8785820ac29da655838e5b854e3c9248cc52ac",

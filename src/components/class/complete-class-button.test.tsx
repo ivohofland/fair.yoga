@@ -60,7 +60,7 @@ describe('CompleteClassButton', () => {
           ? new Response(null, { status: 503 })
           : new Response(JSON.stringify({ data: { id: url.split('/').pop(), status: 'attended' } }), { status: 200 }),
       );
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
 
@@ -79,7 +79,7 @@ describe('CompleteClassButton', () => {
       await queue('r1');
       await queue('r2', 'c-9', 'acct-1', 'no_show');
       answer(offline);
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
 
@@ -96,7 +96,7 @@ describe('CompleteClassButton', () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
       await queue('r1');
       answer(offline);
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
 
@@ -107,7 +107,7 @@ describe('CompleteClassButton', () => {
       await queue('r1', 'c-other');
       await queue('r2', 'c-9', 'acct-2');
       answer(offline);
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
 
@@ -120,7 +120,7 @@ describe('CompleteClassButton', () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
       await queue('r1');
       answer(offline);
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
       fireEvent.click(await screen.findByRole('button', { name: 'Finish anyway' }));
@@ -133,7 +133,7 @@ describe('CompleteClassButton', () => {
       vi.spyOn(console, 'error').mockImplementation(() => {});
       await queue('r1');
       answer(offline);
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
       fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
@@ -147,7 +147,7 @@ describe('CompleteClassButton', () => {
       vi.useFakeTimers();
       await queue('r1');
       answer(() => new Promise(() => {}));
-      render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+      render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
       finish();
       await act(() => vi.advanceTimersByTimeAsync(2_999));
@@ -161,7 +161,7 @@ describe('CompleteClassButton', () => {
   it('posts the completion once confirmed and refreshes on success', async () => {
     fetchMock.mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
@@ -174,7 +174,7 @@ describe('CompleteClassButton', () => {
 
   it('asks before finishing, and posts nothing until confirmed', () => {
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
 
@@ -184,7 +184,7 @@ describe('CompleteClassButton', () => {
 
   it('keeps the class open when the teacher backs out', () => {
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     fireEvent.click(screen.getByRole('button', { name: 'Keep open' }));
@@ -201,7 +201,7 @@ describe('CompleteClassButton', () => {
     let answer: (value: { ok: boolean }) => void = () => {};
     fetchMock.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     expect(screen.getByRole('button', { name: 'Keep open' })).toBeEnabled();
@@ -215,15 +215,41 @@ describe('CompleteClassButton', () => {
 
   it('says one student, not one students', () => {
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={1} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={1} ownerId="acct-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     screen.getByText('Finish class? A payment request goes to 1 student now.');
+  });
+
+  describe('a donation class', () => {
+    const donation = (invitedCount: number) =>
+      render(<CompleteClassButton pricingMode="donation" invitedCount={invitedCount} classId="c-9" chargedCount={0} ownerId="acct-1" />);
+
+    it('(#912) says how many will be invited to give', () => {
+      vi.stubGlobal('fetch', fetchMock);
+      donation(3);
+      fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+      screen.getByText('Finish class? 3 students will be invited to give.');
+    });
+
+    it('(#912) says one student, not one students', () => {
+      vi.stubGlobal('fetch', fetchMock);
+      donation(1);
+      fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+      screen.getByText('Finish class? 1 student will be invited to give.');
+    });
+
+    it('(#912) says no one to invite when no one came', () => {
+      vi.stubGlobal('fetch', fetchMock);
+      donation(0);
+      fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
+      screen.getByText('Finish class? No one to invite.');
+    });
   });
 
   // Review Focus 4.
   it('does not promise payment requests when nobody is charged', () => {
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={0} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={0} ownerId="acct-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     screen.getByText('Finish class? No one is charged for this class.');
   });
@@ -235,7 +261,7 @@ describe('CompleteClassButton', () => {
       json: async () => ({ data: { ok: true, newStatus: 'completed' }, outcome: 'unchanged' }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
@@ -253,7 +279,7 @@ describe('CompleteClassButton', () => {
       }),
     });
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
@@ -267,7 +293,7 @@ describe('CompleteClassButton', () => {
     const offline = new Error('offline');
     fetchMock.mockRejectedValue(offline);
     vi.stubGlobal('fetch', fetchMock);
-    render(<CompleteClassButton classId="c-9" chargedCount={2} ownerId="acct-1" />);
+    render(<CompleteClassButton pricingMode="tiered" invitedCount={0} classId="c-9" chargedCount={2} ownerId="acct-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Finish class' }));
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }));

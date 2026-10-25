@@ -133,3 +133,73 @@ export async function hideDonationPrompt(
   if (reread?.donationPromptHiddenAt == null) return { kind: 'not_found' };
   return { kind: 'unchanged', hiddenAt: reread.donationPromptHiddenAt };
 }
+
+export type RecordDonationTotalResult =
+  | { ok: true; outcome: 'applied' | 'unchanged'; donationTotal: number | null }
+  | { ok: false; reason: 'not_found' | 'forbidden' | 'cancelled' | 'not_donation' | 'not_completed' };
+
+const toCents = (v: number | null): number | null => (v === null ? null : Math.round(v * 100));
+
+/**
+ * Records, replaces or clears (`null`) what a donation class took in (#912).
+ * The only statement that writes `Class.donationTotal`, and its own: a
+ * completed class is terminal, so `updateClass` refuses every field of it and
+ * this never goes through that freeze. A caller must pass the session's own
+ * teacher id.
+ *
+ * The refusals are read in the order the spec fixes (ownership, cancelled,
+ * mode, completed). The write repeats those conditions, so a class that stopped
+ * qualifying between the read and the write is not written. A write that
+ * matches no row is classified from one fresh read; a second miss throws,
+ * because nothing that reaches the write can move a completed class.
+ */
+export async function recordDonationTotal(
+  db: PrismaClient,
+  teacherId: string,
+  classId: string,
+  amount: number | null,
+): Promise<RecordDonationTotalResult> {
+  const wanted = toCents(amount);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const cls = await db.class.findUnique({
+      where: { id: classId },
+      select: {
+        status: true,
+        pricingMode: true,
+        donationTotal: true,
+        calendarEntry: { select: { teacherId: true, cancelledAt: true } },
+      },
+    });
+    if (!cls) return { ok: false, reason: 'not_found' };
+    if (cls.calendarEntry.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
+    if (cls.calendarEntry.cancelledAt !== null) return { ok: false, reason: 'cancelled' };
+    switch (cls.pricingMode) {
+      case 'tiered':
+        return { ok: false, reason: 'not_donation' };
+      case 'donation':
+        break;
+      default: {
+        const unhandled: never = cls.pricingMode;
+        throw new Error(`recordDonationTotal: unhandled pricing mode ${String(unhandled)}`);
+      }
+    }
+    if (cls.status !== 'completed') return { ok: false, reason: 'not_completed' };
+    const stored = toCents(cls.donationTotal === null ? null : Number(cls.donationTotal));
+    if (wanted === stored) {
+      return { ok: true, outcome: 'unchanged', donationTotal: stored === null ? null : stored / 100 };
+    }
+    const written = await db.class.updateMany({
+      where: {
+        id: classId,
+        status: 'completed',
+        pricingMode: 'donation',
+        calendarEntry: { teacherId, cancelledAt: null },
+      },
+      data: { donationTotal: wanted === null ? null : wanted / 100 },
+    });
+    if (written.count > 0) {
+      return { ok: true, outcome: 'applied', donationTotal: wanted === null ? null : wanted / 100 };
+    }
+  }
+  throw new Error(`recordDonationTotal: write matched no row twice for class ${classId}`);
+}

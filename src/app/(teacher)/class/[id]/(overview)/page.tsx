@@ -7,6 +7,8 @@ import { PageHeader } from '@/components/layout/page-header';
 import { ListRow } from '@/components/ui/list-row';
 import { ClassInfo } from '@/components/class/class-info';
 import { PricingPreview } from '@/components/class/pricing-preview';
+import { DonationSummary } from '@/components/class/donation-summary';
+import { DonationsReceivedCard } from '@/components/class/donations-received-card';
 import { AttendanceList } from '@/components/class/attendance-list';
 import { PricingBreakdown } from '@/components/class/pricing-breakdown';
 import { PaymentChecklist } from '@/components/class/payment-checklist';
@@ -24,7 +26,7 @@ import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { AddWalkIn } from '@/components/class/add-walk-in';
 import { SendAnnouncement } from '@/components/class/send-announcement';
 import { toIncomeTier } from '@/lib/tiers.server';
-import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
+import { ACTIVE_REGISTRATION_STATUSES, DONATION_INVITED_STATUSES } from '@/lib/registration-status';
 import { CLAIMABLE_WAITLIST_STATUSES } from '@/lib/waitlist-status';
 import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { OfflineSnapshot } from '@/components/layout/offline-snapshot';
@@ -129,6 +131,11 @@ export default async function ClassDetailPage({
     CHARGED_STATUSES.includes(r.status),
   ).length;
 
+  // Who completion will invite to give: the bookings that came.
+  const invitedCount = cls.registrations.filter((r) =>
+    DONATION_INVITED_STATUSES.includes(r.status),
+  ).length;
+
   // Serialize registrations for client components (Prisma Dates/Decimals are not serializable)
   const attendanceItems: AttendanceItem[] = activeRegistrations
     .map((r) => ({
@@ -222,6 +229,73 @@ export default async function ClassDetailPage({
     <AttendanceList items={attendanceItems} classId={cls.id} renderedAt={now} locked />
   ) : undefined;
 
+  // What the automatic finish will send: invitations for a donation class,
+  // payment requests for a tiered one; either says only when it finishes if
+  // there is no one to send to.
+  const autoAtClock = formatClockInZone(autoAt, tz);
+  const finishCaption = (() => {
+    switch (cls.pricingMode) {
+      case 'tiered':
+        return chargedCount > 0
+          ? `Payment requests go out automatically at ${autoAtClock}.`
+          : `This class finishes automatically at ${autoAtClock}.`;
+      case 'donation':
+        return invitedCount > 0
+          ? `Invitations to give go out at ${autoAtClock}.`
+          : `This class finishes automatically at ${autoAtClock}.`;
+      default: {
+        const unhandled: never = cls.pricingMode;
+        throw new Error(`class detail: unhandled pricing mode ${String(unhandled)}`);
+      }
+    }
+  })();
+
+  // The pricing section a class shows before it is completed, by mode.
+  const pricingSection = (() => {
+    switch (cls.pricingMode) {
+      case 'tiered':
+        return <PricingPreview cls={cls} />;
+      case 'donation':
+        return (
+          <DonationSummary
+            roomCost={Number(cls.roomCost)}
+            vatPercent={Number(cls.vatPercent)}
+            currency={cls.currency}
+          />
+        );
+      default: {
+        const unhandled: never = cls.pricingMode;
+        throw new Error(`class detail: unhandled pricing mode ${String(unhandled)}`);
+      }
+    }
+  })();
+
+  // What a completed class shows about money, by mode.
+  const completedSection = (() => {
+    switch (cls.pricingMode) {
+      case 'tiered':
+        return (
+          <>
+            <PricingBreakdown cls={cls} tierPrices={tierPrices} />
+            <PaymentChecklist items={paymentItems} currency={cls.currency} />
+          </>
+        );
+      case 'donation':
+        return (
+          <DonationsReceivedCard
+            classId={cls.id}
+            donationTotal={cls.donationTotal === null ? null : Number(cls.donationTotal)}
+            vatPercent={Number(cls.vatPercent)}
+            currency={cls.currency}
+          />
+        );
+      default: {
+        const unhandled: never = cls.pricingMode;
+        throw new Error(`class detail: unhandled pricing mode ${String(unhandled)}`);
+      }
+    }
+  })();
+
   return (
     <OfflineSnapshot
       {...stamp}
@@ -237,27 +311,18 @@ export default async function ClassDetailPage({
                   registeredStudentIds={activeRegistrations.map((r) => r.studentId)}
                 />
               </div>
-              <PricingPreview cls={cls} />
+              {pricingSection}
             </>
           )}
 
           {/* Draft: pricing preview */}
-          {!cancelled && cls.status === 'draft' && (
-            <PricingPreview cls={cls} />
-          )}
+          {!cancelled && cls.status === 'draft' && pricingSection}
 
           {/* Open (not check-in): pricing preview */}
-          {!cancelled && cls.status === 'open' && !showCheckin && (
-            <PricingPreview cls={cls} />
-          )}
+          {!cancelled && cls.status === 'open' && !showCheckin && pricingSection}
 
-          {/* Completed: pricing breakdown, payment checklist */}
-          {!cancelled && cls.status === 'completed' && (
-            <>
-              <PricingBreakdown cls={cls} tierPrices={tierPrices} />
-              <PaymentChecklist items={paymentItems} currency={cls.currency} />
-            </>
-          )}
+          {/* Completed: pricing breakdown and payment checklist, or the donations received */}
+          {!cancelled && cls.status === 'completed' && completedSection}
 
           {/* Cancelled */}
           {cancelled && (
@@ -302,7 +367,13 @@ export default async function ClassDetailPage({
           !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
             : canFinish
-              ? <CompleteClassButton classId={cls.id} chargedCount={chargedCount} ownerId={session.accountId} />
+              ? <CompleteClassButton
+                classId={cls.id}
+                chargedCount={chargedCount}
+                pricingMode={cls.pricingMode}
+                invitedCount={invitedCount}
+                ownerId={session.accountId}
+              />
               : undefined
         }
       />
@@ -326,9 +397,7 @@ export default async function ClassDetailPage({
         <p className="type-caption py-2">
           {autoFinishing
             ? 'This class is finishing automatically.'
-            : chargedCount > 0
-              ? `Payment requests go out automatically at ${formatClockInZone(autoAt, tz)}.`
-              : `This class finishes automatically at ${formatClockInZone(autoAt, tz)}.`}
+            : finishCaption}
         </p>
       )}
     </OfflineSnapshot>

@@ -524,6 +524,9 @@ const signedMoneyField = () =>
 const capacityField = () =>
   z.number().int().positive().max(CAPACITY_MAX, CAPACITY_MESSAGE);
 
+/** What a donation class took in (#912); `null` clears the recorded total. */
+export const donationTotalSchema = z.object({ amount: moneyField().nullable() }).strict();
+
 // ============================================================================
 // ROOMS
 // ============================================================================

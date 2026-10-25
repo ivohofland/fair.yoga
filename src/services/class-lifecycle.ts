@@ -1062,6 +1062,7 @@ void _entryUpdateFieldsAreSent;
  *                            list against BOTH tables' inputs
  *   - the financial totals → written only by `completeClass`, and
  *                            `donationTotal` only by `recordDonationTotal`
+ *                            (`services/donations.ts`)
  * — because the compiler will not. For the columns above, the forbidden pin
  * below refuses the grant outright; for anything else, the judgement is yours.
  */
