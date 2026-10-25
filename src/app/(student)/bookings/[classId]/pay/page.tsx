@@ -241,7 +241,7 @@ export default async function PayPage({
         timeZone={teacher.defaultTimezone}
       />
       {breakdown.kind === 'shown' && (
-        <PaymentBreakdown lines={breakdown.lines} classType={entry.classType} date={entry.date} currency={cls.currency} />
+        <PaymentBreakdown lines={breakdown.lines} format={cls.format} classType={entry.classType} date={entry.date} currency={cls.currency} />
       )}
     </div>
   );

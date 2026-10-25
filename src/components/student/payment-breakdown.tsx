@@ -1,9 +1,10 @@
-import type { Currency } from '@/lib/prisma-client';
+import type { ClassFormat, Currency } from '@/lib/prisma-client';
 import { formatDayHeader, formatMoneyCents } from '@/lib/format';
 import type { PaymentBreakdownLines } from '@/lib/payment-breakdown';
 
 interface PaymentBreakdownProps {
   lines: PaymentBreakdownLines;
+  format: ClassFormat;
   classType: string;
   date: Date;
   currency: Currency;
@@ -11,11 +12,14 @@ interface PaymentBreakdownProps {
 
 /**
  * Where a student's payment for a completed class went. Renders
- * unconditionally; the caller decides whether a row shows it.
+ * unconditionally; the caller decides whether a row shows it. An online class
+ * had no room, so it has no Room row.
  */
-export function PaymentBreakdown({ lines, classType, date, currency }: PaymentBreakdownProps) {
+export function PaymentBreakdown({ lines, format, classType, date, currency }: PaymentBreakdownProps) {
   const rows: ReadonlyArray<{ label: string; value: string; emphasis: boolean }> = [
-    { label: 'Room', value: formatMoneyCents(lines.roomCents, currency), emphasis: false },
+    ...(format === 'online'
+      ? []
+      : [{ label: 'Room', value: formatMoneyCents(lines.roomCents, currency), emphasis: false }]),
     ...(lines.chargesVat
       ? [{ label: 'VAT', value: formatMoneyCents(lines.vatCents, currency), emphasis: false }]
       : []),
