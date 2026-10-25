@@ -13,7 +13,7 @@ describe('PaymentLinkPanel', () => {
       <PaymentLinkPanel
         url="https://revolut.me/anna"
         host="revolut.me"
-        amount={12.5}
+        amount={{ kind: 'fixed', amount: 12.5 }}
         currency="EUR"
         reference="Hatha Tue 7 Oct"
       />,
@@ -41,5 +41,16 @@ describe('PaymentLinkPanel', () => {
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'Copy amount' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('12.50'));
+  });
+
+  it('for an open amount, names no amount, offers only the reference, keeps the link and drops the received caption (#912)', () => {
+    render(
+      <PaymentLinkPanel url="https://revolut.me/anna" host="revolut.me" amount={{ kind: 'open' }} currency="EUR" reference="Hatha Tue 7 Oct" />,
+    );
+    expect(screen.getByText('Give through the link, with this reference:')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy amount' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Copy reference' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Give via revolut.me (opens in a new tab)' })).toHaveAttribute('href', 'https://revolut.me/anna');
+    expect(screen.queryByText(/marks it as received/)).toBeNull();
   });
 });

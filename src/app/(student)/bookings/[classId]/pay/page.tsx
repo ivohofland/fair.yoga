@@ -5,11 +5,8 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
-import { PaymentDetails } from '@/components/student/payment-details';
-import { PaymentLinkPanel } from '@/components/student/payment-link-panel';
-import { PaymentQr } from '@/components/student/payment-qr';
+import { MethodPanel } from '@/components/student/method-panel';
 import { MarkSentControl } from '@/components/student/mark-sent-control';
-import { ProcessorPayButton } from '@/components/pay/processor-pay-button';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { formatDayHeader, formatMoney } from '@/lib/format';
@@ -23,71 +20,13 @@ import {
   paymentMethodLabel,
   paymentMethodsForTeacher,
   paymentReference,
-  type PaymentMethod,
   type PaymentMethodsAnswer,
 } from '@/lib/payment-methods';
 import { isOutstanding } from '@/lib/payment-status';
-import { MOLLIE_METHODS } from '@/lib/processor-methods';
 import { payPageMethods, payPageTeacherSelect } from '@/services/pay-page-methods';
 import { mollieDeps } from '@/services/mollie-deps';
 
 export const dynamic = 'force-dynamic';
-
-/** One method's details, inside its chooser row. */
-function MethodPanel({
-  method,
-  amount,
-  currency,
-  reference,
-  paymentId,
-}: {
-  method: PaymentMethod;
-  amount: number;
-  currency: Currency;
-  reference: string;
-  paymentId: string;
-}) {
-  switch (method.kind) {
-    case 'bank_transfer':
-      return (
-        <>
-          <p className="type-body">
-            Transfer <span className="type-number">{formatMoney(amount, currency)}</span> to:
-          </p>
-          <PaymentDetails details={method.details} beneficiary={method.beneficiary} reference={reference} />
-        </>
-      );
-    case 'epc_qr':
-      return (
-        <PaymentQr
-          iban={method.iban}
-          bic={method.bic}
-          beneficiary={method.beneficiary}
-          amount={amount}
-          currency={method.currency}
-          remittance={reference}
-        />
-      );
-    case 'payment_link':
-      return (
-        <PaymentLinkPanel
-          url={method.url}
-          host={method.host}
-          amount={amount}
-          currency={currency}
-          reference={reference}
-        />
-      );
-    case 'processor':
-      return <ProcessorPayButton paymentId={paymentId} method={method.method} label={MOLLIE_METHODS[method.method].label} />;
-    default: {
-      // A kind added to `PaymentMethod` without a panel fails the build here.
-      const unhandled: never = method;
-      log.error({ kind: String((unhandled as { kind?: unknown }).kind) }, 'pay page: unhandled payment method kind');
-      return null;
-    }
-  }
-}
 
 /**
  * What the student is told on coming back from Mollie, from the attempt's
@@ -166,6 +105,7 @@ export default async function PayPage({
       registrationId: registration.id,
       registrationStatus: registration.status,
       classStatus: registration.class.status,
+      pricingMode: registration.class.pricingMode,
     });
     notFound();
   }
@@ -192,6 +132,7 @@ export default async function PayPage({
   const breakdown = resolveReportedPaymentBreakdown(
     {
       classStatus: cls.status,
+      pricingMode: cls.pricingMode,
       roomCost: cls.roomCost,
       totalRevenue: cls.totalRevenue,
       vatTotal: cls.vatTotal,
@@ -317,7 +258,7 @@ function PayBody({
                     <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
                   </summary>
                   <div className="pb-4">
-                    <MethodPanel method={method} amount={amount} currency={currency} reference={reference} paymentId={paymentId} />
+                    <MethodPanel method={method} amount={{ kind: 'fixed', amount }} currency={currency} reference={reference} paymentId={paymentId} />
                   </div>
                 </details>
               ))}

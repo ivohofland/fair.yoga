@@ -189,6 +189,7 @@ export default async function BookClassPage({
       </p>
       <ClassPriceLine
         line={resolvePriceLine({
+          pricingMode: cls.pricingMode,
           roomCost: Number(cls.roomCost),
           minRate: Number(cls.minRate),
           targetRate: Number(cls.targetRate),

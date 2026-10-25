@@ -1,11 +1,12 @@
 import { estimateTierPrices, estimateAttendanceSpread, type TierPrices, type AttendanceSpread } from '@/lib/tier-estimates';
 import { readIncomeTier, toIncomeTier } from '@/lib/tiers.server';
 import type { IncomeTier } from '@/lib/tiers';
-import type { RegistrationStatus } from '@/lib/prisma-client';
+import type { PricingMode, RegistrationStatus } from '@/lib/prisma-client';
 
 export type PriceLineResult =
   | { kind: 'personal'; spread: AttendanceSpread }
-  | { kind: 'anonymous'; estimates: TierPrices };
+  | { kind: 'anonymous'; estimates: TierPrices }
+  | { kind: 'donation' };
 
 export interface PriceLineRegistration {
   id: string;
@@ -21,6 +22,7 @@ export interface PriceLineViewer {
 }
 
 export interface ResolvePriceLineInput {
+  pricingMode: PricingMode;
   roomCost: number;
   minRate: number;
   targetRate: number;
@@ -40,6 +42,19 @@ export interface ResolvePriceLineInput {
  * docs/superpowers/specs/2026-09-11-price-line-unification-design.md.
  */
 export function resolvePriceLine(input: ResolvePriceLineInput): PriceLineResult {
+  switch (input.pricingMode) {
+    case 'donation':
+      return { kind: 'donation' };
+    case 'tiered':
+      return resolveTieredPriceLine(input);
+    default: {
+      const unhandled: never = input.pricingMode;
+      throw new Error(`resolvePriceLine: unhandled pricing mode ${String(unhandled)}`);
+    }
+  }
+}
+
+function resolveTieredPriceLine(input: ResolvePriceLineInput): PriceLineResult {
   const { roomCost, minRate, targetRate, minStudents, maxStudents, vatPercent, registrations, viewer } = input;
 
   const ownRegistration = viewer

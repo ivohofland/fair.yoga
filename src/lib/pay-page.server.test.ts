@@ -68,7 +68,7 @@ describe('reportMissingPayment', () => {
     'reports CHARGED_REGISTRATION_WITHOUT_PAYMENT for a %s registration on a completed class',
     (registrationStatus) => {
       const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-      reportMissingPayment({ ...IDS, registrationStatus, classStatus: 'completed' });
+      reportMissingPayment({ ...IDS, registrationStatus, classStatus: 'completed', pricingMode: 'tiered' });
       expect(warn).toHaveBeenCalledWith(
         expect.objectContaining({ code: 'CHARGED_REGISTRATION_WITHOUT_PAYMENT', classId: 'class-1', registrationId: 'reg-1' }),
         'charged registration on a completed class has no payment; the pay page answered not found',
@@ -78,13 +78,19 @@ describe('reportMissingPayment', () => {
 
   it('reports nothing for a cancelled registration, which is never charged', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    reportMissingPayment({ ...IDS, registrationStatus: 'cancelled', classStatus: 'completed' });
+    reportMissingPayment({ ...IDS, registrationStatus: 'cancelled', classStatus: 'completed', pricingMode: 'tiered' });
     expect(warn).not.toHaveBeenCalled();
   });
 
   it.each(['draft', 'open', 'in_progress'] as const)('reports nothing on a %s class, which has no payments yet', (classStatus) => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
-    reportMissingPayment({ ...IDS, registrationStatus: 'attended', classStatus });
+    reportMissingPayment({ ...IDS, registrationStatus: 'attended', classStatus, pricingMode: 'tiered' });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('records nothing for a donation class, which never has a payment (#912)', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    reportMissingPayment({ classId: 'c', registrationId: 'r', registrationStatus: 'attended', classStatus: 'completed', pricingMode: 'donation' });
     expect(warn).not.toHaveBeenCalled();
   });
 });

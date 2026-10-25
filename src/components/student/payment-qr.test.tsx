@@ -8,7 +8,7 @@ vi.mock('qrcode', () => ({ default: { toDataURL } }));
 const IBAN = 'NL91ABNA0417164300';
 
 async function payloadFor(bic: string | null): Promise<string[]> {
-  render(<PaymentQr iban={IBAN} bic={bic} beneficiary="I. Hofland" amount={12.5} currency="EUR" remittance="Vinyasa Saturday" />);
+  render(<PaymentQr iban={IBAN} bic={bic} beneficiary="I. Hofland" amount={{ kind: 'fixed', amount: 12.5 }} currency="EUR" remittance="Vinyasa Saturday" />);
   await screen.findByRole('img');
   const payload = toDataURL.mock.calls.at(-1)?.[0];
   if (payload === undefined) throw new Error('no QR payload generated');
@@ -34,5 +34,15 @@ describe('PaymentQr', () => {
     expect(lines[1]).toBe('001');
     expect(lines[4]).toBe('ABNANL2A');
     expect(lines[6]).toBe(IBAN);
+  });
+
+  it('leaves the amount line empty and names no amount in the alt text for an open amount (#912)', async () => {
+    render(<PaymentQr iban={IBAN} bic={null} beneficiary="I. Hofland" amount={{ kind: 'open' }} currency="EUR" remittance="Vinyasa Saturday" />);
+    const image = await screen.findByRole('img');
+    const payload = toDataURL.mock.calls.at(-1)?.[0];
+    if (payload === undefined) throw new Error('no QR payload generated');
+    expect(payload.split('\n')[7]).toBe('');
+    expect(image).toHaveAttribute('alt', 'Payment QR to I. Hofland');
+    expect(image.getAttribute('alt')).not.toMatch(/\d/);
   });
 });

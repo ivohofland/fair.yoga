@@ -259,6 +259,7 @@ export default async function StudentBookingsPage() {
                 />
                 <ClassPriceLine
                   line={resolvePriceLine({
+                    pricingMode: cls.pricingMode,
                     roomCost: Number(cls.roomCost),
                     minRate: Number(cls.minRate),
                     targetRate: Number(cls.targetRate),
@@ -346,6 +347,7 @@ export default async function StudentBookingsPage() {
                       />
                       <ClassPriceLine
                         line={resolvePriceLine({
+                          pricingMode: cls.pricingMode,
                           roomCost: Number(cls.roomCost),
                           minRate: Number(cls.minRate),
                           targetRate: Number(cls.targetRate),
@@ -401,6 +403,7 @@ export default async function StudentBookingsPage() {
             const breakdown = resolveReportedPaymentBreakdown(
               {
                 classStatus: cls.status,
+                pricingMode: cls.pricingMode,
                 roomCost: cls.roomCost,
                 totalRevenue: cls.totalRevenue,
                 vatTotal: cls.vatTotal,
