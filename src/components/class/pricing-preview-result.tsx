@@ -15,6 +15,8 @@ export interface PricingPreviewInputs {
   maxStudents: number;
   /** The VAT percentage the class charges on top of room and rate; 0 charges none. */
   vatPercent: number;
+  /** An online class has no room: its cost line is left out. */
+  hideRoomCost?: boolean;
 }
 
 interface PricingPreviewResultProps extends PricingPreviewInputs {
@@ -35,6 +37,7 @@ export function PricingPreviewResult({
   minStudents,
   maxStudents,
   vatPercent,
+  hideRoomCost = false,
   distribution,
   distributionControl,
   showRateProgress = true,
@@ -74,10 +77,12 @@ export function PricingPreviewResult({
           <p className="type-number text-[28px] leading-[1.25]">{formatMoney(teacherRate, currency)}</p>
         </div>
         <div className="flex gap-6">
-          <div>
-            <p className="type-caption">{chargesVat ? 'Room cost (excl. VAT)' : 'Room cost'}</p>
-            <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(roomCost, currency)}</p>
-          </div>
+          {!hideRoomCost && (
+            <div>
+              <p className="type-caption">{chargesVat ? 'Room cost (excl. VAT)' : 'Room cost'}</p>
+              <p className="text-sm font-medium text-ink tabular-nums">{formatMoney(roomCost, currency)}</p>
+            </div>
+          )}
           {chargesVat && (
             <div>
               <p className="type-caption">{`VAT (${vatPercent}%)`}</p>

@@ -36,6 +36,10 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
   // `!cancelled` alongside the status on both windows below (#327): a
   // cancelled class keeps its `open` status, and neither a progress bar nor a
   // live-queue count means anything on a class that is off.
+  const location = classLocation(cls);
+  // A link can still be added until the class has run; after that, or once it
+  // is cancelled, a missing one is no longer something to act on.
+  const upcoming = !cancelled && (cls.status === 'draft' || cls.status === 'open' || cls.status === 'in_progress');
   const showProgress = !cancelled && (cls.status === 'open' || cls.status === 'in_progress');
 
   // #199. `in_progress` is included, not `open` alone: `closeQueueOnStart`
@@ -84,8 +88,18 @@ export function ClassInfo({ cls, registrationCount, waitlistCount }: ClassInfoPr
         {formatDateWithYear(cls.calendarEntry.date)} &middot; {timeToHHmm(cls.calendarEntry.startTime)} &middot; {cls.calendarEntry.durationMinutes} min
       </p>
       <p className="type-body">
-        {locationLabel(classLocation(cls))}
+        {locationLabel(location)}
       </p>
+      {location.format === 'online' && location.videoUrl !== null && (
+        <p className="type-caption mt-1 break-all">
+          <a href={location.videoUrl} target="_blank" rel="noopener noreferrer" className="text-teal">
+            {location.videoUrl}
+          </a>
+        </p>
+      )}
+      {location.format === 'online' && location.videoUrl === null && upcoming && (
+        <p className="type-caption text-gold-deep bg-gold-tint rounded-card px-4 py-3 mt-2">No video link yet</p>
+      )}
       <p className={`type-caption ${COUNT_LINE_GAP}`}>
         {registrationCount} registered
         {awaitingCheck && <> &middot; needs {cls.minStudents} to go ahead</>}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { Currency } from '@/lib/prisma-client';
+import type { ClassFormat, Currency } from '@/lib/prisma-client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import {
   CLASS_TYPE_MAX,
@@ -33,7 +33,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
-import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
 
 export interface ClassEditInitial {
@@ -49,17 +50,11 @@ export interface ClassEditInitial {
   maxStudents: number;
   vatPercent: number;
   isPrivate: boolean;
+  /** The stored link as the field holds it; empty for none. Read only by an online class. */
+  videoUrl: string;
 }
 
-/**
- * `videoUrl` is the one schema field this form does not carry: it is never
- * locked and is set on its own, so the pins below leave it out.
- */
-type UpdateClassWire = Omit<z.infer<typeof updateClassSchema>, 'videoUrl'>;
-
-/** Non-vacuity: the excluded key is still a key of the schema, so a rename turns this red. */
-const _excludedKeyExists: NoneOf<Exclude<'videoUrl', keyof z.infer<typeof updateClassSchema>>> = true;
-void _excludedKeyExists;
+type UpdateClassWire = z.infer<typeof updateClassSchema>;
 
 /** This form's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {
@@ -125,6 +120,8 @@ void _formHasNoExtras;
 
 interface ClassEditFormProps {
   classId: string;
+  /** Fixed when the class was made; it decides whether the room cost or the video link is shown. */
+  format: ClassFormat;
   settingsLocked: boolean;
   currency: Currency;
   /** `null`: no notice, however the start moves. */
@@ -137,6 +134,7 @@ interface ClassEditFormProps {
 // Policies aren't part of the update schema, so they aren't part of this form.
 export function ClassEditForm({
   classId,
+  format,
   settingsLocked,
   currency,
   moveWarning,
@@ -164,6 +162,7 @@ export function ClassEditForm({
   // hydration passes and `now` does not reach the markup.
   const [now, setNow] = useState(() => Date.now());
 
+  const online = format === 'online';
   const chargesVat = form.vatPercent > 0;
   const moved = form.date !== initial.date || form.startTime !== initial.startTime;
   const reading =
@@ -247,9 +246,15 @@ export function ClassEditForm({
     if (!settingsLocked) {
       const [violation] = economicsViolations(form);
       if (violation !== undefined) {
-        setError(ECONOMICS_COPY[violation.rule]);
+        setError(online && violation.rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
         return;
       }
+    }
+
+    const link = online ? readVideoLink(form.videoUrl) : null;
+    if (link !== null && !link.ok) {
+      setError(link.message);
+      return;
     }
 
     setSaving(true);
@@ -274,6 +279,11 @@ export function ClassEditForm({
     // Private goes out only as a change from the stored flag, so a tab opened
     // before it changed elsewhere does not send its old value back.
     if (payload.isPrivate === initial.isPrivate) delete payload.isPrivate;
+    // The link, likewise, goes only as a change, and only for an online class;
+    // such a class has no room cost to send.
+    if (link?.ok && link.url !== (initial.videoUrl.trim() || null)) payload.videoUrl = link.url;
+    else delete payload.videoUrl;
+    if (online) delete payload.roomCost;
 
     let res: Response;
     try {
@@ -367,6 +377,13 @@ export function ClassEditForm({
             onValueChange={(n) => set('durationMinutes', n)}
           />
         </div>
+        {online && (
+          <VideoLinkField
+            value={form.videoUrl}
+            onChange={(v) => set('videoUrl', v)}
+            hint={CLASS_VIDEO_LINK_HINT}
+          />
+        )}
       </section>
 
       <section>
@@ -378,18 +395,20 @@ export function ClassEditForm({
           </p>
         )}
         <div className="grid grid-cols-2 gap-3">
-          <NumberInput
-            label={
-              chargesVat
-                ? `Room cost excl. VAT (${currencyLabel(currency)})`
-                : `Room cost (${currencyLabel(currency)})`
-            }
-            decimals={MONEY_DECIMALS}
-            value={form.roomCost}
-            disabled={settingsLocked}
-            onValueChange={(n) => set('roomCost', n)}
-            hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
-          />
+          {!online && (
+            <NumberInput
+              label={
+                chargesVat
+                  ? `Room cost excl. VAT (${currencyLabel(currency)})`
+                  : `Room cost (${currencyLabel(currency)})`
+              }
+              decimals={MONEY_DECIMALS}
+              value={form.roomCost}
+              disabled={settingsLocked}
+              onValueChange={(n) => set('roomCost', n)}
+              hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
+            />
+          )}
           <NumberInput
             id="vatPercent"
             label="VAT %"
@@ -434,6 +453,7 @@ export function ClassEditForm({
           <PricingPreviewTable
             currency={currency}
             roomCost={form.roomCost}
+            hideRoomCost={online}
             minRate={form.minRate}
             targetRate={form.targetRate}
             minStudents={form.minStudents}

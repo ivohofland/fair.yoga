@@ -56,12 +56,13 @@ describe('ClassEditForm', () => {
     maxStudents: 12,
     vatPercent: 0,
     isPrivate: false,
+    videoUrl: '',
   };
 
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const [, options] = fetchMock.mock.calls[0] ?? [];
@@ -88,7 +89,7 @@ describe('ClassEditForm', () => {
   it('keeps the Private checkbox enabled on a locked class and sends the toggle (#910)', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
     const box = screen.getByRole('checkbox', { name: /private class/i });
     expect(box).toBeEnabled();
     expect(screen.getByLabelText('Max students')).toBeDisabled();
@@ -110,7 +111,7 @@ describe('ClassEditForm', () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
       return render(
-        <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate }} />,
+        <ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate }} />,
       );
     }
     async function save(): Promise<Record<string, unknown>> {
@@ -122,7 +123,7 @@ describe('ClassEditForm', () => {
 
     it('an untouched box follows the refreshed flag and the save leaves it out', async () => {
       const { rerender } = renderForm(false);
-      rerender(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: true }} />);
+      rerender(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: true }} />);
       expect(screen.getByRole('checkbox', { name: /private class/i })).toBeChecked();
       expect(await save()).not.toHaveProperty('isPrivate');
     });
@@ -130,7 +131,7 @@ describe('ClassEditForm', () => {
     it('a box the teacher ticked survives a refresh that leaves the flag alone, and is sent', async () => {
       const { rerender } = renderForm(false);
       fireEvent.click(screen.getByRole('checkbox', { name: /private class/i }));
-      rerender(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: false, classType: 'Yin' }} />);
+      rerender(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, isPrivate: false, classType: 'Yin' }} />);
       expect(screen.getByRole('checkbox', { name: /private class/i })).toBeChecked();
       expect(await save()).toHaveProperty('isPrivate', true);
     });
@@ -162,7 +163,7 @@ describe('ClassEditForm', () => {
   });
 
   it('shows the stored VAT %, and the room cost label follows whether VAT is charged (#819)', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
     expect(screen.getByLabelText('VAT %')).toHaveValue('21');
     expect(screen.getByLabelText('Room cost excl. VAT (€)')).toBeInTheDocument();
     expect(screen.getByText("You reclaim the room's VAT in your own VAT return.")).toBeInTheDocument();
@@ -171,7 +172,7 @@ describe('ClassEditForm', () => {
   it('saves an edited non-zero VAT % (#819)', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, vatPercent: 21 }} />);
     fireEvent.change(screen.getByLabelText('VAT %'), { target: { value: '9' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -181,13 +182,13 @@ describe('ClassEditForm', () => {
   });
 
   it('keeps the plain room cost label at 0% VAT (#819)', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
     expect(screen.queryByText("You reclaim the room's VAT in your own VAT return.")).toBeNull();
   });
 
   it('disables the date and start time once booked, and says how to change the time (#836)', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={true} initial={initial} />);
     expect(screen.getByLabelText('Date')).toBeDisabled();
     expect(screen.getByLabelText('Start time')).toBeDisabled();
     expect(screen.getByLabelText('Duration (minutes)')).not.toBeDisabled();
@@ -195,14 +196,14 @@ describe('ClassEditForm', () => {
   });
 
   it('leaves the date and start time editable while unbooked', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Date')).not.toBeDisabled();
     expect(screen.getByLabelText('Start time')).not.toBeDisabled();
     expect(screen.queryByText(/cancel it and create a new one/)).not.toBeInTheDocument();
   });
 
   it('steps the start time by five minutes from midnight, whatever is typed', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     const input = screen.getByLabelText<HTMLInputElement>('Start time');
     expect(input).toHaveAttribute('min', '00:00');
     fireEvent.change(input, { target: { value: '14:37' } });
@@ -211,7 +212,7 @@ describe('ClassEditForm', () => {
   });
 
   it('keeps a saved start time off the five-minute grid valid', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, startTime: '09:37' }} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, startTime: '09:37' }} />);
     const input = screen.getByLabelText<HTMLInputElement>('Start time');
     expect(input).toHaveAttribute('step', '60');
     expect(input.checkValidity()).toBe(true);
@@ -231,7 +232,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm moveWarning={null} currency="EUR"
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -246,7 +247,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm moveWarning={null} currency="EUR"
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, description: '' }}
@@ -282,7 +283,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, clearedValue, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value: clearedValue } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -352,7 +353,7 @@ describe('ClassEditForm', () => {
     async (_label, fieldName, value, settingsLocked, copy) => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
       vi.stubGlobal('fetch', fetchMock);
-      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
+      render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={initial} />);
 
       fireEvent.change(screen.getByLabelText(fieldName), { target: { value } });
       fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -372,7 +373,7 @@ describe('ClassEditForm', () => {
   ])('refuses a %s of %s, rather than reading it as some other amount', async (fieldName, text, name) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     fireEvent.change(screen.getByLabelText(fieldName), { target: { value: text } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -381,7 +382,7 @@ describe('ClassEditForm', () => {
   });
 
   it('keeps the minus key on the signed rate fields and the decimal keypad on room cost', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     expect(screen.getByLabelText('Min rate (€)')).not.toHaveAttribute('inputmode');
     expect(screen.getByLabelText('Target rate (€)')).not.toHaveAttribute('inputmode');
     expect(screen.getByLabelText('Room cost (€)')).toHaveAttribute('inputmode', 'decimal');
@@ -394,7 +395,7 @@ describe('ClassEditForm', () => {
   ])('sends 4.5 for a %s typed as 4,5', async (fieldName, key) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     if (key === 'targetRate') fireEvent.change(screen.getByLabelText('Min rate (€)'), { target: { value: '1' } });
     fireEvent.change(screen.getByLabelText(fieldName), { target: { value: '4,5' } });
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
@@ -407,7 +408,7 @@ describe('ClassEditForm', () => {
   it('lets a cleared min rate be retyped, sending the new rate', async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     const field = screen.getByLabelText('Min rate (€)') as HTMLInputElement;
     fireEvent.change(field, { target: { value: '' } });
     expect(field.value).toBe('');
@@ -431,7 +432,7 @@ describe('ClassEditForm', () => {
   ] as const)('saves every number field at %s, with no alert', async (_label, edges) => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, ...edges }} />);
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -456,7 +457,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm moveWarning={null} currency="EUR"
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={true}
         initial={{ ...initial, ...overrides }}
@@ -481,7 +482,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm moveWarning={null} currency="EUR"
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, minRate: 30, targetRate: 25 }}
@@ -504,7 +505,7 @@ describe('ClassEditForm', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
     vi.stubGlobal('fetch', fetchMock);
     render(
-      <ClassEditForm moveWarning={null} currency="EUR"
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR"
         classId="cls-1"
         settingsLocked={false}
         initial={{ ...initial, roomCost: 20, minRate: -25, targetRate: 25 }}
@@ -538,7 +539,7 @@ describe('ClassEditForm', () => {
     // as it would under UTC — while still reddening the instant anyone calls
     // a clock-reading formatter during render.
     const html = renderToStaticMarkup(
-      <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     // Scoped to the date field's own tag rather than run over the whole
     // document, because this form legitimately server-renders another `min`:
@@ -570,7 +571,7 @@ describe('ClassEditForm', () => {
     // pins is the TRANSITION: absent in the server HTML, present after
     // hydration, on the same DOM node.
     const html = renderToString(
-      <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+      <ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
     );
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -590,7 +591,7 @@ describe('ClassEditForm', () => {
       await act(async () => {
         root = hydrateRoot(
           container,
-          <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
+          <ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />,
         );
       });
 
@@ -620,7 +621,7 @@ describe('ClassEditForm', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'));
     try {
-      render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+      render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
       expect(screen.getByLabelText('Date')).toHaveAttribute('min', '2026-08-18');
     } finally {
       vi.useRealTimers();
@@ -638,7 +639,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(htmlResponse(502));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -654,7 +655,7 @@ describe('ClassEditForm', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     vi.stubGlobal('fetch', fetchMock);
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
 
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
@@ -666,7 +667,7 @@ describe('ClassEditForm', () => {
   });
 
   it('feeds the pricing preview from the rate fields as the teacher types', () => {
-    render(<ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={initial} />);
     fireEvent.change(screen.getByLabelText('Target rate (€)'), { target: { value: '45' } });
 
     // 8 students on 4–12: 15 + (45 − 15) × 4 / 8 = 30, plus the €20 room
@@ -693,6 +694,7 @@ describe('ClassEditForm, late-move notice', () => {
     maxStudents: 12,
     vatPercent: 0,
     isPrivate: false,
+    videoUrl: '',
   };
   const warning: MoveWarning = {
     timeZone: 'Europe/Amsterdam',
@@ -704,7 +706,7 @@ describe('ClassEditForm, late-move notice', () => {
 
   function open(moveWarning: MoveWarning | null, minStudents = 4) {
     return render(
-      <ClassEditForm
+      <ClassEditForm format="in_person"
         currency="EUR"
         classId="cls-1"
         settingsLocked={false}
@@ -848,5 +850,109 @@ describe('ClassEditForm, late-move notice', () => {
     move('2026-06-12', '02:30');
     const save = screen.getByRole('button', { name: 'Save changes' });
     expect(notice()!.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe('ClassEditForm video link (#911)', () => {
+  const initial: ClassEditInitial = {
+    classType: 'Vinyasa',
+    description: 'Bring a mat.',
+    date: '2026-06-12',
+    startTime: '09:30',
+    durationMinutes: 60,
+    roomCost: 20,
+    minRate: 15,
+    targetRate: 25,
+    minStudents: 4,
+    maxStudents: 12,
+    vatPercent: 0,
+    isPrivate: false,
+    videoUrl: '',
+  };
+  const fetchMock = vi.fn();
+  afterEach(() => {
+    fetchMock.mockReset();
+    vi.unstubAllGlobals();
+  });
+  const LINK = 'https://meet.example/a?pwd=1';
+  const ONLINE_INITIAL: ClassEditInitial = { ...initial, roomCost: 0, videoUrl: LINK };
+
+  function renderOnline(settingsLocked = false, over: Partial<ClassEditInitial> = {}) {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ClassEditForm format="online" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={settingsLocked} initial={{ ...ONLINE_INITIAL, ...over }} />,
+    );
+  }
+
+  async function save(): Promise<Record<string, unknown>> {
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [, options] = fetchMock.mock.calls[0] ?? [];
+    return JSON.parse((options as { body: string }).body) as Record<string, unknown>;
+  }
+
+  it('shows no link field for a class in a room, and never sends one', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ClassEditForm format="in_person" moveWarning={null} currency="EUR" classId="cls-1" settingsLocked={false} initial={{ ...initial, videoUrl: '' }} />);
+    const body = await save();
+    expect(screen.queryByLabelText('Video link (optional)')).toBeNull();
+    expect(body).not.toHaveProperty('videoUrl');
+  });
+
+  it('shows the stored link with the one-off hint, and no format switch', () => {
+    renderOnline();
+    const field = screen.getByLabelText('Video link (optional)');
+    expect(field).toHaveValue(LINK);
+    expect(field).toHaveAccessibleDescription('Only students who have booked see this link.');
+    expect(screen.queryByRole('radio')).toBeNull();
+  });
+
+  it('shows no room cost for an online class and sends none', async () => {
+    renderOnline();
+    expect(screen.queryByLabelText(/room cost/i)).toBeNull();
+    const body = await save();
+    expect(body).not.toHaveProperty('roomCost');
+  });
+
+  it('sends videoUrl only when it changed', async () => {
+    renderOnline();
+    const body = await save();
+    expect(body).not.toHaveProperty('videoUrl');
+  });
+
+  it('sends the normalised new link', async () => {
+    renderOnline();
+    fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: ' https://meet.example/b ' } });
+    expect((await save()).videoUrl).toBe('https://meet.example/b');
+  });
+
+  it('sends null for a cleared link', async () => {
+    renderOnline();
+    fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: '' } });
+    expect((await save()).videoUrl).toBeNull();
+  });
+
+  it('adds a first link', async () => {
+    renderOnline(false, { videoUrl: '' });
+    fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: LINK } });
+    expect((await save()).videoUrl).toBe(LINK);
+  });
+
+  it('is editable on a locked class and sent', async () => {
+    renderOnline(true);
+    const field = screen.getByLabelText('Video link (optional)');
+    expect(field).toBeEnabled();
+    fireEvent.change(field, { target: { value: 'https://meet.example/b' } });
+    expect((await save()).videoUrl).toBe('https://meet.example/b');
+  });
+
+  it('refuses a link that is not https, without sending', async () => {
+    renderOnline();
+    fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: 'http://meet.example/b' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Use a secure link — one that starts with https://');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

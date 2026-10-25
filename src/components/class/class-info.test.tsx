@@ -74,3 +74,55 @@ describe('ClassInfo "needs N to go ahead"', () => {
     expect(container.textContent).not.toMatch(NEEDS);
   });
 });
+
+describe('ClassInfo, online (#911)', () => {
+  const online = (videoUrl: string | null, over: { cancelled?: boolean; status?: 'draft' | 'open' | 'completed' } = {}) => {
+    const cls = classRow('c-o', over.status ?? 'open', [], { cancelled: over.cancelled === true });
+    cls.format = 'online';
+    cls.teacherRoomId = null;
+    cls.teacherRoom = null;
+    cls.videoUrl = videoUrl;
+    return cls;
+  };
+
+  it('names the location Online', () => {
+    const { container } = render(<ClassInfo cls={online(null)} registrationCount={0} waitlistCount={0} />);
+    expect(container.textContent).toContain('Online');
+  });
+
+  it('nudges, in the attention style, when there is no link yet', () => {
+    const { getByText } = render(<ClassInfo cls={online(null)} registrationCount={0} waitlistCount={0} />);
+    const nudge = getByText('No video link yet');
+    expect(nudge.className).toContain('text-gold-deep');
+    expect(nudge.className).toContain('bg-gold-tint');
+  });
+
+  it('nudges on a draft too', () => {
+    const { container } = render(<ClassInfo cls={online(null, { status: 'draft' })} registrationCount={0} waitlistCount={0} />);
+    expect(container.textContent).toContain('No video link yet');
+  });
+
+  it('shows the link, and no nudge, once there is one', () => {
+    const { container, getByRole } = render(
+      <ClassInfo cls={online('https://meet.example/a?pwd=1')} registrationCount={0} waitlistCount={0} />,
+    );
+    expect(getByRole('link')).toHaveAttribute('href', 'https://meet.example/a?pwd=1');
+    expect(getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(container.textContent).not.toContain('No video link yet');
+  });
+
+  it('does not nudge a class that is over', () => {
+    const done = render(<ClassInfo cls={online(null, { status: 'completed' })} registrationCount={0} waitlistCount={0} />);
+    expect(done.container.textContent).not.toContain('No video link yet');
+    const cancelled = render(<ClassInfo cls={online(null, { cancelled: true })} registrationCount={0} waitlistCount={0} />);
+    expect(cancelled.container.textContent).not.toContain('No video link yet');
+  });
+
+  it('shows neither for a class in a room', () => {
+    const { container, queryByRole } = render(
+      <ClassInfo cls={classRow('c-r', 'open', [])} registrationCount={0} waitlistCount={0} />,
+    );
+    expect(container.textContent).not.toContain('No video link yet');
+    expect(queryByRole('link')).toBeNull();
+  });
+});

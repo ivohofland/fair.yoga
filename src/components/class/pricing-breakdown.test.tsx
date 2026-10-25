@@ -123,3 +123,21 @@ describe('PricingBreakdown', () => {
     });
   });
 });
+
+describe('PricingBreakdown, online (#911)', () => {
+  it('shows the room cost line for a class in a room', () => {
+    render(<PricingBreakdown cls={makeClass()} tierPrices={[]} />);
+    expect(screen.getByText('Room cost')).toBeInTheDocument();
+  });
+
+  it('leaves the room cost line out for an online class', () => {
+    render(
+      <PricingBreakdown
+        cls={makeClass({ format: 'online', teacherRoomId: null, roomCost: new Prisma.Decimal(0) })}
+        tierPrices={[]}
+      />,
+    );
+    expect(screen.queryByText('Room cost')).toBeNull();
+    expect(screen.getByText('Rate')).toBeInTheDocument();
+  });
+});

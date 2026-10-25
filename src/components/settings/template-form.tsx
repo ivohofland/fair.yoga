@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
-import type { CancelDeadline, AutoCancelCheck, Currency } from '@/lib/prisma-client';
+import type { CancelDeadline, AutoCancelCheck, ClassFormat, Currency } from '@/lib/prisma-client';
 import {
   CLASS_TYPE_MAX,
   DURATION_MAX_MINUTES,
@@ -22,7 +22,8 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { FormatChoice, VideoLinkField, TEMPLATE_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { formatRoomLocation } from '@/lib/format';
 import {
   CANCEL_DEADLINE_OPTIONS,
@@ -32,6 +33,7 @@ import {
 } from '@/lib/class-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
+  linkKeptNotice,
   resumeMessage,
   templateUpdatedMessage,
   UNREADABLE_CONFIRMATION_MESSAGE,
@@ -57,7 +59,11 @@ interface TeacherRoomOption {
  * request body. The pins below hold it against the wire schema.
  */
 interface TemplateFormValues {
+  format: ClassFormat;
+  /** Empty for an online template, which holds no room. */
   teacherRoomId: string;
+  /** The link as stored, or as typed; empty for none. Online only. */
+  videoUrl: string;
   classType: string;
   description: string;
   dayOfWeek: number;
@@ -74,21 +80,8 @@ interface TemplateFormValues {
   isPrivate: boolean;
 }
 
-/**
- * `format` and `videoUrl` are the schema fields this form does not carry yet
- * (#911): it builds an in-person body, which needs neither, so the pins below
- * leave both out.
- */
-type FullUpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
-type InPersonCreateTemplateWire = Extract<z.infer<typeof createClassTemplateSchema>, { format: 'in_person' }>;
-type UpdateTemplateWire = Omit<FullUpdateTemplateWire, 'format' | 'videoUrl'>;
-type CreateTemplateWire = Omit<InPersonCreateTemplateWire, 'format' | 'videoUrl'>;
-
-/** Non-vacuity: each excluded key is still a key of both schemas, so a rename turns this red. */
-const _excludedUpdateKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof FullUpdateTemplateWire>> = true;
-const _excludedCreateKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof InPersonCreateTemplateWire>> = true;
-void _excludedUpdateKeysExist;
-void _excludedCreateKeysExist;
+type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
+type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
 
 /**
  * #85. Both schemas, both directions — four pins, because this form builds one
@@ -218,7 +211,9 @@ function numberFieldError(form: TemplateFormValues): string | undefined {
 }
 
 const INITIAL_VALUES: TemplateFormValues = {
+  format: 'in_person',
   teacherRoomId: '',
+  videoUrl: '',
   classType: '',
   description: '',
   dayOfWeek: 0,
@@ -256,6 +251,9 @@ export function TemplateForm(props: TemplateFormProps) {
   // A saved edit that changed Private leaves the classes already generated as
   // they were; this is the line that says so.
   const [privacyChanged, setPrivacyChanged] = useState(false);
+  // The sentence for a saved edit that changed the link while classes made
+  // from the template are on the schedule; `null` otherwise.
+  const [linkKept, setLinkKept] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
   // The filter below keys off this prop rather than `form.teacherRoomId` so
@@ -338,7 +336,11 @@ export function TemplateForm(props: TemplateFormProps) {
   }, [initialTeacherRoomId]);
 
   const selectedRoom = teacherRooms.find((tr) => tr.id === form.teacherRoomId);
-  const roomCapacity = selectedRoom?.capacityOverride ?? 30;
+  const online = form.format === 'online';
+  const roomCapacity = online ? MAX_CLASS_SIZE : (selectedRoom?.capacityOverride ?? 30);
+  // An online template has no room: none of the room's cost reaches a rule, a
+  // preview or the body, whatever the field held before the switch.
+  const roomCost = online ? 0 : form.roomCost;
   const chargesVat = form.vatPercent > 0;
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -347,6 +349,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setSuccess('');
     setLate(null);
     setPrivacyChanged(false);
+    setLinkKept(null);
   }
 
   function handleRoomChange(teacherRoomId: string) {
@@ -367,6 +370,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setSuccess('');
     setLate(null);
     setPrivacyChanged(false);
+    setLinkKept(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -383,7 +387,7 @@ export function TemplateForm(props: TemplateFormProps) {
     // reduced to a single field, the guard is the second line and the test is
     // what proves it can still fail.
     if (created) return;
-    if (!form.teacherRoomId) {
+    if (!online && !form.teacherRoomId) {
       setError('Select a room');
       return;
     }
@@ -395,7 +399,12 @@ export function TemplateForm(props: TemplateFormProps) {
       setError('Enter a start time');
       return;
     }
-    const numberError = numberFieldError(form);
+    const typedLink = online ? readVideoLink(form.videoUrl) : null;
+    if (typedLink !== null && !typedLink.ok) {
+      setError(typedLink.message);
+      return;
+    }
+    const numberError = numberFieldError({ ...form, roomCost });
     if (numberError !== undefined) {
       setError(numberError);
       return;
@@ -405,9 +414,9 @@ export function TemplateForm(props: TemplateFormProps) {
     // `updateClassTemplate` on edit. Checked here through the same function so
     // a teacher sees the message immediately instead of after a round trip, on
     // create and edit alike. `ECONOMICS_COPY` above is this form's own wording.
-    const [violation] = economicsViolations(form);
+    const [violation] = economicsViolations({ ...form, roomCost });
     if (violation !== undefined) {
-      setError(ECONOMICS_COPY[violation.rule]);
+      setError(online && violation.rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
       return;
     }
 
@@ -416,6 +425,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setSuccess('');
     setLate(null);
     setPrivacyChanged(false);
+    setLinkKept(null);
 
     try {
       const url = edit
@@ -423,28 +433,40 @@ export function TemplateForm(props: TemplateFormProps) {
         : '/api/class-templates';
       const method = edit ? 'PUT' : 'POST';
 
-      // The intersection, not either half: `full` goes to both endpoints, so
-      // it has to satisfy both schemas. The pins above hold the *key sets*
-      // against both; this annotation is what holds the *value types* — without
-      // it the literal is inferred, and retyping a schema field (say
-      // `durationMinutes` to a string) would change what the route expects
-      // while this file kept compiling. `withoutRoom` inherits its types.
-      //
       // #685. An edit carries the room only when it differs from the stored
       // room in `initial`: the stored room can change while this tab is open,
       // and resending the one this tab loaded would ask the server to move the
       // template back. `initial` follows the server on every refresh, and the
       // render-time adoption above keeps an untouched `form` room equal to it.
-      const full: CreateTemplateWire & UpdateTemplateWire = {
-        ...form,
-        classType: form.classType.trim(),
-        description: form.description.trim() || null,
-      };
-      const { teacherRoomId, ...withoutRoom } = full;
-      const payload =
-        edit !== null && teacherRoomId === edit.initial.teacherRoomId ? withoutRoom : full;
+      //
+      // #911. The format always goes, and the rest follows from it. An online
+      // body holds no room and a room cost of 0, so a template that was in a
+      // room releases its room (`null`); a template that was online and goes
+      // in a room releases its link (`null`). The link otherwise goes only as
+      // a change from the stored one, as the room does.
+      const { teacherRoomId, videoUrl, ...rest } = form;
+      const common = { ...rest, classType: form.classType.trim(), description: form.description.trim() || null };
+      const parsedLink = online ? readVideoLink(videoUrl) : null;
+      const nextLink = parsedLink?.ok ? parsedLink.url : null;
+      const storedLink = edit?.initial.videoUrl.trim() || null;
+      const roomChanged = edit === null || teacherRoomId !== edit.initial.teacherRoomId;
+      const body: CreateTemplateWire | UpdateTemplateWire = online
+        ? {
+            ...common,
+            format: 'online',
+            roomCost: 0,
+            ...(edit?.initial.format === 'in_person' ? { teacherRoomId: null } : {}),
+            ...(edit === null || nextLink !== storedLink ? { videoUrl: nextLink } : {}),
+          }
+        : {
+            ...common,
+            format: 'in_person',
+            ...(roomChanged ? { teacherRoomId } : {}),
+            ...(edit?.initial.format === 'online' ? { videoUrl: null } : {}),
+          };
       // #910. Private likewise goes out on an edit only as a change.
-      if (edit !== null && payload.isPrivate === edit.initial.isPrivate) delete payload.isPrivate;
+      if (edit !== null && body.isPrivate === edit.initial.isPrivate) delete body.isPrivate;
+      const payload = body;
 
       let res: Response;
       try {
@@ -624,6 +646,7 @@ export function TemplateForm(props: TemplateFormProps) {
                 firstEffective?: TemplateEditResponse['firstEffective'];
                 generationState?: string;
                 lateFirstClass?: unknown;
+                linkChangedWithScheduledClasses?: boolean;
               };
             };
             const firstEffective = data.firstEffective ?? null;
@@ -638,6 +661,7 @@ export function TemplateForm(props: TemplateFormProps) {
               ),
             );
             setLate(readLateFirstClass(data.lateFirstClass, 'recurring class edit'));
+            setLinkKept(linkKeptNotice(data.linkChangedWithScheduledClasses === true));
           } catch (err) {
             console.error('[template-form] updated, but the confirmation could not be resolved', {
               templateId: edit?.templateId,
@@ -653,6 +677,10 @@ export function TemplateForm(props: TemplateFormProps) {
     }
   }
 
+  const formatChoice = (
+    <FormatChoice name="format" value={form.format} onChange={(format) => update('format', format)} />
+  );
+
   if (loading) {
     return <div className="py-12 text-center text-brown">Loading rooms...</div>;
   }
@@ -666,29 +694,37 @@ export function TemplateForm(props: TemplateFormProps) {
     );
   }
 
-  if (teacherRooms.length === 0) {
+  // Without a room only an online template can be made, so the choice stays on
+  // screen beside the empty state and the form opens once Online is chosen.
+  if (teacherRooms.length === 0 && !online) {
     // Issue 76: a teacher whose rooms are all archived still has `allRoomsCount
     // > 0` — the filter above is what emptied `teacherRooms`, not an absence of
     // rooms. Telling them to add a room they already own would be wrong; the
     // way out is un-archiving one.
-    if (allRoomsCount > 0) {
-      return (
-        <div className="py-12 text-center">
-          <p className="text-brown mb-4">All your rooms are archived.</p>
-          <p className="text-sm text-brown">Unarchive one in Settings to schedule here.</p>
-        </div>
-      );
-    }
     return (
-      <div className="py-12 text-center">
-        <p className="text-brown mb-4">No rooms configured.</p>
-        <p className="text-sm text-brown">Add a room in Settings before creating a recurring class.</p>
+      <div className="flex flex-col gap-4">
+        {formatChoice}
+        <div className="py-12 text-center">
+          {allRoomsCount > 0 ? (
+            <>
+              <p className="text-brown mb-4">All your rooms are archived.</p>
+              <p className="text-sm text-brown">Unarchive one in Settings to schedule here.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-brown mb-4">No rooms configured.</p>
+              <p className="text-sm text-brown">Add a room in Settings before creating a recurring class.</p>
+            </>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+      {formatChoice}
+
       <Input
         label="Class type"
         value={form.classType}
@@ -710,19 +746,27 @@ export function TemplateForm(props: TemplateFormProps) {
         />
       </div>
 
-      <Select
-        id="room"
-        label="Room"
-        value={form.teacherRoomId}
-        onChange={(e) => handleRoomChange(e.target.value)}
-      >
-        <option value="">Select a room</option>
-        {teacherRooms.map((tr) => (
-          <option key={tr.id} value={tr.id}>
-            {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
-          </option>
-        ))}
-      </Select>
+      {online ? (
+        <VideoLinkField
+          value={form.videoUrl}
+          onChange={(v) => update('videoUrl', v)}
+          hint={TEMPLATE_VIDEO_LINK_HINT}
+        />
+      ) : (
+        <Select
+          id="room"
+          label="Room"
+          value={form.teacherRoomId}
+          onChange={(e) => handleRoomChange(e.target.value)}
+        >
+          <option value="">Select a room</option>
+          {teacherRooms.map((tr) => (
+            <option key={tr.id} value={tr.id}>
+              {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
+            </option>
+          ))}
+        </Select>
+      )}
 
       <Select
         id="dayOfWeek"
@@ -751,17 +795,19 @@ export function TemplateForm(props: TemplateFormProps) {
       />
 
       <div className="grid grid-cols-2 gap-3">
-        <NumberInput
-          label={
-            chargesVat
-              ? `Room cost excl. VAT (${currencyLabel(currency)})`
-              : `Room cost (${currencyLabel(currency)})`
-          }
-          decimals={MONEY_DECIMALS}
-          value={form.roomCost}
-          onValueChange={(n) => update('roomCost', n)}
-          hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
-        />
+        {!online && (
+          <NumberInput
+            label={
+              chargesVat
+                ? `Room cost excl. VAT (${currencyLabel(currency)})`
+                : `Room cost (${currencyLabel(currency)})`
+            }
+            decimals={MONEY_DECIMALS}
+            value={form.roomCost}
+            onValueChange={(n) => update('roomCost', n)}
+            hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
+          />
+        )}
         <NumberInput
           id="vatPercent"
           label="VAT %"
@@ -806,7 +852,8 @@ export function TemplateForm(props: TemplateFormProps) {
 
       <PricingPreviewTable
         currency={currency}
-        roomCost={form.roomCost}
+        roomCost={roomCost}
+        hideRoomCost={online}
         minRate={form.minRate}
         targetRate={form.targetRate}
         minStudents={form.minStudents}
@@ -858,6 +905,7 @@ export function TemplateForm(props: TemplateFormProps) {
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
       {privacyChanged && <p className="type-caption">Classes already on your schedule keep their own setting.</p>}
+      {linkKept !== null && <p className="type-caption">{linkKept}</p>}
       {late && mode === 'create' && <LateFirstClassNotice late={late} when="added" />}
       {/* The response type is the full `LateFirstClass` union, but an edit's
           answer can only be `past_deadline` (`UpdateRuleResult.lateFirstClass`,

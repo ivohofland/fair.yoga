@@ -1,6 +1,6 @@
 'use client';
 
-import type { Currency } from '@/lib/prisma-client';
+import type { AutoCancelCheck, CancelDeadline, ClassFormat, Currency } from '@/lib/prisma-client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
@@ -17,8 +17,9 @@ import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
 import { currencyLabel, formatRoomLocation, formatDateWithYear, formatMoney } from '@/lib/format';
+import { FormatChoice, VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { startTimeInputProps } from '@/lib/time-of-day';
 import { useTodayLocal } from '@/lib/use-today-local';
 import {
@@ -26,8 +27,6 @@ import {
   AUTO_CANCEL_OPTIONS,
   cancelDeadlineHint,
   autoCancelHint,
-  type CancelDeadlineOption,
-  type AutoCancelOption,
 } from '@/lib/class-options';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 
@@ -52,12 +51,15 @@ interface TeacherRoomData {
 
 interface FormData {
   // Step 1: Basics
+  format: ClassFormat;
   teacherRoomId: string;
   classType: string;
   description: string;
   date: string;
   startTime: string;
   durationMinutes: number;
+  /** The link as typed; the body carries it normalised, or `null`. Online only. */
+  videoUrl: string;
   // Step 2: Pricing
   roomCost: number;
   minRate: number;
@@ -66,41 +68,30 @@ interface FormData {
   maxStudents: number;
   vatPercent: number;
   // Step 3: Policies
-  cancelDeadline: string;
-  autoCancelCheck: string;
+  cancelDeadline: CancelDeadline;
+  autoCancelCheck: AutoCancelCheck;
   isPrivate: boolean;
 }
 
 /**
- * The in-person arm without its `format` key, which this form never sends (a
- * body without one is in person) and `videoUrl`, which only the online arm
- * carries.
- */
-type InPersonCreateWire = Extract<z.infer<typeof createClassSchema>, { format: 'in_person' }>;
-type CreateClassWire = Omit<InPersonCreateWire, 'format' | 'videoUrl'>;
-
-/** Non-vacuity: each excluded key is still a key of the schema, so a rename turns this red. */
-const _excludedKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof InPersonCreateWire>> = true;
-void _excludedKeysExist;
-
-/**
- * #136. `FormData` is the list; the body is `form` spread with `description`
- * normalized at submit (`trim() || null`), so the *key* list cannot drift —
- * the value transform is what `page.test.tsx` pins. These pins tie the key
- * list to the schema in both directions, with two exclusions, `format` and
- * `videoUrl`, each with its reason on `CreateClassWire` above and its
- * non-vacuity pin just below it.
- *
- * An exclusion here needs its own reason *and* a non-vacuity pin (see the
- * studio-class wizard's history for the lesson).
+ * #136. `FormData` is the list; the body is built from `form` at submit (the
+ * description normalised, the link parsed, the room dropped for an online
+ * class), so the *key* list cannot drift — the value transforms are what
+ * `new-class-form.test.tsx` pins. These pins tie the key list to the schema in
+ * both directions. `keyof` of the schema's union is the keys both arms carry,
+ * which is every key: the online arm declares the room and the room cost as
+ * optional.
  *
  * What this pin enforces, exactly: every key `createClassSchema` declares
  * is a key of `FormData`, this form's own value type. Not that the field is
  * *rendered* — `FormData` is a TypeScript interface, and adding a key to it
  * with no matching input keeps both pins green. What catches that is
- * `page.test.tsx`, which drives the rendered inputs and asserts the whole
- * POST body.
+ * `new-class-form.test.tsx`, which drives the rendered inputs and asserts the
+ * whole POST body.
  */
+type CreateClassWire = z.infer<typeof createClassSchema>;
+type OnlineCreateWire = Extract<CreateClassWire, { format: 'online' }>;
+type InPersonCreateWire = Extract<CreateClassWire, { format: 'in_person' }>;
 const _formCoversCreate: NoneOf<Exclude<keyof CreateClassWire, keyof FormData>> = true;
 const _formHasNoExtras: NoneOf<Exclude<keyof FormData, keyof CreateClassWire>> = true;
 void _formCoversCreate;
@@ -118,19 +109,26 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
-const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set(Object.values(ECONOMICS_COPY));
+const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set([...Object.values(ECONOMICS_COPY), ONLINE_SUBSIDY_COPY]);
+
+/** A class with no room has none to subsidize from, and the copy says so. */
+function economicsCopy(rule: EconomicsRule, online: boolean): string {
+  return online && rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[rule];
+}
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const INITIAL_FORM: FormData = {
+  format: 'in_person',
   teacherRoomId: '',
   classType: '',
   description: '',
   date: '',
   startTime: '',
   durationMinutes: 60,
+  videoUrl: '',
   roomCost: 0,
   minRate: 15,
   targetRate: 25,
@@ -146,12 +144,35 @@ const INITIAL_FORM: FormData = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** `<select>` hands back a `string`; these narrow it from the options that were rendered. */
+function isCancelDeadline(v: string): v is CancelDeadline {
+  return CANCEL_DEADLINE_OPTIONS.some((o) => o.value === v);
+}
+
+function isAutoCancelCheck(v: string): v is AutoCancelCheck {
+  return AUTO_CANCEL_OPTIONS.some((o) => o.value === v);
+}
+
 function formatDeadlineLabel(value: string): string {
   return CANCEL_DEADLINE_OPTIONS.find((o) => o.value === value)?.label ?? value;
 }
 
 function formatAutoCancelLabel(value: string): string {
   return AUTO_CANCEL_OPTIONS.find((o) => o.value === value)?.label ?? value;
+}
+
+/**
+ * The POST body for what the wizard holds. An online class carries no room and
+ * a room cost of 0, and its link goes out normalised; an in-person one carries
+ * no link at all. Step 1 has refused an unreadable link before this runs.
+ */
+function createBody(form: FormData, description: string | null): InPersonCreateWire | OnlineCreateWire {
+  const { teacherRoomId, videoUrl, format, ...rest } = form;
+  if (format === 'online') {
+    const link = readVideoLink(videoUrl);
+    return { ...rest, format, description, roomCost: 0, videoUrl: link.ok ? link.url : null };
+  }
+  return { ...rest, format, description, teacherRoomId };
 }
 
 /**
@@ -238,8 +259,12 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
   }, []);
 
   // Derive selected room data
+  const online = form.format === 'online';
   const selectedRoom = teacherRooms.find((tr) => tr.id === form.teacherRoomId);
   const roomCapacity = selectedRoom?.capacityOverride ?? 30;
+  // An online class has no room, so none of its cost reaches a rule, a preview
+  // or the body, whatever the room fields held before the switch.
+  const roomCost = online ? 0 : form.roomCost;
   const chargesVat = form.vatPercent > 0;
 
   // -------------------------------------------------------------------------
@@ -251,13 +276,19 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
   function updateField<K extends keyof FormData>(key: K, value: FormData[K]) {
     const nextForm = { ...form, [key]: value };
     const stillFiring: ReadonlySet<string> = new Set(
-      economicsViolations(nextForm).map((v) => ECONOMICS_COPY[v.rule]),
+      economicsViolations({ ...nextForm, roomCost: nextForm.format === 'online' ? 0 : nextForm.roomCost }).map((v) =>
+        economicsCopy(v.rule, nextForm.format === 'online'),
+      ),
     );
     setForm((prev) => ({ ...prev, [key]: value }));
     setSubmitError('');
     setErrors((prev) => {
       const next = { ...prev };
       delete next[key];
+      if (key === 'format') {
+        delete next.teacherRoomId;
+        delete next.videoUrl;
+      }
       for (const [field, message] of Object.entries(next)) {
         if (ECONOMICS_MESSAGES.has(message) && !stillFiring.has(message)) delete next[field];
       }
@@ -295,7 +326,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     const errs: StepErrors = {};
 
     if (s === 1) {
-      if (!form.teacherRoomId) errs.teacherRoomId = 'Select a room';
+      if (!online && !form.teacherRoomId) errs.teacherRoomId = 'Select a room';
+      if (online) {
+        const link = readVideoLink(form.videoUrl);
+        if (!link.ok) errs.videoUrl = link.message;
+      }
       if (!form.classType.trim()) errs.classType = 'Enter a class type';
       if (!form.date) errs.date = 'Select a date';
       if (!form.startTime) errs.startTime = 'Enter a start time';
@@ -307,9 +342,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     }
 
     if (s === 2) {
-      if (!Number.isFinite(form.roomCost)) errs.roomCost = 'Enter a number for room cost';
-      else if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
-      else if (form.roomCost > MONEY_MAX) errs.roomCost = `Room cost cannot exceed ${MONEY_LIMIT}`;
+      if (!online) {
+        if (!Number.isFinite(form.roomCost)) errs.roomCost = 'Enter a number for room cost';
+        else if (form.roomCost < 0) errs.roomCost = 'Room cost cannot be negative';
+        else if (form.roomCost > MONEY_MAX) errs.roomCost = `Room cost cannot exceed ${MONEY_LIMIT}`;
+      }
       if (!Number.isFinite(form.minRate)) errs.minRate = 'Enter a number for min rate';
       else if (Math.abs(form.minRate) > MONEY_MAX)
         errs.minRate = `Min rate must be between -${MONEY_LIMIT} and ${MONEY_LIMIT}`;
@@ -324,16 +361,16 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       if (form.maxStudents <= 0) errs.maxStudents = 'Max students must be at least 1';
       else if (!Number.isInteger(form.maxStudents))
         errs.maxStudents = 'Max students must be a whole number';
-      else if (form.maxStudents > Math.min(roomCapacity, MAX_CLASS_SIZE))
+      else if (form.maxStudents > (online ? MAX_CLASS_SIZE : Math.min(roomCapacity, MAX_CLASS_SIZE)))
         errs.maxStudents =
-          roomCapacity <= MAX_CLASS_SIZE
+          !online && roomCapacity <= MAX_CLASS_SIZE
             ? `Cannot exceed room capacity (${roomCapacity})`
             : `Max students cannot exceed ${MAX_CLASS_SIZE}`;
       // The shared cross-field rules (#221), each on the field it names. A
       // single-field message already on that field wins, and so does the first
       // rule to claim it.
-      for (const v of economicsViolations(form)) {
-        errs[v.path] ??= ECONOMICS_COPY[v.rule];
+      for (const v of economicsViolations({ ...form, roomCost })) {
+        errs[v.path] ??= economicsCopy(v.rule, online);
       }
     }
 
@@ -371,10 +408,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     setSubmitting(true);
     setSubmitError('');
 
-    const payload = {
-      ...form,
-      description: normalizeDescription(form.description),
-    };
+    const payload = createBody(form, normalizeDescription(form.description));
 
     let res: Response;
     try {
@@ -430,6 +464,10 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
   // -------------------------------------------------------------------------
   // Render helpers
   // -------------------------------------------------------------------------
+
+  const formatChoice = (
+    <FormatChoice name="format" value={form.format} onChange={(format) => updateField('format', format)} />
+  );
 
   // The page's header, rendered by the wizard and by every state below, so it
   // is on screen whatever the rooms fetch returns.
@@ -496,29 +534,30 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     );
   }
 
-  if (teacherRooms.length === 0) {
+  // Without a room only an online class can be made, so the choice stays on
+  // screen beside the empty state and the wizard opens once Online is chosen.
+  if (teacherRooms.length === 0 && !online) {
     // Issue 76: a teacher whose rooms are all archived still has
     // `allRoomsCount > 0` — the filter above is what emptied `teacherRooms`,
     // not an absence of rooms. Telling them to add a room they already own
     // would be wrong; the way out is un-archiving one.
-    if (allRoomsCount > 0) {
-      return (
-        <>
-          {header}
-          <EmptyState
-            title="All your rooms are archived"
-            body="Unarchive one in Settings to schedule here."
-          />
-        </>
-      );
-    }
     return (
       <>
         {header}
-        <EmptyState
-          title="No rooms configured"
-          body="Add a room in Settings before creating a class."
-        />
+        <div className="flex flex-col gap-4">
+          {formatChoice}
+          {allRoomsCount > 0 ? (
+            <EmptyState
+              title="All your rooms are archived"
+              body="Unarchive one in Settings to schedule here."
+            />
+          ) : (
+            <EmptyState
+              title="No rooms configured"
+              body="Add a room in Settings before creating a class."
+            />
+          )}
+        </div>
       </>
     );
   }
@@ -530,20 +569,31 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       {/* Step 1: Basics */}
       {step === 1 && (
         <div className="flex flex-col gap-4">
-          <Select
-            id="room"
-            label="Room"
-            value={form.teacherRoomId}
-            onChange={(e) => handleRoomChange(e.target.value)}
-            error={errors.teacherRoomId}
-          >
-            <option value="">Select a room</option>
-            {teacherRooms.map((tr) => (
-              <option key={tr.id} value={tr.id}>
-                {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
-              </option>
-            ))}
-          </Select>
+          {formatChoice}
+
+          {online ? (
+            <VideoLinkField
+              value={form.videoUrl}
+              onChange={(v) => updateField('videoUrl', v)}
+              hint={CLASS_VIDEO_LINK_HINT}
+              error={errors.videoUrl}
+            />
+          ) : (
+            <Select
+              id="room"
+              label="Room"
+              value={form.teacherRoomId}
+              onChange={(e) => handleRoomChange(e.target.value)}
+              error={errors.teacherRoomId}
+            >
+              <option value="">Select a room</option>
+              {teacherRooms.map((tr) => (
+                <option key={tr.id} value={tr.id}>
+                  {formatRoomLocation(tr.room.roomName, tr.room.venueName)}
+                </option>
+              ))}
+            </Select>
+          )}
 
           <Input
             id="classType"
@@ -614,19 +664,21 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       {step === 2 && (
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-3">
-            <NumberInput
-              id="roomCost"
-              label={
-                chargesVat
-                  ? `Room cost excl. VAT (${currencyLabel(currency)})`
-                  : `Room cost (${currencyLabel(currency)})`
-              }
-              decimals={MONEY_DECIMALS}
-              value={form.roomCost}
-              onValueChange={(n) => updateField('roomCost', n)}
-              hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
-              error={errors.roomCost}
-            />
+            {!online && (
+              <NumberInput
+                id="roomCost"
+                label={
+                  chargesVat
+                    ? `Room cost excl. VAT (${currencyLabel(currency)})`
+                    : `Room cost (${currencyLabel(currency)})`
+                }
+                decimals={MONEY_DECIMALS}
+                value={form.roomCost}
+                onValueChange={(n) => updateField('roomCost', n)}
+                hint={chargesVat ? "You reclaim the room's VAT in your own VAT return." : undefined}
+                error={errors.roomCost}
+              />
+            )}
             <NumberInput
               id="vatPercent"
               label="VAT %"
@@ -675,7 +727,8 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
 
           <PricingPreviewTable
             currency={currency}
-            roomCost={form.roomCost}
+            roomCost={roomCost}
+            hideRoomCost={online}
             minRate={form.minRate}
             targetRate={form.targetRate}
             minStudents={form.minStudents}
@@ -691,9 +744,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <Select
             id="cancelDeadline"
             label="Cancellation deadline"
-            hint={cancelDeadlineHint(form.cancelDeadline as CancelDeadlineOption)}
+            hint={cancelDeadlineHint(form.cancelDeadline)}
             value={form.cancelDeadline}
-            onChange={(e) => updateField('cancelDeadline', e.target.value)}
+            onChange={(e) => {
+              if (isCancelDeadline(e.target.value)) updateField('cancelDeadline', e.target.value);
+            }}
           >
             {CANCEL_DEADLINE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -705,9 +760,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <Select
             id="autoCancelCheck"
             label="Auto-cancel check"
-            hint={autoCancelHint(form.autoCancelCheck as AutoCancelOption, form.minStudents)}
+            hint={autoCancelHint(form.autoCancelCheck, form.minStudents)}
             value={form.autoCancelCheck}
-            onChange={(e) => updateField('autoCancelCheck', e.target.value)}
+            onChange={(e) => {
+              if (isAutoCancelCheck(e.target.value)) updateField('autoCancelCheck', e.target.value);
+            }}
           >
             {AUTO_CANCEL_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -737,12 +794,17 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <h2 className="type-subtitle mb-2">Review your class</h2>
 
           <div className="py-2 border-b border-border">
-            <span className="type-label">Room</span>
+            <span className="type-label">{online ? 'Location' : 'Room'}</span>
             <p className="text-base text-ink">
-              {selectedRoom
-                ? formatRoomLocation(selectedRoom.room.roomName, selectedRoom.room.venueName)
-                : '-'}
+              {online
+                ? 'Online'
+                : selectedRoom
+                  ? formatRoomLocation(selectedRoom.room.roomName, selectedRoom.room.venueName)
+                  : '-'}
             </p>
+            {online && readVideoLink(form.videoUrl).ok && form.videoUrl.trim() !== '' && (
+              <p className="type-caption break-all">{form.videoUrl.trim()}</p>
+            )}
           </div>
 
           <div className="py-2 border-b border-border">
@@ -776,7 +838,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <div className="py-2 border-b border-border">
             <span className="type-label">Pricing</span>
             <p className="text-base text-ink">
-              Room cost: {formatMoney(form.roomCost, currency)} &middot; Rate:{' '}
+              {!online && <>Room cost: {formatMoney(form.roomCost, currency)} &middot; </>}Rate:{' '}
               {formatMoney(form.minRate, currency)} &ndash; {formatMoney(form.targetRate, currency)}
               {chargesVat && <> &middot; VAT {form.vatPercent}%</>}
             </p>
