@@ -1277,6 +1277,7 @@ describe('NewClassPage', () => {
         cancelDeadline: 'HOURS_24',
         autoCancelCheck: 'HOURS_2',
         isPrivate: false,
+        pricingMode: 'tiered',
       });
     });
 
@@ -1355,6 +1356,93 @@ describe('NewClassPage', () => {
       expect(body.teacherRoomId).toBe(ROOM_ID);
       expect(body.roomCost).toBe(20);
       expect(body).not.toHaveProperty('videoUrl');
+    });
+  });
+
+  describe('Pricing: Tiered or By donation (#912)', () => {
+    async function toStep2() {
+      stubFetch();
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_ID } });
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      await screen.findByLabelText('Min rate (€)');
+    }
+
+    it('By donation hides the rates and the preview, and keeps room cost, VAT and students (#912)', async () => {
+      await toStep2();
+      expect(screen.getByRole('radio', { name: 'Tiered' })).toBeChecked();
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      expect(screen.queryByLabelText(/^Min rate/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Target rate/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Explore class size')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Room cost (€)')).toBeInTheDocument();
+      expect(screen.getByLabelText('VAT %')).toBeInTheDocument();
+      expect(screen.getByLabelText('Min students')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max students')).toBeInTheDocument();
+    });
+
+    it('step 4 reads By donation with the room cost, and the POST carries pricingMode (#912)', async () => {
+      await toStep2();
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      expect(await screen.findByText(/^By donation · Room cost: €20\.00/)).toBeInTheDocument();
+      const { body } = await submit();
+      expect(body.pricingMode).toBe('donation');
+    });
+
+    it('switching back to Tiered shows the rates with the values typed before (#912)', async () => {
+      await toStep2();
+      fireEvent.change(screen.getByLabelText('Target rate (€)'), { target: { value: '45' } });
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      fireEvent.click(screen.getByRole('radio', { name: 'Tiered' }));
+      expect(screen.getByLabelText('Target rate (€)')).toHaveValue('45');
+      expect(screen.getByText('Explore class size')).toBeInTheDocument();
+    });
+
+    it('a saved tiered rate that breaks a rule is named in donation mode, not as a hidden field (#912)', async () => {
+      await toStep2();
+      fireEvent.change(screen.getByLabelText('Min rate (€)'), { target: { value: '-30' } });
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      expect(await screen.findByText('Your saved tiered rates need a room cost of at least €30.00. Switch to Tiered to change them.')).toBeInTheDocument();
+    });
+
+    async function toOnlineStep2() {
+      stubFetch();
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+      fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-08-10' } });
+      fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '09:00' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      await screen.findByLabelText('Min rate (€)');
+    }
+
+    it('an online donation class shows no room cost, reads By donation alone, and posts both choices (#912)', async () => {
+      await toOnlineStep2();
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      expect(screen.queryByLabelText(/^Room cost/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Min rate/)).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.click(await screen.findByRole('button', { name: /next/i }));
+      expect(await screen.findByText(/^By donation$/)).toBeInTheDocument();
+      expect(screen.queryByText(/Room cost:/)).not.toBeInTheDocument();
+      const { body } = await submit();
+      expect(body).toMatchObject({ format: 'online', pricingMode: 'donation', roomCost: 0 });
+    });
+
+    it('an online donation class names a negative saved min rate without a room cost (#912)', async () => {
+      await toOnlineStep2();
+      fireEvent.change(screen.getByLabelText('Min rate (€)'), { target: { value: '-5' } });
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      expect(
+        await screen.findByText('Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.'),
+      ).toBeInTheDocument();
     });
   });
 });

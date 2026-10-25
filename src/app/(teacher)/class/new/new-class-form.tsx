@@ -18,6 +18,7 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { currencyLabel, formatRoomLocation, formatDateWithYear, formatMoney } from '@/lib/format';
 import { FormatChoice, VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { startTimeInputProps } from '@/lib/time-of-day';
@@ -110,11 +111,58 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+/**
+ * A donation class holds its tiered rates unseen, so a rule they break is named
+ * as the saved rates', not as a field that is not on screen.
+ */
+const DONATION_ECONOMICS_COPY = {
+  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
+  room_subsidy: ({ minRate }, currency) =>
+    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
+} as const satisfies Partial<
+  Record<EconomicsRule, (e: Pick<FormData, 'minRate'>, currency: Currency) => string>
+>;
+
+/** An online donation class has no room cost to name. */
+const DONATION_ONLINE_SUBSIDY_COPY =
+  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
+
+const DONATION_MESSAGE_PREFIX = 'Your saved tiered rates';
+
+/**
+ * The wording for `rule` under the pricing mode and format `f` holds. A class
+ * with no room has none to subsidize from, and the copy says so.
+ */
+function economicsMessage(rule: EconomicsRule, f: FormData, currency: Currency): string {
+  const online = f.format === 'online';
+  if (f.pricingMode === 'donation' && rule !== 'students_order') {
+    return online && rule === 'room_subsidy' ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[rule](f, currency);
+  }
+  return online && rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[rule];
+}
+
+/** The review's Pricing line, before any VAT clause. An online class has no room cost to show. */
+function pricingSummary(f: FormData, currency: Currency): string {
+  const room = f.format === 'online' ? null : `Room cost: ${formatMoney(f.roomCost, currency)}`;
+  const mode = f.pricingMode;
+  switch (mode) {
+    case 'tiered': {
+      const rate = `Rate: ${formatMoney(f.minRate, currency)} – ${formatMoney(f.targetRate, currency)}`;
+      return room === null ? rate : `${room} · ${rate}`;
+    }
+    case 'donation':
+      return room === null ? 'By donation' : `By donation · ${room}`;
+    default: {
+      const unreachable: never = mode;
+      return unreachable;
+    }
+  }
+}
+
 const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set([...Object.values(ECONOMICS_COPY), ONLINE_SUBSIDY_COPY]);
 
-/** A class with no room has none to subsidize from, and the copy says so. */
-function economicsCopy(rule: EconomicsRule, online: boolean): string {
-  return online && rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[rule];
+function isEconomicsMessage(message: string): boolean {
+  return ECONOMICS_MESSAGES.has(message) || message.startsWith(DONATION_MESSAGE_PREFIX);
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +327,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     const nextForm = { ...form, [key]: value };
     const stillFiring: ReadonlySet<string> = new Set(
       economicsViolations({ ...nextForm, roomCost: nextForm.format === 'online' ? 0 : nextForm.roomCost }).map((v) =>
-        economicsCopy(v.rule, nextForm.format === 'online'),
+        economicsMessage(v.rule, nextForm, currency),
       ),
     );
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -292,7 +340,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
         delete next.videoUrl;
       }
       for (const [field, message] of Object.entries(next)) {
-        if (ECONOMICS_MESSAGES.has(message) && !stillFiring.has(message)) delete next[field];
+        if (isEconomicsMessage(message) && !stillFiring.has(message)) delete next[field];
       }
       return next;
     });
@@ -372,7 +420,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       // single-field message already on that field wins, and so does the first
       // rule to claim it.
       for (const v of economicsViolations({ ...form, roomCost })) {
-        errs[v.path] ??= economicsCopy(v.rule, online);
+        errs[v.path] ??= economicsMessage(v.rule, form, currency);
       }
     }
 
@@ -669,6 +717,11 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       {/* Step 2: Pricing */}
       {step === 2 && (
         <div className="flex flex-col gap-4">
+          <PricingModeChoice
+            name="pricingMode"
+            value={form.pricingMode}
+            onChange={(mode) => updateField('pricingMode', mode)}
+          />
           <div className="grid grid-cols-2 gap-3">
             {!online && (
               <NumberInput
@@ -694,24 +747,28 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
               hint="Included in student prices. Use 0 if you don't charge VAT."
               error={errors.vatPercent}
             />
-            <NumberInput
-              id="minRate"
-              label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-              decimals={MONEY_DECIMALS}
-              signed
-              value={form.minRate}
-              onValueChange={(n) => updateField('minRate', n)}
-              error={errors.minRate}
-            />
-            <NumberInput
-              id="targetRate"
-              label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-              decimals={MONEY_DECIMALS}
-              signed
-              value={form.targetRate}
-              onValueChange={(n) => updateField('targetRate', n)}
-              error={errors.targetRate}
-            />
+            {form.pricingMode === 'tiered' && (
+              <>
+              <NumberInput
+                id="minRate"
+                label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+                decimals={MONEY_DECIMALS}
+                signed
+                value={form.minRate}
+                onValueChange={(n) => updateField('minRate', n)}
+                error={errors.minRate}
+              />
+              <NumberInput
+                id="targetRate"
+                label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+                decimals={MONEY_DECIMALS}
+                signed
+                value={form.targetRate}
+                onValueChange={(n) => updateField('targetRate', n)}
+                error={errors.targetRate}
+              />
+              </>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -731,16 +788,24 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
             />
           </div>
 
-          <PricingPreviewTable
-            currency={currency}
-            roomCost={roomCost}
-            hideRoomCost={online}
-            minRate={form.minRate}
-            targetRate={form.targetRate}
-            minStudents={form.minStudents}
-            maxStudents={form.maxStudents}
-            vatPercent={form.vatPercent}
-          />
+          {form.pricingMode === 'tiered' ? (
+            <PricingPreviewTable
+              currency={currency}
+              roomCost={roomCost}
+              hideRoomCost={online}
+              minRate={form.minRate}
+              targetRate={form.targetRate}
+              minStudents={form.minStudents}
+              maxStudents={form.maxStudents}
+              vatPercent={form.vatPercent}
+            />
+          ) : (
+            (errors.minRate ?? errors.targetRate) && (
+              <p role="alert" className="text-sm text-danger">
+                {errors.minRate ?? errors.targetRate}
+              </p>
+            )
+          )}
         </div>
       )}
 
@@ -844,8 +909,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
           <div className="py-2 border-b border-border">
             <span className="type-label">Pricing</span>
             <p className="text-base text-ink">
-              {!online && <>Room cost: {formatMoney(form.roomCost, currency)} &middot; </>}Rate:{' '}
-              {formatMoney(form.minRate, currency)} &ndash; {formatMoney(form.targetRate, currency)}
+              {pricingSummary(form, currency)}
               {chargesVat && <> &middot; VAT {form.vatPercent}%</>}
             </p>
           </div>

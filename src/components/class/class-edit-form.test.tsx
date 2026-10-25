@@ -101,6 +101,60 @@ describe('ClassEditForm', () => {
     expect(JSON.parse((options as { body: string }).body)).toHaveProperty('isPrivate', true);
   });
 
+  describe('Pricing: Tiered or By donation (#912)', () => {
+    function renderWith(over: Partial<ClassEditInitial>, settingsLocked = false) {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+      vi.stubGlobal('fetch', fetchMock);
+      return render(
+        <ClassEditForm moveWarning={null} currency="EUR" classId="cls-1" format="in_person" settingsLocked={settingsLocked} initial={{ ...initial, ...over }} />,
+      );
+    }
+    async function save(): Promise<Record<string, unknown>> {
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [, options] = fetchMock.mock.calls.at(-1) ?? [];
+      return JSON.parse((options as { body: string }).body) as Record<string, unknown>;
+    }
+
+    it('a booked class has the choice disabled, under the lock caption (#912)', () => {
+      renderWith({}, true);
+      expect(screen.getByRole('radio', { name: 'Tiered' })).toBeDisabled();
+      expect(screen.getByRole('radio', { name: 'By donation' })).toBeDisabled();
+      expect(screen.getByRole('group', { name: 'Pricing' })).toHaveAccessibleDescription(/Locked since the first registration/);
+    });
+
+    it('choosing donation sends pricingMode and the rates exactly as stored (#912)', async () => {
+      renderWith({});
+      fireEvent.click(screen.getByRole('radio', { name: 'By donation' }));
+      expect(screen.queryByLabelText(/^Min rate/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Explore class size')).not.toBeInTheDocument();
+      const body = await save();
+      expect(body).toMatchObject({ pricingMode: 'donation', minRate: 15, targetRate: 25, roomCost: 20 });
+    });
+
+    it('an unchanged pricing mode is left out of the payload (#912)', async () => {
+      renderWith({ pricingMode: 'donation' });
+      expect(await save()).not.toHaveProperty('pricingMode');
+    });
+
+    it('saved tiered rates a lower room cost would break are named, and nothing is sent (#912)', () => {
+      renderWith({ pricingMode: 'donation', minRate: -20, roomCost: 20 });
+      fireEvent.change(screen.getByLabelText('Room cost (€)'), { target: { value: '10' } });
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Your saved tiered rates need a room cost of at least €20.00. Switch to Tiered to change them.',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('saved tiered rates out of order are named in donation mode (#912)', () => {
+      renderWith({ pricingMode: 'donation', minRate: 30, targetRate: 25 });
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      expect(screen.getByRole('alert')).toHaveTextContent('Your saved tiered rates are out of order. Switch to Tiered to change them.');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   /**
    * #910. Private goes out only when it differs from the stored flag in
    * `initial`, so a tab opened before the flag changed elsewhere does not send
@@ -909,7 +963,8 @@ describe('ClassEditForm video link (#911)', () => {
     const field = screen.getByLabelText('Video link (optional)');
     expect(field).toHaveValue(LINK);
     expect(field).toHaveAccessibleDescription('Only students who have booked see this link.');
-    expect(screen.queryByRole('radio')).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'Online' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: 'In a room' })).toBeNull();
   });
 
   it('shows no room cost for an online class and sends none', async () => {

@@ -13,7 +13,7 @@ import {
   MONEY_MAX,
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
-import { currencyLabel } from '@/lib/format';
+import { currencyLabel, formatMoney } from '@/lib/format';
 import { startTimeInputProps } from '@/lib/time-of-day';
 import { vatPercentViolation } from '@/lib/vat';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
 import { FormatChoice, VideoLinkField, TEMPLATE_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
+import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { formatRoomLocation } from '@/lib/format';
 import {
   CANCEL_DEADLINE_OPTIONS,
@@ -180,6 +181,22 @@ const ECONOMICS_COPY = {
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
 
+/**
+ * A donation template holds its tiered rates unseen, so a rule they break is
+ * named as the saved rates', not as a field that is not on screen.
+ */
+const DONATION_ECONOMICS_COPY = {
+  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
+  room_subsidy: ({ minRate }, currency) =>
+    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
+} as const satisfies Partial<
+  Record<EconomicsRule, (e: Pick<TemplateFormValues, 'minRate'>, currency: Currency) => string>
+>;
+
+/** An online donation template has no room cost to name. */
+const DONATION_ONLINE_SUBSIDY_COPY =
+  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
+
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
@@ -252,7 +269,7 @@ export function TemplateForm(props: TemplateFormProps) {
   const [late, setLate] = useState<LateFirstClass | null>(null);
   // A saved edit that changed Private leaves the classes already generated as
   // they were; this is the line that says so.
-  const [privacyChanged, setPrivacyChanged] = useState(false);
+  const [existingKeepTheirs, setExistingKeepTheirs] = useState(false);
   // The sentence for a saved edit that changed the link while classes made
   // from the template are on the schedule; `null` otherwise.
   const [linkKept, setLinkKept] = useState<string | null>(null);
@@ -370,7 +387,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
-    setPrivacyChanged(false);
+    setExistingKeepTheirs(false);
     setLinkKept(null);
   }
 
@@ -391,7 +408,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
-    setPrivacyChanged(false);
+    setExistingKeepTheirs(false);
     setLinkKept(null);
   }
 
@@ -438,7 +455,12 @@ export function TemplateForm(props: TemplateFormProps) {
     // create and edit alike. `ECONOMICS_COPY` above is this form's own wording.
     const [violation] = economicsViolations({ ...form, roomCost });
     if (violation !== undefined) {
-      setError(online && violation.rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
+      const noRoom = online && violation.rule === 'room_subsidy';
+      if (form.pricingMode === 'donation' && violation.rule !== 'students_order') {
+        setError(noRoom ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[violation.rule](form, currency));
+      } else {
+        setError(noRoom ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
+      }
       return;
     }
 
@@ -446,7 +468,7 @@ export function TemplateForm(props: TemplateFormProps) {
     setError('');
     setSuccess('');
     setLate(null);
-    setPrivacyChanged(false);
+    setExistingKeepTheirs(false);
     setLinkKept(null);
 
     try {
@@ -625,7 +647,9 @@ export function TemplateForm(props: TemplateFormProps) {
           router.push(RECURRING_LIST_PATH);
         }
       } else {
-        setPrivacyChanged(form.isPrivate !== edit?.initial.isPrivate);
+        setExistingKeepTheirs(
+          form.isPrivate !== edit?.initial.isPrivate || form.pricingMode !== edit?.initial.pricingMode,
+        );
 
         // Nothing to count: since #194 an edit changes the template row and
         // no generated class, so there is no arrival, delete or kept tally to
@@ -825,6 +849,12 @@ export function TemplateForm(props: TemplateFormProps) {
         onValueChange={(n) => update('durationMinutes', n)}
       />
 
+      <PricingModeChoice
+        name="pricingMode"
+        value={form.pricingMode}
+        onChange={(mode) => update('pricingMode', mode)}
+      />
+
       <div className="grid grid-cols-2 gap-3">
         {!online && (
           <NumberInput
@@ -847,20 +877,24 @@ export function TemplateForm(props: TemplateFormProps) {
           onValueChange={(n) => update('vatPercent', n)}
           hint="Included in student prices. Use 0 if you don't charge VAT."
         />
-        <NumberInput
-          label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-          decimals={MONEY_DECIMALS}
-          signed
-          value={form.minRate}
-          onValueChange={(n) => update('minRate', n)}
-        />
-        <NumberInput
-          label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-          decimals={MONEY_DECIMALS}
-          signed
-          value={form.targetRate}
-          onValueChange={(n) => update('targetRate', n)}
-        />
+        {form.pricingMode === 'tiered' && (
+          <>
+          <NumberInput
+            label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+            decimals={MONEY_DECIMALS}
+            signed
+            value={form.minRate}
+            onValueChange={(n) => update('minRate', n)}
+          />
+          <NumberInput
+            label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+            decimals={MONEY_DECIMALS}
+            signed
+            value={form.targetRate}
+            onValueChange={(n) => update('targetRate', n)}
+          />
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -881,16 +915,18 @@ export function TemplateForm(props: TemplateFormProps) {
         />
       </div>
 
-      <PricingPreviewTable
-        currency={currency}
-        roomCost={roomCost}
-        hideRoomCost={online}
-        minRate={form.minRate}
-        targetRate={form.targetRate}
-        minStudents={form.minStudents}
-        maxStudents={form.maxStudents}
-        vatPercent={form.vatPercent}
-      />
+      {form.pricingMode === 'tiered' && (
+        <PricingPreviewTable
+          currency={currency}
+          roomCost={roomCost}
+          hideRoomCost={online}
+          minRate={form.minRate}
+          targetRate={form.targetRate}
+          minStudents={form.minStudents}
+          maxStudents={form.maxStudents}
+          vatPercent={form.vatPercent}
+        />
+      )}
 
       <Select
         id="cancelDeadline"
@@ -935,7 +971,7 @@ export function TemplateForm(props: TemplateFormProps) {
 
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {success && <p className="text-sm text-teal">{success}</p>}
-      {privacyChanged && <p className="type-caption">Classes already on your schedule keep their own setting.</p>}
+      {existingKeepTheirs && <p className="type-caption">Classes already on your schedule keep their own setting.</p>}
       {linkKept !== null && <p className="type-caption">{linkKept}</p>}
       {late && mode === 'create' && <LateFirstClassNotice late={late} when="added" />}
       {/* The response type is the full `LateFirstClass` union, but an edit's
