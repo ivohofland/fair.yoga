@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
+import { VIDEO_LINK_PENDING_COPY } from './class-location';
 import { PAUSE_TOKEN_TTL_DAYS } from '@/services/payout-pause-token';
 import {
   CLASS_REMINDER_EMAIL_FOOTER,
@@ -333,6 +334,22 @@ describe('email templates', () => {
       expect(html).toContain('>Join the class</a>');
       expect(html).not.toContain(`https://example.test${LINK}`);
       expect(text).toContain(`Join the class: ${LINK}`);
+    });
+
+    it('drops the pending sentence from the body beside a Join the class button', () => {
+      const body = `Your Monday class with Tess. ${VIDEO_LINK_PENDING_COPY}`;
+      const withLink = renderNotificationEmail(
+        { type: 'class_reminder', title: 't', body, recipientType: 'student', videoLink: LINK },
+        'https://example.test',
+      );
+      expect(withLink.html).toContain('Your Monday class with Tess.');
+      expect(withLink.html).not.toContain(VIDEO_LINK_PENDING_COPY);
+      expect(withLink.text).not.toContain(VIDEO_LINK_PENDING_COPY);
+      const withoutLink = renderNotificationEmail(
+        { type: 'class_reminder', title: 't', body, recipientType: 'student', videoLink: null },
+        'https://example.test',
+      );
+      expect(withoutLink.text).toContain(VIDEO_LINK_PENDING_COPY);
     });
 
     it('keeps the type’s own action beside the link', () => {

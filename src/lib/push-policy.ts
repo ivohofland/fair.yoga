@@ -41,6 +41,7 @@ export const STUDENT_PUSH_GROUP = {
   payment_paid_twice: 'never',
   payment_charged_back: 'never',
   refund_failed: 'never',
+  video_link_updated: 'classChanges',
 } as const satisfies Record<NotificationType, StudentPushGroup | 'never'>;
 
 export const TEACHER_PUSH_GROUP = {

@@ -77,6 +77,7 @@ const CARRIES_VIDEO_LINK = {
   payment_paid_twice: false,
   payment_charged_back: false,
   refund_failed: false,
+  video_link_updated: true,
 } as const satisfies Record<NotificationType, boolean>;
 
 /**

@@ -89,6 +89,7 @@ const STUDENT_COLUMN_FOR = {
   payment_paid_twice: null,
   payment_charged_back: null,
   refund_failed: null,
+  video_link_updated: 'pushClassChanges',
 } as const satisfies Record<NotificationType, keyof StudentPushPrefs | null>;
 
 const TEACHER_COLUMN_FOR = {
@@ -111,6 +112,7 @@ const TEACHER_COLUMN_FOR = {
   announcement: null,
   booking_cancelled: null,
   payment_received: null,
+  video_link_updated: null,
 } as const satisfies Record<NotificationType, keyof TeacherPushPrefs | null>;
 
 const STUDENT_COLUMNS = Object.keys(allStudentOff) as Array<keyof StudentPushPrefs>;

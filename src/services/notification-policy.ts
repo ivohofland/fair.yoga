@@ -43,6 +43,9 @@ export const ESSENTIAL_NOTIFICATION_TYPES: ReadonlySet<NotificationType> = new S
   // The student's own money, sent back by their teacher: a service message
   // about their payment, as `payment_request` is.
   'payment_refunded',
+  // A link changed shortly before class is the only way in; the student has
+  // no other cue to look for it.
+  'video_link_updated',
 ]);
 
 export function isEssential(type: NotificationType): boolean {
@@ -61,6 +64,9 @@ export const URGENT_WINDOW_MINUTES = 120;
 export const IMMEDIATE_EMAIL_TYPES: ReadonlySet<NotificationType> = new Set([
   'waitlist_promoted',
   'walk_in_added',
+  // A link changed close to class start is useless by the time the unread
+  // threshold has passed.
+  'video_link_updated',
 ]);
 
 /**
