@@ -28,7 +28,7 @@
  */
 
 import { Prisma } from '@/lib/prisma-client';
-import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus } from '@/lib/prisma-client';
+import type { PrismaClient, ClassTemplate, ScheduleRule, ClassStatus, ClassFormat } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import type { createClassTemplateSchema, updateClassTemplateSchema } from '@/lib/schemas';
 import type { NoneOf } from '@/lib/type-pins';
@@ -38,13 +38,17 @@ import { ruleSlotHolder, minutesSinceMidnight, type RuleSlotHolder } from '@/lib
 import { transientDbFailure } from '@/lib/api-errors';
 import { ECONOMIC_FIELDS } from '@/lib/class-fields';
 import { economicsViolations, type EconomicsViolation } from '@/lib/class-economics';
+import { formatShapeViolations, type FormatShapeRow, type FormatShapeViolation } from '@/lib/class-location';
 import {
   CLASS_TO_ENTRY_JOIN,
   lockClassRowsOrdered,
   lockTeacherForShare,
   statusInList,
   statusesWhere,
+  type TransactionClientOnly,
 } from '@/lib/db-locks';
+import { startOfLocalDay } from '@/lib/timezone';
+import type { ChildWithRule } from './entry-generation';
 // Server-only: the build rejects a client import of this chain (see `@/lib/log`'s header).
 import { log } from '@/lib/log';
 import { createBulkNotifications, type CreateNotificationInput } from './notifications';
@@ -128,7 +132,8 @@ void _templateUpdateColumnsExist;
  * Adding a member is how a new schema field gets authorized. Since #194 a
  * template is a stamp, not a live link: editing one of these fields changes
  * the template row and NOTHING else. No generated `Class` moves, is rewritten,
- * or is deleted — not on a rate change, not on a room change. The next
+ * or is deleted — not on a rate change, a room change, a format change or a
+ * new video link (#911). The next
  * generation run reads the new values; every class already on the schedule
  * keeps the values it was stamped with.
  *
@@ -142,6 +147,10 @@ void _templateUpdateColumnsExist;
  *   - `teacherRoomId` → cross-teacher. The ownership check in
  *                       `updateClassTemplate` is the only thing stopping a
  *                       teacher attaching their template to another's room.
+ *
+ * `format` is editable only together with what its shape ties to it — the
+ * room, the room cost and the link. `writeClassTemplateChild` checks the
+ * merged row against `formatShapeViolations` before the write.
  */
 type TeacherEditableClassTemplateField =
   | 'description'
@@ -154,7 +163,9 @@ type TeacherEditableClassTemplateField =
   | 'vatPercent'
   | 'cancelDeadline'
   | 'autoCancelCheck'
-  | 'isPrivate';
+  | 'isPrivate'
+  | 'format'
+  | 'videoUrl';
 
 /**
  * Compile-time pin (forward): every field the schema routes to `ClassTemplate`
@@ -206,10 +217,6 @@ void _templateAllowlistHasNoStaleFields;
  *                        maintains it, and the composite key refuses a row
  *                        that claims a value its rule does not hold. It is on
  *                        this list so a plain edit cannot start.
- *   - `format`, `videoUrl` → the online shape (#911). No wire field routes
- *                        either here, and a format change must move
- *                        `teacherRoomId`, `roomCost` and `videoUrl` with it
- *                        or `ClassTemplate_format_shape` refuses the row.
  *
  * `teacherId`, `isActive`, `isArchived`, `archivedAt` and `withdrawnCount`
  * left this model for `ScheduleRule` in issue 298 — see
@@ -229,8 +236,6 @@ type PlainUpdateForbiddenTemplateField =
   | 'kind'
   | 'roomArchived'
   | 'ruleLive'
-  | 'format'
-  | 'videoUrl'
   | 'createdAt'
   | 'updatedAt';
 
@@ -453,6 +458,13 @@ class InvalidTemplateEconomics extends Error {
   }
 }
 
+/** `InvalidTemplateEconomics`'s twin for the format shape (#911). */
+class InvalidTemplateFormat extends Error {
+  constructor(readonly violations: readonly [FormatShapeViolation, ...FormatShapeViolation[]]) {
+    super('updateClassTemplate: format shape refused, rolling back');
+  }
+}
+
 /**
  * Why an update did or did not happen. Every business outcome is a variant;
  * callers own the user-facing wording.
@@ -464,21 +476,45 @@ class InvalidTemplateEconomics extends Error {
  * itself because the studio family shares that type and has no economics.
  */
 export type UpdateClassTemplateResult =
-  | UpdateRuleResult<ClassTemplate>
+  | (Extract<UpdateRuleResult<ClassTemplate>, { ok: true }> & {
+      /**
+       * The edit changed the link and this template has a class on the
+       * schedule that is neither cancelled nor completed, dated from the
+       * teacher's today. That class keeps the link it was stamped with.
+       */
+      linkChangedWithScheduledClasses: boolean;
+    })
+  | Exclude<UpdateRuleResult<ClassTemplate>, { ok: true }>
   | {
       ok: false;
       reason: 'invalid_economics';
       violations: readonly [EconomicsViolation, ...EconomicsViolation[]];
+    }
+  /**
+   * The merged row contradicts its format (#911): a room template with no
+   * room or with a link, an online one with a room or a room cost.
+   */
+  | {
+      ok: false;
+      reason: 'invalid_format';
+      violations: readonly [FormatShapeViolation, ...FormatShapeViolation[]];
     };
 
 /**
  * Apply a partial update to a class template.
  *
  * Runs on `updateRule` in `rule-lifecycle.ts` parameterised by `CLASS_FAMILY`
- * (issue 284 / stage C2). `CLASS_FAMILY.updateChild` below throws
- * `InvalidTemplateEconomics` to roll the transaction back on a merged-row
- * violation; this catches it and returns the `invalid_economics` result
- * instead of letting it escape (#221).
+ * (issue 284 / stage C2). `writeClassTemplateChild` below throws
+ * `InvalidTemplateEconomics` or `InvalidTemplateFormat` to roll the
+ * transaction back on a merged-row violation; this catches them and returns
+ * the `invalid_economics` / `invalid_format` result instead of letting them
+ * escape (#221, #911).
+ *
+ * The family is `CLASS_FAMILY` with its `updateChild` wrapped, so the link
+ * this edit replaces is read under the row lock and the scheduled-class check
+ * runs in the same transaction, under `updateRule`'s lock on this template's
+ * row. The generation claim (`claimTemplateForGeneration`) takes that same
+ * row, so no class is added between the write and the check.
  */
 export async function updateClassTemplate(
   db: PrismaClient,
@@ -488,14 +524,62 @@ export async function updateClassTemplate(
     Partial<Record<PlainUpdateForbiddenTemplateField, never>> &
     Partial<Record<PlainUpdateForbiddenScheduleRuleField, never>>,
 ): Promise<UpdateClassTemplateResult> {
+  let linkChangedWithScheduledClasses = false;
+  const family: TemplateFamily<ClassTemplate, 'regular'> = {
+    ...CLASS_FAMILY,
+    updateChild: async (tx, id, childData, roomResult, template, raw) => {
+      const { row, previousVideoUrl } = await writeClassTemplateChild(tx, id, childData, roomResult, template, raw);
+      linkChangedWithScheduledClasses =
+        row.videoUrl !== previousVideoUrl &&
+        (await hasScheduledClasses(tx, template.scheduleRuleId, template.scheduleRule.teacher.defaultTimezone));
+      return row;
+    },
+  };
   try {
-    return await updateRule(db, CLASS_FAMILY, templateId, teacherId, data);
+    const result = await updateRule(db, family, templateId, teacherId, data);
+    return result.ok ? { ...result, linkChangedWithScheduledClasses } : result;
   } catch (err) {
     if (err instanceof InvalidTemplateEconomics) {
       return { ok: false, reason: 'invalid_economics', violations: err.violations };
     }
+    if (err instanceof InvalidTemplateFormat) {
+      return { ok: false, reason: 'invalid_format', violations: err.violations };
+    }
     throw err;
   }
+}
+
+/**
+ * Whether a class can still happen, for `hasScheduledClasses`. A completed
+ * class is over; a new `ClassStatus` is a compile error here until it is
+ * classified.
+ */
+const CLASS_STATUS_STILL_AHEAD = {
+  draft: true,
+  open: true,
+  in_progress: true,
+  completed: false,
+} as const satisfies Record<ClassStatus, boolean>;
+
+/**
+ * Whether this rule has a class on the schedule that is neither cancelled nor
+ * completed, dated from the teacher's today.
+ */
+async function hasScheduledClasses(
+  tx: TransactionClientOnly,
+  scheduleRuleId: string,
+  timeZone: string,
+): Promise<boolean> {
+  const found = await tx.calendarEntry.findFirst({
+    where: {
+      scheduleRuleId,
+      date: { gte: startOfLocalDay(new Date(), timeZone) },
+      cancelledAt: null,
+      classes: { some: { status: { in: [...statusesWhere(CLASS_STATUS_STILL_AHEAD)] } } },
+    },
+    select: { id: true },
+  });
+  return found !== null;
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +673,117 @@ const scheduledWhere = (
  * Trips when the room is deleted or when roomArchived drifts out of sync with TeacherRoom.isArchived (#231).
  */
 export const CLASS_TEMPLATE_ROOM_FK = 'ClassTemplate_teacherRoomId_roomArchived_fkey';
+
+/**
+ * A field the patch sends, or the stored value when it sends none.
+ * `childData` is `Record<string, unknown>` (the generic boundary
+ * `rule-lifecycle.ts` shares with the studio family), so a sent field is not
+ * yet known to have its type: a present field of the wrong type throws rather
+ * than falling back to the stored value while the write still sends the real
+ * one.
+ */
+function sentOr<T>(
+  childData: Record<string, unknown>,
+  key: string,
+  stored: T,
+  is: (v: unknown) => v is T,
+  expected: string,
+): T {
+  const sent = childData[key];
+  if (sent === undefined) return stored;
+  if (is(sent)) return sent;
+  throw new Error(`updateClassTemplate: ${key} is not ${expected} at the service boundary`);
+}
+
+const isNumber = (v: unknown): v is number => typeof v === 'number';
+const isStringOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
+const isFormat = (v: unknown): v is ClassFormat => v === 'in_person' || v === 'online';
+
+/** The fields `formatShapeViolations` reads, tethered to its row type. */
+const FORMAT_SHAPE_FIELDS = {
+  format: true,
+  teacherRoomId: true,
+  roomCost: true,
+  videoUrl: true,
+} as const satisfies Record<keyof FormatShapeRow, true>;
+
+/**
+ * The class family's child write, and the link it replaced. Checked on the row
+ * the write would leave, under the row lock `updateRule` took, and before the
+ * write: the `CHECK`s raise at the write itself, as a 500. A patch sending no
+ * economic or format-shape field reads nothing stored, since it cannot break
+ * either rule and leaves the link as it was.
+ */
+async function writeClassTemplateChild(
+  tx: TransactionClientOnly,
+  templateId: string,
+  childData: Record<string, unknown>,
+  roomResult: { isArchived: boolean } | null,
+  template: ChildWithRule<ClassTemplate>,
+  data: Record<string, unknown>,
+): Promise<{ row: ClassTemplate; previousVideoUrl: string | null }> {
+  const sendsEconomics = ECONOMIC_FIELDS.some((f) => childData[f] !== undefined);
+  // Every economic field, `vatPercent` included, though only the rate and
+  // capacity fields reach `economicsViolations` below.
+  const badField = ECONOMIC_FIELDS.find((f) => childData[f] !== undefined && typeof childData[f] !== 'number');
+  if (badField !== undefined) {
+    throw new Error(`updateClassTemplate: ${badField} is not a number at the service boundary`);
+  }
+  const sendsShape = Object.keys(FORMAT_SHAPE_FIELDS).some((f) => childData[f] !== undefined);
+  let previousVideoUrl: string | null | undefined;
+  if (sendsEconomics || sendsShape) {
+    const stored = await tx.classTemplate.findUniqueOrThrow({
+      where: { id: templateId },
+      select: {
+        format: true,
+        teacherRoomId: true,
+        videoUrl: true,
+        roomCost: true,
+        minRate: true,
+        targetRate: true,
+        minStudents: true,
+        maxStudents: true,
+      },
+    });
+    previousVideoUrl = stored.videoUrl;
+    const roomCost = sentOr(childData, 'roomCost', Number(stored.roomCost), isNumber, 'a number');
+    if (sendsEconomics) {
+      const [first, ...rest] = economicsViolations({
+        roomCost,
+        minRate: sentOr(childData, 'minRate', Number(stored.minRate), isNumber, 'a number'),
+        targetRate: sentOr(childData, 'targetRate', Number(stored.targetRate), isNumber, 'a number'),
+        minStudents: sentOr(childData, 'minStudents', stored.minStudents, isNumber, 'a number'),
+        maxStudents: sentOr(childData, 'maxStudents', stored.maxStudents, isNumber, 'a number'),
+      });
+      if (first !== undefined) throw new InvalidTemplateEconomics([first, ...rest]);
+    }
+    const [firstShape, ...restShape] = formatShapeViolations({
+      format: sentOr(childData, 'format', stored.format, isFormat, 'a format'),
+      teacherRoomId: sentOr(childData, 'teacherRoomId', stored.teacherRoomId, isStringOrNull, 'a string or null'),
+      roomCost,
+      videoUrl: sentOr(childData, 'videoUrl', stored.videoUrl, isStringOrNull, 'a string or null'),
+    });
+    if (firstShape !== undefined) throw new InvalidTemplateFormat([firstShape, ...restShape]);
+  }
+
+  const writeData: Prisma.ClassTemplateUncheckedUpdateManyInput &
+    Partial<Record<PlainUpdateForbiddenTemplateField, never>> =
+    childData as ClassTemplateOwnUpdateData;
+  const row = await tx.classTemplate.update({
+    where: { id: templateId },
+    data: {
+      ...writeData,
+      // The room mirror follows the room: false with no room, which the
+      // online shape requires, and the moved-to room's state on a move.
+      ...(data.teacherRoomId === null
+        ? { roomArchived: false }
+        : data.teacherRoomId !== undefined && data.teacherRoomId !== template.teacherRoomId && roomResult
+          ? { roomArchived: roomResult.isArchived }
+          : {}),
+    },
+  });
+  return { row, previousVideoUrl: previousVideoUrl === undefined ? row.videoUrl : previousVideoUrl };
+}
 
 /**
  * The recurring-class family's `TemplateFamily` entry (`rule-lifecycle.ts`).
@@ -857,58 +1052,13 @@ export const CLASS_FAMILY: TemplateFamily<ClassTemplate, 'regular'> = {
       return { ok: true, isArchived: teacherRoom.isArchived };
     },
     foreignKeyConstraint: CLASS_TEMPLATE_ROOM_FK,
+    // An online template has no room (#911).
+    allowsNoRoom: true,
   },
   lateFirstClass: (child, entry, timeZone, at) =>
     lateFirstClass({ template: child, entry, timeZone, at }),
-  updateChild: async (tx, templateId, childData, roomResult, template, data) => {
-    // Checked on the row the write would leave, under the row lock
-    // `updateRule` took, and before the write: the `CHECK`s raise at the
-    // write itself, as a 500.
-    if (ECONOMIC_FIELDS.some((f) => childData[f] !== undefined)) {
-      // `childData` is `Record<string, unknown>` (the generic boundary
-      // `rule-lifecycle.ts` shares with the studio family), so a field the
-      // gate above found present is not yet known to be a number. Checked
-      // here, before the overlay below reads it: left unchecked, a present
-      // non-number would fall through the `typeof` checks there as if it
-      // were absent, checking the STORED value while the write below still
-      // sends the real one.
-      const badField = ECONOMIC_FIELDS.find(
-        (f) => childData[f] !== undefined && typeof childData[f] !== 'number',
-      );
-      if (badField !== undefined) {
-        throw new Error(`updateClassTemplate: ${badField} is not a number at the service boundary`);
-      }
-      const stored = await tx.classTemplate.findUniqueOrThrow({
-        where: { id: templateId },
-        select: { roomCost: true, minRate: true, targetRate: true, minStudents: true, maxStudents: true },
-      });
-      const [first, ...rest] = economicsViolations({
-        roomCost: typeof childData.roomCost === 'number' ? childData.roomCost : Number(stored.roomCost),
-        minRate: typeof childData.minRate === 'number' ? childData.minRate : Number(stored.minRate),
-        targetRate:
-          typeof childData.targetRate === 'number' ? childData.targetRate : Number(stored.targetRate),
-        minStudents:
-          typeof childData.minStudents === 'number' ? childData.minStudents : stored.minStudents,
-        maxStudents:
-          typeof childData.maxStudents === 'number' ? childData.maxStudents : stored.maxStudents,
-      });
-      if (first !== undefined) throw new InvalidTemplateEconomics([first, ...rest]);
-    }
-    const writeData: Prisma.ClassTemplateUncheckedUpdateManyInput &
-      Partial<Record<PlainUpdateForbiddenTemplateField, never>> =
-      childData as ClassTemplateOwnUpdateData;
-    return tx.classTemplate.update({
-      where: { id: templateId },
-      data: {
-        ...writeData,
-        ...(data.teacherRoomId !== undefined &&
-        data.teacherRoomId !== template.teacherRoomId &&
-        roomResult
-          ? { roomArchived: roomResult.isArchived }
-          : {}),
-      },
-    });
-  },
+  updateChild: async (tx, templateId, childData, roomResult, template, data) =>
+    (await writeClassTemplateChild(tx, templateId, childData, roomResult, template, data)).row,
 };
 
 /**
@@ -976,7 +1126,14 @@ export function pauseOrResumeTemplate(
  * (`studio-class-template-lifecycle.ts`), is the same derivation one model
  * over.
  */
-export type CreateClassTemplateInput = z.infer<typeof createClassTemplateSchema>;
+type CreateClassTemplateWire = z.infer<typeof createClassTemplateSchema>;
+/**
+ * The in-person arm takes `format` as optional, as the schema does: a body
+ * with no `format` is in person.
+ */
+export type CreateClassTemplateInput =
+  | (Omit<Extract<CreateClassTemplateWire, { format: 'in_person' }>, 'format'> & { format?: 'in_person' })
+  | Extract<CreateClassTemplateWire, { format: 'online' }>;
 
 /**
  * A create lands, loses the slot, hits a transient database
@@ -1064,13 +1221,16 @@ export async function createClassTemplate(
         data: {
           scheduleRuleId: rule.id,
           kind: 'regular',
-          teacherRoomId: input.teacherRoomId,
+          // The two arms of the shape `ClassTemplate_format_shape` holds (#911).
+          ...(input.format === 'online'
+            ? { format: 'online' as const, teacherRoomId: null, videoUrl: input.videoUrl ?? null, roomCost: 0 }
+            : { format: 'in_person' as const, teacherRoomId: input.teacherRoomId, videoUrl: null, roomCost: input.roomCost }),
           // ASSERTS the room is open rather than reading it. There is no
           // matching parent key for an archived room, so this is refused by the
           // foreign key without a read that could go stale between the two.
+          // An online template has no room, and its shape holds this false.
           roomArchived: false,
           description: input.description,
-          roomCost: input.roomCost,
           minRate: input.minRate,
           targetRate: input.targetRate,
           minStudents: input.minStudents,

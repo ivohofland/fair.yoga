@@ -8,6 +8,7 @@ import {
   resumeMessage,
   resumeStudioMessage,
   templateUpdatedMessage,
+  linkKeptNotice,
   UNARCHIVE_MESSAGE,
   type StudioTemplateToggleResponse,
   type TemplateToggleResponse,
@@ -736,5 +737,15 @@ describe('templateUpdatedMessage', () => {
     expect(templateUpdatedMessage(null, 'paused', 'template')).not.toBe(
       templateUpdatedMessage(null, 'paused', 'recurring class'),
     );
+  });
+});
+
+describe('linkKeptNotice (#911)', () => {
+  it('tells the teacher scheduled classes keep their link when the link changed with classes on the schedule', () => {
+    expect(linkKeptNotice(true)).toBe('Classes already on your schedule keep their current link.');
+  });
+
+  it('says nothing otherwise', () => {
+    expect(linkKeptNotice(false)).toBeNull();
   });
 });

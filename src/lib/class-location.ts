@@ -100,3 +100,53 @@ export function locationLabel(loc: ClassLocation | PublicClassLocation): string 
     }
   }
 }
+
+/** The sentence each format-shape rule answers with. */
+export const FORMAT_SHAPE_MESSAGES = {
+  videoUrlInPerson: 'Only an online class has a video link.',
+  roomOnline: 'An online class has no room.',
+  roomCostOnline: 'An online class has no room cost.',
+  noRoomInPerson: 'Choose the room this class is held in.',
+} as const;
+
+/** The columns `ClassTemplate_format_shape` / `Class_format_shape` tie to the format. */
+export type FormatShapeRow = {
+  format: ClassFormat;
+  teacherRoomId: string | null;
+  roomCost: number;
+  videoUrl: string | null;
+};
+
+export type FormatShapeViolation = {
+  path: 'teacherRoomId' | 'roomCost' | 'videoUrl';
+  message: string;
+};
+
+/**
+ * Every rule of the format shape `row` breaks; empty when it breaks none. In
+ * a room: a room and no link. Online: no room and a room cost of 0. Run on a
+ * merged row before a write, so a contradiction answers a field error rather
+ * than reaching the database's CHECK.
+ */
+export function formatShapeViolations(row: FormatShapeRow): readonly FormatShapeViolation[] {
+  const out: FormatShapeViolation[] = [];
+  switch (row.format) {
+    case 'in_person':
+      if (row.teacherRoomId === null) out.push({ path: 'teacherRoomId', message: FORMAT_SHAPE_MESSAGES.noRoomInPerson });
+      if (row.videoUrl !== null) out.push({ path: 'videoUrl', message: FORMAT_SHAPE_MESSAGES.videoUrlInPerson });
+      return out;
+    case 'online':
+      if (row.teacherRoomId !== null) out.push({ path: 'teacherRoomId', message: FORMAT_SHAPE_MESSAGES.roomOnline });
+      if (row.roomCost !== 0) out.push({ path: 'roomCost', message: FORMAT_SHAPE_MESSAGES.roomCostOnline });
+      return out;
+    default: {
+      const unreachable: never = row.format;
+      throw new Error(`Unknown class format: ${String(unreachable)}`);
+    }
+  }
+}
+
+/** The `path: message` list `parseBody` builds from Zod issues. */
+export function formatShapeMessage(vs: readonly FormatShapeViolation[]): string {
+  return vs.map((v) => `${v.path}: ${v.message}`).join(', ');
+}

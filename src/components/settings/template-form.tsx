@@ -74,8 +74,21 @@ interface TemplateFormValues {
   isPrivate: boolean;
 }
 
-type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
-type CreateTemplateWire = z.infer<typeof createClassTemplateSchema>;
+/**
+ * `format` and `videoUrl` are the schema fields this form does not carry yet
+ * (#911): it builds an in-person body, which needs neither, so the pins below
+ * leave both out.
+ */
+type FullUpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
+type InPersonCreateTemplateWire = Extract<z.infer<typeof createClassTemplateSchema>, { format: 'in_person' }>;
+type UpdateTemplateWire = Omit<FullUpdateTemplateWire, 'format' | 'videoUrl'>;
+type CreateTemplateWire = Omit<InPersonCreateTemplateWire, 'format' | 'videoUrl'>;
+
+/** Non-vacuity: each excluded key is still a key of both schemas, so a rename turns this red. */
+const _excludedUpdateKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof FullUpdateTemplateWire>> = true;
+const _excludedCreateKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof InPersonCreateTemplateWire>> = true;
+void _excludedUpdateKeysExist;
+void _excludedCreateKeysExist;
 
 /**
  * #85. Both schemas, both directions — four pins, because this form builds one

@@ -118,11 +118,13 @@ export interface TemplateEditResponse {
 
 /**
  * The `data` payload of a successful PUT on a recurring class template: the
- * edit's prediction plus whether the first class it may add starts inside its
- * cancellation deadline (#849).
+ * edit's prediction, whether the first class it may add starts inside its
+ * cancellation deadline (#849), and whether it changed the link while classes
+ * from this template are on the schedule, which keep the link they had (#911).
  */
 export type ClassTemplateEditResponse = TemplateEditResponse & {
   lateFirstClass: LateFirstClass | null;
+  linkChangedWithScheduledClasses: boolean;
 };
 
 /**

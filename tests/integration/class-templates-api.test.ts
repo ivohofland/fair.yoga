@@ -3044,3 +3044,237 @@ describe('the VAT % a class template stamps (#819)', () => {
     expect(after.every((c) => c.vatPercent.toNumber() === 21)).toBe(true);
   }));
 });
+
+describe('online class templates (#911)', () => {
+  const LINK = 'https://meet.jit.si/fair-yoga-weekly';
+  const NEW_LINK = 'https://meet.jit.si/fair-yoga-new-room';
+
+  const send = (token: string, method: 'POST' | 'PUT', path: string, body: Record<string, unknown>) =>
+    fetch(`${BASE_URL}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...cookie(token) },
+      body: JSON.stringify(body),
+    });
+
+  /** An online template body: no room, no room cost. ALT_DAY_1 is never today. */
+  function onlineBody(classType: string, startTime: string) {
+    const { teacherRoomId: _room, roomCost: _cost, ...rest } = templateBody(classType, startTime, ALT_DAY_1);
+    void _room;
+    void _cost;
+    return { ...rest, format: 'online', videoUrl: LINK };
+  }
+
+  async function createOnline(token: string, classType: string): Promise<string> {
+    const res = await send(token, 'POST', '/api/class-templates', onlineBody(classType, '07:00'));
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    return data.id;
+  }
+
+  async function createInPerson(owner: { sessionToken: string; teacherRoomId: string }, classType: string, roomCost: number) {
+    const res = await send(owner.sessionToken, 'POST', '/api/class-templates', {
+      ...templateBody(classType, '07:00', ALT_DAY_1),
+      teacherRoomId: owner.teacherRoomId,
+      roomCost,
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    return data.id;
+  }
+
+  const generatedFrom = (id: string) =>
+    prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } } });
+
+  it('creates an online template with a link, and stamps it onto the window', () =>
+    withOwner('online-create', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Online Create');
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'online', teacherRoomId: null, videoUrl: LINK, roomArchived: false });
+      expect(template.roomCost.toString()).toBe('0');
+      const generated = await generatedFrom(id);
+      expect(generated.length).toBe(4);
+      expect(generated.every((c) => c.format === 'online' && c.videoUrl === LINK && c.teacherRoomId === null)).toBe(true);
+    }));
+
+  it('refuses a room on an online create body with 400', () =>
+    withOwner('online-create-room', async (owner) => {
+      const res = await send(owner.sessionToken, 'POST', '/api/class-templates', {
+        ...onlineBody('Online Room', '07:00'),
+        teacherRoomId: owner.teacherRoomId,
+      });
+      expect(res.status).toBe(400);
+      expect(await prisma.scheduleRule.count({ where: { teacherId: owner.teacherId } })).toBe(0);
+    }));
+
+  it('refuses online → in person that keeps the stored link with a 400 naming videoUrl, and writes nothing', () =>
+    withOwner('online-to-room-link', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Keeps Link');
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'in_person',
+        teacherRoomId: owner.teacherRoomId,
+        roomCost: 15,
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.message).toBe('videoUrl: Only an online class has a video link.');
+      expect(body.error.code).toBeUndefined();
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'online', teacherRoomId: null, videoUrl: LINK });
+    }));
+
+  it('switches online → in person when the body clears the link', () =>
+    withOwner('online-to-room', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'To Room');
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'in_person',
+        teacherRoomId: owner.teacherRoomId,
+        videoUrl: null,
+        roomCost: 15,
+      });
+      expect(res.status).toBe(200);
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'in_person', teacherRoomId: owner.teacherRoomId, videoUrl: null, roomArchived: false });
+      expect(template.roomCost.toString()).toBe('15');
+      // A stamp: the window generated online stays online, link and all.
+      const generated = await generatedFrom(id);
+      expect(generated.length).toBe(4);
+      expect(generated.every((c) => c.format === 'online' && c.videoUrl === LINK)).toBe(true);
+    }));
+
+  it('refuses in person → online while the stored room cost is 20, with a 400 naming roomCost', () =>
+    withOwner('room-to-online-cost', async (owner) => {
+      const id = await createInPerson(owner, 'Keeps Cost', 20);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'online',
+        teacherRoomId: null,
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toBe('roomCost: An online class has no room cost.');
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'in_person', teacherRoomId: owner.teacherRoomId });
+    }));
+
+  it('refuses in person → online that keeps the stored room, with a 400 naming teacherRoomId', () =>
+    withOwner('room-to-online-room', async (owner) => {
+      const id = await createInPerson(owner, 'Keeps Room', 20);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { format: 'online', roomCost: 0 });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toBe('teacherRoomId: An online class has no room.');
+    }));
+
+  it('refuses clearing the room of an in-person template, with a 400 naming teacherRoomId', () =>
+    withOwner('room-cleared', async (owner) => {
+      const id = await createInPerson(owner, 'Room Cleared', 20);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { teacherRoomId: null });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { message: string } };
+      expect(body.error.message).toMatch(/^teacherRoomId: /);
+    }));
+
+  it('switches in person → online with roomCost 0, and leaves the in-person window as it is', () =>
+    withOwner('room-to-online', async (owner) => {
+      const id = await createInPerson(owner, 'To Online', 20);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'online',
+        teacherRoomId: null,
+        roomCost: 0,
+      });
+      expect(res.status).toBe(200);
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'online', teacherRoomId: null, videoUrl: null, roomArchived: false });
+      expect(template.roomCost.toString()).toBe('0');
+      const generated = await generatedFrom(id);
+      expect(generated.length).toBe(4);
+      expect(generated.every((c) => c.format === 'in_person' && c.teacherRoomId === owner.teacherRoomId)).toBe(true);
+    }));
+
+  it('a paused template on an archived room can switch to online', () =>
+    withOwner('archived-room-to-online', async (owner) => {
+      const id = await createInPerson(owner, 'Archived To Online', 20);
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+      await cancelGeneratedInstances(owner.teacherId);
+      await prisma.teacherRoom.update({ where: { id: owner.teacherRoomId }, data: { isArchived: true } });
+      expect((await prisma.classTemplate.findUniqueOrThrow({ where: { id } })).roomArchived).toBe(true);
+
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'online',
+        teacherRoomId: null,
+        roomCost: 0,
+      });
+      expect(res.status).toBe(200);
+      const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+      expect(template).toMatchObject({ format: 'online', teacherRoomId: null, roomArchived: false });
+    }));
+
+  it('a link change with classes on the schedule answers linkChangedWithScheduledClasses, and those classes keep their link', () =>
+    withOwner('online-link-change', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Link Change');
+      const before = await generatedFrom(id);
+      expect(before.length).toBe(4);
+
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { videoUrl: NEW_LINK });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { videoUrl: string; linkChangedWithScheduledClasses: boolean } };
+      expect(data.videoUrl).toBe(NEW_LINK);
+      expect(data.linkChangedWithScheduledClasses).toBe(true);
+
+      const after = await generatedFrom(id);
+      expect(after.map((c) => c.id).sort()).toEqual(before.map((c) => c.id).sort());
+      expect(after.every((c) => c.videoUrl === LINK)).toBe(true);
+    }));
+
+  it('a link change with nothing live on the schedule answers false', () =>
+    withOwner('online-link-none', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Link None');
+      await cancelGeneratedInstances(owner.teacherId);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { videoUrl: NEW_LINK });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { linkChangedWithScheduledClasses: boolean } };
+      expect(data.linkChangedWithScheduledClasses).toBe(false);
+    }));
+
+  it('a description-only edit answers linkChangedWithScheduledClasses: false', () =>
+    withOwner('online-description', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Description Only');
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { description: 'Bring a mat.' });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { linkChangedWithScheduledClasses: boolean } };
+      expect(data.linkChangedWithScheduledClasses).toBe(false);
+    }));
+
+  it('sending the stored link again answers false', () =>
+    withOwner('online-same-link', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Same Link');
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, { videoUrl: LINK });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { linkChangedWithScheduledClasses: boolean } };
+      expect(data.linkChangedWithScheduledClasses).toBe(false);
+    }));
+
+  it('resuming a paused online template is not refused by the room-archive check', () =>
+    withOwner('online-resume', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Online Resume');
+      const pause = await fetch(`${BASE_URL}/api/class-templates/${id}?state=paused`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(pause.status).toBe(200);
+      // The teacher's only room archived: an online template has none, so nothing refuses.
+      await cancelGeneratedInstances(owner.teacherId);
+      await prisma.teacherRoom.update({ where: { id: owner.teacherRoomId }, data: { isArchived: true } });
+
+      const res = await fetch(`${BASE_URL}/api/class-templates/${id}?state=active`, {
+        method: 'PATCH',
+        headers: cookie(owner.sessionToken),
+      });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { action: string } };
+      expect(data.action).toBe('active');
+    }));
+});
