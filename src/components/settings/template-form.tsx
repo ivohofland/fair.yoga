@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
 import { MAX_CLASS_SIZE, type createClassTemplateSchema, type updateClassTemplateSchema } from '@/lib/schemas';
-import type { CancelDeadline, AutoCancelCheck, ClassFormat, Currency } from '@/lib/prisma-client';
+import type { CancelDeadline, AutoCancelCheck, ClassFormat, Currency, PricingMode } from '@/lib/prisma-client';
 import {
   CLASS_TYPE_MAX,
   DURATION_MAX_MINUTES,
@@ -78,6 +78,7 @@ interface TemplateFormValues {
   cancelDeadline: CancelDeadline;
   autoCancelCheck: AutoCancelCheck;
   isPrivate: boolean;
+  pricingMode: PricingMode;
 }
 
 type UpdateTemplateWire = z.infer<typeof updateClassTemplateSchema>;
@@ -228,6 +229,7 @@ const INITIAL_VALUES: TemplateFormValues = {
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
   isPrivate: false,
+  pricingMode: 'tiered',
 };
 
 export function TemplateForm(props: TemplateFormProps) {
@@ -490,6 +492,7 @@ export function TemplateForm(props: TemplateFormProps) {
           };
       // #910. Private likewise goes out on an edit only as a change.
       if (edit !== null && editBody.isPrivate === edit.initial.isPrivate) delete editBody.isPrivate;
+      if (edit !== null && editBody.pricingMode === edit.initial.pricingMode) delete editBody.pricingMode;
       const payload = edit === null ? createBody : editBody;
 
       let res: Response;

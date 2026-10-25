@@ -57,6 +57,7 @@ describe('ClassEditForm', () => {
     vatPercent: 0,
     isPrivate: false,
     videoUrl: '',
+    pricingMode: 'tiered',
   };
 
   async function saveWith(settingsLocked: boolean): Promise<Record<string, unknown>> {
@@ -695,6 +696,7 @@ describe('ClassEditForm, late-move notice', () => {
     vatPercent: 0,
     isPrivate: false,
     videoUrl: '',
+    pricingMode: 'tiered',
   };
   const warning: MoveWarning = {
     timeZone: 'Europe/Amsterdam',
@@ -868,6 +870,7 @@ describe('ClassEditForm video link (#911)', () => {
     vatPercent: 0,
     isPrivate: false,
     videoUrl: '',
+    pricingMode: 'tiered',
   };
   const fetchMock = vi.fn();
   afterEach(() => {

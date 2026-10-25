@@ -56,6 +56,7 @@ export default async function EditTemplatePage({
           cancelDeadline: template.cancelDeadline,
           autoCancelCheck: template.autoCancelCheck,
           isPrivate: template.isPrivate,
+          pricingMode: template.pricingMode,
         }}
       />
 

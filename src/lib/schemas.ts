@@ -648,6 +648,7 @@ export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
     cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
     autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
     isPrivate: z.boolean().optional(),
+    pricingMode: z.enum(['tiered', 'donation']).optional(),
   };
   const inPerson = z
     .object({
@@ -699,6 +700,8 @@ export const updateClassSchema = z.object({
   // Never locked either: a link is added when the teacher has one, booked or not.
   // The format and the room are fixed at creation, so they are not accepted.
   videoUrl: videoUrlField(),
+  // Locked with the economics (#912); see PRICING_LOCKED_FIELDS in src/lib/class-fields.ts.
+  pricingMode: z.enum(['tiered', 'donation']).optional(),
   // Economic fields — only accepted when settings not locked (enforced by
   // updateClass in src/services/class-lifecycle.ts)
   roomCost: moneyField().optional(),
@@ -753,6 +756,7 @@ export const updateClassTemplateSchema = z.object({
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
   isPrivate: z.boolean().optional(),
+  pricingMode: z.enum(['tiered', 'donation']).optional(),
 }).strict();
 // Cross-field economics and the format shape are checked on the merged row by
 // the update service (economicsViolations, formatShapeViolations).

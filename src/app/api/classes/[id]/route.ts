@@ -117,10 +117,13 @@ export const PUT = withErrorHandler(async (
       'class edit refused: its settings are locked since the first booking',
     );
     const movesBookedClass = result.fields.some((f) => f === 'date' || f === 'startTime');
+    const onlyPricingMode = result.fields.every((f) => f === 'pricingMode');
     return respondError(
       movesBookedClass
         ? BOOKED_SCHEDULE_FIXED_MESSAGE
-        : 'Prices and capacity are locked once the first student books.',
+        : onlyPricingMode
+          ? 'Pricing is locked once the first student books.'
+          : 'Prices and capacity are locked once the first student books.',
       409,
       'SETTINGS_LOCKED',
     );

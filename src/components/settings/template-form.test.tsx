@@ -44,6 +44,7 @@ describe('TemplateForm', () => {
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
     isPrivate: false,
+    pricingMode: 'tiered',
   } as const;
 
   function stubFetch() {
@@ -416,7 +417,7 @@ describe('TemplateForm', () => {
     expect(method).toBe('POST');
     expect(Object.keys(body).sort()).toEqual([
       'autoCancelCheck', 'cancelDeadline', 'classType', 'dayOfWeek', 'description',
-      'durationMinutes', 'format', 'isPrivate', 'maxStudents', 'minRate', 'minStudents', 'roomCost',
+      'durationMinutes', 'format', 'isPrivate', 'maxStudents', 'minRate', 'minStudents', 'pricingMode', 'roomCost',
       'startTime', 'targetRate', 'teacherRoomId', 'vatPercent',
     ]);
   });

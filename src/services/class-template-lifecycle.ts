@@ -165,7 +165,8 @@ type TeacherEditableClassTemplateField =
   | 'autoCancelCheck'
   | 'isPrivate'
   | 'format'
-  | 'videoUrl';
+  | 'videoUrl'
+  | 'pricingMode';
 
 /**
  * Compile-time pin (forward): every field the schema routes to `ClassTemplate`
@@ -1257,6 +1258,7 @@ export async function createClassTemplate(
           cancelDeadline: input.cancelDeadline,
           autoCancelCheck: input.autoCancelCheck,
           isPrivate: input.isPrivate ?? false,
+          pricingMode: input.pricingMode ?? 'tiered',
         },
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });

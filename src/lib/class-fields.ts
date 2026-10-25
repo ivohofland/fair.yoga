@@ -31,7 +31,19 @@ export const SCHEDULE_LOCKED_FIELDS = Object.freeze(['date', 'startTime'] as con
 
 export type ScheduleLockedField = (typeof SCHEDULE_LOCKED_FIELDS)[number];
 
-/** Everything `settingsLocked` freezes: the economics, then the schedule. */
-export const LOCKED_FIELDS = Object.freeze([...ECONOMIC_FIELDS, ...SCHEDULE_LOCKED_FIELDS] as const);
+/**
+ * How a class is priced (#912). Locked with the economics: a booked class's
+ * students booked against the pricing it showed them.
+ */
+export const PRICING_LOCKED_FIELDS = Object.freeze(['pricingMode'] as const);
+
+export type PricingLockedField = (typeof PRICING_LOCKED_FIELDS)[number];
+
+/** Everything `settingsLocked` freezes: the economics, the pricing mode, then the schedule. */
+export const LOCKED_FIELDS = Object.freeze([
+  ...ECONOMIC_FIELDS,
+  ...PRICING_LOCKED_FIELDS,
+  ...SCHEDULE_LOCKED_FIELDS,
+] as const);
 
 export type LockedField = (typeof LOCKED_FIELDS)[number];

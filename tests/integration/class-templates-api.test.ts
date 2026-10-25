@@ -353,6 +353,21 @@ describe('POST /api/class-templates', () => {
     expect(listed.classes.every((c) => !c.isPrivate)).toBe(true);
   });
 
+  it('persists pricingMode on the template and stamps it onto every generated class (#912)', async () => {
+    const res = await fetch(`${BASE_URL}/api/class-templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ ...templateBody('Donation Flow', '20:30', ALT_DAY_3), pricingMode: 'donation' }),
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id: data.id } });
+    expect(template.pricingMode).toBe('donation');
+    const classes = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: data.id } } } } } });
+    expect(classes.length).toBeGreaterThan(0);
+    expect(classes.every((c) => c.pricingMode === 'donation')).toBe(true);
+  });
+
   it('a generation failure rolls the whole create back — no template, no instances', async () => {
     const before = await prisma.classTemplate.count({ where: { scheduleRule: { teacherId } } });
 
@@ -1485,6 +1500,26 @@ describe('PUT /api/class-templates/[id]', () => {
     const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } }, orderBy: { id: 'asc' } });
     expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
     expect(after.every((c) => c.isPrivate === false)).toBe(true);
+  });
+
+  it('a PUT of pricingMode changes the template and leaves generated classes as they are (#912, #194)', async () => {
+    const id = await createTemplate('Mode Flow', '12:30', ALT_DAY_5);
+    const before = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } }, orderBy: { id: 'asc' } });
+    expect(before.length).toBeGreaterThan(0);
+    expect(before.every((c) => c.pricingMode === 'tiered')).toBe(true);
+
+    const res = await fetch(`${BASE_URL}/api/class-templates/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...cookie(sessionToken) },
+      body: JSON.stringify({ pricingMode: 'donation' }),
+    });
+    expect(res.status).toBe(200);
+
+    const template = await prisma.classTemplate.findUniqueOrThrow({ where: { id } });
+    expect(template.pricingMode).toBe('donation');
+    const after = await prisma.class.findMany({ where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id } } } } }, orderBy: { id: 'asc' } });
+    expect(after.map((c) => c.id)).toEqual(before.map((c) => c.id));
+    expect(after.every((c) => c.pricingMode === 'tiered')).toBe(true);
   });
 
   it('returns 404 for a well-formed id that does not exist', async () => {
