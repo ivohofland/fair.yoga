@@ -122,6 +122,7 @@ function registrationRow() {
       status: 'open',
       maxStudents: 10,
       cancelDeadline: 'HOURS_24',
+      pricingMode: 'tiered',
       calendarEntry: {
         teacherId: 'teacher-1',
         classType: 'Vinyasa',
