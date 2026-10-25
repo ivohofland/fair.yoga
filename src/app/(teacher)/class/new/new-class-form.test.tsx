@@ -184,6 +184,7 @@ describe('NewClassPage', () => {
       cancelDeadline: 'HOURS_24',
       autoCancelCheck: 'HOURS_2',
       isPrivate: false,
+      pricingMode: 'tiered',
     });
   });
 

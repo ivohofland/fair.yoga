@@ -66,6 +66,7 @@ export default async function ClassEditPage({
           vatPercent: cls.vatPercent.toNumber(),
           isPrivate: cls.isPrivate,
           videoUrl: cls.videoUrl ?? '',
+          pricingMode: cls.pricingMode,
         }}
       />
     </div>

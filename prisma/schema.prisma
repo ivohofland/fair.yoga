@@ -15,6 +15,11 @@ datasource db {
 // ENUMS
 // ============================================================================
 
+enum PricingMode {
+  tiered
+  donation
+}
+
 enum Currency {
   EUR
   GBP
@@ -611,6 +616,7 @@ model ClassTemplate {
   cancelDeadline  CancelDeadline  @default(HOURS_24)
   autoCancelCheck AutoCancelCheck @default(HOURS_2)
   isPrivate       Boolean         @default(false)
+  pricingMode     PricingMode     @default(tiered)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -705,6 +711,7 @@ model Class {
   /// `Class_format_shape`.
   entryLive            Boolean         @default(true)
   isPrivate            Boolean         @default(false)
+  pricingMode          PricingMode     @default(tiered)
   roomArchived         Boolean         @default(false)
   description          String?         @db.Text
   currency             Currency
@@ -722,6 +729,9 @@ model Class {
   totalStudents        Int?
   totalRevenue         Decimal?        @db.Decimal(10, 2)
   vatTotal             Decimal?        @db.Decimal(10, 2)
+  /// What a donation class's students gave in total, as the teacher recorded it.
+  /// NULL is "not recorded", distinct from 0. Written only by `recordDonationTotal`.
+  donationTotal        Decimal?        @db.Decimal(10, 2)
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -1198,23 +1208,27 @@ model StudioClass {
 // ============================================================================
 
 model Registration {
-  id                  String             @id @default(uuid())
-  classId             String
-  studentId           String
-  status              RegistrationStatus @default(registered)
-  isWalkIn            Boolean            @default(false)
-  tierAtBooking       Int
-  price               Decimal?           @db.Decimal(10, 2)
-  tierRatio           Decimal?           @db.Decimal(5, 4)
-  registeredAt        DateTime           @default(now())
-  cancelledAt         DateTime?
+  id                     String             @id @default(uuid())
+  classId                String
+  studentId              String
+  status                 RegistrationStatus @default(registered)
+  isWalkIn               Boolean            @default(false)
+  tierAtBooking          Int
+  price                  Decimal?           @db.Decimal(10, 2)
+  tierRatio              Decimal?           @db.Decimal(5, 4)
+  registeredAt           DateTime           @default(now())
+  cancelledAt            DateTime?
   /// Set by a student's late cancel and never cleared, so a booking that is
   /// reactivated afterwards still gets no free-cancel grace.
-  lateCancelledAt     DateTime?
+  lateCancelledAt        DateTime?
   /// Set once when this booking's class reminder is claimed, before it is
   /// delivered; a failed email leaves it set.
-  classReminderSentAt DateTime?
-  updatedAt           DateTime           @updatedAt
+  classReminderSentAt    DateTime?
+  /// When this booking was invited to give. Set once, never cleared.
+  donationInvitedAt      DateTime?
+  /// When the student hid the giving prompt. Records only that it was hidden.
+  donationPromptHiddenAt DateTime?
+  updatedAt              DateTime           @updatedAt
 
   class         Class          @relation(fields: [classId], references: [id], onDelete: Cascade)
   student       Student        @relation(fields: [studentId], references: [id], onDelete: Cascade)

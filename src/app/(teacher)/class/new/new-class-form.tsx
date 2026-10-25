@@ -1,6 +1,6 @@
 'use client';
 
-import type { AutoCancelCheck, CancelDeadline, ClassFormat, Currency } from '@/lib/prisma-client';
+import type { AutoCancelCheck, CancelDeadline, ClassFormat, Currency, PricingMode } from '@/lib/prisma-client';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
@@ -71,6 +71,7 @@ interface FormData {
   cancelDeadline: CancelDeadline;
   autoCancelCheck: AutoCancelCheck;
   isPrivate: boolean;
+  pricingMode: PricingMode;
 }
 
 /**
@@ -138,6 +139,7 @@ const INITIAL_FORM: FormData = {
   cancelDeadline: 'HOURS_24',
   autoCancelCheck: 'HOURS_2',
   isPrivate: false,
+  pricingMode: 'tiered',
 };
 
 // ---------------------------------------------------------------------------

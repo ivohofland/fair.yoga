@@ -1032,7 +1032,9 @@ void _entryUpdateFieldsAreSent;
  *                            A `CalendarEntry` column since #327, which is why
  *                            `_forbiddenColumnsExist` below pins the forbidden
  *                            list against BOTH tables' inputs
- *   - the financial totals → written only by `completeClass`
+ *   - the financial totals → written only by `completeClass`, and
+ *                            `donationTotal` only by `recordDonationTotal`
+ *                            (`services/donations.ts`)
  * — because the compiler will not. For the columns above, the forbidden pin
  * below refuses the grant outright; for anything else, the judgement is yours.
  */
@@ -1049,7 +1051,8 @@ type TeacherEditableClassField =
   | 'maxStudents'
   | 'vatPercent'
   | 'isPrivate'
-  | 'videoUrl';
+  | 'videoUrl'
+  | 'pricingMode';
 
 /**
  * Compile-time pin (forward): every field `updateClassSchema` accepts must be
@@ -1128,7 +1131,8 @@ type PlainUpdateForbiddenClassField =
   | 'effectiveTeacherRate'
   | 'totalStudents'
   | 'totalRevenue'
-  | 'vatTotal';
+  | 'vatTotal'
+  | 'donationTotal';
 
 /**
  * Compile-time pin (completeness): no column may leave the list above
@@ -1164,7 +1168,8 @@ const _classForbiddenListIsComplete: NoneOf<
     | 'effectiveTeacherRate'
     | 'totalStudents'
     | 'totalRevenue'
-    | 'vatTotal',
+    | 'vatTotal'
+    | 'donationTotal',
     PlainUpdateForbiddenClassField
   >
 > = true;

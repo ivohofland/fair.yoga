@@ -1185,6 +1185,25 @@ describe('PUT /api/classes/[id]', () => {
     await prisma.class.update({ where: { id: lockedClassId }, data: { isPrivate: before.isPrivate } });
   });
 
+  it('a pricingMode change on a locked class -> 409 SETTINGS_LOCKED, mode unchanged (#912)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(before.settingsLocked).toBe(true);
+    await expectRefusal(await put(ownerToken, lockedClassId, { pricingMode: 'donation' }), 'SETTINGS_LOCKED');
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: lockedClassId } });
+    expect(after.pricingMode).toBe(before.pricingMode);
+  });
+
+  it('an unbooked class moves to donation and back with its rates untouched (#912)', async () => {
+    const before = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(before.settingsLocked).toBe(false);
+    expect((await put(ownerToken, economicsClassId, { pricingMode: 'donation' })).status).toBe(200);
+    expect((await put(ownerToken, economicsClassId, { pricingMode: 'tiered' })).status).toBe(200);
+    const after = await prisma.class.findUniqueOrThrow({ where: { id: economicsClassId } });
+    expect(after.pricingMode).toBe('tiered');
+    expect(after.minRate.toString()).toBe(before.minRate.toString());
+    expect(after.targetRate.toString()).toBe(before.targetRate.toString());
+  });
+
   it('an edit body without isPrivate leaves the stored flag alone (#910)', async () => {
     await prisma.class.update({ where: { id: economicsClassId }, data: { isPrivate: true } });
     const res = await put(ownerToken, economicsClassId, { description: 'still private' });
@@ -1722,6 +1741,17 @@ describe('POST /api/classes', () => {
       expect(published.status).toBe('open');
       expect(published.isPrivate).toBe(true);
     });
+  });
+
+  it('creates a donation class when pricingMode is sent, a tiered one when omitted (#912)', async () => {
+    const donationRes = await post(ownerToken, { ...baseBody(), date: '2099-11-04', pricingMode: 'donation' });
+    const tieredRes = await post(ownerToken, { ...baseBody(), date: '2099-11-05' });
+    expect(donationRes.status).toBe(201);
+    expect(tieredRes.status).toBe(201);
+    const donation = await prisma.class.findUniqueOrThrow({ where: { id: ((await donationRes.json()) as { data: { id: string } }).data.id } });
+    const tiered = await prisma.class.findUniqueOrThrow({ where: { id: ((await tieredRes.json()) as { data: { id: string } }).data.id } });
+    expect(donation.pricingMode).toBe('donation');
+    expect(tiered.pricingMode).toBe('tiered');
   });
 
   describe('the VAT % a class is created with (#819)', () => {

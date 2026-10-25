@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { z } from 'zod';
-import type { ClassFormat, Currency } from '@/lib/prisma-client';
+import type { ClassFormat, Currency, PricingMode } from '@/lib/prisma-client';
 import { MAX_CLASS_SIZE, type updateClassSchema } from '@/lib/schemas';
 import {
   CLASS_TYPE_MAX,
@@ -52,6 +52,7 @@ export interface ClassEditInitial {
   isPrivate: boolean;
   /** The stored link as the field holds it; empty for none. Read only by an online class. */
   videoUrl: string;
+  pricingMode: PricingMode;
 }
 
 type UpdateClassWire = z.infer<typeof updateClassSchema>;
@@ -290,6 +291,8 @@ export function ClassEditForm({
     if (link?.ok && link.url !== (initial.videoUrl.trim() || null)) payload.videoUrl = link.url;
     else delete payload.videoUrl;
     if (online) delete payload.roomCost;
+    // Pricing mode follows the same rule; a booked class never sends it (LOCKED_FIELDS).
+    if (payload.pricingMode === initial.pricingMode) delete payload.pricingMode;
 
     let res: Response;
     try {

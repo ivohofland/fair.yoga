@@ -664,6 +664,7 @@ calendar-shaped, through this row.
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | Student cancellation window |
 | auto_cancel_check | enum: 4h, 2h, 1h | When to check min_students threshold |
 | is_private | boolean, default false | Stamped onto each generated Class; changing it touches no existing class (#194, #910) |
+| pricing_mode | enum `PricingMode`: tiered, donation; default tiered | Stamped onto each generated Class; changing it touches no existing class (#194, #912) |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -762,6 +763,7 @@ child, and the reverse does not.
 | cancel_deadline | enum: 48h, 24h, 12h, 6h | |
 | auto_cancel_check | enum: 4h, 2h, 1h | |
 | is_private | boolean, default false | Left off the teacher's public page (/[slug]); bookable by direct link. Never locked: not one of `LOCKED_FIELDS` (#910) |
+| pricing_mode | enum `PricingMode`: tiered, donation; default tiered | Locked with the economics: a `PRICING_LOCKED_FIELDS` member (#912) |
 | **State** | | |
 | status | enum | draft → open → in_progress → completed. `full` is derived, not stored; cancellation is the entry's `cancelled_at`, not a member |
 | settings_locked | boolean | Flips to true on first registration; freezes `LOCKED_FIELDS` (`src/lib/class-fields.ts`) |
@@ -773,6 +775,7 @@ child, and the reverse does not.
 | total_students | int, nullable | Number of charged registrations at completion |
 | total_revenue | decimal, nullable | Sum of the payments created at completion. A class below its minimum is priced on a pool padded to the minimum, and the padding seats bill no one, so this is less than `(room_cost + min_rate) × (1 + vat_percent / 100)` there (#836) |
 | vat_total | decimal(10,2), nullable | The VAT contained in `total_revenue`: the sum of the class's payments' `vat_amount`, written at completion. A snapshot, like `total_revenue`: `Class_vat_total_snapshot_check` makes it null exactly when `total_revenue` is, and `Class_vat_total_nonnegative_check` keeps it `>= 0` |
+| donation_total | decimal(10,2), nullable | What the teacher recorded for a donation class. NULL is not recorded, distinct from 0. Written only by `recordDonationTotal`; VAT is derived on read, never stored (#912) |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -821,6 +824,8 @@ No pricing engine. No individual registration. No link to Room or Student. No `s
 | cancelled_at | datetime, nullable | |
 | late_cancelled_at | datetime, nullable | Set by a student's late cancel and never cleared. A booking that carries it gets no auto-promotion free-cancel grace, so rejoining the waitlist after a late cancel is a change of mind, not a way out of the charge (`freeCancelUntilFor`, `src/lib/cancel-deadline.ts`). The teacher's attendance edit (`PUT /api/registrations/[id]`) may return a booking to `late_cancel` only when it carries this stamp |
 | class_reminder_sent_at | datetime, nullable | Set when this booking's reminder is claimed, before it is delivered; a failed email leaves it set (at most once). Cleared when an earlier booking's row is reused for a new booking |
+| donation_invited_at | datetime, nullable | When this booking was invited to give. Set once, never cleared (#912) |
+| donation_prompt_hidden_at | datetime, nullable | When the student hid the giving prompt. Records only that it was hidden; deliberately not "I gave". `Registration_donation_hidden_requires_invited_check` refuses a hide without an invitation (#912) |
 | updated_at | datetime | |
 
 **Attendance writes (#766).** `PUT /api/registrations/[id]` records `attended`,
