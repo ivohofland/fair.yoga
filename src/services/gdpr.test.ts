@@ -3893,3 +3893,133 @@ describe('exports carry VAT (#819)', () => {
     expect(Number(exported.bookings[0]?.payment?.vatAmount)).toBe(0.99);
   });
 });
+
+/** #911: an online class's link is the teacher's own data — exported, then cleared by erasure. */
+describe('online class links in the teacher export and erasure (#911)', () => {
+  const prisma = createPrismaClient();
+  const suffix = `gdpr-link-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const teacherIds: string[] = [];
+  const accountIds: string[] = [];
+  const link = (name: string) => `https://zoom.example.invalid/my/${suffix}-${name}`;
+  const economics = { roomCost: 0, minRate: 15, targetRate: 25, minStudents: 1, maxStudents: 10 };
+
+  async function makeTeacher(tag: string): Promise<string> {
+    const email = `${suffix}-${tag}@test.local`;
+    const t = await prisma.teacher.create({
+      data: { firstName: 'Link', lastName: 'Teacher', email, account: { create: { email } }, bio: '', pageSlug: `${suffix}-${tag}` },
+      select: { id: true, accountId: true },
+    });
+    teacherIds.push(t.id);
+    accountIds.push(t.accountId);
+    return t.id;
+  }
+
+  async function onlineClass(
+    teacherId: string,
+    date: string,
+    status: 'open' | 'completed',
+    videoUrl: string,
+    cancelledAt: Date | null = null,
+  ): Promise<string> {
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: null, format: 'online', videoUrl, classType: 'Online flow',
+      date: new Date(date), startTime: hhmmToTime('18:00'), durationMinutes: 60,
+      ...economics, status, cancelledAt,
+    });
+    return cls.id;
+  }
+
+  async function onlineTemplate(teacherId: string, videoUrl: string): Promise<string> {
+    const tpl = await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Online tpl', dayOfWeek: 2,
+            startTime: hhmmToTime('07:00'), durationMinutes: 60, isActive: true,
+          },
+        },
+        format: 'online',
+        videoUrl,
+        description: 'Online template',
+        ...economics,
+      },
+      select: { id: true },
+    });
+    return tpl.id;
+  }
+
+  afterAll(async () => {
+    await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.scheduleRule.deleteMany({ where: { teacherId: { in: teacherIds } } });
+    await prisma.teacher.deleteMany({ where: { id: { in: teacherIds } } });
+    await prisma.account.deleteMany({ where: { id: { in: accountIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('the export carries each class’s format and link', async () => {
+    const teacherId = await makeTeacher('export');
+    await onlineClass(teacherId, '2099-03-01', 'open', link('export'));
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.classes).toEqual([
+      expect.objectContaining({ classType: 'Online flow', format: 'online', videoUrl: link('export') }),
+    ]);
+  });
+
+  it('erasure clears the link on every class and template of the teacher, and on no one else’s', async () => {
+    const teacherId = await makeTeacher('erased');
+    const upcoming = await onlineClass(teacherId, '2099-03-02', 'open', link('upcoming'));
+    const completed = await onlineClass(teacherId, '2026-01-05', 'completed', link('completed'));
+    const cancelled = await onlineClass(teacherId, '2099-03-03', 'open', link('cancelled'), new Date());
+    const template = await onlineTemplate(teacherId, link('template'));
+    const bystanderId = await makeTeacher('bystander');
+    const bystanderClass = await onlineClass(bystanderId, '2099-03-02', 'open', link('bystander'));
+    const bystanderTemplate = await onlineTemplate(bystanderId, link('bystander-tpl'));
+
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+
+    const classes = await prisma.class.findMany({
+      where: { id: { in: [upcoming, completed, cancelled] } },
+      select: { videoUrl: true, format: true },
+    });
+    expect(classes).toHaveLength(3);
+    expect(classes.every((c) => c.videoUrl === null && c.format === 'online')).toBe(true);
+    expect((await prisma.classTemplate.findUniqueOrThrow({ where: { id: template } })).videoUrl).toBeNull();
+
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: bystanderClass } })).videoUrl).toBe(link('bystander'));
+    expect((await prisma.classTemplate.findUniqueOrThrow({ where: { id: bystanderTemplate } })).videoUrl).toBe(
+      link('bystander-tpl'),
+    );
+  }, 20_000);
+
+  it('clears the live classes and templates inside the erasure, and logs a failed clear after it', async () => {
+    const teacherId = await makeTeacher('failed-clear');
+    const upcoming = await onlineClass(teacherId, '2099-03-04', 'open', link('in-tx'));
+    const completed = await onlineClass(teacherId, '2026-01-06', 'completed', link('after-commit'));
+    const template = await onlineTemplate(teacherId, link('tpl-in-tx'));
+
+    // The post-commit clear is the erasure's one lock call without `entries`.
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      if (source.entries !== true) throw new Error('post-commit clear failed');
+      return original(tx, source);
+    });
+    onTestFinished(() => spy.mockRestore());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: upcoming } })).videoUrl).toBeNull();
+    expect((await prisma.classTemplate.findUniqueOrThrow({ where: { id: template } })).videoUrl).toBeNull();
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: completed } })).videoUrl).toBe(link('after-commit'));
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({ teacherId }),
+      'teacher erasure: the class video links were not cleared',
+    );
+
+    // A repeated request finishes the clear.
+    spy.mockRestore();
+    expect(await deleteTeacherAccount(prisma, teacherId)).toEqual({ erased: false, reason: 'already-erased' });
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: completed } })).videoUrl).toBeNull();
+  }, 20_000);
+});
