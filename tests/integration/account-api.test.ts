@@ -750,6 +750,62 @@ describe('DELETE /api/account', () => {
     expect(teacherAfterRetry.deletedAt).not.toBeNull();
   }, 40_000);
 
+  it('reports ERASURE_BUSY and erases nothing when the video-link pre-clear loses a lock race, and the retry clears the link (#911)', async () => {
+    const acc = await seedTeacherOnly('linkbusy');
+    const link = `https://zoom.example.invalid/my/${suffix}-linkbusy`;
+    const cls = await createClassFixture(prisma, {
+      teacherId: acc.teacherId,
+      teacherRoomId: null,
+      format: 'online',
+      videoUrl: link,
+      classType: 'Link Busy Flow',
+      date: new Date('2026-01-10'),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 0,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 1,
+      maxStudents: 8,
+      status: 'completed',
+    });
+    seededClassIds.push(cls.id);
+
+    // A completed class: only the pre-clear locks it, so the 2s bound it hits
+    // is the pre-clear's.
+    let signalHeld!: () => void;
+    const held = new Promise<void>((r) => {
+      signalHeld = r;
+    });
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${cls.id} FOR UPDATE`;
+        signalHeld();
+        await new Promise((r) => setTimeout(r, 4_000));
+      },
+      { timeout: 20_000 },
+    );
+    await held;
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error: { message: string; code?: string } };
+      expect(body.error.code).toBe('ERASURE_BUSY');
+      expect(body.error.message).toMatch(/again/i);
+      const teacher = await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } });
+      expect(teacher.deletedAt).toBeNull();
+      expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).videoUrl).toBe(link);
+    } finally {
+      await holder;
+    }
+
+    const second = await fetch(`${BASE_URL}/api/account`, { method: 'DELETE', headers: cookie(acc.token) });
+    expect(second.status).toBe(200);
+    expect((await prisma.teacher.findUniqueOrThrow({ where: { id: acc.teacherId } })).deletedAt).not.toBeNull();
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: cls.id } })).videoUrl).toBeNull();
+  }, 40_000);
+
   /**
    * `PARTIAL_ERASURE_BUSY`: the same lock race as `ERASURE_BUSY` above, but
    * on a dual account, where the student half commits before the teacher

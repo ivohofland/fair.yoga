@@ -1307,6 +1307,15 @@ export async function deleteTeacherAccount(
     }
   }
 
+  // #911. The video links on the teacher's completed and cancelled classes,
+  // cleared BEFORE the erasure and allowed to throw: a failure reaches the
+  // route while the session still lives, so the teacher can retry. Not inside
+  // the transaction below, whose only `Class` lock is its live classes — a
+  // second ordered lock there could take a lower id after a higher one
+  // (`docs/lock-order.md`, "Ordering WITHIN `Class`"). The live classes'
+  // links are cleared inside it, under its own pre-lock.
+  await clearTeacherClassLinks(db, teacherId, 'terminal');
+
   const committed = await unlessAlreadyErased(db.$transaction(
     async (tx) => {
       // Collected, not logged, inside this transaction — see the loop below
@@ -1568,7 +1577,8 @@ export async function deleteTeacherAccount(
       // #911. The video link is a teacher-typed URL, often naming them. These
       // rows are the pre-lock's own, so the write takes no lock this
       // transaction does not already hold; the teacher's other classes are
-      // cleared after commit by `clearErasedTeacherClassLinks`.
+      // cleared by `clearTeacherClassLinks`, before and after this
+      // transaction.
       await tx.class.updateMany({
         where: { id: { in: lockedIds }, videoUrl: { not: null } },
         data: { videoUrl: null },
@@ -1769,9 +1779,15 @@ export async function deleteTeacherAccount(
     // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
   ));
-  // Run on the already-erased answer too, so a repeated request finishes a
-  // clear that an earlier one committed the erasure without.
-  await clearErasedTeacherClassLinks(db, teacherId);
+  // #911. The backstop for the pre-clear above the transaction: a class that
+  // became terminal, or was created, between the two. Logged, not thrown,
+  // because the erasure has committed and the session that could retry is
+  // gone.
+  try {
+    await clearTeacherClassLinks(db, teacherId, 'all');
+  } catch (err) {
+    log.error({ err, teacherId }, 'teacher erasure: the class video links were not cleared');
+  }
   if (committed === null) return { erased: false, reason: 'already-erased' };
   const { skipped: skippedClassIds, droppedGrant } = committed;
 
@@ -1902,31 +1918,38 @@ export async function deleteTeacherAccount(
 }
 
 /**
- * Clears the video link on every class of an erased teacher (#911): the link
- * is a URL the teacher typed, often naming them, and a completed class
- * outlives the erasure as its students' bookkeeping. Its own transaction,
- * after the erasure commits: the erasure holds only its live classes, and a
- * second ordered `Class` lock inside it could take a lower id after a higher
- * one (`docs/lock-order.md`, "Ordering WITHIN `Class`"). Idempotent. A failure
- * is logged, not thrown, because the erasure has already committed.
+ * Clears the video link on a teacher's classes (#911): the link is a URL the
+ * teacher typed, often naming them, and a completed or cancelled class
+ * outlives the erasure as its students' bookkeeping. `terminal` limits it to
+ * completed and cancelled classes, whose link no one can use any more, so
+ * clearing it before an erasure that then fails loses nothing; `all` also
+ * reaches a class still live. Its own transaction, whose one lock is the
+ * ordered pre-lock below; idempotent. Throws on failure.
  */
-async function clearErasedTeacherClassLinks(db: PrismaClient, teacherId: string): Promise<void> {
-  try {
-    const linked = await db.class.findFirst({
-      where: { videoUrl: { not: null }, calendarEntry: { teacherId } },
-      select: { id: true },
+async function clearTeacherClassLinks(
+  db: PrismaClient,
+  teacherId: string,
+  scope: 'terminal' | 'all',
+): Promise<void> {
+  const linked = await db.class.findFirst({
+    where: { videoUrl: { not: null }, calendarEntry: { teacherId } },
+    select: { id: true },
+  });
+  if (linked === null) return;
+  const terminal =
+    scope === 'terminal'
+      ? Prisma.sql`AND (c.status NOT IN (${CANCELLABLE_STATUSES_SQL}) OR e."cancelledAt" IS NOT NULL)`
+      : Prisma.empty;
+  await db.$transaction(async (tx) => {
+    // VERDICT (#327): no `entries: true`. This transaction writes only
+    // `Class.videoUrl`. Its predicate reads the entry's `teacherId`, which no
+    // writer changes, and `cancelledAt`, which on a regular entry is never
+    // cleared once set: a stale read can only miss a class cancelled
+    // meanwhile, which the erasure's post-commit pass still reaches.
+    const ids = await lockClassRowsOrdered(tx, {
+      join: CLASS_TO_ENTRY_JOIN,
+      where: Prisma.sql`e."teacherId" = ${teacherId} AND c."videoUrl" IS NOT NULL ${terminal}`,
     });
-    if (linked === null) return;
-    await db.$transaction(async (tx) => {
-      // VERDICT (#327): no `entries: true`. This transaction writes only
-      // `Class.videoUrl`, and its join reads the entry's `teacherId` alone.
-      const ids = await lockClassRowsOrdered(tx, {
-        join: CLASS_TO_ENTRY_JOIN,
-        where: Prisma.sql`e."teacherId" = ${teacherId} AND c."videoUrl" IS NOT NULL`,
-      });
-      if (ids.length > 0) await tx.class.updateMany({ where: { id: { in: ids } }, data: { videoUrl: null } });
-    });
-  } catch (err) {
-    log.error({ err, teacherId }, 'teacher erasure: the class video links were not cleared');
-  }
+    if (ids.length > 0) await tx.class.updateMany({ where: { id: { in: ids } }, data: { videoUrl: null } });
+  });
 }

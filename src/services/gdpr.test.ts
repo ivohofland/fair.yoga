@@ -11,6 +11,7 @@ import {
 import { saveTeacherPhoto } from './teacher-photo';
 import * as dbLocks from '@/lib/db-locks';
 import { log } from '@/lib/log';
+import { isTransientDbError } from '@/lib/api-errors';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
@@ -3991,35 +3992,92 @@ describe('online class links in the teacher export and erasure (#911)', () => {
     );
   }, 20_000);
 
-  it('clears the live classes and templates inside the erasure, and logs a failed clear after it', async () => {
-    const teacherId = await makeTeacher('failed-clear');
-    const upcoming = await onlineClass(teacherId, '2099-03-04', 'open', link('in-tx'));
-    const completed = await onlineClass(teacherId, '2026-01-06', 'completed', link('after-commit'));
-    const template = await onlineTemplate(teacherId, link('tpl-in-tx'));
+  it('clears the completed and cancelled classes before the erasure transaction opens', async () => {
+    const teacherId = await makeTeacher('pre-clear');
+    const completed = await onlineClass(teacherId, '2026-01-06', 'completed', link('pre-completed'));
+    const cancelled = await onlineClass(teacherId, '2099-03-05', 'open', link('pre-cancelled'), new Date());
 
-    // The post-commit clear is the erasure's one lock call without `entries`.
+    // The erasure's own pre-lock is its lock call with `entries`; read what a
+    // second connection sees at that moment.
+    const seen: Array<string | null> = [];
     const original = dbLocks.lockClassRowsOrdered;
     const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
-      if (source.entries !== true) throw new Error('post-commit clear failed');
+      if (source.entries === true) {
+        const rows = await prisma.class.findMany({
+          where: { id: { in: [completed, cancelled] } },
+          select: { videoUrl: true },
+        });
+        seen.push(...rows.map((r) => r.videoUrl));
+      }
+      return original(tx, source);
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    await expectErased(deleteTeacherAccount(prisma, teacherId));
+    expect(seen).toEqual([null, null]);
+  }, 20_000);
+
+  it('a failed pre-clear throws a retryable error and erases nothing', async () => {
+    const teacherId = await makeTeacher('pre-clear-fails');
+    const upcoming = await onlineClass(teacherId, '2099-03-06', 'open', link('kept-upcoming'));
+    const completed = await onlineClass(teacherId, '2026-01-07', 'completed', link('kept-completed'));
+
+    // The pre-clear is the erasure's first lock call without `entries`.
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      if (source.entries !== true) throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+      return original(tx, source);
+    });
+    onTestFinished(() => spy.mockRestore());
+
+    const err: unknown = await deleteTeacherAccount(prisma, teacherId).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).not.toBeNull();
+    expect(isTransientDbError(err)).toBe(true);
+    expect((await prisma.teacher.findUniqueOrThrow({ where: { id: teacherId } })).deletedAt).toBeNull();
+    const links = await prisma.class.findMany({ where: { id: { in: [upcoming, completed] } }, select: { videoUrl: true } });
+    expect(links.map((l) => l.videoUrl).sort()).toEqual([link('kept-completed'), link('kept-upcoming')].sort());
+  }, 20_000);
+
+  it('the post-commit pass clears a link the pre-clear missed, and logs when it fails', async () => {
+    const missed = await makeTeacher('backstop');
+    const missedClass = await onlineClass(missed, '2026-01-08', 'completed', link('backstop'));
+    const failed = await makeTeacher('backstop-fails');
+    const failedClass = await onlineClass(failed, '2026-01-09', 'completed', link('backstop-fails'));
+    const upcoming = await onlineClass(failed, '2099-03-07', 'open', link('in-tx'));
+    const template = await onlineTemplate(failed, link('tpl-in-tx'));
+
+    // Lock calls without `entries`, in order: the pre-clear, then the
+    // post-commit pass. The pre-clear is made to miss (lock nothing); the
+    // pass either runs for real or, for the second teacher, fails.
+    let calls = 0;
+    let failPass = false;
+    const original = dbLocks.lockClassRowsOrdered;
+    const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
+      if (source.entries === true) return original(tx, source);
+      calls += 1;
+      if (calls % 2 === 1) return [];
+      if (failPass) throw new Error('post-commit clear failed');
       return original(tx, source);
     });
     onTestFinished(() => spy.mockRestore());
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     onTestFinished(() => error.mockRestore());
 
-    await expectErased(deleteTeacherAccount(prisma, teacherId));
+    await expectErased(deleteTeacherAccount(prisma, missed));
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: missedClass } })).videoUrl).toBeNull();
 
+    failPass = true;
+    await expectErased(deleteTeacherAccount(prisma, failed));
+    expect((await prisma.class.findUniqueOrThrow({ where: { id: failedClass } })).videoUrl).toBe(link('backstop-fails'));
+    // The live class and the template are cleared inside the erasure itself.
     expect((await prisma.class.findUniqueOrThrow({ where: { id: upcoming } })).videoUrl).toBeNull();
     expect((await prisma.classTemplate.findUniqueOrThrow({ where: { id: template } })).videoUrl).toBeNull();
-    expect((await prisma.class.findUniqueOrThrow({ where: { id: completed } })).videoUrl).toBe(link('after-commit'));
     expect(error).toHaveBeenCalledWith(
-      expect.objectContaining({ teacherId }),
+      expect.objectContaining({ teacherId: failed }),
       'teacher erasure: the class video links were not cleared',
     );
-
-    // A repeated request finishes the clear.
-    spy.mockRestore();
-    expect(await deleteTeacherAccount(prisma, teacherId)).toEqual({ erased: false, reason: 'already-erased' });
-    expect((await prisma.class.findUniqueOrThrow({ where: { id: completed } })).videoUrl).toBeNull();
   }, 20_000);
 });
