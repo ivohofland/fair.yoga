@@ -23,6 +23,18 @@ const online: LocationRow = {
   teacherRoom: null,
 };
 
+describe('a malformed row names itself in the error', () => {
+  it('names the id of an in-person row with no room', () => {
+    expect(() => classLocation({ ...inPerson, id: 'cls-77', teacherRoom: null })).toThrow('cls-77');
+    expect(() => publicClassLocation({ ...inPerson, id: 'cls-78', teacherRoom: null })).toThrow('cls-78');
+  });
+
+  it('names the id of an online row that holds a room', () => {
+    expect(() => classLocation({ ...online, id: 'cls-79', teacherRoom: { isArchived: false, room } })).toThrow('cls-79');
+    expect(() => publicClassLocation({ ...online, id: 'cls-80', teacherRoom: { isArchived: false, room } })).toThrow('cls-80');
+  });
+});
+
 describe('classLocation', () => {
   it('maps an in-person row to its room and archive state', () => {
     expect(classLocation(inPerson)).toStrictEqual({

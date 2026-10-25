@@ -48,6 +48,8 @@ export function videoLinkPendingSuffix(row: { format: ClassFormat; videoUrl: str
 
 /** The columns `classLocation` reads, from a `Class` or a `ClassTemplate`. */
 export type LocationRow = {
+  /** Named in a thrown message when the row is malformed; callers that select it get it there. */
+  id?: string;
   format: ClassFormat;
   videoUrl: string | null;
   teacherRoom: { isArchived: boolean; room: RoomPlace } | null;
@@ -68,6 +70,11 @@ export const classLocationSelect = {
   },
 } as const satisfies Prisma.ClassSelect & Prisma.ClassTemplateSelect;
 
+/** The row's id for an error message, or nothing when the caller did not select it. */
+function rowRef(row: { id?: string }): string {
+  return row.id === undefined ? '' : ` (row ${row.id})`;
+}
+
 /**
  * Throws on a row `Class_format_shape` / `ClassTemplate_format_shape` would
  * refuse: such a row cannot be stored, so reading one means the caller built
@@ -76,14 +83,14 @@ export const classLocationSelect = {
 export function classLocation(row: LocationRow): ClassLocation {
   switch (row.format) {
     case 'in_person':
-      if (row.teacherRoom === null) throw new Error('An in-person class row has no room.');
+      if (row.teacherRoom === null) throw new Error(`An in-person class row has no room${rowRef(row)}.`);
       return {
         format: 'in_person',
         room: { roomName: row.teacherRoom.room.roomName, venueName: row.teacherRoom.room.venueName },
         roomArchived: row.teacherRoom.isArchived,
       };
     case 'online':
-      if (row.teacherRoom !== null) throw new Error('An online class row holds a room.');
+      if (row.teacherRoom !== null) throw new Error(`An online class row holds a room${rowRef(row)}.`);
       return { format: 'online', videoUrl: row.videoUrl };
     default: {
       const unreachable: never = row.format;
@@ -96,13 +103,13 @@ export function classLocation(row: LocationRow): ClassLocation {
 export function publicClassLocation(row: PublicLocationRow): PublicClassLocation {
   switch (row.format) {
     case 'in_person':
-      if (row.teacherRoom === null) throw new Error('An in-person class row has no room.');
+      if (row.teacherRoom === null) throw new Error(`An in-person class row has no room${rowRef(row)}.`);
       return {
         format: 'in_person',
         room: { roomName: row.teacherRoom.room.roomName, venueName: row.teacherRoom.room.venueName },
       };
     case 'online':
-      if (row.teacherRoom !== null) throw new Error('An online class row holds a room.');
+      if (row.teacherRoom !== null) throw new Error(`An online class row holds a room${rowRef(row)}.`);
       return { format: 'online' };
     default: {
       const unreachable: never = row.format;
