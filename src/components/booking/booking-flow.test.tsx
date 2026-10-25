@@ -389,6 +389,15 @@ describe('BookingFlow', () => {
       expect(screen.queryByText(/Your price is based/)).not.toBeInTheDocument();
     });
 
+    it('tells a returning student with a known tier too (#912)', () => {
+      stubFetch();
+      renderFlow({ pricing: donation, currentTier: 3, isFirstBooking: false });
+      expect(
+        screen.getByText('This class is by donation. After class you can give what you like, if you like.'),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/You're in Tier 3/)).toBeInTheDocument();
+    });
+
     it('books with a plain Book button and no estimate caveat (#912)', () => {
       stubFetch();
       renderFlow({ pricing: donation });
@@ -411,6 +420,15 @@ describe('BookingFlow', () => {
       expect(await screen.findByText('Your spot is confirmed.')).toBeInTheDocument();
       expect(document.body.textContent).not.toContain('final price');
     });
+  });
+
+  it('leaves the tiered returning-student render without a donation line or picker intro (#912)', () => {
+    stubFetch();
+    renderFlow({ currentTier: 3, isFirstBooking: false });
+    expect(document.body.textContent).not.toContain('by donation');
+    expect(document.body.textContent).not.toContain('Your price is based');
+    expect(screen.getByText(/You're in Tier 3/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Book — around/ })).toBeInTheDocument();
   });
 
   it('keeps the tiered claim-window caption charged (#912)', () => {

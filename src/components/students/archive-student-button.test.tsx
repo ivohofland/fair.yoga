@@ -347,7 +347,7 @@ describe('ArchiveStudentButton', () => {
       json: async () => ({
         error: {
           code: 'STUDENT_HAS_UNBILLED_CLASSES',
-          message: "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+          message: "This student is booked on 1 class that hasn't finished yet. Remove them from it, or archive once it's completed.",
         },
       }),
     });
@@ -365,14 +365,14 @@ describe('ArchiveStudentButton', () => {
 
     expect(
       await screen.findByText(
-        "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+        "This student is booked on 1 class that hasn't finished yet. Remove them from it, or archive once it's completed.",
       ),
     ).toBeInTheDocument();
     expect(routerRefresh).not.toHaveBeenCalled();
     expect(routerPush).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Waive and archive' })).not.toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent(
-      "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+      "This student is booked on 1 class that hasn't finished yet. Remove them from it, or archive once it's completed.",
     );
   });
 
