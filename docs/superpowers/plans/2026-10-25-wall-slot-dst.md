@@ -54,12 +54,13 @@ test in this block issues.
 
 ## Not done here, stated in the PR
 
-The out-of-process callers that cannot fake the server's clock —
-`tests/integration/classes-api.test.ts` (two "started 50 minutes ago"
-Amsterdam slots, `now` in [00:50, 01:50) UTC on the last Sunday of October) and
-`tests/e2e/student-journey.spec.ts` (+30 min, zone from its teacher) — now fail
-at the fixture for that hour, naming the cause, instead of with an unrelated
-assertion. Accepted as the trade the issue asked for.
+The one out-of-process caller that cannot fake the server's clock and still
+reaches a repeated hour is `tests/integration/classes-api.test.ts` (two "started
+50 minutes ago" Amsterdam slots, now in [00:50, 01:50) UTC on the last Sunday of
+October): it fails at the fixture for that hour, naming the cause, instead of
+with an unrelated assertion. Accepted as the trade the issue asked for. The two
+e2e specs that call `wallSlotAt` run with UTC teachers, so they cannot reach a
+repeated hour.
 
 ## Verification
 

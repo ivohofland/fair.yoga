@@ -375,7 +375,8 @@ test.describe('Student journey — final-hour claim', () => {
 
   const claimSuffix = uniqueSuffix();
   const claimSlug = `e2e-sclaim-${claimSuffix}`;
-  const timeZone = 'Europe/Amsterdam';
+  // UTC, so a wall slot names exactly one instant.
+  const timeZone = 'UTC';
   let claimTeacherId: string;
   let claimRoomId: string;
   let claimClassId: string;

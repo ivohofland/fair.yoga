@@ -59,6 +59,8 @@ test.describe('Class edit screen', () => {
         account: { create: { email: `e2e-classedit-teacher-${suffix}@test.local` } },
         bio: 'Class edit e2e',
         pageSlug: `e2e-classedit-${suffix}`,
+        // UTC, so a wall slot names exactly one instant.
+        defaultTimezone: 'UTC',
       },
     });
     teacherId = teacher.id;

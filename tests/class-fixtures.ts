@@ -255,8 +255,8 @@ export function slotTime(totalMinutesFrom9am: number): string {
  * given distance from now: a finish-window test cannot use a far-future date.
  *
  * Throws when the pair does not read back as `instant`. That is the earlier of
- * a repeated wall-clock hour: `readClassStart` resolves the pair to the later,
- * so no `(date, startTime)` can name the earlier, and returning the pair would
+ * a repeated wall-clock hour: the slot reads back as the later occurrence, so
+ * no `(date, startTime)` can name the earlier, and returning the pair would
  * hand the caller a class an hour away from the one it asked for.
  */
 export function wallSlotAt(instant: Date, timeZone: string): { date: Date; startTime: Date } {
