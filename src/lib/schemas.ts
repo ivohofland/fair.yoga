@@ -653,7 +653,7 @@ export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
       format: z.literal('in_person'),
       teacherRoomId: z.string().uuid(),
       roomCost: moneyField(),
-      videoUrl: z.undefined('Only an online class has a video link.').optional(),
+      videoUrl: z.null('Only an online class has a video link.').optional(),
       ...shared,
     })
     .extend(schedule)

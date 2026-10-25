@@ -57,6 +57,10 @@ export interface ClassEditInitial {
  */
 type UpdateClassWire = Omit<z.infer<typeof updateClassSchema>, 'videoUrl'>;
 
+/** Non-vacuity: the excluded key is still a key of the schema, so a rename turns this red. */
+const _excludedKeyExists: NoneOf<Exclude<'videoUrl', keyof z.infer<typeof updateClassSchema>>> = true;
+void _excludedKeyExists;
+
 /** This form's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {
   students_order: 'Min students cannot exceed max students',
