@@ -309,7 +309,6 @@ describe('an online class’s video link stays with its booked students (#911)',
             if (done) return;
             seen += decoder.decode(value, { stream: true });
           }
-          // eslint-disable-next-line no-restricted-syntax -- the read rejects when the test aborts the stream
         } catch {
           return;
         }
