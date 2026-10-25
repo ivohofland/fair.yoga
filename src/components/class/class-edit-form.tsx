@@ -153,6 +153,12 @@ export function ClassEditForm({
     setPrevInitialPrivate(initial.isPrivate);
     setForm((prev) => (prev.isPrivate === prevInitialPrivate ? { ...prev, isPrivate: initial.isPrivate } : prev));
   }
+  // The same adoption for the link (#911).
+  const [prevInitialLink, setPrevInitialLink] = useState(initial.videoUrl);
+  if (initial.videoUrl !== prevInitialLink) {
+    setPrevInitialLink(initial.videoUrl);
+    setForm((prev) => (prev.videoUrl === prevInitialLink ? { ...prev, videoUrl: initial.videoUrl } : prev));
+  }
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');

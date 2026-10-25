@@ -948,6 +948,27 @@ describe('ClassEditForm video link (#911)', () => {
     expect((await save()).videoUrl).toBe('https://meet.example/b');
   });
 
+  it('an untouched link follows a refresh and is not sent back', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const props = { format: 'online', moveWarning: null, currency: 'EUR', classId: 'cls-1', settingsLocked: false } as const;
+    const { rerender } = render(<ClassEditForm {...props} initial={ONLINE_INITIAL} />);
+    rerender(<ClassEditForm {...props} initial={{ ...ONLINE_INITIAL, videoUrl: 'https://meet.example/new' }} />);
+    expect(screen.getByLabelText('Video link (optional)')).toHaveValue('https://meet.example/new');
+    expect(await save()).not.toHaveProperty('videoUrl');
+  });
+
+  it('a typed link survives a refresh and is sent', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const props = { format: 'online', moveWarning: null, currency: 'EUR', classId: 'cls-1', settingsLocked: false } as const;
+    const { rerender } = render(<ClassEditForm {...props} initial={ONLINE_INITIAL} />);
+    fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: 'https://meet.example/mine' } });
+    rerender(<ClassEditForm {...props} initial={{ ...ONLINE_INITIAL, videoUrl: 'https://meet.example/new' }} />);
+    expect(screen.getByLabelText('Video link (optional)')).toHaveValue('https://meet.example/mine');
+    expect((await save()).videoUrl).toBe('https://meet.example/mine');
+  });
+
   it('refuses a link that is not https, without sending', async () => {
     renderOnline();
     fireEvent.change(screen.getByLabelText('Video link (optional)'), { target: { value: 'http://meet.example/b' } });

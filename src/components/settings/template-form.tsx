@@ -301,6 +301,26 @@ export function TemplateForm(props: TemplateFormProps) {
     }
   }
 
+  // The same adoption for the format and the link (#911): an untouched field
+  // follows the stored value across a refresh, so a save does not send this
+  // tab's old one back as a change.
+  const initialFormat = edit?.initial.format;
+  const [prevInitialFormat, setPrevInitialFormat] = useState(initialFormat);
+  if (initialFormat !== prevInitialFormat) {
+    setPrevInitialFormat(initialFormat);
+    if (initialFormat !== undefined) {
+      setForm((prev) => (prev.format === prevInitialFormat ? { ...prev, format: initialFormat } : prev));
+    }
+  }
+  const initialLink = edit?.initial.videoUrl;
+  const [prevInitialLink, setPrevInitialLink] = useState(initialLink);
+  if (initialLink !== prevInitialLink) {
+    setPrevInitialLink(initialLink);
+    if (initialLink !== undefined) {
+      setForm((prev) => (prev.videoUrl === prevInitialLink ? { ...prev, videoUrl: initialLink } : prev));
+    }
+  }
+
   useEffect(() => {
     async function fetchRooms() {
       try {
@@ -449,24 +469,28 @@ export function TemplateForm(props: TemplateFormProps) {
       const parsedLink = online ? readVideoLink(videoUrl) : null;
       const nextLink = parsedLink?.ok ? parsedLink.url : null;
       const storedLink = edit?.initial.videoUrl.trim() || null;
-      const roomChanged = edit === null || teacherRoomId !== edit.initial.teacherRoomId;
-      const body: CreateTemplateWire | UpdateTemplateWire = online
+      // Each arm is annotated against the schema its endpoint validates, so a
+      // retyped schema field fails here for create and for edit separately.
+      const createBody: CreateTemplateWire = online
+        ? { ...common, format: 'online', roomCost: 0, videoUrl: nextLink }
+        : { ...common, format: 'in_person', teacherRoomId };
+      const editBody: UpdateTemplateWire = online
         ? {
             ...common,
             format: 'online',
             roomCost: 0,
             ...(edit?.initial.format === 'in_person' ? { teacherRoomId: null } : {}),
-            ...(edit === null || nextLink !== storedLink ? { videoUrl: nextLink } : {}),
+            ...(nextLink !== storedLink ? { videoUrl: nextLink } : {}),
           }
         : {
             ...common,
             format: 'in_person',
-            ...(roomChanged ? { teacherRoomId } : {}),
+            ...(teacherRoomId !== edit?.initial.teacherRoomId ? { teacherRoomId } : {}),
             ...(edit?.initial.format === 'online' ? { videoUrl: null } : {}),
           };
       // #910. Private likewise goes out on an edit only as a change.
-      if (edit !== null && body.isPrivate === edit.initial.isPrivate) delete body.isPrivate;
-      const payload = body;
+      if (edit !== null && editBody.isPrivate === edit.initial.isPrivate) delete editBody.isPrivate;
+      const payload = edit === null ? createBody : editBody;
 
       let res: Response;
       try {
@@ -685,11 +709,15 @@ export function TemplateForm(props: TemplateFormProps) {
     return <div className="py-12 text-center text-brown">Loading rooms...</div>;
   }
 
-  if (roomsFailed) {
+  // A failed load blocks only the in-person path: an online template needs no room.
+  if (roomsFailed && !online) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-brown mb-4">Couldn&apos;t load your rooms.</p>
-        <p className="text-sm text-brown">Check your connection and reload the page.</p>
+      <div className="flex flex-col gap-4">
+        {formatChoice}
+        <div className="py-12 text-center">
+          <p className="text-brown mb-4">Couldn&apos;t load your rooms.</p>
+          <p className="text-sm text-brown">Check your connection and reload the page.</p>
+        </div>
       </div>
     );
   }

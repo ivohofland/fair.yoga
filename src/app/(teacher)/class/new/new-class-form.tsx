@@ -517,7 +517,8 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     );
   }
 
-  if (roomsFailed) {
+  // A failed load blocks only the in-person path: an online class needs no room.
+  if (roomsFailed && !online) {
     // Distinct from both empty states below. On a 401/500/network failure
     // `allRoomsCount` stays 0, so the teacher was told "No rooms configured —
     // add a room in Settings" while their rooms existed and the fetch simply
@@ -526,10 +527,13 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     return (
       <>
         {header}
-        <EmptyState
-          title="Couldn't load your rooms"
-          body="Check your connection and reload the page."
-        />
+        <div className="flex flex-col gap-4">
+          {formatChoice}
+          <EmptyState
+            title="Couldn't load your rooms"
+            body="Check your connection and reload the page."
+          />
+        </div>
       </>
     );
   }

@@ -2314,6 +2314,55 @@ describe('TemplateForm', () => {
       expect(body.format).toBe('in_person');
       expect(body.videoUrl).toBeNull();
       expect(body.teacherRoomId).toBe(ROOM_B);
+      expect(body).toHaveProperty('roomCost');
+      expect(body.roomCost).toBe(20);
+    });
+
+    it('accepts max students above the default room capacity when online', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE }} />);
+      fireEvent.change(await screen.findByLabelText('Max students'), { target: { value: '31' } });
+      const { body } = await submit();
+      expect(body.maxStudents).toBe(31);
+    });
+
+    it('a failed rooms fetch still lets Online be chosen and saved', async () => {
+      fetchMock.mockResolvedValue({ ok: false, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      expect(await screen.findByText(/Couldn.t load your rooms/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      fireEvent.change(await screen.findByLabelText('Class type'), { target: { value: 'Yin' } });
+      const { body } = await submit();
+      expect(body.format).toBe('online');
+    });
+
+    it('an untouched link follows a refreshed one and the save does not send the old one back', async () => {
+      stubFetch();
+      const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      await screen.findByLabelText('Video link (optional)');
+      rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: 'https://meet.example/new' }} />);
+      expect(screen.getByLabelText('Video link (optional)')).toHaveValue('https://meet.example/new');
+      const { body } = await submit();
+      expect(body).not.toHaveProperty('videoUrl');
+    });
+
+    it('a link the teacher typed survives a refresh', async () => {
+      stubFetch();
+      const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: LINK }} />);
+      fireEvent.change(await screen.findByLabelText('Video link (optional)'), { target: { value: 'https://meet.example/mine' } });
+      rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE, videoUrl: 'https://meet.example/new' }} />);
+      expect(screen.getByLabelText('Video link (optional)')).toHaveValue('https://meet.example/mine');
+      const { body } = await submit();
+      expect(body.videoUrl).toBe('https://meet.example/mine');
+    });
+
+    it('an untouched format follows a refresh', async () => {
+      stubFetch();
+      const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      await screen.findByRole('radio', { name: 'Online' });
+      rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...ONLINE }} />);
+      expect(screen.getByRole('radio', { name: 'Online' })).toBeChecked();
     });
 
     it('edit: switching online to in person with no room chosen is refused on the form', async () => {
