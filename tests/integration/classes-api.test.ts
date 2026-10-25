@@ -2387,6 +2387,9 @@ describe('online classes on the one-off create and edit API (#911)', () => {
       onTestFinished(() => removeIsolatedClass(cls));
       const res = await put(cls.id, { videoUrl: LINK });
       expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { message: string } }).error.message).toBe(
+        'videoUrl: Only an online class has a video link.',
+      );
       const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(row.videoUrl).toBeNull();
     });
@@ -2402,6 +2405,9 @@ describe('online classes on the one-off create and edit API (#911)', () => {
       const cls = await onlineClass('2099-12-18', 'open');
       const res = await put(cls.id, { roomCost: 15 });
       expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { message: string } }).error.message).toBe(
+        'roomCost: An online class has no room cost.',
+      );
       const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
       expect(row.roomCost.toString()).toBe('0');
     });
