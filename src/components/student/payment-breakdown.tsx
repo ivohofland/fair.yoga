@@ -13,7 +13,7 @@ interface PaymentBreakdownProps {
 /**
  * Where a student's payment for a completed class went. Renders
  * unconditionally; the caller decides whether a row shows it. An online class
- * had no room, so it has no Room row.
+ * has no room, so it has no Room row.
  */
 export function PaymentBreakdown({ lines, format, classType, date, currency }: PaymentBreakdownProps) {
   const rows: ReadonlyArray<{ label: string; value: string; emphasis: boolean }> = [

@@ -608,8 +608,8 @@ const videoUrlField = () =>
  * The rate and capacity fields of a body the schema has already validated.
  * `classFormatUnion` is generic over its schedule fields, which leaves the
  * refinement's argument opaque to the compiler; the shape is read back here.
- * The guard cannot fail for a validated body, and refuses it as a missing
- * field if it ever did.
+ * The guard cannot fail for a validated body; if it ever did, it throws
+ * rather than checking a guessed value.
  */
 function economicsOf(d: object, onlineRoomCost?: 0): ClassEconomics {
   const roomCost = onlineRoomCost ?? ('roomCost' in d && typeof d.roomCost === 'number' ? d.roomCost : null);

@@ -735,8 +735,8 @@ async function writeClassTemplateChild(
   data: Record<string, unknown>,
 ): Promise<{ row: ClassTemplate; previousVideoUrl: string | null; previousFormat: ClassFormat }> {
   const sendsEconomics = ECONOMIC_FIELDS.some((f) => childData[f] !== undefined);
-  // Every economic field, `vatPercent` included, though only the rate and
-  // capacity fields reach `economicsViolations` below.
+  // Every economic field, `vatPercent` included, though `vatPercent` is the one
+  // `economicsViolations` below does not read.
   const badField = ECONOMIC_FIELDS.find((f) => childData[f] !== undefined && typeof childData[f] !== 'number');
   if (badField !== undefined) {
     throw new Error(`updateClassTemplate: ${badField} is not a number at the service boundary`);
