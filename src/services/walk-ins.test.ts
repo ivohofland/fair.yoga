@@ -36,7 +36,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _completeWalkInRejectsABareClient(client: PrismaClient, resolved: ResolvedWalkIn): Promise<void> {
-  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x', videoLinkPending: false };
+  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x', videoLink: { format: 'in_person' as const, videoUrl: null } };
   // @ts-expect-error A bare PrismaClient must never satisfy the brand.
   await completeWalkIn(client, { teacherId: 'never-called', classId: 'never-called', resolved, notice });
 }
@@ -161,7 +161,7 @@ async function seedClaimedStudent(email: string): Promise<string> {
   return student.id;
 }
 
-const notice = { teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October', videoLinkPending: false };
+const notice = { teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October', videoLink: { format: 'in_person' as const, videoUrl: null } };
 
 async function walkIn(teacherId: string, classId: string, subject: WalkInSubject) {
   return prisma.$transaction(async (tx) => {
@@ -214,7 +214,7 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
         teacherId,
         subject: { kind: 'newContact', firstName: 'Olga', lastName: 'Online', email },
       });
-      await completeWalkIn(tx, { teacherId, classId, resolved: r, notice: { ...notice, videoLinkPending: true } });
+      await completeWalkIn(tx, { teacherId, classId, resolved: r, notice: { ...notice, videoLink: { format: 'online' as const, videoUrl: null } } });
       return r;
     });
     studentIds.push(resolved.studentId);

@@ -10,7 +10,7 @@ import { unsubscribeLinks } from '@/lib/unsubscribe-token';
 import { log } from '@/lib/log';
 import { createNotification } from './notifications';
 import { videoLinkForEmail } from './video-link-for-email';
-import { TEACHER_REMINDER_NO_LINK_COPY, videoLinkPendingSuffix } from '@/lib/class-location';
+import { TEACHER_REMINDER_NO_LINK_COPY, isVideoLinkPending, videoLinkPendingSuffix } from '@/lib/class-location';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -227,7 +227,7 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
   if (cls.teacherReminderSentAt === null && dueMoment(entry, teacher.classReminder, cls.createdAt, start, now) !== null) {
     const title = 'Class reminder';
     const registered = await db.registration.count({ where: { classId: cls.id, status: 'registered' } });
-    const noLink = cls.format === 'online' && cls.videoUrl === null ? TEACHER_REMINDER_NO_LINK_COPY : '';
+    const noLink = isVideoLinkPending(cls) ? TEACHER_REMINDER_NO_LINK_COPY : '';
     const body = `${when} — ${registered} registered so far.${noLink}`;
     const claimed = await db.$transaction(async (tx) => {
       const { count } = await tx.class.updateMany({

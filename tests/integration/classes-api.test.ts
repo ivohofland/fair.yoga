@@ -11,6 +11,7 @@ import { expectApplied, expectRefusal, expectUnchanged } from '../api-assertions
 import { expectReconciliationSkips, fillSeats } from '../waitlist-fixtures';
 import { createPrismaClient } from '@/lib/prisma-client';
 import { updateClass } from '@/services/class-lifecycle';
+import { videoLinkForEmail } from '@/services/video-link-for-email';
 
 const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
@@ -2418,6 +2419,65 @@ describe('online classes on the one-off create and edit API (#911)', () => {
       expect(untouched).toMatchObject({ ok: true, previousVideoUrl: 'https://meet.example.com/room-2' });
       const first = await onlineClass('2099-12-21', 'open');
       expect(await updateClass(prisma, first.id, { videoUrl: LINK })).toMatchObject({ ok: true, previousVideoUrl: null });
+    });
+
+    describe('the link notice', () => {
+      const stamp = uniqueSuffix();
+      async function bookedOnline(date: string, videoUrl: string | null) {
+        const cls = await onlineClass(date, 'open', { videoUrl });
+        const seat = async (status: 'registered' | 'cancelled') => {
+          const st = await prisma.student.create({
+            data: { firstName: 'Notice', lastName: status, email: `notice-${stamp}-${status}-${date}-${Math.random().toString(36).slice(2, 6)}@test.local` },
+          });
+          await prisma.registration.create({ data: { classId: cls.id, studentId: st.id, status, tierAtBooking: 3 } });
+          onTestFinished(async () => {
+            await prisma.notification.deleteMany({ where: { recipientId: st.id } });
+            await prisma.registration.deleteMany({ where: { studentId: st.id } });
+            await prisma.student.deleteMany({ where: { id: st.id } });
+          });
+          return st.id;
+        };
+        return { cls, registered: await seat('registered'), cancelled: await seat('cancelled') };
+      }
+      const noticeRows = (classId: string) =>
+        prisma.notification.findMany({ where: { relatedClassId: classId, type: 'video_link_updated' } });
+
+      it('a new link notifies the registered student only, with no link in the row, and the response says nothing of it', async () => {
+        const { cls, registered, cancelled } = await bookedOnline('2099-11-01', null);
+        const res = await put(cls.id, { videoUrl: LINK });
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(await res.json())).not.toContain('notif');
+        const rows = await noticeRows(cls.id);
+        expect(rows.map((r) => r.recipientId)).toEqual([registered]);
+        expect(rows.some((r) => r.recipientId === cancelled)).toBe(false);
+        for (const row of rows) expect(`${row.title} ${row.body}`).not.toContain('https://');
+      });
+
+      it('an edit that leaves the link alone notifies no one', async () => {
+        const { cls } = await bookedOnline('2099-11-02', LINK);
+        expect((await put(cls.id, { description: 'Same link' })).status).toBe(200);
+        expect(await noticeRows(cls.id)).toHaveLength(0);
+      });
+
+      it('two quick changes give two rows, and each email carries the second link', async () => {
+        const { cls, registered } = await bookedOnline('2099-11-03', null);
+        const second = 'https://meet.example.com/room-second';
+        expect((await put(cls.id, { videoUrl: LINK })).status).toBe(200);
+        expect((await put(cls.id, { videoUrl: second })).status).toBe(200);
+        const rows = await noticeRows(cls.id);
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          expect(
+            await videoLinkForEmail(prisma, {
+              recipientType: row.recipientType,
+              recipientId: row.recipientId,
+              type: row.type,
+              relatedClassId: row.relatedClassId,
+            }),
+          ).toBe(second);
+          expect(row.recipientId).toBe(registered);
+        }
+      });
     });
 
     it('format and teacherRoomId are not editable: 400', async () => {

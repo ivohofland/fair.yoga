@@ -23,7 +23,7 @@ import {
   isPaymentNotification,
   payPagePath,
 } from './notification-links';
-import { JOIN_CLASS_LABEL } from './class-location';
+import { JOIN_CLASS_LABEL, VIDEO_LINK_PENDING_COPY } from './class-location';
 import { logDegraded } from './degradation';
 import { isValidTimeZone } from './iana-timezone';
 
@@ -160,6 +160,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   payment_paid_twice: 'A payment was made twice.',
   payment_charged_back: 'A payment was charged back.',
   refund_failed: 'A refund did not go through.',
+  video_link_updated: 'The video link for your class changed.',
 };
 
 const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
@@ -201,6 +202,7 @@ const STUDENT_ACTION_LINKS: Partial<Record<NotificationType, { label: string; pa
   spot_available: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
   walk_in_added: { label: 'Sign in', path: '/login' },
   class_reminder: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
+  video_link_updated: { label: STUDENT_BOOKINGS_LABEL, path: STUDENT_BOOKINGS_PATH },
 };
 
 /**
@@ -286,15 +288,20 @@ export function renderNotificationEmail(
     notification.recipientType === 'teacher'
       ? TEACHER_ACTION_LINKS[notification.type]
       : studentAction(notification);
+  const showsJoinButton =
+    Boolean(notification.videoLink)
+    && notification.recipientType !== 'teacher'
+    && VIDEO_LINK_EMAIL_TYPES.has(notification.type);
+  // The pending sentence was written when the class had no link; beside a
+  // Join button it would contradict it.
+  const body = showsJoinButton
+    ? notification.body.replace(` ${VIDEO_LINK_PENDING_COPY}`, '')
+    : notification.body;
   const blocks: EmailBlock[] = [
     { kind: 'paragraph', tone: 'intro', lines: [intro] },
-    { kind: 'paragraph', lines: [notification.body] },
+    { kind: 'paragraph', lines: [body] },
   ];
-  if (
-    notification.videoLink
-    && notification.recipientType !== 'teacher'
-    && VIDEO_LINK_EMAIL_TYPES.has(notification.type)
-  ) {
+  if (showsJoinButton && notification.videoLink) {
     // The link is off-site: its href is used as it is, not under `baseUrl`.
     blocks.push({ kind: 'button', label: JOIN_CLASS_LABEL, href: notification.videoLink });
   }
