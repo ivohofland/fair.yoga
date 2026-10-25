@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, onTestFinished, vi } from 'vitest';
 import { type PrismaClient, ClassStatus, type Currency } from '@/lib/prisma-client';
 import { classStartInstant } from '@/lib/timezone';
 import { classEndInstant, autoFinishAt, finishOpensAt, walkInOpensAt } from '@/lib/finish-window';
@@ -119,6 +119,20 @@ function localWallClockMinutesAgo(minutes: number, timeZone: string) {
       Date.UTC(parts.year!, parts.month! - 1, parts.day!, parts.hour!, parts.minute!),
     ),
   };
+}
+
+/**
+ * Fakes only `Date`, at an instant clear of either DST transition of its year,
+ * and restores real timers when the calling test ends, passed or failed.
+ * `localWallClockMinutesAgo` reads the clock, and on a real one the slot half
+ * an hour back is not a past start for an hour a year.
+ */
+function pinDateClear() {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2037-06-10T10:00:00.000Z'));
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
 }
 
 /**
@@ -773,6 +787,7 @@ describe('transitionClass (DB)', () => {
     // an hour ago IN AMSTERDAM — and the same wall clock read as UTC is still
     // ahead of now, so a guard that hardcoded `'UTC'` would publish it. Nothing
     // else in this file separates those two readings.
+    pinDateClear();
     const { date, startTime, utcMisreading } = localWallClockMinutesAgo(30, 'Europe/Amsterdam');
 
     // The premise, asserted rather than assumed. If the offset ever stopped
@@ -2356,6 +2371,7 @@ describe('updateClass (DB)', () => {
     // a slot that passed half an hour ago in Amsterdam and is still ahead of
     // now if the same wall clock is misread as UTC — so `'UTC'` hardcoded here
     // would accept the write instead of refusing it.
+    pinDateClear();
     const cls = await makeClass(false, 'open');
     const { date, startTime, utcMisreading } = localWallClockMinutesAgo(30, 'Europe/Amsterdam');
 
