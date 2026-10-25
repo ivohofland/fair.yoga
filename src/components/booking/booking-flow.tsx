@@ -211,15 +211,21 @@ export function BookingFlow({
           </Link>
         </p>
       )}
+      {donationLine(pricing) !== null && (
+        <p className="type-body mb-4 max-w-[420px]">{donationLine(pricing)}</p>
+      )}
       <h2 className="type-subtitle mb-1">Your tier</h2>
       {summaryTier === null ? (
         <>
-          <p className="type-body max-w-[420px]">{pickerIntro(pricing)}</p>
+          {pickerIntro(pricing) !== null && (
+            <p className="type-body max-w-[420px]">{pickerIntro(pricing)}</p>
+          )}
           <p className="type-body font-semibold mt-3 mb-4 max-w-[420px]">{TIER_PROMPT}</p>
 
           <div className="flex flex-col gap-3" role="radiogroup" aria-label="Income tier">
             {TIER_INFO.map((t) => {
               const selected = tier === t.tier;
+              const estimate = tierPriceFor(pricing, t.tier);
               return (
                 <button
                   key={t.tier}
@@ -238,10 +244,8 @@ export function BookingFlow({
                       </div>
                       <div className="type-caption mt-0.5">{t.caption}</div>
                     </div>
-                    {tierPriceFor(pricing, t.tier) !== null && (
-                      <span className="type-number text-[18px]">
-                        {formatMoney(tierPriceFor(pricing, t.tier)!, currency)}
-                      </span>
+                    {estimate !== null && (
+                      <span className="type-number text-[18px]">{formatMoney(estimate, currency)}</span>
                     )}
                   </div>
                 </button>
@@ -327,11 +331,23 @@ function formatMinutes(minutes: number): string {
   return hours === 1 ? '1 hour' : `${hours} hours`;
 }
 
-/** The picker's opening paragraph, per pricing mode. */
-function pickerIntro(pricing: BookingPricing): string {
+/** The picker's opening paragraph, shown on a first booking, or `null` when the class has none. */
+function pickerIntro(pricing: BookingPricing): string | null {
   switch (pricing.mode) {
     case 'tiered':
       return 'Your price is based on what you can comfortably contribute. Tiers are self-reported. No proof needed, and you can change yours at any time.';
+    case 'donation':
+      return null;
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** What every student is told about how a class is paid for, or `null` when the class says nothing. */
+function donationLine(pricing: BookingPricing): string | null {
+  switch (pricing.mode) {
+    case 'tiered':
+      return null;
     case 'donation':
       return 'This class is by donation. After class you can give what you like, if you like.';
     default:

@@ -72,11 +72,11 @@ export class WaitlistJoinError extends Error {
   }
 }
 
-/** What a student who late-cancelled this booking before is told on promotion. */
+/** What a student who late-cancelled this booking before is told on promotion, or `null` when it carries no consequence. */
 const LATE_CANCELLED_BEFORE_TERMS = {
   tiered: 'You cancelled this class after the deadline before, so it stays charged if you cancel again.',
-  donation: 'You cancelled this class after the deadline before.',
-} as const satisfies Record<PricingMode, string>;
+  donation: null,
+} as const satisfies Record<PricingMode, string | null>;
 
 /** The confirmation a final-hour claim sends. */
 const CLAIM_BODIES = {
@@ -782,7 +782,9 @@ export async function promoteNext(
         recipientId: nextEntry.studentId,
         type: 'waitlist_promoted',
         title: 'You are in',
-        body: `A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist. ${cancelTerms}${videoLinkPendingSuffix(cls)}`,
+        body: `${[`A spot opened in ${cls.calendarEntry.classType} and you moved off the waitlist.`, cancelTerms]
+          .filter((part) => part !== null)
+          .join(' ')}${videoLinkPendingSuffix(cls)}`,
         relatedClassId: classId,
       },
       ...(await teacherBookingNotice(tx, {

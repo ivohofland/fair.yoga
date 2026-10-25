@@ -1025,8 +1025,8 @@ describe('promoteNext (DB)', () => {
 
     it('says a donation class carries no charge after a late cancel (#912)', async () => {
       const body = await promoteLateCancelled('2099-07-20', 'DonLate', 'donation');
-      expect(body).toContain('You cancelled this class after the deadline before.');
-      expect(body).not.toContain('stays charged');
+      expect(body).toMatch(/moved off the waitlist\.$/);
+      expect(body).not.toContain('cancelled this class after the deadline');
     });
 
     it('keeps the tiered charge wording after a late cancel (#912)', async () => {
