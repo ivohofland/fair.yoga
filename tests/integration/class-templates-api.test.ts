@@ -3229,6 +3229,37 @@ describe('online class templates (#911)', () => {
       expect(after.every((c) => c.videoUrl === LINK)).toBe(true);
     }));
 
+  it('switching in person → online with a link answers linkChangedWithScheduledClasses: false, since the scheduled classes are in a room', () =>
+    withOwner('room-to-online-link', async (owner) => {
+      const id = await createInPerson(owner, 'To Online With Link', 20);
+      expect((await generatedFrom(id)).length).toBe(4);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'online',
+        teacherRoomId: null,
+        roomCost: 0,
+        videoUrl: NEW_LINK,
+      });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { videoUrl: string; linkChangedWithScheduledClasses: boolean } };
+      expect(data.videoUrl).toBe(NEW_LINK);
+      expect(data.linkChangedWithScheduledClasses).toBe(false);
+    }));
+
+  it('switching online → in person answers linkChangedWithScheduledClasses: true, and the scheduled classes keep their link', () =>
+    withOwner('online-to-room', async (owner) => {
+      const id = await createOnline(owner.sessionToken, 'Online To Room');
+      expect((await generatedFrom(id)).length).toBe(4);
+      const res = await send(owner.sessionToken, 'PUT', `/api/class-templates/${id}`, {
+        format: 'in_person',
+        teacherRoomId: owner.teacherRoomId,
+        videoUrl: null,
+      });
+      expect(res.status).toBe(200);
+      const { data } = (await res.json()) as { data: { linkChangedWithScheduledClasses: boolean } };
+      expect(data.linkChangedWithScheduledClasses).toBe(true);
+      expect((await generatedFrom(id)).every((c) => c.videoUrl === LINK)).toBe(true);
+    }));
+
   it('a link change with nothing live on the schedule answers false', () =>
     withOwner('online-link-none', async (owner) => {
       const id = await createOnline(owner.sessionToken, 'Link None');
