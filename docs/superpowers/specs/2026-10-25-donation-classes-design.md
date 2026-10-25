@@ -371,9 +371,17 @@ each `CHECK`; the `donationInvitedAt IS NULL` clause in both claims; the
 
 ## 9. Manual check
 
-Scan an amount-less EPC QR with at least one Dutch banking app and confirm it
-opens a transfer with the amount left for the payer. If it does not, the give
-page shows the IBAN without a QR for donation classes.
+An EPC QR is read by the **student's** banking app; the teacher's bank only
+receives an ordinary SEPA transfer, where the amount plays no part. Which app a
+given student uses is unknowable, so no single scan decides anything. What makes
+an app that mishandles an amount-less code harmless is that the give page always
+shows the IBAN, beneficiary and reference as text beside the QR (the same
+`PaymentDetails` the pay page renders) — the student types the transfer instead.
+
+The check: scan an amount-less code with the common apps to hand (ING, Rabobank,
+ABN AMRO, bunq, plus a non-Dutch one if available) and record which open a
+transfer with the amount left blank. Keep the QR if most do; drop it for donation
+classes only if most fail, since a code that usually errors is worse than none.
 
 ## 10. Out of scope
 
