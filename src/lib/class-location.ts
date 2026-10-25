@@ -2,10 +2,9 @@ import type { ClassFormat, Prisma } from '@/lib/prisma-client';
 import { formatRoomLocation } from '@/lib/format';
 
 /**
- * Where a class or template happens, as its readers see it (#911). A row is
- * read through `classLocation` (teacher-side and registered-student surfaces)
- * or `publicClassLocation` (everything else), never by dereferencing
- * `teacherRoom` directly. Client-safe: the Prisma imports are types only.
+ * Where a class or template happens, as its readers see it (#911):
+ * `classLocation` carries the link, `publicClassLocation` cannot. Client-safe:
+ * the Prisma imports are types only.
  */
 
 /** The two room fields a location label is built from. */
@@ -16,10 +15,10 @@ export type ClassLocation =
   | { format: 'online'; videoUrl: string | null };
 
 /**
- * A location that cannot hold the link. Public and pre-booking pages accept
- * only this. `videoUrl?: never` rather than leaving the member out: structural
- * typing lets an object with an extra member through, so without it a
- * `ClassLocation` would be assignable here and its link would ride along.
+ * A location that cannot hold the link. `videoUrl?: never` rather than leaving
+ * the member out: structural typing lets an object with an extra member
+ * through, so without it a `ClassLocation` would be assignable here and its
+ * link would ride along.
  */
 export type PublicClassLocation =
   | { format: 'in_person'; room: RoomPlace }

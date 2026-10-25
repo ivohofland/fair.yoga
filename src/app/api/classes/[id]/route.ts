@@ -18,7 +18,7 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { frozenClassMessage } from '@/lib/transition-refusal';
 import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
 import { log } from '@/lib/log';
-import { FORMAT_SHAPE_MESSAGES } from '@/lib/class-location';
+import { FORMAT_SHAPE_MESSAGES, formatShapeMessage } from '@/lib/class-location';
 import { CLASS_GONE } from './shared';
 
 /** The 404 for a class that is not there, whichever read in this file found it gone. */
@@ -262,14 +262,19 @@ export const PUT = withErrorHandler(async (
   // A link sent for a class held in a room. A 400 field error like the
   // economics refusal above, not a coded 409: the format never changes after
   // creation, so the request can never succeed against this class and no
-  // other state is in conflict with it. The same rule refuses the body on
-  // create, as a schema issue on `videoUrl`.
+  // other state is in conflict with it.
   if (result.reason === 'video_url_on_room_class') {
-    return respondError(`videoUrl: ${FORMAT_SHAPE_MESSAGES.videoUrlInPerson}`, 400);
+    return respondError(
+      formatShapeMessage([{ path: 'videoUrl', message: FORMAT_SHAPE_MESSAGES.videoUrlInPerson }]),
+      400,
+    );
   }
   // The room-cost twin of the refusal above, for the same reason.
   if (result.reason === 'room_cost_on_online_class') {
-    return respondError(`roomCost: ${FORMAT_SHAPE_MESSAGES.roomCostOnline}`, 400);
+    return respondError(
+      formatShapeMessage([{ path: 'roomCost', message: FORMAT_SHAPE_MESSAGES.roomCostOnline }]),
+      400,
+    );
   }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
