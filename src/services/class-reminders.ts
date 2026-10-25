@@ -109,12 +109,19 @@ async function emailReminder(
       kind: recipientType === 'student' ? 'student_reminders' : 'teacher_reminders',
       subjectId: context.recipientId,
     } as const;
-    const videoLink = await videoLinkForEmail(db, {
-      recipientType,
-      recipientId: context.recipientId,
-      type: 'class_reminder',
-      relatedClassId: context.classId,
-    });
+    // The Join button is the lookup's answer; without it the reminder still
+    // carries the class and its time, so a failed lookup costs the button only.
+    let videoLink: Awaited<ReturnType<typeof videoLinkForEmail>> = null;
+    try {
+      videoLink = await videoLinkForEmail(db, {
+        recipientType,
+        recipientId: context.recipientId,
+        type: 'class_reminder',
+        relatedClassId: context.classId,
+      });
+    } catch (err) {
+      log.error({ ...context, recipientType, err }, 'class reminder video link lookup failed; sent without the link');
+    }
     const content = renderNotificationEmail(
       { type: 'class_reminder', title, body, recipientType, videoLink },
       undefined,
@@ -187,7 +194,7 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
     const moment = dueMoment(entry, student.classReminder, reg.registeredAt, start, now);
     if (moment === null) continue;
     const title = 'Class reminder';
-    // The link itself is only ever in the email, read at send time.
+    // The body never carries the link; the email reads it at send time (`videoLinkForEmail`).
     const body = `Your ${when} with ${entry.teacher.firstName}.${videoLinkPendingSuffix(cls)}`;
     const claimed = await db.$transaction(async (tx) => {
       // `Class` before `Registration`, the order `docs/lock-order.md` fixes:
