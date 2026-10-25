@@ -17,7 +17,7 @@ import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
 import { vatPercentViolation } from '@/lib/vat';
 import { LOCKED_FIELDS } from '@/lib/class-fields';
 import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
-import { currencyLabel } from '@/lib/format';
+import { currencyLabel, formatMoney } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
@@ -35,6 +35,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
 import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
 import { VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
+import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
 
 export interface ClassEditInitial {
@@ -63,6 +64,22 @@ const ECONOMICS_COPY = {
   rate_order: 'Min rate cannot exceed target rate',
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
+
+/**
+ * A donation class holds its tiered rates unseen, so a rule they break is named
+ * as the saved rates', not as a field that is not on screen.
+ */
+const DONATION_ECONOMICS_COPY = {
+  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
+  room_subsidy: ({ minRate }, currency) =>
+    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
+} as const satisfies Partial<
+  Record<EconomicsRule, (e: Pick<ClassEditInitial, 'minRate'>, currency: Currency) => string>
+>;
+
+/** An online donation class has no room cost to name. */
+const DONATION_ONLINE_SUBSIDY_COPY =
+  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
 
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
@@ -253,7 +270,12 @@ export function ClassEditForm({
     if (!settingsLocked) {
       const [violation] = economicsViolations(form);
       if (violation !== undefined) {
-        setError(online && violation.rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
+        const noRoom = online && violation.rule === 'room_subsidy';
+        if (form.pricingMode === 'donation' && violation.rule !== 'students_order') {
+          setError(noRoom ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[violation.rule](form, currency));
+        } else {
+          setError(noRoom ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
+        }
         return;
       }
     }
@@ -398,12 +420,19 @@ export function ClassEditForm({
       <section>
         <h2 className="type-subtitle mb-1">Economics</h2>
         {settingsLocked && (
-          <p className="type-caption mb-3 max-w-[420px]">
+          <p id="pricing-locked" className="type-caption mb-3 max-w-[420px]">
             Locked since the first registration — the economics can&apos;t
             change under students.
           </p>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <PricingModeChoice
+          name="pricingMode"
+          value={form.pricingMode}
+          onChange={(mode) => set('pricingMode', mode)}
+          disabled={settingsLocked}
+          describedBy={settingsLocked ? 'pricing-locked' : undefined}
+        />
+        <div className="grid grid-cols-2 gap-3 mt-3">
           {!online && (
             <NumberInput
               label={
@@ -427,22 +456,26 @@ export function ClassEditForm({
             onValueChange={(n) => set('vatPercent', n)}
             hint="Included in student prices. Use 0 if you don't charge VAT."
           />
-          <NumberInput
-            label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-            decimals={MONEY_DECIMALS}
-            signed
-            value={form.minRate}
-            disabled={settingsLocked}
-            onValueChange={(n) => set('minRate', n)}
-          />
-          <NumberInput
-            label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
-            decimals={MONEY_DECIMALS}
-            signed
-            value={form.targetRate}
-            disabled={settingsLocked}
-            onValueChange={(n) => set('targetRate', n)}
-          />
+          {form.pricingMode === 'tiered' && (
+            <>
+              <NumberInput
+                label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+                decimals={MONEY_DECIMALS}
+                signed
+                value={form.minRate}
+                disabled={settingsLocked}
+                onValueChange={(n) => set('minRate', n)}
+              />
+              <NumberInput
+                label={`Target rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
+                decimals={MONEY_DECIMALS}
+                signed
+                value={form.targetRate}
+                disabled={settingsLocked}
+                onValueChange={(n) => set('targetRate', n)}
+              />
+            </>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3 max-w-[320px]">
           <NumberInput
@@ -458,18 +491,20 @@ export function ClassEditForm({
             onValueChange={(n) => set('maxStudents', n)}
           />
         </div>
-        <div className="mt-4">
-          <PricingPreviewTable
-            currency={currency}
-            roomCost={form.roomCost}
-            hideRoomCost={online}
-            minRate={form.minRate}
-            targetRate={form.targetRate}
-            minStudents={form.minStudents}
-            maxStudents={form.maxStudents}
-            vatPercent={form.vatPercent}
-          />
-        </div>
+        {form.pricingMode === 'tiered' && (
+          <div className="mt-4">
+            <PricingPreviewTable
+              currency={currency}
+              roomCost={form.roomCost}
+              hideRoomCost={online}
+              minRate={form.minRate}
+              targetRate={form.targetRate}
+              minStudents={form.minStudents}
+              maxStudents={form.maxStudents}
+              vatPercent={form.vatPercent}
+            />
+          </div>
+        )}
       </section>
 
       <label className="flex items-center gap-3 min-h-[44px]">

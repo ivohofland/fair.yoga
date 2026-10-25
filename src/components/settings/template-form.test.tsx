@@ -2413,4 +2413,48 @@ describe('TemplateForm', () => {
       expect(screen.queryByText('Classes already on your schedule keep their current link.')).toBeNull();
     });
   });
+
+  describe('Pricing: Tiered or By donation (#912)', () => {
+    const NOTICE = 'Classes already on your schedule keep their own setting.';
+
+    it('choosing donation hides the rates and the preview, and sends pricingMode (#912)', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'By donation' }));
+      expect(screen.queryByLabelText(/^Min rate/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^Target rate/)).not.toBeInTheDocument();
+      expect(screen.queryByText('Explore class size')).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/^Room cost/)).toBeInTheDocument();
+      const { body } = await submit();
+      expect(body.pricingMode).toBe('donation');
+      expect(body).toMatchObject({ minRate: 15, targetRate: 25 });
+      expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    });
+
+    it('an unchanged pricing mode is left out of an edit (#912)', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, pricingMode: 'donation' }} />);
+      const first = await submit();
+      expect(first.body).not.toHaveProperty('pricingMode');
+    });
+
+    it('an edit changing only the class type shows no notice (#912)', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.change(await screen.findByLabelText(/^Class type/), { target: { value: 'Yin' } });
+      await submit();
+      await screen.findByText(/^Template updated\./);
+      expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    });
+
+    it('saved tiered rates a lower room cost would break are named in donation mode (#912)', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, pricingMode: 'donation', minRate: -20 }} />);
+      fireEvent.change(await screen.findByLabelText(/^Room cost/), { target: { value: '10' } });
+      fireEvent.click(screen.getByRole('button', { name: /save/i }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Your saved tiered rates need a room cost of at least €20.00. Switch to Tiered to change them.',
+      );
+    });
+  });
 });
