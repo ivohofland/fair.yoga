@@ -13,7 +13,13 @@ import { UpdatesStrip } from '@/components/student/updates-strip';
 import { WaitlistEntryActions } from '@/components/student/waitlist-entry-actions';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { formatDayHeader, formatMoney } from '@/lib/format';
-import { publicClassLocation, locationLabel } from '@/lib/class-location';
+import {
+  classLocation,
+  locationLabel,
+  JOIN_CLASS_LABEL,
+  VIDEO_LINK_PENDING_COPY,
+  type ClassLocation,
+} from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { canClaimSpot, cancelDeadlineInstant } from '@/services/waitlist';
 import { freeCancelUntilFor } from '@/lib/cancel-deadline';
@@ -32,7 +38,7 @@ import { isClaimStanding, studentPaymentStateText } from '@/lib/payment-claim';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { isUpcomingRegistration } from '@/lib/booking-ledger';
-import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { CHARGED_STATUSES, TERMINAL_CLASS_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
 import { LATE_CANCEL_CHARGE_NOTE } from '@/lib/charge-note';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
@@ -126,6 +132,8 @@ export default async function StudentBookingsPage() {
       ],
       include: {
         class: {
+          // A waitlist entry is not a booking: its class's link is not read (#911).
+          omit: { videoUrl: true },
           include: {
             calendarEntry: {
               include: {
@@ -158,6 +166,7 @@ export default async function StudentBookingsPage() {
           select: {
             id: true,
             status: true,
+            format: true,
             calendarEntry: {
               select: { cancelledAt: true, teacher: { select: { pageSlug: true } } },
             },
@@ -300,6 +309,13 @@ export default async function StudentBookingsPage() {
                 cls.minStudents,
                 cls.maxStudents,
               );
+              const location = classLocation(cls);
+              // Only a booking that holds its seat, on a class still to come
+              // or under way, is shown the link (#911).
+              const liveBooking =
+                ACTIVE_REGISTRATION_STATUSES.includes(reg.status)
+                && !cancelled
+                && !TERMINAL_CLASS_STATUSES.includes(cls.status);
               const tz = cls.calendarEntry.teacher.defaultTimezone;
               // #236's free-cancel instant (`freeCancelUntilFor`, `cancel-deadline.ts`).
               const freeCancelUntil = freeCancelUntilFor(
@@ -316,9 +332,10 @@ export default async function StudentBookingsPage() {
                   </div>
                   <p className="type-subtitle mt-1">{cls.calendarEntry.classType}</p>
                   <p className="type-caption mt-0.5">
-                    {locationLabel(publicClassLocation(cls))}
+                    {locationLabel(location)}
                     {' · '}with {cls.calendarEntry.teacher.firstName} {cls.calendarEntry.teacher.lastName}
                   </p>
+                  {liveBooking && <VideoLinkAction location={location} />}
                   {cls.status === 'open' && !cancelled && (
                     <>
                       <RegistrationProgress
@@ -455,6 +472,27 @@ export default async function StudentBookingsPage() {
           })}
         </section>
       )}
+    </div>
+  );
+}
+
+/**
+ * A live booking's video link, as a button opening it off-site, or the line
+ * saying it is still to come; nothing for a class in a room.
+ */
+function VideoLinkAction({ location }: { location: ClassLocation }) {
+  if (location.format !== 'online') return null;
+  if (location.videoUrl === null) return <p className="type-caption mt-2">{VIDEO_LINK_PENDING_COPY}</p>;
+  return (
+    <div className="mt-3">
+      <a
+        href={location.videoUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center h-9 px-4 rounded-pill text-[13px] font-medium border-[1.5px] border-transparent bg-teal text-cream hover:bg-teal-hover active:bg-teal-pressed no-underline"
+      >
+        {JOIN_CLASS_LABEL}
+      </a>
     </div>
   );
 }

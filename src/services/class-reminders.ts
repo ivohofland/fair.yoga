@@ -9,6 +9,8 @@ import { sendEmail } from '@/lib/email';
 import { unsubscribeLinks } from '@/lib/unsubscribe-token';
 import { log } from '@/lib/log';
 import { createNotification } from './notifications';
+import { videoLinkForEmail } from './video-link-for-email';
+import { TEACHER_REMINDER_NO_LINK_COPY, videoLinkPendingSuffix } from '@/lib/class-location';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -45,6 +47,8 @@ function readCandidatePage(db: PrismaClient, from: Date, to: Date, afterId: stri
       id: true,
       createdAt: true,
       teacherReminderSentAt: true,
+      format: true,
+      videoUrl: true,
       calendarEntry: {
         select: {
           classType: true,
@@ -93,6 +97,7 @@ const LIVE_CLASS = { status: 'open', calendarEntry: { cancelledAt: null } } as c
  * rendering included — is logged and not retried.
  */
 async function emailReminder(
+  db: PrismaClient,
   to: string,
   recipientType: 'student' | 'teacher',
   title: string,
@@ -104,8 +109,14 @@ async function emailReminder(
       kind: recipientType === 'student' ? 'student_reminders' : 'teacher_reminders',
       subjectId: context.recipientId,
     } as const;
+    const videoLink = await videoLinkForEmail(db, {
+      recipientType,
+      recipientId: context.recipientId,
+      type: 'class_reminder',
+      relatedClassId: context.classId,
+    });
     const content = renderNotificationEmail(
-      { type: 'class_reminder', title, body, recipientType },
+      { type: 'class_reminder', title, body, recipientType, videoLink },
       undefined,
       CLASS_REMINDER_EMAIL_FOOTER,
       unsubscribeLinks(target)?.page,
@@ -176,7 +187,8 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
     const moment = dueMoment(entry, student.classReminder, reg.registeredAt, start, now);
     if (moment === null) continue;
     const title = 'Class reminder';
-    const body = `Your ${when} with ${entry.teacher.firstName}.`;
+    // The link itself is only ever in the email, read at send time.
+    const body = `Your ${when} with ${entry.teacher.firstName}.${videoLinkPendingSuffix(cls)}`;
     const claimed = await db.$transaction(async (tx) => {
       // `Class` before `Registration`, the order `docs/lock-order.md` fixes:
       // the inbox row's `relatedClassId` takes this same lock, and taken there
@@ -205,7 +217,7 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
     result.studentReminders++;
     if (
       wantsEmail(student.classReminderChannel) &&
-      !(await emailReminder(student.email, 'student', title, body, { classId: cls.id, recipientId: student.id }))
+      !(await emailReminder(db, student.email, 'student', title, body, { classId: cls.id, recipientId: student.id }))
     ) {
       result.emailFailures++;
     }
@@ -215,7 +227,8 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
   if (cls.teacherReminderSentAt === null && dueMoment(entry, teacher.classReminder, cls.createdAt, start, now) !== null) {
     const title = 'Class reminder';
     const registered = await db.registration.count({ where: { classId: cls.id, status: 'registered' } });
-    const body = `${when} — ${registered} registered so far.`;
+    const noLink = cls.format === 'online' && cls.videoUrl === null ? TEACHER_REMINDER_NO_LINK_COPY : '';
+    const body = `${when} — ${registered} registered so far.${noLink}`;
     const claimed = await db.$transaction(async (tx) => {
       const { count } = await tx.class.updateMany({
         where: { id: cls.id, teacherReminderSentAt: null, ...LIVE_CLASS },
@@ -234,7 +247,7 @@ async function remindForClass(db: PrismaClient, cls: Candidate, now: Date, resul
       result.teacherReminders++;
       if (
         wantsEmail(teacher.classReminderChannel) &&
-        !(await emailReminder(teacher.email, 'teacher', title, body, { classId: cls.id, recipientId: entry.teacherId }))
+        !(await emailReminder(db, teacher.email, 'teacher', title, body, { classId: cls.id, recipientId: entry.teacherId }))
       ) {
         result.emailFailures++;
       }

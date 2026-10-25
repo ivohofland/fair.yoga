@@ -36,7 +36,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _completeWalkInRejectsABareClient(client: PrismaClient, resolved: ResolvedWalkIn): Promise<void> {
-  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x' };
+  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x', videoLinkPending: false };
   // @ts-expect-error A bare PrismaClient must never satisfy the brand.
   await completeWalkIn(client, { teacherId: 'never-called', classId: 'never-called', resolved, notice });
 }
@@ -161,7 +161,7 @@ async function seedClaimedStudent(email: string): Promise<string> {
   return student.id;
 }
 
-const notice = { teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October' };
+const notice = { teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October', videoLinkPending: false };
 
 async function walkIn(teacherId: string, classId: string, subject: WalkInSubject) {
   return prisma.$transaction(async (tx) => {
@@ -203,6 +203,24 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
     expect(n.body).toContain(notice.classType);
     expect(n.body).toContain(notice.dateLabel);
     expect(n.body).toContain('calculated after class');
+    expect(n.body).not.toContain('video link');
+  });
+
+  it('tells a walk-in to an online class with no link yet that one is coming (#911)', async () => {
+    const { teacherId, classId } = await seedTeacher('online');
+    const email = `walkin-online-${suffix}@test.local`;
+    const resolved = await prisma.$transaction(async (tx) => {
+      const r = await resolveWalkInStudent(tx, {
+        teacherId,
+        subject: { kind: 'newContact', firstName: 'Olga', lastName: 'Online', email },
+      });
+      await completeWalkIn(tx, { teacherId, classId, resolved: r, notice: { ...notice, videoLinkPending: true } });
+      return r;
+    });
+    studentIds.push(resolved.studentId);
+
+    const n = await prisma.notification.findFirstOrThrow({ where: { recipientId: resolved.studentId, type: 'walk_in_added' } });
+    expect(n.body.endsWith(' Your teacher will share the video link before class.')).toBe(true);
   });
 
   it('uses the existing student for a known address and seeds no privacy row', async () => {

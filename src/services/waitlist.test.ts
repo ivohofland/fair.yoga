@@ -565,7 +565,7 @@ describe('promoteNext (DB)', () => {
    * differ per caller: `CalendarEntry_teacher_slot_excl` refuses two
    * overlapping entries for one teacher.
    */
-  async function seedPromotable(date: string, label: string) {
+  async function seedPromotable(date: string, label: string, online?: { videoUrl: string | null }) {
     const mk = async (role: string) =>
       (
         await prisma.student.create({
@@ -579,14 +579,16 @@ describe('promoteNext (DB)', () => {
       ).id;
     const fillerId = await mk('filler');
     const waiterId = await mk('waiter');
+    const place = online === undefined
+      ? { teacherRoomId, roomCost: 40 }
+      : { teacherRoomId: null, format: 'online' as const, videoUrl: online.videoUrl, roomCost: 0 };
     const cls = await createClassFixture(prisma, {
       teacherId,
-      teacherRoomId,
+      ...place,
       classType: 'Yin',
       date: new Date(date),
       startTime: hhmmToTime('18:00'),
       durationMinutes: 75,
-      roomCost: 40,
       minRate: 10,
       targetRate: 20,
       minStudents: 0,
@@ -858,6 +860,30 @@ describe('promoteNext (DB)', () => {
     expect(promoted).not.toBeNull();
     expect(promoted!.studentId).toBe(seeded.waiterId);
     expect(promoted!.status).toBe('promoted');
+  });
+
+  it('tells a student promoted into an online class with no link yet that one is coming (#911)', async () => {
+    const seeded = await seedPromotable('2099-07-20', 'OnlinePending', { videoUrl: null });
+
+    await promoteNext(prisma, seeded.classId, { now: new Date('2099-07-20T10:00:00Z') });
+
+    const n = await prisma.notification.findFirstOrThrow({
+      where: { relatedClassId: seeded.classId, recipientId: seeded.waiterId, type: 'waitlist_promoted' },
+    });
+    expect(n.body.endsWith(' Your teacher will share the video link before class.')).toBe(true);
+  });
+
+  it('never writes an online class\'s link into the promotion notice (#911)', async () => {
+    const link = `https://example.invalid/online-911-promote-${uniqueSuffix}`;
+    const seeded = await seedPromotable('2099-07-21', 'OnlineLinked', { videoUrl: link });
+
+    await promoteNext(prisma, seeded.classId, { now: new Date('2099-07-21T10:00:00Z') });
+
+    const n = await prisma.notification.findFirstOrThrow({
+      where: { relatedClassId: seeded.classId, recipientId: seeded.waiterId, type: 'waitlist_promoted' },
+    });
+    expect(`${n.title} ${n.body}`).not.toContain(link);
+    expect(n.body).not.toContain('video link');
   });
 
   it('refuses in the final hour before class (#236)', async () => {

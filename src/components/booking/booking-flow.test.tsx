@@ -40,6 +40,7 @@ describe('BookingFlow', () => {
         openPaymentsCount={0}
         waitlistPosition={null}
         inClaimWindow={false}
+        location={{ format: 'in_person', room: { roomName: 'Hall', venueName: 'Studio' } }}
         {...overrides}
       />,
     );
@@ -54,6 +55,22 @@ describe('BookingFlow', () => {
     expect(screen.getByText(/You're number 2 in the queue/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Go to your bookings' })).toHaveAttribute('href', '/bookings');
     expect(screen.queryByRole('button', { name: 'Join the waitlist' })).not.toBeInTheDocument();
+  });
+
+  // #911: the booking page never carries the link; the booking does.
+  it('points a student booked on an online class to their bookings for the video link', () => {
+    stubFetch();
+    renderFlow({ alreadyBooked: true, location: { format: 'online' } });
+
+    expect(screen.getByText('Find it, and the video link, under your bookings.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to your bookings' })).toHaveAttribute('href', '/bookings');
+  });
+
+  it('keeps the plain pointer for a class in a room', () => {
+    stubFetch();
+    renderFlow({ alreadyBooked: true });
+
+    expect(screen.getByText('Find it under your bookings.')).toBeInTheDocument();
   });
 
   it('asks for a tier instead of naming one when the stored tier is unreadable', () => {

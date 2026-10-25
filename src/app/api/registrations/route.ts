@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isVideoLinkPending, videoLinkPendingSuffix } from '@/lib/class-location';
 import type { RegistrationStatus, Student } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
@@ -359,6 +360,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             teacherName: `${cls.calendarEntry.teacher.firstName} ${cls.calendarEntry.teacher.lastName}`.trim(),
             classType: cls.calendarEntry.classType,
             dateLabel: formatDayHeader(cls.calendarEntry.date),
+            videoLinkPending: isVideoLinkPending(cls),
           },
         });
       }
@@ -420,7 +422,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             recipientId: studentId,
             type: 'booking_confirmed',
             title: 'Booking confirmed',
-            body: `You're booked for ${cls.calendarEntry.classType}. The final price settles after class.`,
+            body: `You're booked for ${cls.calendarEntry.classType}. The final price settles after class.${videoLinkPendingSuffix(cls)}`,
             relatedClassId: cls.id,
           },
           ...(bookingNotifications === 'off'

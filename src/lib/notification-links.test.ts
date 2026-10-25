@@ -12,6 +12,7 @@ describe('studentNotificationHref', () => {
   const openClass = {
     id: 'class-1',
     status: 'open' as const,
+    format: 'in_person' as const,
     calendarEntry: { cancelledAt: null, teacher: { pageSlug: 'anna' } },
   };
 
@@ -85,6 +86,28 @@ describe('studentNotificationHref', () => {
 
   it('yields null for a payment notification with no related class', () => {
     expect(studentNotificationHref({ type: 'payment_request', relatedClass: null })).toBeNull();
+  });
+
+  // #911: the link is a button on the student's booking, and the public
+  // booking page never carries it.
+  it.each(['booking_confirmed', 'walk_in_added', 'class_reminder'] as const)(
+    'sends %s about an online class to the student\'s bookings, where its link is',
+    (type) => {
+      const onlineClass = { ...openClass, format: 'online' as const };
+      expect(studentNotificationHref({ type, relatedClass: onlineClass })).toBe(STUDENT_BOOKINGS_PATH);
+      expect(studentNotificationHref({ type, relatedClass: { ...onlineClass, status: 'in_progress' } }))
+        .toBe(STUDENT_BOOKINGS_PATH);
+    },
+  );
+
+  it('still sends a booking notification about an in-person class to its public page', () => {
+    expect(studentNotificationHref({ type: 'class_reminder', relatedClass: openClass })).toBe('/anna/book/class-1');
+  });
+
+  it('keeps a type that carries no link on its usual target for an online class', () => {
+    expect(
+      studentNotificationHref({ type: 'announcement', relatedClass: { ...openClass, format: 'online' } }),
+    ).toBe('/anna/book/class-1');
   });
 
   it('builds the pay page path from the class id', () => {
