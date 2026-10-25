@@ -13,6 +13,8 @@ import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
 import type { PublicClassLocation } from '@/lib/class-location';
 import { PricingExplainer } from './pricing-explainer';
 
+type BookingPricing = { mode: 'tiered'; tierPrices: number[] } | { mode: 'donation' };
+
 interface BookingFlowProps {
   classId: string;
   isFull: boolean;
@@ -25,9 +27,13 @@ interface BookingFlowProps {
    */
   currentTier: IncomeTier | null;
   studentId: string;
-  /** Estimated price per tier 1..5 if the class ran with today's sign-ups plus you. */
-  tierPrices: number[];
-  /** The class's currency, which `tierPrices` are in. */
+  /**
+   * How the class is priced. A tiered class carries its estimated price per
+   * tier 1..5 if it ran with today's sign-ups plus you; a donation class
+   * carries no figure at all.
+   */
+  pricing: BookingPricing;
+  /** The class's currency, which a tiered class's `tierPrices` are in. */
   currency: Currency;
   /**
    * The student has never chosen a tier themselves (tierSelectedAt is
@@ -62,7 +68,7 @@ export function BookingFlow({
   alreadyBooked,
   currentTier,
   studentId,
-  tierPrices,
+  pricing,
   currency,
   isFirstBooking,
   openPaymentsCount,
@@ -160,8 +166,7 @@ export function BookingFlow({
       <div className="py-4">
         <p className="type-subtitle">You&apos;re in</p>
         <p className="type-body mt-2">
-          Your spot is confirmed. The final price settles after class, based on
-          who comes — your tier keeps it fair.
+          {bookedCopy(pricing)}
         </p>
         <Link href="/bookings" className="inline-block mt-4 type-label text-teal no-underline">
           Go to your bookings
@@ -209,10 +214,7 @@ export function BookingFlow({
       <h2 className="type-subtitle mb-1">Your tier</h2>
       {summaryTier === null ? (
         <>
-          <p className="type-body max-w-[420px]">
-            Your price is based on what you can comfortably contribute. Tiers are
-            self-reported. No proof needed, and you can change yours at any time.
-          </p>
+          <p className="type-body max-w-[420px]">{pickerIntro(pricing)}</p>
           <p className="type-body font-semibold mt-3 mb-4 max-w-[420px]">{TIER_PROMPT}</p>
 
           <div className="flex flex-col gap-3" role="radiogroup" aria-label="Income tier">
@@ -236,9 +238,11 @@ export function BookingFlow({
                       </div>
                       <div className="type-caption mt-0.5">{t.caption}</div>
                     </div>
-                    <span className="type-number text-[18px]">
-                      {formatMoney(tierPrices[t.tier - 1]!, currency)}
-                    </span>
+                    {tierPriceFor(pricing, t.tier) !== null && (
+                      <span className="type-number text-[18px]">
+                        {formatMoney(tierPriceFor(pricing, t.tier)!, currency)}
+                      </span>
+                    )}
                   </div>
                 </button>
               );
@@ -262,22 +266,26 @@ export function BookingFlow({
         </div>
       )}
 
-      <p className="type-caption mt-4 max-w-[420px]">
-        Estimates assume the class at least reaches its minimum; the final price settles after
-        class.{summaryTier === null && ' The highest tier pays about twice the lowest.'}{' '}
-        <button
-          type="button"
-          onClick={() => setShowExplainer((prev) => !prev)}
-          aria-expanded={showExplainer}
-          aria-controls="pricing-explainer-panel"
-          className="text-teal"
-        >
-          {showExplainer ? 'Hide explanation' : 'Learn more'}
-        </button>
-      </p>
+      {showsEstimates(pricing) && (
+        <>
+          <p className="type-caption mt-4 max-w-[420px]">
+            Estimates assume the class at least reaches its minimum; the final price settles after
+            class.{summaryTier === null && ' The highest tier pays about twice the lowest.'}{' '}
+            <button
+              type="button"
+              onClick={() => setShowExplainer((prev) => !prev)}
+              aria-expanded={showExplainer}
+              aria-controls="pricing-explainer-panel"
+              className="text-teal"
+            >
+              {showExplainer ? 'Hide explanation' : 'Learn more'}
+            </button>
+          </p>
 
-      {showExplainer && (
-        <PricingExplainer id="pricing-explainer-panel" className="mt-3 max-w-[420px]" />
+          {showExplainer && (
+            <PricingExplainer id="pricing-explainer-panel" className="mt-3 max-w-[420px]" />
+          )}
+        </>
       )}
 
       <div className="mt-5">
@@ -286,9 +294,7 @@ export function BookingFlow({
             ? 'One moment...'
             : isFull
               ? 'Join the waitlist'
-              : tier === null
-                ? 'Book'
-                : `Book — around ${formatMoney(tierPrices[tier - 1]!, currency)}`}
+              : bookLabel(pricing, tier, currency)}
         </Button>
         {isFull && (
           <p className="type-caption mt-2">
@@ -296,7 +302,7 @@ export function BookingFlow({
               <>
                 It&apos;s the final hour before class, so a spot that opens isn&apos;t given
                 out automatically: everyone waiting is told, and the first to claim it gets
-                it. Claiming is charged even if you can&apos;t make it.
+                it.{claimChargeSentence(pricing)}
               </>
             ) : (
               <>
@@ -319,4 +325,82 @@ function formatMinutes(minutes: number): string {
   if (minutes % 60 !== 0) return `${minutes} minutes`;
   const hours = minutes / 60;
   return hours === 1 ? '1 hour' : `${hours} hours`;
+}
+
+/** The picker's opening paragraph, per pricing mode. */
+function pickerIntro(pricing: BookingPricing): string {
+  switch (pricing.mode) {
+    case 'tiered':
+      return 'Your price is based on what you can comfortably contribute. Tiers are self-reported. No proof needed, and you can change yours at any time.';
+    case 'donation':
+      return 'This class is by donation. After class you can give what you like, if you like.';
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** The confirmation line after booking, per pricing mode. */
+function bookedCopy(pricing: BookingPricing): string {
+  switch (pricing.mode) {
+    case 'tiered':
+      return 'Your spot is confirmed. The final price settles after class, based on who comes — your tier keeps it fair.';
+    case 'donation':
+      return 'Your spot is confirmed.';
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** The estimate for a tier, or null when the class shows none. */
+function tierPriceFor(pricing: BookingPricing, tier: IncomeTier): number | null {
+  switch (pricing.mode) {
+    case 'tiered':
+      return pricing.tierPrices[tier - 1]!;
+    case 'donation':
+      return null;
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** Whether the estimate caveat and its explainer belong on this class. */
+function showsEstimates(pricing: BookingPricing): boolean {
+  switch (pricing.mode) {
+    case 'tiered':
+      return true;
+    case 'donation':
+      return false;
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** The booking button's label, with the estimate where the class has one. */
+function bookLabel(pricing: BookingPricing, tier: IncomeTier | null, currency: Currency): string {
+  switch (pricing.mode) {
+    case 'tiered':
+      return tier === null
+        ? 'Book'
+        : `Book — around ${formatMoney(pricing.tierPrices[tier - 1]!, currency)}`;
+    case 'donation':
+      return 'Book';
+    default:
+      return assertNever(pricing);
+  }
+}
+
+/** What the final-hour caption adds about claiming, per pricing mode. */
+function claimChargeSentence(pricing: BookingPricing): string {
+  switch (pricing.mode) {
+    case 'tiered':
+      return " Claiming is charged even if you can't make it.";
+    case 'donation':
+      return '';
+    default:
+      return assertNever(pricing);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled pricing: ${JSON.stringify(value)}`);
 }

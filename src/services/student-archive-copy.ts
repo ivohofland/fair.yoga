@@ -25,7 +25,7 @@ export function owedPhrase(open: readonly OpenPayment[], first: Currency): strin
 export function unbilledRefusal(n: number): ArchiveRefusal {
   return codedRefusal(
     'STUDENT_HAS_UNBILLED_CLASSES',
-    `This student is booked on ${n} ${n === 1 ? 'class' : 'classes'} that ${n === 1 ? "hasn't" : "haven't"} been billed yet. Remove them from ${n === 1 ? 'it' : 'those classes'}, or archive once ${n === 1 ? "it's" : "they're"} completed.`,
+    `This student is booked on ${n} ${n === 1 ? 'class' : 'classes'} that ${n === 1 ? "hasn't" : "haven't"} finished yet. Remove them from ${n === 1 ? 'it' : 'those classes'}, or archive once ${n === 1 ? "it's" : "they're"} completed.`,
   );
 }
 

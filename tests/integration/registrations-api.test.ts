@@ -3114,3 +3114,79 @@ describe('POST /api/registrations — teacher bookingNotifications (#49)', () =>
     expect(await bookUnder('inbox_and_email')).toEqual(['student', 'teacher']);
   });
 });
+
+describe('a donation class names no charge in what a student is told (#912)', () => {
+  async function donation(classId: string): Promise<string> {
+    await prisma.class.update({ where: { id: classId }, data: { pricingMode: 'donation' } });
+    return classId;
+  }
+
+  function cancel(token: string, id: string): Promise<Response> {
+    return fetch(`${BASE_URL}/api/registrations/${id}`, { method: 'DELETE', headers: cookie(token) });
+  }
+
+  function noteFor(classId: string, type: 'booking_cancelled' | 'booking_confirmed' | 'booking_removed') {
+    return prisma.notification.findFirstOrThrow({
+      where: { recipientType: 'student', recipientId: studentIds[0]!, relatedClassId: classId, type },
+    });
+  }
+
+  it('records a late cancel as one, without a charge (#912)', async () => {
+    const classId = await donation(await makeLateCancelClass(5, 200));
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    const res = await cancel(studentTokens[0]!, data.id);
+    expect(((await expectApplied(res)) as { status: string }).status).toBe('late_cancel');
+
+    const note = await noteFor(classId, 'booking_cancelled');
+    expect(note.body.endsWith(
+      'You cancelled after the deadline, so this is recorded as a late cancellation.',
+    )).toBe(true);
+    expect(note.body).not.toContain('charged');
+  });
+
+  it('says nothing of a charge on a free cancel (#912)', async () => {
+    const classId = await donation(await makeClass(5));
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    await expectApplied(await cancel(studentTokens[0]!, data.id));
+
+    expect((await noteFor(classId, 'booking_cancelled')).body).not.toContain('charged');
+  });
+
+  it('says nothing of a charge when the teacher removes the booking (#912)', async () => {
+    const classId = await donation(await makeClass(5));
+    const created = await post(studentTokens[0]!, { classId });
+    const { data } = (await created.json()) as { data: { id: string } };
+
+    await expectApplied(await cancel(ownerToken, data.id));
+
+    expect((await noteFor(classId, 'booking_removed')).body).not.toContain('charged');
+  });
+
+  it('refuses a teacher cancelling a late cancel under the same code, in donation words (#912)', async () => {
+    const classId = await donation(await makeClass(5));
+    const reg = await prisma.registration.create({
+      data: { classId, studentId: studentIds[0]!, status: 'late_cancel', cancelledAt: new Date(), tierAtBooking: 3 },
+    });
+
+    const res = await cancel(ownerToken, reg.id);
+    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown } };
+    expect({ status: res.status, code: body.error?.code, message: body.error?.message }).toEqual({
+      status: 409,
+      code: 'ALREADY_LATE_CANCELLED',
+      message: 'This booking is already cancelled.',
+    });
+  });
+
+  it('confirms a fresh booking without a price (#912)', async () => {
+    const classId = await donation(await makeClass(5));
+    await expectApplied(await post(studentTokens[0]!, { classId }), 201);
+
+    const note = await noteFor(classId, 'booking_confirmed');
+    expect(note.body).not.toContain('price');
+    expect(note.body).toContain("You're booked for");
+  });
+});

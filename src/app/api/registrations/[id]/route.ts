@@ -37,6 +37,32 @@ const MODE_CAN_INVITE = {
   donation: true,
 } as const satisfies Record<PricingMode, boolean>;
 
+/** The notice a student's own late cancel sends, per pricing mode. */
+const LATE_CANCEL_BODIES = {
+  tiered: (phrase) =>
+    `Your booking for ${phrase} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
+  donation: (phrase) =>
+    `Your booking for ${phrase} is cancelled. You cancelled after the deadline, so this is recorded as a late cancellation.`,
+} as const satisfies Record<PricingMode, (phrase: string) => string>;
+
+/** The notice a student's free cancel sends, per pricing mode. */
+const FREE_CANCEL_BODIES = {
+  tiered: (phrase) => `Your booking for ${phrase} is cancelled. You won't be charged for it.`,
+  donation: (phrase) => `Your booking for ${phrase} is cancelled.`,
+} as const satisfies Record<PricingMode, (phrase: string) => string>;
+
+/** The notice a teacher's removal of a booking sends, per pricing mode. */
+const TEACHER_CANCEL_BODIES = {
+  tiered: (phrase) => `Your teacher cancelled your booking for ${phrase}. You won't be charged for it.`,
+  donation: (phrase) => `Your teacher cancelled your booking for ${phrase}.`,
+} as const satisfies Record<PricingMode, (phrase: string) => string>;
+
+/** What a teacher's cancel of a late-cancelled booking is told, per pricing mode. */
+const ALREADY_LATE_CANCELLED_MESSAGES = {
+  tiered: 'This student already cancelled late, and the late-cancellation charge stands.',
+  donation: 'This booking is already cancelled.',
+} as const satisfies Record<PricingMode, string>;
+
 /** A DELETE's response body, applied or unchanged. */
 type CancelledBooking = { id: string; status: 'cancelled' | 'late_cancel' };
 
@@ -319,7 +345,7 @@ export const DELETE = withErrorHandler(async (
     include: {
       class: {
         select: {
-          status: true, maxStudents: true, id: true, cancelDeadline: true,
+          status: true, maxStudents: true, id: true, cancelDeadline: true, pricingMode: true,
           calendarEntry: {
             select: {
               teacherId: true,
@@ -352,7 +378,7 @@ export const DELETE = withErrorHandler(async (
   // Before the finished-class refusal: a cancel that already holds is done,
   // whatever happened to the class since. Branched on `isStudent`, as the
   // notice below is.
-  const alreadyCancelled = answerForCancelledRow(id, registration.status, isStudent);
+  const alreadyCancelled = answerForCancelledRow(id, registration.status, isStudent, registration.class.pricingMode);
   if (alreadyCancelled) return alreadyCancelled;
 
   // Cancelling on a completed class would orphan its payment. Read again
@@ -397,7 +423,7 @@ export const DELETE = withErrorHandler(async (
       const written = await writeCancel(id, registration.classId, 'late_cancel');
       if (written === 'class_completed') return refuseCompletedCancel();
       if (written === 'missed') {
-        return answerMissedCancel(id, isStudent);
+        return answerMissedCancel(id, isStudent, registration.class.pricingMode);
       }
       // The seat is free even though the canceller is still charged.
       await promoteAfterCancel(registration.classId);
@@ -407,8 +433,7 @@ export const DELETE = withErrorHandler(async (
         relatedClassId: registration.classId,
         type: 'booking_cancelled',
         title: 'Booking cancelled',
-        buildBody: (phrase) =>
-          `Your booking for ${phrase} is cancelled. It was past the cancellation deadline, so this class is still charged.`,
+        buildBody: (phrase) => LATE_CANCEL_BODIES[registration.class.pricingMode](phrase),
       });
       return respondTyped<CancelledBooking>({ id, status: 'late_cancel' });
     }
@@ -422,7 +447,7 @@ export const DELETE = withErrorHandler(async (
   const written = await writeCancel(id, registration.classId, 'cancelled');
   if (written === 'class_completed') return refuseCompletedCancel();
   if (written === 'missed') {
-    return answerMissedCancel(id, isStudent);
+    return answerMissedCancel(id, isStudent, registration.class.pricingMode);
   }
 
   // Hybrid waitlist promotion: auto-promote, broadcast, or stay frozen
@@ -446,7 +471,7 @@ export const DELETE = withErrorHandler(async (
           relatedClassId: registration.classId,
           type: 'booking_cancelled',
           title: 'Booking cancelled',
-          buildBody: (phrase) => `Your booking for ${phrase} is cancelled. You won't be charged for it.`,
+          buildBody: (phrase) => FREE_CANCEL_BODIES[registration.class.pricingMode](phrase),
         }
       : {
           recipientType: 'student',
@@ -454,8 +479,7 @@ export const DELETE = withErrorHandler(async (
           relatedClassId: registration.classId,
           type: 'booking_removed',
           title: 'Booking cancelled by your teacher',
-          buildBody: (phrase) =>
-            `Your teacher cancelled your booking for ${phrase}. You won't be charged for it.`,
+          buildBody: (phrase) => TEACHER_CANCEL_BODIES[registration.class.pricingMode](phrase),
         },
   );
 
@@ -472,13 +496,14 @@ function answerForCancelledRow(
   id: string,
   status: RegistrationStatus,
   byStudent: boolean,
+  mode: PricingMode,
 ): NextResponse | null {
   if (status === 'cancelled' || (byStudent && status === 'late_cancel')) {
     return respondUnchanged<CancelledBooking>({ id, status });
   }
   if (status === 'late_cancel') {
     return respondError(
-      'This student already cancelled late, and the late-cancellation charge stands.',
+      ALREADY_LATE_CANCELLED_MESSAGES[mode],
       409,
       'ALREADY_LATE_CANCELLED',
     );
@@ -490,14 +515,18 @@ function answerForCancelledRow(
  * A cancel whose scoped write matched nothing: after the read above, the row
  * left the cancellable statuses or was deleted. Decided from a fresh read.
  */
-async function answerMissedCancel(id: string, byStudent: boolean): Promise<NextResponse> {
+async function answerMissedCancel(
+  id: string,
+  byStudent: boolean,
+  mode: PricingMode,
+): Promise<NextResponse> {
   const current = await prisma.registration.findUnique({
     where: { id },
     select: { status: true },
   });
   if (!current) return respondError('This booking no longer exists.', 404, 'NOT_FOUND');
   return (
-    answerForCancelledRow(id, current.status, byStudent) ??
+    answerForCancelledRow(id, current.status, byStudent, mode) ??
     // Active again: a rebooking reactivated the row between the two statements.
     respondError(
       'This booking was just changed elsewhere. Refresh and try again.',

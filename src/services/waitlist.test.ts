@@ -1001,6 +1001,42 @@ describe('promoteNext (DB)', () => {
     }
   });
 
+  describe('a late-cancelled booking promoted into a class (#912)', () => {
+    async function promoteLateCancelled(date: string, label: string, pricingMode: 'tiered' | 'donation') {
+      const seeded = await seedPromotable(date, label);
+      await prisma.class.update({ where: { id: seeded.classId }, data: { pricingMode } });
+      await prisma.registration.create({
+        data: {
+          classId: seeded.classId,
+          studentId: seeded.waiterId,
+          status: 'late_cancel',
+          tierAtBooking: 3,
+          cancelledAt: new Date('2099-01-01T00:00:00Z'),
+          lateCancelledAt: new Date('2099-01-01T00:00:00Z'),
+        },
+      });
+      const promoted = await promoteNext(prisma, seeded.classId);
+      expect(promoted).not.toBeNull();
+      const notification = await prisma.notification.findFirstOrThrow({
+        where: { relatedClassId: seeded.classId, recipientId: seeded.waiterId, type: 'waitlist_promoted' },
+      });
+      return notification.body;
+    }
+
+    it('says a donation class carries no charge after a late cancel (#912)', async () => {
+      const body = await promoteLateCancelled('2099-07-20', 'DonLate', 'donation');
+      expect(body).toContain('You cancelled this class after the deadline before.');
+      expect(body).not.toContain('stays charged');
+    });
+
+    it('keeps the tiered charge wording after a late cancel (#912)', async () => {
+      const body = await promoteLateCancelled('2099-07-21', 'TierLate', 'tiered');
+      expect(body).toContain(
+        'You cancelled this class after the deadline before, so it stays charged if you cancel again.',
+      );
+    });
+  });
+
   it('reactivates the promoted student\'s archived roster link (#265)', async () => {
     const seeded = await seedPromotable('2099-07-15', 'Archived');
     await prisma.teacherStudent.update({
@@ -1356,6 +1392,21 @@ describe('claimSpot (DB)', () => {
     expect(notifications[0]!.body).toBe(
       "You claimed the open spot in Claim Flow. It's past the cancellation deadline, so this class is charged even if you can't make it.",
     );
+  });
+
+  it('a final-hour claim on a donation class names no charge (#912)', async () => {
+    const classId = await makeFullClass();
+    await prisma.class.update({ where: { id: classId }, data: { pricingMode: 'donation' } });
+    await freeTheSpot(classId);
+
+    const result = await claimSpot(prisma, classId, waiterId, IN_CLAIM_WINDOW);
+    expect(result.outcome).toBe('claimed');
+
+    const notification = await prisma.notification.findFirstOrThrow({
+      where: { relatedClassId: classId, recipientId: waiterId, recipientType: 'student' },
+    });
+    expect(notification.body).toBe('You claimed the open spot in Claim Flow.');
+    expect(notification.body).not.toContain('charged');
   });
 
   /** Claims the freed spot for `waiterId`, and returns what the claim wrote. */

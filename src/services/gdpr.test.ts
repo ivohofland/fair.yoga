@@ -4081,3 +4081,108 @@ describe('online class links in the teacher export and erasure (#911)', () => {
     );
   }, 20_000);
 });
+
+/** #912: what a donation class recorded is part of what an export tells the subject. */
+describe('exports carry the donation fields (#912)', () => {
+  const prisma = createPrismaClient();
+  const suffix = `gdpr-don-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  const invitedAt = new Date('2026-06-02T10:00:00Z');
+  const hiddenAt = new Date('2026-06-03T10:00:00Z');
+  let teacherId: string;
+  let accountId: string;
+  let studentId: string;
+  let roomId: string;
+
+  beforeAll(async () => {
+    const teacher = await prisma.teacher.create({
+      data: {
+        firstName: 'Don', lastName: 'Teacher', email: `${suffix}@test.local`,
+        account: { create: { email: `${suffix}@test.local` } },
+        bio: '', pageSlug: suffix,
+      },
+      select: { id: true, accountId: true },
+    });
+    teacherId = teacher.id;
+    accountId = teacher.accountId;
+    const room = await prisma.room.create({
+      data: {
+        venueName: 'Don Studio', address: `${suffix} St`, city: 'Utrecht', postcode: '3511',
+        floor: '1', roomName: 'Main', maxCapacity: 20, createdById: teacherId,
+      },
+      select: { id: true },
+    });
+    roomId = room.id;
+    const teacherRoom = await prisma.teacherRoom.create({
+      data: { teacherId, roomId, capacityOverride: 15, rentalRate: 30 },
+      select: { id: true },
+    });
+    const economics = { roomCost: 30, minRate: 40, targetRate: 80, minStudents: 1, maxStudents: 10 };
+    const cls = await createClassFixture(prisma, {
+      teacherId, teacherRoomId: teacherRoom.id, classType: 'Donation class',
+      date: new Date('2026-06-01'), startTime: hhmmToTime('09:00'), durationMinutes: 60,
+      ...economics, status: 'completed', pricingMode: 'donation', donationTotal: 42.5,
+    });
+    await prisma.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'regular', classType: 'Donation tpl', dayOfWeek: 3,
+            startTime: hhmmToTime('11:00'), durationMinutes: 60, isActive: true,
+          },
+        },
+        teacherRoom: { connect: { id: teacherRoom.id } },
+        description: 'Donation template',
+        ...economics,
+        pricingMode: 'donation',
+      },
+    });
+    const student = await prisma.student.create({
+      data: { firstName: 'Don', lastName: 'Student', email: `${suffix}-s@test.local`, incomeTier: 2 },
+      select: { id: true },
+    });
+    studentId = student.id;
+    await prisma.registration.create({
+      data: {
+        classId: cls.id, studentId, status: 'attended', tierAtBooking: 2,
+        donationInvitedAt: invitedAt, donationPromptHiddenAt: hiddenAt,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    if (studentId) await prisma.student.deleteMany({ where: { id: studentId } });
+    if (teacherId) {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.deleteMany({ where: { teacherId } });
+      await prisma.teacherRoom.deleteMany({ where: { teacherId } });
+      if (roomId) await prisma.room.deleteMany({ where: { id: roomId } });
+      await prisma.teacher.deleteMany({ where: { id: teacherId } });
+      await prisma.account.deleteMany({ where: { id: accountId } });
+    }
+    await prisma.$disconnect();
+  });
+
+  it('the teacher export carries each class’s pricing mode and recorded total, and each template’s mode (#912)', async () => {
+    const exported = await exportTeacherData(prisma, teacherId);
+    expect(exported.classes).toHaveLength(1);
+    expect(exported.classes[0]).toMatchObject({ pricingMode: 'donation' });
+    expect(Number(exported.classes[0]?.donationTotal)).toBe(42.5);
+    expect(exported.recurringTemplates).toHaveLength(1);
+    expect(exported.recurringTemplates[0]).toMatchObject({ pricingMode: 'donation' });
+  });
+
+  it('the teacher export carries neither Registration timestamp (#912)', async () => {
+    const serialised = JSON.stringify(await exportTeacherData(prisma, teacherId));
+    expect(serialised).not.toContain('donationInvitedAt');
+    expect(serialised).not.toContain('donationPromptHiddenAt');
+  });
+
+  it('the student export carries their own invitation and hide timestamps (#912)', async () => {
+    const exported = await exportStudentData(prisma, studentId);
+    expect(exported.bookings).toHaveLength(1);
+    expect(exported.bookings[0]).toMatchObject({
+      donationInvitedAt: invitedAt,
+      donationPromptHiddenAt: hiddenAt,
+    });
+  });
+});

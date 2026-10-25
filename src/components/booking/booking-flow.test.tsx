@@ -34,7 +34,7 @@ describe('BookingFlow', () => {
         alreadyBooked={false}
         currentTier={3}
         studentId="student-1"
-        tierPrices={tierPrices}
+        pricing={{ mode: 'tiered', tierPrices }}
         currency="EUR"
         isFirstBooking={false}
         openPaymentsCount={0}
@@ -373,5 +373,49 @@ describe('BookingFlow', () => {
         screen.queryByText(/If a spot opens up until 1 hour before class/),
       ).not.toBeInTheDocument();
     });
+  });
+
+  describe('a donation class (#912)', () => {
+    const donation = { mode: 'donation' } as const;
+
+    it('shows the donation line and tier cards without any price (#912)', () => {
+      stubFetch();
+      renderFlow({ pricing: donation, currentTier: null, isFirstBooking: true });
+      expect(
+        screen.getByText('This class is by donation. After class you can give what you like, if you like.'),
+      ).toBeInTheDocument();
+      expect(screen.getAllByRole('radio')).toHaveLength(5);
+      expect(document.body.textContent).not.toContain('€');
+      expect(screen.queryByText(/Your price is based/)).not.toBeInTheDocument();
+    });
+
+    it('books with a plain Book button and no estimate caveat (#912)', () => {
+      stubFetch();
+      renderFlow({ pricing: donation });
+      expect(screen.getByRole('button', { name: 'Book' })).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain('Estimates assume');
+      expect(document.body.textContent).not.toContain('Learn more');
+    });
+
+    it('drops the charge sentence from the claim-window caption (#912)', () => {
+      stubFetch();
+      renderFlow({ pricing: donation, isFull: true, inClaimWindow: true });
+      expect(document.body.textContent).toContain('the first to claim it gets it.');
+      expect(document.body.textContent).not.toContain('Claiming is charged');
+    });
+
+    it('confirms the booking without a final price (#912)', async () => {
+      stubFetch();
+      renderFlow({ pricing: donation });
+      fireEvent.click(screen.getByRole('button', { name: 'Book' }));
+      expect(await screen.findByText('Your spot is confirmed.')).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain('final price');
+    });
+  });
+
+  it('keeps the tiered claim-window caption charged (#912)', () => {
+    stubFetch();
+    renderFlow({ isFull: true, inClaimWindow: true });
+    expect(document.body.textContent).toContain("it. Claiming is charged even if you can't make it.");
   });
 });

@@ -2,12 +2,15 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import type { PricingMode } from '@/lib/prisma-client';
 import { Button } from '@/components/ui/button';
 import { logRequestFailure, readError } from '@/lib/client-errors';
 import { isPastCancelDeadline } from '@/lib/cancel-deadline';
 
 interface CancelBookingButtonProps {
   registrationId: string;
+  /** The class's pricing mode, which decides what the confirm says a late cancel costs. */
+  pricingMode: PricingMode;
   /** ISO instant — `freeCancelUntilFor` (`@/lib/cancel-deadline`), computed server-side. */
   freeCancelUntilAt: string;
   /**
@@ -31,6 +34,7 @@ interface Confirming {
 
 export function CancelBookingButton({
   registrationId,
+  pricingMode,
   freeCancelUntilAt,
   freeCancelUntilLabel,
 }: CancelBookingButtonProps) {
@@ -82,9 +86,7 @@ export function CancelBookingButton({
   return (
     <div className="flex flex-col gap-3">
       <p className="type-body">
-        {confirming.pastDeadline
-          ? "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there."
-          : `Cancel this booking? Free until ${freeCancelUntilLabel} — after that the class is still charged.`}
+        {confirmCopy(pricingMode, confirming.pastDeadline, freeCancelUntilLabel)}
       </p>
       <div className="flex gap-3">
         <Button variant="destructive" onClick={handleCancel} disabled={cancelling}>
@@ -97,4 +99,22 @@ export function CancelBookingButton({
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     </div>
   );
+}
+
+/** The confirm step's sentence, by pricing mode and whether the free-cancel instant has passed. */
+function confirmCopy(mode: PricingMode, pastDeadline: boolean, freeCancelUntilLabel: string): string {
+  switch (mode) {
+    case 'tiered':
+      return pastDeadline
+        ? "The cancellation deadline has passed, so you'll still pay your share of this class. Cancelling lets your teacher know you won't be there."
+        : `Cancel this booking? Free until ${freeCancelUntilLabel} — after that the class is still charged.`;
+    case 'donation':
+      return pastDeadline
+        ? 'After the deadline, cancelling is recorded as a late cancellation.'
+        : `Cancel this booking? Free until ${freeCancelUntilLabel}.`;
+    default: {
+      const unhandled: never = mode;
+      throw new Error(`Unhandled pricing mode: ${String(unhandled)}`);
+    }
+  }
 }

@@ -259,6 +259,8 @@ export async function exportStudentData(db: PrismaClient, studentId: string) {
       price: r.price,
       payment: r.payment ? { ...r.payment, currency: r.class.currency } : null,
       registeredAt: r.registeredAt,
+      donationInvitedAt: r.donationInvitedAt,
+      donationPromptHiddenAt: r.donationPromptHiddenAt,
     })),
     waitlist: student.waitlistEntries.map((w) => ({
       class: w.class.calendarEntry.classType,
@@ -388,6 +390,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         status: c.status,
         format: c.format,
         videoUrl: c.videoUrl,
+        pricingMode: c.pricingMode,
         currency: c.currency,
         cancelledAt: e.cancelledAt,
         registrations: c._count.registrations,
@@ -395,6 +398,7 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         effectiveTeacherRate: c.effectiveTeacherRate,
         vatPercent: c.vatPercent,
         vatTotal: c.vatTotal,
+        donationTotal: c.donationTotal,
       })),
     ),
     studioClasses: teacher.calendarEntries.flatMap((e) =>

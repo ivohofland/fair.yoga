@@ -31,6 +31,7 @@ describe('CancelBookingButton', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FUTURE_INSTANT}
         freeCancelUntilLabel={FUTURE_LABEL}
       />,
@@ -130,6 +131,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -148,6 +150,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -166,6 +169,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -184,6 +188,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -204,6 +209,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     const { rerender } = render(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -214,6 +220,7 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
     rerender(
       <CancelBookingButton
         registrationId="reg-1"
+        pricingMode="tiered"
         freeCancelUntilAt={FREE_UNTIL_AT}
         freeCancelUntilLabel={FREE_UNTIL_LABEL}
       />,
@@ -223,6 +230,44 @@ describe('CancelBookingButton free-cancel-aware copy', () => {
       screen.getByText(
         'Cancel this booking? Free until Mon 1 Jun 12:00 — after that the class is still charged.',
       ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('CancelBookingButton on a donation class (#912)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function open(now: string) {
+    vi.setSystemTime(new Date(now));
+    render(
+      <CancelBookingButton
+        registrationId="reg-1"
+        pricingMode="donation"
+        freeCancelUntilAt="2026-06-01T12:00:00.000Z"
+        freeCancelUntilLabel="Mon 1 Jun 12:00"
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel booking' }));
+  }
+
+  it('records a late cancellation past the deadline without charging language (#912)', () => {
+    open('2026-06-01T13:00:00.000Z');
+    expect(
+      screen.getByText('After the deadline, cancelling is recorded as a late cancellation.'),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/charged|pay/);
+  });
+
+  it('says free until the label before the deadline (#912)', () => {
+    open('2026-06-01T10:00:00.000Z');
+    expect(
+      screen.getByText('Cancel this booking? Free until Mon 1 Jun 12:00.'),
     ).toBeInTheDocument();
   });
 });
