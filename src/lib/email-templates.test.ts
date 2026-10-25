@@ -230,7 +230,12 @@ describe('email templates', () => {
     expect(text).not.toContain('/pay');
   });
 
-  it('records a donation invitation without a class as DONATION_INVITATION_WITHOUT_CLASS (#912)', () => {
+  describe('a donation invitation without a class (#912)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('records it as DONATION_INVITATION_WITHOUT_CLASS (#912)', () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
     const { html } = renderNotificationEmail(
       { id: 'note-9', type: 'donation_invitation', title: 'T', body: 'B', recipientType: 'student', relatedClassId: null },
@@ -241,7 +246,16 @@ describe('email templates', () => {
       expect.objectContaining({ code: 'DONATION_INVITATION_WITHOUT_CLASS', notificationId: 'note-9' }),
       'donation invitation has no related class; emailed without a How to give button',
     );
-    vi.restoreAllMocks();
+  });
+  });
+
+  it('opens the teacher completion email with the mode-neutral intro (#912)', () => {
+    const { text } = renderNotificationEmail(
+      { type: 'payment_request', title: 'Class completed', body: 'Done.', recipientType: 'teacher', relatedClassId: 'c1' },
+      'https://example.test',
+    );
+    expect(text).toContain('One of your classes is complete.');
+    expect(text).not.toContain('has been priced');
   });
 
   describe('a payment notification without a class', () => {

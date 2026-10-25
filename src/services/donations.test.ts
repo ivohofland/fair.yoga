@@ -167,7 +167,7 @@ describe('completeClass on a donation class (#912)', () => {
   it('never re-stamps a booking already invited (#912)', async () => {
     const cls = await makeClass();
     const { id: regId } = await register(cls.id, 'attended');
-    // A value completion cannot produce: it stamps the transaction's own clock.
+    // A value completion cannot produce: it stamps the current time.
     const reserved = new Date('2000-01-01T00:00:00.000Z');
     await prisma.registration.update({ where: { id: regId }, data: { donationInvitedAt: reserved } });
     await completeClass(prisma, cls.id, { sweepAt: new Date('2099-01-01T00:00:00Z') });

@@ -840,8 +840,8 @@ export async function completeClass(
 
     switch (cls.pricingMode) {
       case 'donation': {
-        // #912. No pricing engine, no Payment, no price write. The snapshot
-        // columns stay null, which `Class_vat_total_snapshot_check` allows.
+        // #912. No pricing engine, no Payment, no price write: the revenue
+        // and VAT snapshot columns are left null.
         await tx.class.update({
           where: { id: classId },
           data: { status: 'completed', totalStudents: chargedRegistrations.length },
