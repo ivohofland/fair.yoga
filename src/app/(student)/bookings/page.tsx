@@ -462,6 +462,7 @@ export default async function StudentBookingsPage() {
                 {breakdown.kind === 'shown' && (
                   <PaymentBreakdown
                     lines={breakdown.lines}
+                    format={cls.format}
                     classType={cls.calendarEntry.classType}
                     date={cls.calendarEntry.date}
                     currency={cls.currency}
