@@ -6,15 +6,14 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
 
 /**
  * Tells the students who hold a seat that a class's video link was added or
- * changed (#911). Sends nothing when the link is cleared or did not change.
+ * changed (#911). Notifies no one when the link is cleared or did not change.
  *
  * Neither the title nor the body carries the link: the email reads the class's
- * current link when it is sent (`videoLinkForEmail`), so two quick changes
- * leave two rows that both point at the second link.
+ * current link when it is sent (`videoLinkForEmail`).
  *
- * Awaited, not `FireAndForget`: it writes inbox rows and sends nothing, so
- * there is no provider whose outage or latency could reach the caller. Takes
- * a transaction client so the rows commit or roll back with the edit; the
+ * Awaited: it inserts inbox rows (and emits them to the in-process bus), with
+ * no provider whose latency or failure could reach the caller. Takes a
+ * transaction client so the rows commit or roll back with the edit; the
  * inserts' `relatedClassId` takes `FOR KEY SHARE` on the class, so the caller
  * holds that class's row lock first.
  *
