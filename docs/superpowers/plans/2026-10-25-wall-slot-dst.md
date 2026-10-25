@@ -58,9 +58,45 @@ The one out-of-process caller that cannot fake the server's clock and still
 reaches a repeated hour is `tests/integration/classes-api.test.ts` (two "started
 50 minutes ago" Amsterdam slots, now in [00:50, 01:50) UTC on the last Sunday of
 October): it fails at the fixture for that hour, naming the cause, instead of
-with an unrelated assertion. Accepted as the trade the issue asked for. The two
-e2e specs that call `wallSlotAt` run with UTC teachers, so they cannot reach a
+with an unrelated assertion. Accepted as the trade the issue asked for. Every
+e2e spec that calls `wallSlotAt` runs with a UTC teacher, so none can reach a
 repeated hour.
+
+## Task 2 — the #249 "teacher's zone" tests pin their clock
+
+Found after Task 1's review, outside `wallSlotAt`: two tests in
+`src/services/class-lifecycle.test.ts` build an Amsterdam slot 30 minutes in
+the past with the file's own `localWallClockMinutesAgo` helper —
+"reads the start in the teacher's zone, not UTC, when publishing (#249)" and
+"… when rescheduling (#249)". When that slot falls in the first 02:xx of the
+autumn change it reads back 30 minutes in the FUTURE, and `past_start` is not
+returned. Measured: with `Date` faked per test to `2026-10-25T00:45:00Z`, both
+fail (`expected { ok: true … } to deeply equal { ok: false, reason:
+'past_start' }`; the publishing one at its precondition, `expected
+1792890900000 to be less than 1792889100000`). Window: `now` in [00:30, 01:30)
+UTC on the last Sunday of October.
+
+**Change.** Each of the two tests fakes only `Date`, fixed to an instant clear
+of either DST transition, and restores real timers even when it fails (the
+file's `#836` block uses `beforeEach`/`afterEach`; a per-test
+`onTestFinished(() => vi.useRealTimers())` or `try`/`finally` is equally fine
+— pick what reads best beside these tests). The slot stays "30 minutes ago in
+Amsterdam" and the UTC-misreading precondition stays: the tests still prove
+what #249 pinned. Verify the fixed instant keeps the precondition true (Amsterdam
+ahead of UTC at that instant, so the misread is in the future). On the
+publishing and rescheduling paths every `now` is a JS `new Date()` — check that
+for the publish path (`transitionClass`) the same way it was checked for
+`updateClass` before relying on it.
+
+**Prove the guards bite** (record exact output):
+1. Before the change, a per-test `beforeEach` faking `Date` to
+   `2026-10-25T00:45:00Z` (one-off, reverted) fails both tests as measured
+   above. A module-top `vi.useFakeTimers` is NOT a valid probe — the `#836`
+   block's `afterEach` restores real timers for everything after it.
+2. After the change, the same one-off probe → both pass.
+3. Make the zone read hardcode `'UTC'` in the guard each test protects
+   (one-off, reverted) → each test fails. This is the #249 regression they
+   exist for; the pin must not have blunted it.
 
 ## Verification
 
