@@ -170,7 +170,7 @@ const TEACHER_INTROS: Partial<Record<NotificationType, string>> = {
   booking_confirmed: 'A student booked your class.',
   class_cancelled: 'One of your classes was cancelled.',
   payment_received: 'A payment was received.',
-  payment_request: 'A class has been priced.',
+  payment_request: 'One of your classes is complete.',
   reminder: 'A gentle reminder.',
   class_reminder: 'You have a class coming up.',
   processor_disconnected: 'Your Mollie connection was disconnected.',

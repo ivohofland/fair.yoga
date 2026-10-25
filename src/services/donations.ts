@@ -9,7 +9,7 @@ export type InvitedRow = { id: string; studentId: string };
 /**
  * Stamps every booking of `classId` that came and was not yet invited, and
  * returns exactly the rows it stamped — the invitations go to these, never
- * to a re-read. Runs inside `completeClass`'s transaction, under its class lock.
+ * to a re-read. The caller holds the class lock and passes its transaction.
  */
 export async function claimCompletionInvitations(
   tx: Prisma.TransactionClient,
