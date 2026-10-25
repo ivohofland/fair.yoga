@@ -654,7 +654,7 @@ calendar-shaped, through this row.
 | video_url | text, nullable | An online template's video link, stamped onto each generated Class; null for `in_person`. Editing it changes no existing class (#194, #911) |
 | description | text, nullable | |
 | **Economics** | | Copied to each instance at generation time — a later template edit does not re-copy (#194) |
-| room_cost | decimal | From TeacherRoom.rental_rate. This and the two rates below are in the teacher's current currency; each generated class stamps that currency on itself |
+| room_cost | decimal | From TeacherRoom.rental_rate; 0 for an online template (#911, pinned by `ClassTemplate_format_shape`). This and the two rates below are in the teacher's current currency; each generated class stamps that currency on itself |
 | min_rate | decimal | Minimum teacher earns per student |
 | target_rate | decimal | Ideal teacher earns per student |
 | min_students | int | Below this, class auto-cancels |
@@ -752,7 +752,7 @@ child, and the reverse does not.
 | description | text, nullable | |
 | **Economics** | | Locked after first registration |
 | currency | enum `Currency`, not null | Snapshot of the teacher's currency, stamped by every writer of a class. `room_cost`, `min_rate`, `target_rate`, and every derived amount (`Registration.price`, `Payment.amount`, `total_revenue`) are denominated in it. Frozen — `class_currency_frozen_guard` refuses a change — once `settings_locked`, `completed`, or the entry is cancelled; before that a currency switch relabels it with the numbers unchanged |
-| room_cost | decimal | |
+| room_cost | decimal | 0 for an online class (#911, pinned by `Class_format_shape`) |
 | min_rate | decimal | |
 | target_rate | decimal | |
 | min_students | int | |
@@ -1068,7 +1068,7 @@ At most one live refund exists per attempt — neither `failed` nor `canceled` (
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, spot_taken, reminder, announcement, teacher_invitation, walk_in_added, class_reminder.
+Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, spot_taken, reminder, announcement, teacher_invitation, walk_in_added, class_reminder, video_link_updated (#911: sent to students with a live registration when a class's `video_url` goes from one value to another, null included; the inbox row never carries the link, the email renders the current one at send time — `docs/superpowers/specs/2026-10-25-online-classes-design.md`).
 
 Rows are deleted by the daily `daily-cleanup` job once older than their type's retention period; the periods live in `NOTIFICATION_RETENTION_DAYS` (`src/lib/notification-retention.ts`) — `spot_available` and `spot_taken` keep 30 days, every other type keeps 365, and read state has no bearing on when a row is reaped. Deleting is safe because a notification row is the message about an event, never that event's record: the domain row the notification is about holds the record (for example `Payment`, `Registration`, `Invitation`, or the class's calendar entry), and no code reads a notification once it has aged out. There is no index on `createdAt`: the sweep's batch read filters on `(type, createdAt)`, which no index covers, so each daily run reads the table in full once for each retention period (the last, short batch of each period is a full scan), accepted because it runs once a day and the table stays bounded to about a year of rows, against an index maintained on every insert into the app's highest-write table.
 
