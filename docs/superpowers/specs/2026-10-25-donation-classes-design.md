@@ -272,7 +272,7 @@ only (403 otherwise); a booking that was never invited → 409
 
 ### 4.6 Recording the total
 
-`recordDonationTotal(teacherId, classId, amount: Decimal | null)` in
+`recordDonationTotal(db, teacherId, classId, amount: number | null)` in
 `src/services/`, exposed as `PUT /api/classes/[id]/donation-total` with
 `{ amount: number | null }` — the codebase's money convention (`moneyField`,
 `z.number()`), ≥ 0.
