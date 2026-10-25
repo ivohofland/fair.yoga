@@ -3740,14 +3740,18 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   conformant. The video links (#911) are cleared inside it only where the
   rows are already held: `Class.videoUrl` on `lockedIds`, and
   `ClassTemplate.videoUrl` under the `FOR UPDATE OF ct` pre-lock. The
-  teacher's other classes — completed, or cancelled earlier — are cleared
-  after commit by `clearErasedTeacherClassLinks` (`gdpr.ts`), in a
-  transaction of its own whose only lock is one ordered
-  `lockClassRowsOrdered`. Writing them inside the erasure would have been a
-  second ordered `Class` lock after the first, taking a lower id after a
-  higher one: a cycle with any ascending locker, such as
-  `deleteStudentAccount`'s pre-lock, that holds a completed class of this
-  teacher and waits on a live one.
+  teacher's other classes — completed, or cancelled — are cleared by
+  `clearTeacherClassLinks` (`gdpr.ts`), each run a transaction of its own
+  whose only lock is one ordered `lockClassRowsOrdered`. It runs twice:
+  before the erasure transaction opens, over the terminal classes only, and
+  allowed to throw, so a `55P03` there reaches `DELETE /api/account` as a
+  retryable 503 while the session still lives; and after commit, over every
+  class, as a backstop for a class that became terminal in between, logged
+  rather than thrown because nothing can retry it. Writing them inside the
+  erasure would have been a second ordered `Class` lock after the first,
+  taking a lower id after a higher one: a cycle with any ascending locker,
+  such as `deleteStudentAccount`'s pre-lock, that holds a completed class of
+  this teacher and waits on a live one.
 - **`transitionClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then its CAS `class.updateMany` on the same row. The CAS
   alone would not do (#327): it carries a conjunct on `CalendarEntry`, and
