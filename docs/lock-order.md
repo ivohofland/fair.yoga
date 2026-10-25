@@ -95,11 +95,23 @@ too quiet — the safe direction, which the reconciliation sweep repairs on its
 next tick. The cancel in `DELETE /api/registrations/[id]` is not on this list:
 `writeCancel` takes `lockClassRow`. Re-derive the candidates with
 
-    git grep -n -E 'registration[[:space:]]*\.[[:space:]]*(update|updateMany|upsert|create|createMany)\(' -- src ':!*.test.ts'
+    git grep -n -E 'registration[[:space:]]*\.[[:space:]]*(update|updateMany|updateManyAndReturn|upsert|create|createMany)\(' -- src ':!*.test.ts'
 
 and read each hit's transaction for a `lockClassRow`/`lockClassRowsOrdered`
 before it. Hits that write no `status` (`completeClass`'s price write,
-`class-reminders.ts`'s `classReminderSentAt` claim) do not move the count.
+`class-reminders.ts`'s `classReminderSentAt` claim, and the two
+`donationInvitedAt` claims in `donations.ts`) do not move the count.
+
+`claimCorrectionInvitation` (`services/donations.ts`, #912) follows the
+attendance write above in its own transaction. It writes no `status`, takes
+`lockClassRow` first and then writes `Registration`, which is the documented
+order. The race it closes: `completeClass` stamps the bookings whose status it
+can see, so a correction to `attended` that commits after that read but before
+completion commits would be missed by the completion claim. The correction's
+claim waits on the class lock, so it runs after completion has committed, sees
+the class `completed` and the booking unstamped, and invites it; if it runs
+first, completion's own claim sees the `attended` row and stamps it, and the
+correction's claim finds `donationInvitedAt` already set and invites nobody.
 
 ### `WaitlistEntry` status writers without a `lockClassRow` of their own
 

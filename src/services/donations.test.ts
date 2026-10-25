@@ -3,6 +3,7 @@ import { createPrismaClient, type RegistrationStatus } from '@/lib/prisma-client
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture, slotDate, slotTime } from '../../tests/class-fixtures';
 import { completeClass } from './class-lifecycle';
+import { claimCorrectionInvitation } from './donations';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = `donations-${Date.now()}`;
@@ -190,5 +191,43 @@ describe('completeClass on a donation class (#912)', () => {
     await completeClass(prisma, cls.id, { sweepAt: new Date('2099-01-01T00:00:00Z') });
     expect(await prisma.payment.count({ where: { registration: { classId: cls.id } } })).toBe(1);
     expect(await prisma.registration.count({ where: { classId: cls.id, donationInvitedAt: { not: null } } })).toBe(0);
+  });
+  describe('claimCorrectionInvitation (#912)', () => {
+    const done = { sweepAt: new Date('2099-01-01T00:00:00Z') };
+
+    it('a no_show corrected to attended after completion is invited once (#912)', async () => {
+      const cls = await makeClass();
+      const { id: regId } = await register(cls.id, 'no_show');
+      await completeClass(prisma, cls.id, done);
+      await prisma.registration.update({ where: { id: regId }, data: { status: 'attended' } });
+      expect(await claimCorrectionInvitation(prisma, regId)).toBe('invited');
+      expect(await claimCorrectionInvitation(prisma, regId)).toBe('not_invited');
+      expect(await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'donation_invitation' } })).toBe(1);
+    });
+
+    it('attended → no_show → attended again sends nothing new (#912, Review Focus 5)', async () => {
+      const cls = await makeClass();
+      const { id: regId } = await register(cls.id, 'attended');
+      await completeClass(prisma, cls.id, done);
+      await prisma.registration.update({ where: { id: regId }, data: { status: 'no_show' } });
+      await prisma.registration.update({ where: { id: regId }, data: { status: 'attended' } });
+      expect(await claimCorrectionInvitation(prisma, regId)).toBe('not_invited');
+      expect(await prisma.notification.count({ where: { relatedClassId: cls.id, type: 'donation_invitation' } })).toBe(1);
+    });
+
+    it('a correction before completion does not invite on its own (#912)', async () => {
+      const cls = await makeClass();
+      const { id: regId } = await register(cls.id, 'attended');
+      expect(await claimCorrectionInvitation(prisma, regId)).toBe('not_invited');
+      expect((await prisma.registration.findUniqueOrThrow({ where: { id: regId } })).donationInvitedAt).toBeNull();
+    });
+
+    it('a tiered class is never invited (#912)', async () => {
+      const cls = await makeClass({ pricingMode: 'tiered', minRate: 15, targetRate: 25 });
+      const { id: regId } = await register(cls.id, 'no_show');
+      await completeClass(prisma, cls.id, done);
+      await prisma.registration.update({ where: { id: regId }, data: { status: 'attended' } });
+      expect(await claimCorrectionInvitation(prisma, regId)).toBe('not_invited');
+    });
   });
 });

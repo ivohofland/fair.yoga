@@ -1801,6 +1801,58 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
     });
   }
 
+  describe('a donation class corrected to attended after completion (#912)', () => {
+    // A completed class keeps its slot (see `makeAttendanceClass`), so each
+    // call starts at a random minute in the past, where check-in is open and
+    // a rerun is unlikely to land on a slot a previous run left taken.
+    async function completedDonationClass() {
+      const minutesUntilStart = -(30 + Math.floor(Math.random() * 1300));
+      const classId = await makeAttendanceClass(4, 'in_progress', minutesUntilStart);
+      await prisma.class.update({
+        where: { id: classId },
+        data: { pricingMode: 'donation', minRate: 0, targetRate: 0 },
+      });
+      onTestFinished(async () => {
+        await prisma.notification.deleteMany({ where: { relatedClassId: classId } });
+      });
+      const reg = await prisma.registration.create({
+        data: { classId, studentId: studentIds[0]!, status: 'no_show', tierAtBooking: 3 },
+      });
+      const completed = await completeClass(prisma, classId, { sweepAt: new Date('2099-01-01T00:00:00Z') });
+      expect(completed.ok).toBe(true);
+      return { classId, regId: reg.id };
+    }
+    const invitations = (classId: string) =>
+      prisma.notification.count({ where: { relatedClassId: classId, type: 'donation_invitation' } });
+
+    it('invites once, and a repeat answers unchanged (#912)', async () => {
+      const { classId, regId } = await completedDonationClass();
+      expect(await expectApplied(await putStatus(attendanceToken, regId, 'attended'))).toEqual({
+        id: regId,
+        status: 'attended',
+      });
+      expect(await invitations(classId)).toBe(1);
+
+      expect(await expectUnchanged(await putStatus(attendanceToken, regId, 'attended'))).toEqual({
+        id: regId,
+        status: 'attended',
+      });
+      expect(await invitations(classId)).toBe(1);
+    });
+
+    it('a retry after a failed claim invites and answers applied, not unchanged (#912, Review Focus 1)', async () => {
+      const { classId, regId } = await completedDonationClass();
+      await prisma.registration.update({ where: { id: regId }, data: { status: 'attended' } });
+      expect(await invitations(classId)).toBe(0);
+
+      expect(await expectApplied(await putStatus(attendanceToken, regId, 'attended'))).toEqual({
+        id: regId,
+        status: 'attended',
+      });
+      expect(await invitations(classId)).toBe(1);
+    });
+  });
+
   /**
    * A queued tap can replay after the class completed (#726). The write moves
    * the registration and nothing else: the prices were fixed at completion, the
