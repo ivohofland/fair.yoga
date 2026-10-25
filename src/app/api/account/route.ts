@@ -52,7 +52,9 @@ import {
  *   those is its own committed transaction that prices the class, writes
  *   `Payment` rows and sends notifications. A failure anywhere after that
  *   loop leaves those completions standing. Telling that teacher "nothing was
- *   changed" would be a lie about money.
+ *   changed" would be a lie about money. The same holds for the video links of
+ *   its completed and cancelled classes, cleared in their own transaction
+ *   before the erasure opens.
  *
  * `partial` is narrower and orthogonal: the student half committed and the
  * teacher half did not, on a dual account. That has to be said out loud
@@ -70,7 +72,8 @@ function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolea
   const transient = isTransientDbError(err) || err instanceof ErasureLockSetError;
   // The teacher erasure's committed-before-the-transaction exposure. Every
   // failure of that half carries it, `partial` included.
-  const billed = 'Any class that was still in progress may already have been closed and billed.';
+  const billed =
+    'Any class that was still in progress may already have been closed and billed, and the video links on your completed and cancelled classes may already have been removed.';
   if (opts.partial) {
     return transient
       ? respondError(
@@ -89,7 +92,7 @@ function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolea
   const stateNote =
     opts.half === 'student'
       ? 'Nothing was changed.'
-      : `${billed} The rest of your data is unchanged.`;
+      : `${billed} The rest of your account is unchanged.`;
   return transient
     ? respondError(
         `The system was busy and could not remove your account. ${stateNote} Wait a moment, then press Delete again.`,
