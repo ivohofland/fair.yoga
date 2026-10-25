@@ -76,17 +76,23 @@ interface FormData {
  * body without one is in person) and `videoUrl`, which only the online arm
  * carries.
  */
-type CreateClassWire = Omit<Extract<z.infer<typeof createClassSchema>, { format: 'in_person' }>, 'format' | 'videoUrl'>;
+type InPersonCreateWire = Extract<z.infer<typeof createClassSchema>, { format: 'in_person' }>;
+type CreateClassWire = Omit<InPersonCreateWire, 'format' | 'videoUrl'>;
+
+/** Non-vacuity: each excluded key is still a key of the schema, so a rename turns this red. */
+const _excludedKeysExist: NoneOf<Exclude<'format' | 'videoUrl', keyof InPersonCreateWire>> = true;
+void _excludedKeysExist;
 
 /**
  * #136. `FormData` is the list; the body is `form` spread with `description`
  * normalized at submit (`trim() || null`), so the *key* list cannot drift —
  * the value transform is what `page.test.tsx` pins. These pins tie the key
- * list to the schema in both directions, with no exclusions.
+ * list to the schema in both directions, with two exclusions, `format` and
+ * `videoUrl`, each with its reason on `CreateClassWire` above and its
+ * non-vacuity pin just below it.
  *
- * `templateId` (server-set, #146) and `description` (#147) were earlier
- * excluded; an exclusion here needs its own reason *and* a non-vacuity pin
- * (see the studio-class wizard's history for the lesson).
+ * An exclusion here needs its own reason *and* a non-vacuity pin (see the
+ * studio-class wizard's history for the lesson).
  *
  * What this pin enforces, exactly: every key `createClassSchema` declares
  * is a key of `FormData`, this form's own value type. Not that the field is

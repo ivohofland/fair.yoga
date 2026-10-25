@@ -256,6 +256,10 @@ export const PUT = withErrorHandler(async (
   if (result.reason === 'video_url_on_room_class') {
     return respondError('videoUrl: Only an online class has a video link.', 400);
   }
+  // The room-cost twin of the refusal above, for the same reason.
+  if (result.reason === 'room_cost_on_online_class') {
+    return respondError('roomCost: An online class has no room cost.', 400);
+  }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
   const unhandled: never = result;

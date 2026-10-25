@@ -1327,7 +1327,9 @@ export type UpdateClassResult =
   | { ok: false; reason: 'template_date_conflict' }
   | { ok: false; reason: 'past_start' }
   /** A link was sent for a class held in a room; only an online class has one. */
-  | { ok: false; reason: 'video_url_on_room_class' };
+  | { ok: false; reason: 'video_url_on_room_class' }
+  /** A room cost above 0 was sent for an online class, which has no room. */
+  | { ok: false; reason: 'room_cost_on_online_class' };
 
 /**
  * Apply a partial update to a class, enforcing two independent freezes, one
@@ -1475,6 +1477,11 @@ export async function updateClass(
   // nothing on a class that cannot hold one, and is let through.
   if (typeof data.videoUrl === 'string' && cls.format === 'in_person') {
     return { ok: false, reason: 'video_url_on_room_class' };
+  }
+  // Same reason, other column: `Class_format_shape` holds an online class's
+  // room cost at 0, and a write against it would raise at the database.
+  if (data.roomCost !== undefined && data.roomCost !== 0 && cls.format === 'online') {
+    return { ok: false, reason: 'room_cost_on_online_class' };
   }
 
   // #249. A write may not newly place this class's start in the past.
@@ -1672,8 +1679,9 @@ export async function updateClass(
       await lockClassRow(tx, classId);
 
       // The value a write of `videoUrl` replaces, read under the lock. A write
-      // that sends none leaves the link as it was, so the opening read stands.
-      let previousVideoUrl = cls.videoUrl;
+      // that sends none leaves the link as it is, so the re-read below, also
+      // under the lock, is the previous value too.
+      let previousVideoUrl: string | null | undefined;
       if (data.videoUrl !== undefined) {
         const before = await tx.class.findUnique({ where: { id: classId }, select: { videoUrl: true } });
         if (!before) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
@@ -1797,7 +1805,7 @@ export async function updateClass(
       // argument holding. Every other refusal in this transaction rolls back;
       // this one used to commit two writes and then report the row missing.
       if (!updated) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
-      return { ok: true, cls: updated, previousVideoUrl };
+      return { ok: true, cls: updated, previousVideoUrl: previousVideoUrl === undefined ? updated.videoUrl : previousVideoUrl };
     });
   } catch (err) {
     if (err instanceof UpdateClassRefusal) return err.result;

@@ -320,6 +320,11 @@ describe('createClassSchema', () => {
       expect(createClassSchema.safeParse({ ...common, format: 'online', ...extra }).success).toBe(false);
     });
 
+    it('takes an in-person body with videoUrl null or absent', () => {
+      expect(createClassSchema.safeParse({ ...common, teacherRoomId: room, roomCost: 5, videoUrl: null }).success).toBe(true);
+      expect(createClassSchema.safeParse({ ...common, teacherRoomId: room, roomCost: 5 }).success).toBe(true);
+    });
+
     it('refuses an in-person body with a link', () => {
       const r = createClassSchema.safeParse({ ...common, teacherRoomId: room, roomCost: 5, videoUrl: 'https://a.example.com' });
       expect(r.success).toBe(false);
@@ -1771,6 +1776,7 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
   } else if (
     schema instanceof z.ZodBoolean ||
     schema instanceof z.ZodUndefined ||
+    schema instanceof z.ZodNull ||
     schema instanceof z.ZodEnum ||
     schema instanceof z.ZodLiteral
   ) {
