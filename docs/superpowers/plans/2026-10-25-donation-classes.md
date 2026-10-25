@@ -1211,7 +1211,7 @@ git commit -m "feat(#912): the give page, and a bookings prompt the student can 
 ```ts
 export type RecordDonationTotalResult =
   | { ok: true; outcome: 'applied' | 'unchanged'; donationTotal: number | null }
-  | { ok: false; reason: 'not_found' | 'cancelled' | 'not_donation' | 'not_completed' };
+  | { ok: false; reason: 'not_found' | 'forbidden' | 'cancelled' | 'not_donation' | 'not_completed' };
 export async function recordDonationTotal(
   db: PrismaClient, teacherId: string, classId: string, amount: number | null,
 ): Promise<RecordDonationTotalResult>;
@@ -1243,8 +1243,13 @@ it('records 0, which is not the same as not recorded', async () => {
   await expectApplied(await put(ownerToken, ids.completedDonation, { amount: 0 }));
   expect((await prisma.class.findUniqueOrThrow({ where: { id: ids.completedDonation } })).donationTotal?.toString()).toBe('0');
 });
-it("answers 404 for another teacher's class", async () => {
-  await expectRefusal(await put(otherToken, ids.completedDonation, { amount: 1 }), 'NOT_FOUND');
+it("answers 403 for another teacher's class, like the sibling class routes", async () => {
+  const res = await put(otherToken, ids.completedDonation, { amount: 1 });
+  expect(res.status).toBe(403);
+  expect((await prisma.class.findUniqueOrThrow({ where: { id: ids.completedDonation } })).donationTotal).toBeNull();
+});
+it('answers 404 for a class that does not exist', async () => {
+  expect((await put(ownerToken, 'no-such-class', { amount: 1 })).status).toBe(404);
 });
 it.each([
   ['cancelledDonation', 'CLASS_CANCELLED'],
@@ -1274,11 +1279,13 @@ export const CLASS_NOT_COMPLETED = codedRefusal('CLASS_NOT_COMPLETED', 'Record w
 
 ```ts
 export async function recordDonationTotal(db, teacherId, classId, amount) {
-  const cls = await db.class.findFirst({
-    where: { id: classId, calendarEntry: { teacherId } },
-    select: { status: true, pricingMode: true, donationTotal: true, calendarEntry: { select: { cancelledAt: true } } },
+  const cls = await db.class.findUnique({
+    where: { id: classId },
+    select: { status: true, pricingMode: true, donationTotal: true, calendarEntry: { select: { teacherId: true, cancelledAt: true } } },
   });
   if (!cls) return { ok: false, reason: 'not_found' };
+  // 403 like the sibling class routes (`api/classes/[id]/route.ts`): a class id is public in every booking link, so a 404 would hide nothing.
+  if (cls.calendarEntry.teacherId !== teacherId) return { ok: false, reason: 'forbidden' };
   if (cls.calendarEntry.cancelledAt !== null) return { ok: false, reason: 'cancelled' };
   switch (cls.pricingMode) {
     case 'tiered': return { ok: false, reason: 'not_donation' };
@@ -1303,7 +1310,7 @@ A completed class is terminal, so the gates read above cannot move between the r
 
 - [ ] **Step 4: Route** `src/app/api/classes/[id]/donation-total/route.ts`:
   - `requireTeacher`, `parseBody(request, donationTotalSchema)`, then the service.
-  - A `satisfies Record<…, CodedRefusal>` map from reason to `CLASS_GONE`, `CLASS_CANCELLED`, `DONATION_CLASS_REQUIRED` and `CLASS_NOT_COMPLETED`, answered with `respondRefusal`.
+  - A `satisfies Record<…, CodedRefusal>` map from reason to `CLASS_GONE`, the sibling routes' 403 `Not your class` (read how `api/classes/[id]/route.ts` sends it and send it the same way), `CLASS_CANCELLED`, `DONATION_CLASS_REQUIRED` and `CLASS_NOT_COMPLETED`, answered with `respondRefusal`.
   - `applied` → `respondTyped<{ classId: string; donationTotal: number | null }>`; `unchanged` → `respondUnchanged` of the same body.
 
 Run Step 1's test. Expected: PASS.
@@ -1311,7 +1318,7 @@ Run Step 1's test. Expected: PASS.
 - [ ] **Step 5: Class detail components.**
   - `donation-summary.tsx` (server), props `{ roomCost: number; vatPercent: number; currency: Currency }`.
   - It renders a `py-6` section with `<h2 className="type-subtitle mb-3">Pricing</h2>`, `<p className="type-body">By donation</p>`, and a caption.
-  - With `vatPercent === 0` the caption reads `Room cost {formatMoney(roomCost)}: your break-even.`. With `vatPercent > 0` it reads `Room cost {formatMoney(roomCost)}: your break-even is {formatMoney(withVat(roomCost, vatThousandths(vatPercent)))} in donations, VAT included.` This is spec defect 9, so the plan reviewer confirms the wording.
+  - With `vatPercent === 0` the caption reads `Room cost {formatMoney(roomCost)}: your break-even.`. With `vatPercent > 0` it reads `Room cost {formatMoney(roomCost)}: your break-even is {formatMoney(withVat(roomCost, vatThousandths(vatPercent)))} in donations, VAT included.` (owner-approved, spec §7).
   - `donations-received-card.tsx` (`'use client'`), props `{ classId: string; donationTotal: number | null; vatPercent: number; currency: Currency }`:
     - a sand-soft card titled `Donations received`;
     - with a total: the figure in `type-number`, then `incl. {formatMoneyCents(includedVatCents(cents, vatThousandths(vatPercent)), currency)} VAT` when `vatPercent > 0`, then `Edit` and `Clear` text buttons;
@@ -1532,6 +1539,7 @@ git commit -m "feat(#912): reporting counts donation classes on their own line, 
 - Modify: `src/services/waitlist.ts` (promotion `cancelTerms`, claim body)
 - Modify: `src/services/walk-ins.ts` (`WalkInNotice`, body)
 - Modify: `src/lib/email-templates.ts` (`TEACHER_INTROS.payment_request`)
+- Modify: `src/services/student-archive-copy.ts` (`unbilledRefusal`) and whichever test asserts its old wording
 - Modify: `src/services/gdpr.ts`, `src/services/gdpr.test.ts`
 - Test: `tests/integration/registrations-api.test.ts`, `src/services/waitlist.test.ts`, `src/services/walk-ins.test.ts` (the tiered walk-in sentence is also asserted in `src/services/email-fallback.consent.test.ts`, which stays unchanged)
 
@@ -1598,7 +1606,8 @@ Expected: FAIL (props absent, strings differ, export keys missing).
     - `cancelTerms`'s second arm reads `You cancelled this class after the deadline before.` for donation.
     - The claim body for donation ends at `…in ${classType}.` with no charge clause.
     - Both reads already `include` the class's columns.
-  - `email-templates.ts`: `TEACHER_INTROS.payment_request` becomes `'One of your classes is complete.'` This is spec defect 7. The type is the teacher's completion notice for both modes, and the current wording names pricing. Flag it in the PR body as a tiered-email copy change.
+  - `email-templates.ts`: `TEACHER_INTROS.payment_request` becomes `'One of your classes is complete.'` Owner-approved (spec §6). The type is the teacher's completion notice for both modes, and the current wording names pricing. Name it in the PR body as a tiered-email copy change.
+  - `student-archive-copy.ts`: `unbilledRefusal` counts donation bookings too, so its wording becomes mode-neutral — `This student is booked on ${n} ${n === 1 ? 'class' : 'classes'} that ${n === 1 ? "hasn't" : "haven't"} finished yet. Remove them from ${n === 1 ? 'it' : 'those classes'}, or archive once ${n === 1 ? "it's" : "they're"} completed.` The code `STUDENT_HAS_UNBILLED_CLASSES` is unchanged. Update the test that asserts the old wording (`grep -rn "been billed yet" src tests`). Owner-approved (spec §6).
   - `gdpr.ts`:
     - Teacher `classes` map gains `pricingMode: c.pricingMode, donationTotal: c.donationTotal`.
     - Student `bookings` map gains `donationInvitedAt: r.donationInvitedAt, donationPromptHiddenAt: r.donationPromptHiddenAt`.
@@ -1611,7 +1620,7 @@ Expected: PASS. Then grep that no tiered string moved: `git diff -U0 -- src | gr
 - [ ] **Step 5: Commit.**
 
 ```bash
-git add src/components/booking/booking-flow.tsx src/components/booking/booking-flow.test.tsx "src/app/(public)/[slug]/book/[classId]/page.tsx" src/components/student/cancel-booking-button.tsx src/components/student/cancel-booking-button.test.tsx "src/app/(student)/bookings/page.tsx" src/lib/charge-note.ts src/lib/charge-note.test.ts "src/app/api/registrations/[id]/route.ts" src/app/api/registrations/route.ts src/services/waitlist.ts src/services/walk-ins.ts src/lib/email-templates.ts src/services/gdpr.ts src/services/gdpr.test.ts tests/integration/registrations-api.test.ts src/services/waitlist.test.ts src/services/walk-ins.test.ts
+git add src/components/booking/booking-flow.tsx src/components/booking/booking-flow.test.tsx "src/app/(public)/[slug]/book/[classId]/page.tsx" src/components/student/cancel-booking-button.tsx src/components/student/cancel-booking-button.test.tsx "src/app/(student)/bookings/page.tsx" src/lib/charge-note.ts src/lib/charge-note.test.ts "src/app/api/registrations/[id]/route.ts" src/app/api/registrations/route.ts src/services/waitlist.ts src/services/walk-ins.ts src/lib/email-templates.ts src/services/student-archive-copy.ts src/services/gdpr.ts src/services/gdpr.test.ts tests/integration/registrations-api.test.ts src/services/waitlist.test.ts src/services/walk-ins.test.ts
 git commit -m "feat(#912): donation copy at every charge site; GDPR exports carry the new fields"
 ```
 

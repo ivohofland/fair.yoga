@@ -159,8 +159,16 @@ transaction (which already holds the class lock):
      AND "donationInvitedAt" IS NULL
    RETURNING id
    ```
-4. After commit, send one `donation_invitation` per returned id — exactly the
-   rows stamped, never a re-read.
+4. In the same transaction, create one `donation_invitation` per returned id
+   — exactly the rows stamped, never a re-read. `completeClass` already creates
+   its notifications inside its transaction (`createBulkNotifications(tx, …)`),
+   so the stamp and the inbox row commit together: a booking can never be
+   stamped and not told.
+
+**Erasure completes, but invites nobody.** A teacher's account erasure finishes
+their in-flight classes early (`CompletionTiming`'s `finishedEarly`). A donation
+class completed that way stamps and sends nothing: the invitation would ask
+students to give to an erased teacher.
 
 `no_show`, `late_cancel` and `cancelled` are not invited. Walk-ins are invited
 like anyone else. The auto-completion sweep goes through the same function.
@@ -178,7 +186,13 @@ succeeds with `attended`, a second short transaction:
 2. Conditional claim:
    `UPDATE … SET "donationInvitedAt" = now() WHERE id = $1 AND status = 'attended'
    AND "donationInvitedAt" IS NULL` and the class is `completed`, `donation`, not cancelled.
-3. One row → send the invitation after commit.
+3. One row → create the invitation in the same transaction.
+
+**A retry after a failed claim.** If the claim's transaction fails (the class
+lock's bound, a 503) after the `attended` write committed, the teacher's retry
+finds the status already `attended`. The route runs the claim on that path too,
+and answers *applied* when it stamps — inviting is a change, so the answer is
+not `respondUnchanged`.
 
 **Why this closes the race with completion.** The status write commits before
 the claim takes the lock. If `completeClass` holds the lock, the claim waits;
@@ -260,9 +274,14 @@ only (403 otherwise); a booking that was never invited → 409
 
 `recordDonationTotal(teacherId, classId, amount: Decimal | null)` in
 `src/services/`, exposed as `PUT /api/classes/[id]/donation-total` with
-`{ amount: string | null }` (money schema, ≥ 0).
+`{ amount: number | null }` — the codebase's money convention (`moneyField`,
+`z.number()`), ≥ 0.
 
-Order, per *Error responses*: ownership (404 for another teacher's class) →
+Order, per *Error responses*: a missing class → 404; another teacher's class →
+403 `Not your class`, as the sibling class routes answer (a class id is public in
+every booking link, so a 404 would hide nothing; the student give page, by
+contrast, stays a 404 that names nothing, because there the *reason* is the
+private fact) →
 `CLASS_CANCELLED` → `DONATION_CLASS_REQUIRED` (409, a tiered class) →
 `CLASS_NOT_COMPLETED` (409) → same value → `respondUnchanged` → write. `null`
 clears back to "not recorded". This is the only post-completion write to a
@@ -312,7 +331,10 @@ Each site switches on `pricingMode`; tiered copy is unchanged.
 | `waitlist.ts` — promotion "…stays charged if you cancel again" | Clause omitted |
 | `waitlist.ts` — final-hour claim "…charged even if you can't make it" | Clause omitted |
 | `walk-ins.ts` — *"Your price is calculated after class."* | *"This class is by donation."* (`walk_in_added` stays essential: it is the booking confirmation) |
-| `charge-note.ts` | Not reached: no pay page for donation classes |
+| `charge-note.ts` — late-cancel note on an upcoming booking (`bookings/page.tsx`) | *"Cancelled after the deadline."* (the pay-page reads are unreachable: no `Payment`) |
+| `api/registrations/route.ts` — booking confirmation *"The final price settles after class."* | Omitted |
+| `email-templates.ts` — teacher intro *"A class has been priced."* | *"One of your classes is complete."* — **for both modes** (the tiered email changes one line) |
+| `student-archive-copy.ts` — *"…haven't been billed yet."* | *"…haven't finished yet."* — for both modes; the code is unchanged |
 | `payment-request-copy.ts` | Not reached: no `Payment` |
 | `complete-class-button.tsx` — "Payment requests go to N students now" | *"{n} students will be invited to give."* |
 | class detail — "Payment requests go out automatically at …" | *"Invitations to give go out at …"* |
@@ -329,13 +351,21 @@ No copy says or implies a donation is VAT-free. No surface suggests an amount.
   VAT, min/max students stay. Locked when booked, shown with the existing lock
   treatment.
 - **Class detail, before completion.** `PricingPreview` → a *"By donation"* line
-  and *"Room cost {€}: your break-even."*
+  and, at 0% VAT, *"Room cost {€}: your break-even."*; above 0%, *"Room cost
+  {€}: your break-even is {room × (1 + VAT)} in donations, VAT included."* —
+  what has to come in for the room to be covered.
 - **Class detail, completed.** No `PricingBreakdown`, no `PaymentChecklist`. A
   **Donations received** card: the amount (with *"incl. {€} VAT"* when
   `vatPercent > 0`), or *"Not recorded yet"* with **Record**; editable and
   clearable. This is the only prompt to record — nothing in the inbox or the
   schedule.
 - **Schedule card, payments overview** — already empty with no `Payment` rows.
+- **Two readers that assume a completed class has a payment snapshot** learn the
+  mode: `resolvePaymentBreakdown` would report `snapshot_missing` (and `/bookings`
+  log `PAYMENT_SNAPSHOT_MISSING`) for every past donation row, and
+  `reportMissingPayment` would log `CHARGED_REGISTRATION_WITHOUT_PAYMENT` when a
+  stale pay link is opened. Neither is a defect for a donation class; both stay
+  silent for one.
 - **GDPR.** Teacher export: `pricingMode`, `donationTotal` per class. Student
   export: their own `donationInvitedAt`, `donationPromptHiddenAt`. No teacher
   surface or export reads either `Registration` timestamp.
