@@ -1323,6 +1323,23 @@ describe('generateClassInstances (DB)', () => {
       await prisma.classTemplate.update({ where: { id: onlineTemplateId }, data: { videoUrl: LINK } });
     });
 
+    it("a link edit through updateClassTemplate leaves already-generated classes' links as they are", async () => {
+      expect((await generateInstancesForTemplate(prisma, await readOnlineTemplate(), from)).created).toBe(4);
+      onTestFinished(async () => {
+        await prisma.classTemplate.update({ where: { id: onlineTemplateId }, data: { videoUrl: LINK } });
+      });
+
+      const edited = await updateClassTemplate(prisma, onlineTemplateId, teacherId, {
+        videoUrl: 'https://meet.jit.si/new-room',
+      });
+      expect(edited.ok).toBe(true);
+      expect((await readOnlineTemplate()).videoUrl).toBe('https://meet.jit.si/new-room');
+
+      const after = await generatedOnline();
+      expect(after).toHaveLength(4);
+      expect(after.every((c) => c.videoUrl === LINK)).toBe(true);
+    });
+
     it('an in-person template still stamps in_person with no link', async () => {
       expect((await generateInstancesForTemplate(prisma, await freshTemplate(), from)).created).toBe(4);
       const generated = await prisma.class.findMany({

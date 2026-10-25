@@ -494,12 +494,59 @@ describe('createClassTemplateSchema', () => {
       'minRate cannot exceed targetRate',
     ]);
   });
+
+  describe('online (#911)', () => {
+    const online = {
+      format: 'online',
+      classType: 'Zoom flow',
+      dayOfWeek: 1,
+      startTime: '09:00',
+      durationMinutes: 60,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 2,
+      maxStudents: 8,
+    };
+
+    it('takes no room and no room cost, and normalises the link', () => {
+      const result = createClassTemplateSchema.safeParse({ ...online, videoUrl: ' https://meet.jit.si/Weekly ' });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data).toMatchObject({ format: 'online', videoUrl: 'https://meet.jit.si/Weekly' });
+    });
+
+    it('refuses a room, a room cost above 0, and a link that is not https', () => {
+      expect(createClassTemplateSchema.safeParse({ ...online, teacherRoomId: '4f7c2a10-1111-4222-8333-444455556666' }).success).toBe(false);
+      expect(createClassTemplateSchema.safeParse({ ...online, roomCost: 5 }).success).toBe(false);
+      expect(createClassTemplateSchema.safeParse({ ...online, videoUrl: 'http://meet.jit.si/x' }).success).toBe(false);
+    });
+
+    it('refuses a link on an in-person body', () => {
+      const { format: _format, ...rest } = online;
+      void _format;
+      const result = createClassTemplateSchema.safeParse({
+        ...rest,
+        teacherRoomId: '4f7c2a10-1111-4222-8333-444455556666',
+        roomCost: 20,
+        videoUrl: 'https://meet.jit.si/x',
+      });
+      expect(result.success).toBe(false);
+    });
+  });
 });
 
 describe('updateClassTemplateSchema', () => {
   it('accepts a partial inversion — the rule is checked on the merged row in the service (#221)', () => {
     expect(updateClassTemplateSchema.safeParse({ minRate: 30, targetRate: 20 }).success).toBe(true);
     expect(updateClassTemplateSchema.safeParse({ minStudents: 8, maxStudents: 4 }).success).toBe(true);
+  });
+
+  it('accepts a format switch with no room, and leaves the shape to the service (#911)', () => {
+    expect(updateClassTemplateSchema.safeParse({ format: 'online', teacherRoomId: null, roomCost: 0 }).success).toBe(true);
+    // Contradicts its format, but the format may be the stored one: the merged row decides.
+    expect(updateClassTemplateSchema.safeParse({ videoUrl: 'https://meet.jit.si/x' }).success).toBe(true);
+    expect(updateClassTemplateSchema.safeParse({ videoUrl: 'http://meet.jit.si/x' }).success).toBe(false);
+    expect(updateClassTemplateSchema.safeParse({ format: 'hybrid' }).success).toBe(false);
   });
 
   // Mirrors the updateClassSchema key-set test. Less load-bearing here —
@@ -518,6 +565,7 @@ describe('updateClassTemplateSchema', () => {
       'dayOfWeek',
       'description',
       'durationMinutes',
+      'format',
       'isPrivate',
       'maxStudents',
       'minRate',
@@ -527,6 +575,7 @@ describe('updateClassTemplateSchema', () => {
       'targetRate',
       'teacherRoomId',
       'vatPercent',
+      'videoUrl',
     ]);
   });
 });

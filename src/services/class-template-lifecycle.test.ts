@@ -334,14 +334,17 @@ describe('updateClassTemplate (DB)', () => {
     // here would make this case fail on every unrelated schema change.
     //
     // Every key beside `ok` and `template` is a PREDICTION about the sweep,
-    // not a report of work this call did, and the distinction is exactly what
-    // this assertion is here to keep. A key that counted rows this call
-    // touched would be the propagation coming back. The list is re-derived
-    // from the arm's own declaration (`UpdateRuleResult`), never incremented.
+    // or (`linkChangedWithScheduledClasses`) a fact about classes this call
+    // left alone — never a report of work this call did, and the distinction
+    // is exactly what this assertion is here to keep. A key that counted rows
+    // this call touched would be the propagation coming back. The list is
+    // re-derived from the arm's own declaration (`UpdateClassTemplateResult`),
+    // never incremented.
     expect(Object.keys(result).sort()).toEqual([
       'firstEffective',
       'generationState',
       'lateFirstClass',
+      'linkChangedWithScheduledClasses',
       'ok',
       'template',
     ]);
@@ -1386,9 +1389,9 @@ describe('updateClassTemplate economics (DB) (#221)', () => {
   });
 
   /**
-   * F2 (#221 review fold). `CLASS_FAMILY.updateChild`'s
-   * `ECONOMIC_FIELDS.some(…)` gate is what stops a rule-only edit (day, time,
-   * classType) from reading the stored economics it does not need — deleting
+   * F2 (#221 review fold). `writeClassTemplateChild`'s gate on the economic
+   * and format-shape fields is what stops a rule-only edit (day, time,
+   * classType) from reading the stored row it does not need — deleting
    * the condition reddens nothing else in this file, since every other test
    * here sends an economic field. Counted through a `prisma.$extends` query
    * hook on `classTemplate.findUniqueOrThrow`, the shape the sibling blocks

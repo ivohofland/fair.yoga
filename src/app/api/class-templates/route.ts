@@ -89,9 +89,12 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  // Verify teacherRoomId belongs to this teacher
-  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
-  if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
+  // Verify teacherRoomId belongs to this teacher. An online template has no
+  // room, so neither this check nor door 4 below has anything to read.
+  const teacherRoomId = body.format === 'in_person' ? body.teacherRoomId : null;
+  const teacherRoom =
+    teacherRoomId === null ? null : await prisma.teacherRoom.findUnique({ where: { id: teacherRoomId } });
+  if (teacherRoomId !== null && (!teacherRoom || teacherRoom.teacherId !== session.teacherId)) {
     return roomNotOnListResponse();
   }
 
@@ -100,9 +103,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   // `isActive: true` (`ScheduleRule.isActive`, `prisma/schema.prisma`) and
   // starts generating immediately,
   // so creation is itself the commitment and there is no later door to catch.
-  if (teacherRoom.isArchived) {
+  if (teacherRoom?.isArchived) {
     log.info(
-      { teacherRoomId: body.teacherRoomId, teacherId: session.teacherId },
+      { teacherRoomId, teacherId: session.teacherId },
       'template create refused: the room is archived',
     );
     return roomArchivedResponse();
@@ -118,8 +121,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     result = await createClassTemplate(prisma, session.teacherId, body);
   } catch (e) {
     if (
-      isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
-      isRestrictViolationOn(e, [CLASS_TEMPLATE_ROOM_FK])
+      teacherRoomId !== null &&
+      (isCheckViolationOn(e, 'ClassTemplate_live_needs_open_room') ||
+        isRestrictViolationOn(e, [CLASS_TEMPLATE_ROOM_FK]))
     ) {
       // WHICH WAY THE ROOM MOVED, because the constraint name does not say.
       // The service ASSERTS `roomArchived: false`, so the room mirror's
@@ -131,32 +135,32 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       let room: { isArchived: boolean } | null;
       try {
         room = await prisma.teacherRoom.findUnique({
-          where: { id: body.teacherRoomId },
+          where: { id: teacherRoomId },
           select: { isArchived: true },
         });
       } catch (probeErr) {
         log.warn(
-          { err: e, probeErr, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          { err: e, probeErr, teacherId: session.teacherId, teacherRoomId },
           'template create hit the room constraint, but the diagnostic re-read failed',
         );
         throw e;
       }
       if (room === null) {
         log.warn(
-          { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          { err: e, teacherId: session.teacherId, teacherRoomId },
           'template create target room vanished',
         );
         return roomNotOnListResponse();
       }
       if (room.isArchived) {
         log.warn(
-          { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+          { err: e, teacherId: session.teacherId, teacherRoomId },
           'template create lost the room-archive race',
         );
         return roomArchivedResponse();
       }
       log.warn(
-        { err: e, teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+        { err: e, teacherId: session.teacherId, teacherRoomId },
         'template create lost a room-state race the other way; the room is open again',
       );
       return templateCreateBusyResponse();

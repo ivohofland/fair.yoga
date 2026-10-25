@@ -147,6 +147,13 @@ export type RoomDescriptor = Readonly<{
    * `CLASS_TEMPLATE_ROOM_FK` (#231).
    */
   foreignKeyConstraint: string;
+  /**
+   * Whether `teacherRoomId: null`, no room, may reach `updateChild`. It is
+   * not validated, since there is no room to read, and the family's
+   * `updateChild` decides whether the row it would leave may hold none. When
+   * false, a null is refused as `invalid_room` like any other non-string.
+   */
+  allowsNoRoom: boolean;
 }>;
 
 /**
@@ -1716,9 +1723,13 @@ export async function updateRule<TChild>(
   // client validation failure (400) (#231). `teacherRoomId` is narrowed once
   // here; the FK catch below re-reads through the same narrowed value, so the
   // two sites cannot diverge (#587).
+  // A null under `allowsNoRoom` is no room: nothing to validate, `roomResult`
+  // stays null, and `teacherRoomId` stays undefined so the FK catch below
+  // never re-reads a room that was not asked for.
   const teacherRoomId = typeof data.teacherRoomId === 'string' ? data.teacherRoomId : undefined;
   let roomResult: { isArchived: boolean } | null = null;
-  if (family.room !== null && data.teacherRoomId !== undefined) {
+  const noRoom = data.teacherRoomId === null && family.room?.allowsNoRoom === true;
+  if (family.room !== null && data.teacherRoomId !== undefined && !noRoom) {
     if (teacherRoomId === undefined) {
       return { ok: false, reason: 'invalid_room' };
     }

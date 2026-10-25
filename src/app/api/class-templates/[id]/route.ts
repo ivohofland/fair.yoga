@@ -15,6 +15,7 @@ import { roomNotOnListResponse } from '@/lib/room-refusal';
 import { log } from '@/lib/log';
 import { updateClassTemplateSchema, templateStateQuerySchema } from '@/lib/schemas';
 import { formatEconomicsViolations } from '@/lib/class-economics';
+import { formatShapeMessage } from '@/lib/class-location';
 import { SHARED_ROOM_SELECT } from '@/lib/room-projection';
 import {
   updateClassTemplate,
@@ -143,6 +144,9 @@ export const PUT = withErrorHandler(async (
   // restating it here would mean importing a type that module doesn't export,
   // to duplicate a check that already has an owner.
   const data: ClassTemplateUpdateData = parsed.data;
+  // The room this edit moves the template onto. `null` (no room, for an online
+  // template) is not a move onto a room: there is nothing to probe below.
+  const movingTo = typeof data.teacherRoomId === 'string' ? data.teacherRoomId : undefined;
 
   // Door 5 of the room archive lifecycle (issue 76), as a PRE-CHECK rather
   // than enforcement (issue 272). What actually refuses an ACTIVE template
@@ -162,7 +166,7 @@ export const PUT = withErrorHandler(async (
   // room is not a move. A live template cannot sit on an archived room
   // (`ClassTemplate_live_needs_open_room`), so the probe would not refuse that
   // no-op today either; the gate keeps this refusal about moves regardless.
-  if (data.teacherRoomId !== undefined) {
+  if (movingTo !== undefined) {
     const moving = await prisma.classTemplate.findUnique({
       where: { id },
       select: {
@@ -180,16 +184,16 @@ export const PUT = withErrorHandler(async (
     if (
       moving &&
       moving.scheduleRule.teacherId === session.teacherId &&
-      moving.teacherRoomId !== data.teacherRoomId
+      moving.teacherRoomId !== movingTo
     ) {
       const targetRoom = await prisma.teacherRoom.findUnique({
-        where: { id: data.teacherRoomId },
+        where: { id: movingTo },
         select: { isArchived: true, teacherId: true },
       });
       if (!targetRoom || targetRoom.teacherId !== session.teacherId) {
         if (!targetRoom) {
           log.warn(
-            { templateId: id, teacherId: session.teacherId, teacherRoomId: data.teacherRoomId },
+            { templateId: id, teacherId: session.teacherId, teacherRoomId: movingTo },
             'template move target room not found',
           );
         }
@@ -232,10 +236,10 @@ export const PUT = withErrorHandler(async (
       // above already established ownership, so only existence (gone → 400)
       // and `isArchived` (409 vs the open-again 503) remain to distinguish.
       let room: { isArchived: boolean } | null = null;
-      if (data.teacherRoomId !== undefined) {
+      if (movingTo !== undefined) {
         try {
           room = await prisma.teacherRoom.findUnique({
-            where: { id: data.teacherRoomId },
+            where: { id: movingTo },
             select: { isArchived: true },
           });
         } catch (probeErr) {
@@ -245,20 +249,20 @@ export const PUT = withErrorHandler(async (
               probeErr,
               templateId: id,
               teacherId: session.teacherId,
-              teacherRoomId: data.teacherRoomId,
+              teacherRoomId: movingTo,
             },
             'room constraint violated, but diagnostic probe failed',
           );
           throw e;
         }
       }
-      if (data.teacherRoomId !== undefined && room === null) {
+      if (movingTo !== undefined && room === null) {
         log.warn(
           {
             err: e,
             templateId: id,
             teacherId: session.teacherId,
-            teacherRoomId: data.teacherRoomId,
+            teacherRoomId: movingTo,
           },
           'template move target room vanished',
         );
@@ -270,7 +274,7 @@ export const PUT = withErrorHandler(async (
             err: e,
             templateId: id,
             teacherId: session.teacherId,
-            ...(data.teacherRoomId !== undefined ? { teacherRoomId: data.teacherRoomId } : {}),
+            ...(movingTo !== undefined ? { teacherRoomId: movingTo } : {}),
           },
           'template move lost the room-archive race',
         );
@@ -281,7 +285,7 @@ export const PUT = withErrorHandler(async (
           err: e,
           templateId: id,
           teacherId: session.teacherId,
-          teacherRoomId: data.teacherRoomId,
+          teacherRoomId: movingTo,
         },
         'template move lost a room-state race the other way; the room is open again',
       );
@@ -310,6 +314,7 @@ export const PUT = withErrorHandler(async (
       firstEffective: result.firstEffective ? result.firstEffective.toISOString() : null,
       generationState: result.generationState,
       lateFirstClass: result.lateFirstClass,
+      linkChangedWithScheduledClasses: result.linkChangedWithScheduledClasses,
     });
   }
 
@@ -340,6 +345,13 @@ export const PUT = withErrorHandler(async (
   // schema's refusal of the same rule.
   if (result.reason === 'invalid_economics') {
     return respondError(formatEconomicsViolations(result.violations), 400);
+  }
+  // The merged row contradicts its format (#911): a format switch that left
+  // the room, the room cost or the link behind. The same field-error shape as
+  // the economics refusal above, and as the class edit's refusals of a link
+  // on a room class and a room cost on an online one.
+  if (result.reason === 'invalid_format') {
+    return respondError(formatShapeMessage(result.violations), 400);
   }
 
   // Exhaustiveness: a new UpdateClassTemplateResult variant becomes a compile

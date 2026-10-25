@@ -8,6 +8,7 @@ import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations, type ClassEconomics } from '@/lib/class-economics';
 import { vatPercentViolation } from '@/lib/vat';
 import { parseHttpsLink, VIDEO_LINK_MESSAGES } from '@/lib/payment-link';
+import { FORMAT_SHAPE_MESSAGES } from '@/lib/class-location';
 import { RESERVED_SLUGS } from '@/lib/reserved-slugs';
 import {
   singleLineText,
@@ -653,7 +654,7 @@ export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
       format: z.literal('in_person'),
       teacherRoomId: z.string().uuid(),
       roomCost: moneyField(),
-      videoUrl: z.null('Only an online class has a video link.').optional(),
+      videoUrl: z.null(FORMAT_SHAPE_MESSAGES.videoUrlInPerson).optional(),
       ...shared,
     })
     .extend(schedule)
@@ -665,8 +666,8 @@ export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
   const online = z
     .object({
       format: z.literal('online'),
-      teacherRoomId: z.undefined('An online class has no room.').optional(),
-      roomCost: z.literal(0, 'An online class has no room cost.').optional(),
+      teacherRoomId: z.undefined(FORMAT_SHAPE_MESSAGES.roomOnline).optional(),
+      roomCost: z.literal(0, FORMAT_SHAPE_MESSAGES.roomCostOnline).optional(),
       videoUrl: videoUrlField(),
       ...shared,
     })
@@ -707,7 +708,8 @@ export const updateClassSchema = z.object({
   maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE).optional(),
   vatPercent: vatPercentField().optional(),
 }).strict();
-// Cross-field economics are checked on the merged row by the update service (economicsViolations).
+// Cross-field economics and the format shape are checked on the merged row by
+// the update service (economicsViolations, formatShapeViolations).
 
 // 'completed' is deliberately absent: completion must go through
 // POST /api/classes/[id]/complete so the pricing engine runs and
@@ -727,33 +729,18 @@ export const transitionClassSchema = z.object({
 // CLASS TEMPLATES
 // ============================================================================
 
-export const createClassTemplateSchema = z.object({
-  teacherRoomId: z.string().uuid(),
-  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
-  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
-  dayOfWeek: z.number().int().min(0).max(6),
-  startTime: timeHHmm,
-  durationMinutes: durationMinutesField(),
-  roomCost: moneyField(),
-  minRate: signedMoneyField(),
-  targetRate: signedMoneyField(),
-  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
-  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
-  vatPercent: vatPercentField().optional(),
-  cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
-  autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-  isPrivate: z.boolean().optional(),
-})
-  .superRefine((d, ctx) => {
-    for (const v of economicsViolations(d)) {
-      ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
-    }
-  });
+export const createClassTemplateSchema = classFormatUnion({ dayOfWeek: z.number().int().min(0).max(6) });
 
 export const updateClassTemplateSchema = z.object({
   classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
   description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
-  teacherRoomId: z.string().uuid().optional(),
+  // Editable, unlike a class's: a template's format reaches only the classes
+  // generated after the edit. The room, the room cost and the link must agree with the format
+  // the row ends up with; the update service checks that on the merged row.
+  format: z.enum(['in_person', 'online']).optional(),
+  // null: no room, for an online template.
+  teacherRoomId: z.string().uuid().nullable().optional(),
+  videoUrl: videoUrlField(),
   dayOfWeek: z.number().int().min(0).max(6).optional(),
   startTime: timeHHmm.optional(),
   durationMinutes: durationMinutesField().optional(),
@@ -767,7 +754,8 @@ export const updateClassTemplateSchema = z.object({
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
   isPrivate: z.boolean().optional(),
 }).strict();
-// Cross-field economics are checked on the merged row by the update service (economicsViolations).
+// Cross-field economics and the format shape are checked on the merged row by
+// the update service (economicsViolations, formatShapeViolations).
 
 // ============================================================================
 // STUDIO CLASS TEMPLATES

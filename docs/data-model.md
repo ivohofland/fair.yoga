@@ -649,7 +649,7 @@ calendar-shaped, through this row.
 |---|---|---|
 | **id** (PK) | uuid | |
 | *schedule_rule_id* (FK) | → ScheduleRule, unique | The calendar identity — teacher, day/time, active/archived state — moved to the rule (#298); this row reaches Teacher through it, not directly |
-| format | enum `ClassFormat`: in_person, online; default in_person | Stamped onto each generated Class (#911). `ClassTemplate_format_shape` ties it to the two columns below and to `room_cost` — see Design Notes |
+| format | enum `ClassFormat`: in_person, online; default in_person | Stamped onto each generated Class (#911). `ClassTemplate_format_shape` ties it to the two columns below and to `room_cost` — see Design Notes. Editable, unlike a Class's: a switch reaches only classes generated afterwards, and `updateClassTemplate` checks the merged row against the shape (`formatShapeViolations`, `src/lib/class-location.ts`) before the write, answering a 400 field error rather than the CHECK's 500 |
 | *teacher_room_id* (FK) | → TeacherRoom, nullable | Set exactly when `format = in_person` |
 | video_url | text, nullable | An online template's video link, stamped onto each generated Class; null for `in_person`. Editing it changes no existing class (#194, #911) |
 | description | text, nullable | |

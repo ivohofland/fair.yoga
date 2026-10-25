@@ -17,6 +17,7 @@ import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { frozenClassMessage } from '@/lib/transition-refusal';
 import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
 import { log } from '@/lib/log';
+import { FORMAT_SHAPE_MESSAGES } from '@/lib/class-location';
 import { CLASS_GONE } from './shared';
 
 /** The 404 for a class that is not there, whichever read in this file found it gone. */
@@ -254,11 +255,11 @@ export const PUT = withErrorHandler(async (
   // other state is in conflict with it. The same rule refuses the body on
   // create, as a schema issue on `videoUrl`.
   if (result.reason === 'video_url_on_room_class') {
-    return respondError('videoUrl: Only an online class has a video link.', 400);
+    return respondError(`videoUrl: ${FORMAT_SHAPE_MESSAGES.videoUrlInPerson}`, 400);
   }
   // The room-cost twin of the refusal above, for the same reason.
   if (result.reason === 'room_cost_on_online_class') {
-    return respondError('roomCost: An online class has no room cost.', 400);
+    return respondError(`roomCost: ${FORMAT_SHAPE_MESSAGES.roomCostOnline}`, 400);
   }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.
