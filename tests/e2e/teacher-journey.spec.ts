@@ -255,7 +255,7 @@ test.describe('Teacher journey', () => {
     await expect(page.getByText('Step 1 of 4')).toBeVisible();
 
     // Basics
-    await page.getByLabel('Room').selectOption(teacherRoom.id);
+    await page.getByLabel('Room', { exact: true }).selectOption(teacherRoom.id);
     await page.getByLabel('Class type').fill('Journey Flow');
     await page.getByLabel('Date').fill('2099-06-01');
     await page.getByLabel('Start time').fill('09:00');
