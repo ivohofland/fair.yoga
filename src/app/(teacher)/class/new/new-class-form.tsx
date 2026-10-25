@@ -71,7 +71,12 @@ interface FormData {
   isPrivate: boolean;
 }
 
-type CreateClassWire = z.infer<typeof createClassSchema>;
+/**
+ * The in-person arm without its `format` key, which this form never sends (a
+ * body without one is in person) and `videoUrl`, which only the online arm
+ * carries.
+ */
+type CreateClassWire = Omit<Extract<z.infer<typeof createClassSchema>, { format: 'in_person' }>, 'format' | 'videoUrl'>;
 
 /**
  * #136. `FormData` is the list; the body is `form` spread with `description`

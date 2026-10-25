@@ -2213,3 +2213,193 @@ describe('POST /api/classes', () => {
     });
   });
 });
+
+describe('online classes on the one-off create and edit API (#911)', () => {
+  const headers = (token: string) => ({ 'Content-Type': 'application/json', ...cookie(token) });
+  const post = (body: unknown) =>
+    fetch(`${BASE_URL}/api/classes`, { method: 'POST', headers: headers(ownerToken), body: JSON.stringify(body) });
+  const put = (id: string, body: Record<string, unknown>) =>
+    fetch(`${BASE_URL}/api/classes/${id}`, { method: 'PUT', headers: headers(ownerToken), body: JSON.stringify(body) });
+
+  const LINK = 'https://meet.example.com/room-1';
+
+  const onlineBody = (date: string) => ({
+    format: 'online' as const,
+    classType: 'Online Create Route',
+    date,
+    startTime: '10:00',
+    durationMinutes: 60,
+    minRate: 10,
+    targetRate: 20,
+    minStudents: 1,
+    maxStudents: 8,
+  });
+  const inPersonBody = (date: string) => ({
+    teacherRoomId,
+    classType: 'Online Create Route',
+    date,
+    startTime: '10:00',
+    durationMinutes: 60,
+    roomCost: 15,
+    minRate: 10,
+    targetRate: 20,
+    minStudents: 1,
+    maxStudents: 8,
+  });
+
+  /** Cleans a class a test created through the API. */
+  function cleanUpAfter(res: { id: string; calendarEntryId: string }): void {
+    onTestFinished(() => removeIsolatedClass(res));
+  }
+  async function created(res: Response): Promise<{ id: string; calendarEntryId: string }> {
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string; calendarEntryId: string } };
+    cleanUpAfter(data);
+    return data;
+  }
+
+  /** An online class of its own, written directly, for the PUT tests. */
+  async function onlineClass(
+    date: string,
+    status: ClassStatus,
+    extra: { videoUrl?: string | null; settingsLocked?: boolean } = {},
+  ) {
+    const cls = await createClassFixture(prisma, {
+      teacherId: ownerId,
+      teacherRoomId: null,
+      format: 'online',
+      videoUrl: extra.videoUrl ?? null,
+      classType: 'Online Edit Route',
+      date: new Date(date),
+      startTime: hhmmToTime('09:00'),
+      durationMinutes: 60,
+      roomCost: 0,
+      minRate: 15,
+      targetRate: 25,
+      minStudents: 1,
+      maxStudents: 4,
+      status,
+      settingsLocked: extra.settingsLocked ?? false,
+    });
+    onTestFinished(() => removeIsolatedClass(cls));
+    return cls;
+  }
+
+  describe('POST /api/classes', () => {
+    it('creates an online class with a link: no room, roomCost 0, link stored normalised', async () => {
+      const data = await created(await post({ ...onlineBody('2099-12-01'), videoUrl: ` ${LINK} ` }));
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(row.format).toBe('online');
+      expect(row.teacherRoomId).toBeNull();
+      expect(row.roomArchived).toBe(false);
+      expect(row.roomCost.toString()).toBe('0');
+      expect(row.videoUrl).toBe(LINK);
+    });
+
+    it('creates an online class without a link', async () => {
+      const data = await created(await post(onlineBody('2099-12-02')));
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(row.format).toBe('online');
+      expect(row.videoUrl).toBeNull();
+    });
+
+    it('accepts an explicit roomCost of 0 on an online class', async () => {
+      await created(await post({ ...onlineBody('2099-12-03'), roomCost: 0 }));
+    });
+
+    it('a body with no format key is an in-person class, as before', async () => {
+      const data = await created(await post(inPersonBody('2099-12-04')));
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: data.id } });
+      expect(row.format).toBe('in_person');
+      expect(row.teacherRoomId).toBe(teacherRoomId);
+      expect(row.videoUrl).toBeNull();
+      await prisma.calendarEntry.deleteMany({ where: { id: row.calendarEntryId } });
+    });
+
+    it('an online class with a teacherRoomId -> 400', async () => {
+      const res = await post({ ...onlineBody('2099-12-05'), teacherRoomId });
+      expect(res.status).toBe(400);
+    });
+
+    it('an online class with roomCost 15 -> 400', async () => {
+      const res = await post({ ...onlineBody('2099-12-06'), roomCost: 15 });
+      expect(res.status).toBe(400);
+    });
+
+    it('an in-person class with a videoUrl -> 400', async () => {
+      const res = await post({ ...inPersonBody('2099-12-07'), videoUrl: LINK });
+      expect(res.status).toBe(400);
+    });
+
+    it('an online class with an http:// link -> 400', async () => {
+      const res = await post({ ...onlineBody('2099-12-08'), videoUrl: 'http://meet.example.com/x' });
+      expect(res.status).toBe(400);
+    });
+
+    it('an unknown format -> 400', async () => {
+      const res = await post({ ...onlineBody('2099-12-09'), format: 'hybrid' });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('PUT /api/classes/[id]', () => {
+    it('sets videoUrl on a booked online class: 200, stored normalised, not locked', async () => {
+      const cls = await onlineClass('2099-12-10', 'open', { settingsLocked: true });
+      const res = await put(cls.id, { videoUrl: LINK });
+      expect(res.status).toBe(200);
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(row.videoUrl).toBe(LINK);
+    });
+
+    it('sets videoUrl on an in_progress online class', async () => {
+      const cls = await onlineClass('2099-12-11', 'in_progress');
+      const res = await put(cls.id, { videoUrl: LINK });
+      expect(res.status).toBe(200);
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(row.videoUrl).toBe(LINK);
+    });
+
+    it('videoUrl: null clears the link', async () => {
+      const cls = await onlineClass('2099-12-12', 'open', { videoUrl: LINK });
+      const res = await put(cls.id, { videoUrl: null });
+      expect(res.status).toBe(200);
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(row.videoUrl).toBeNull();
+    });
+
+    it('an http:// link -> 400 and nothing stored', async () => {
+      const cls = await onlineClass('2099-12-13', 'open');
+      const res = await put(cls.id, { videoUrl: 'http://meet.example.com/x' });
+      expect(res.status).toBe(400);
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(row.videoUrl).toBeNull();
+    });
+
+    it('a completed class refuses videoUrl with the terminal code', async () => {
+      const cls = await onlineClass('2099-12-14', 'completed');
+      await expectRefusal(await put(cls.id, { videoUrl: LINK }), 'CLASS_TERMINAL');
+    });
+
+    it('an in-person class refuses videoUrl with 400 and stores nothing', async () => {
+      const cls = await isolatedClass('Online Edit Route', '2099-12-15', 'open');
+      onTestFinished(() => removeIsolatedClass(cls));
+      const res = await put(cls.id, { videoUrl: LINK });
+      expect(res.status).toBe(400);
+      const row = await prisma.class.findUniqueOrThrow({ where: { id: cls.id } });
+      expect(row.videoUrl).toBeNull();
+    });
+
+    it('clearing videoUrl on an in-person class is allowed (nothing to refuse)', async () => {
+      const cls = await isolatedClass('Online Edit Route', '2099-12-16', 'open');
+      onTestFinished(() => removeIsolatedClass(cls));
+      const res = await put(cls.id, { videoUrl: null });
+      expect(res.status).toBe(200);
+    });
+
+    it('format and teacherRoomId are not editable: 400', async () => {
+      const cls = await onlineClass('2099-12-17', 'open');
+      expect((await put(cls.id, { format: 'in_person' })).status).toBe(400);
+      expect((await put(cls.id, { teacherRoomId })).status).toBe(400);
+    });
+  });
+});

@@ -51,7 +51,11 @@ export interface ClassEditInitial {
   isPrivate: boolean;
 }
 
-type UpdateClassWire = z.infer<typeof updateClassSchema>;
+/**
+ * `videoUrl` is the one schema field this form does not carry: it is never
+ * locked and is set on its own, so the pins below leave it out.
+ */
+type UpdateClassWire = Omit<z.infer<typeof updateClassSchema>, 'videoUrl'>;
 
 /** This form's own wording for each rule `economicsViolations` can report. */
 const ECONOMICS_COPY = {

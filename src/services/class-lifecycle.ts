@@ -1047,7 +1047,8 @@ type TeacherEditableClassField =
   | 'minStudents'
   | 'maxStudents'
   | 'vatPercent'
-  | 'isPrivate';
+  | 'isPrivate'
+  | 'videoUrl';
 
 /**
  * Compile-time pin (forward): every field `updateClassSchema` accepts must be
@@ -1299,7 +1300,12 @@ class UpdateClassRefusal extends Error {
  * cross-field rules (#221).
  */
 export type UpdateClassResult =
-  | { ok: true; cls: ClassWithEntry }
+  | {
+      ok: true;
+      cls: ClassWithEntry;
+      /** The link before this write, read under the lock; null when it held none. */
+      previousVideoUrl: string | null;
+    }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [LockedField, ...LockedField[]] }
   | { ok: false; reason: 'terminal'; state: TerminalClassState }
@@ -1319,7 +1325,9 @@ export type UpdateClassResult =
   | { ok: false; reason: 'frozen' }
   | { ok: false; reason: 'slot_conflict' }
   | { ok: false; reason: 'template_date_conflict' }
-  | { ok: false; reason: 'past_start' };
+  | { ok: false; reason: 'past_start' }
+  /** A link was sent for a class held in a room; only an online class has one. */
+  | { ok: false; reason: 'video_url_on_room_class' };
 
 /**
  * Apply a partial update to a class, enforcing two independent freezes, one
@@ -1460,6 +1468,13 @@ export async function updateClass(
   const frozenState = frozenStateOf(cls.status, entry.cancelledAt);
   if (frozenState !== null) {
     return { ok: false, reason: 'terminal', state: frozenState };
+  }
+
+  // The format is fixed at creation, so this needs no lock. After the
+  // terminal answer, which is the older and stronger reason. A null clears
+  // nothing on a class that cannot hold one, and is let through.
+  if (typeof data.videoUrl === 'string' && cls.format === 'in_person') {
+    return { ok: false, reason: 'video_url_on_room_class' };
   }
 
   // #249. A write may not newly place this class's start in the past.
@@ -1656,6 +1671,15 @@ export async function updateClass(
       // would deadlock against every other holder of this pair.
       await lockClassRow(tx, classId);
 
+      // The value a write of `videoUrl` replaces, read under the lock. A write
+      // that sends none leaves the link as it was, so the opening read stands.
+      let previousVideoUrl = cls.videoUrl;
+      if (data.videoUrl !== undefined) {
+        const before = await tx.class.findUnique({ where: { id: classId }, select: { videoUrl: true } });
+        if (!before) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
+        previousVideoUrl = before.videoUrl;
+      }
+
       // The `Class` CAS filter, built once: the pre-check below reads through
       // it and the `updateMany` writes through it, so the two cannot disagree
       // about which row is still writable. The cancel half of the freeze lives
@@ -1773,7 +1797,7 @@ export async function updateClass(
       // argument holding. Every other refusal in this transaction rolls back;
       // this one used to commit two writes and then report the row missing.
       if (!updated) throw new UpdateClassRefusal({ ok: false, reason: 'not_found' });
-      return { ok: true, cls: updated };
+      return { ok: true, cls: updated, previousVideoUrl };
     });
   } catch (err) {
     if (err instanceof UpdateClassRefusal) return err.result;
