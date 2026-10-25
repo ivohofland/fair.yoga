@@ -386,6 +386,8 @@ export async function exportTeacherData(db: PrismaClient, teacherId: string) {
         startTime: timeToHHmm(e.startTime),
         durationMinutes: e.durationMinutes,
         status: c.status,
+        format: c.format,
+        videoUrl: c.videoUrl,
         currency: c.currency,
         cancelledAt: e.cancelledAt,
         registrations: c._count.registrations,
@@ -1563,6 +1565,15 @@ export async function deleteTeacherAccount(
         }
       }
 
+      // #911. The video link is a teacher-typed URL, often naming them. These
+      // rows are the pre-lock's own, so the write takes no lock this
+      // transaction does not already hold; the teacher's other classes are
+      // cleared after commit by `clearErasedTeacherClassLinks`.
+      await tx.class.updateMany({
+        where: { id: { in: lockedIds }, videoUrl: { not: null } },
+        data: { videoUrl: null },
+      });
+
       // Cancel future studio entries (#280). Studio classes have no student
       // registrations or waitlists to notify, so a single bulk write suffices.
       // Uses `gt: today` matching `archiveOrUnarchiveStudioTemplate`'s boundary
@@ -1587,6 +1598,12 @@ export async function deleteTeacherAccount(
       await tx.scheduleRule.updateMany({
         where: { teacherId, kind: 'studio' },
         data: { isActive: false, isArchived: true },
+      });
+      // The templates' links go with the teacher (#911); these rows are held
+      // by the `FOR UPDATE OF ct` pre-lock above.
+      await tx.classTemplate.updateMany({
+        where: { scheduleRule: { teacherId }, videoUrl: { not: null } },
+        data: { videoUrl: null },
       });
       // `StudentPrivacy` BEFORE `TeacherStudent` — the same order
       // `deleteStudentAccount` above and `unlinkTeacher`
@@ -1752,6 +1769,9 @@ export async function deleteTeacherAccount(
     // archive/pause sites did even before a lock wait enters the picture.
     { timeout: 10_000 },
   ));
+  // Run on the already-erased answer too, so a repeated request finishes a
+  // clear that an earlier one committed the erasure without.
+  await clearErasedTeacherClassLinks(db, teacherId);
   if (committed === null) return { erased: false, reason: 'already-erased' };
   const { skipped: skippedClassIds, droppedGrant } = committed;
 
@@ -1879,4 +1899,34 @@ export async function deleteTeacherAccount(
     }
   }
   return { erased: true };
+}
+
+/**
+ * Clears the video link on every class of an erased teacher (#911): the link
+ * is a URL the teacher typed, often naming them, and a completed class
+ * outlives the erasure as its students' bookkeeping. Its own transaction,
+ * after the erasure commits: the erasure holds only its live classes, and a
+ * second ordered `Class` lock inside it could take a lower id after a higher
+ * one (`docs/lock-order.md`, "Ordering WITHIN `Class`"). Idempotent. A failure
+ * is logged, not thrown, because the erasure has already committed.
+ */
+async function clearErasedTeacherClassLinks(db: PrismaClient, teacherId: string): Promise<void> {
+  try {
+    const linked = await db.class.findFirst({
+      where: { videoUrl: { not: null }, calendarEntry: { teacherId } },
+      select: { id: true },
+    });
+    if (linked === null) return;
+    await db.$transaction(async (tx) => {
+      // VERDICT (#327): no `entries: true`. This transaction writes only
+      // `Class.videoUrl`, and its join reads the entry's `teacherId` alone.
+      const ids = await lockClassRowsOrdered(tx, {
+        join: CLASS_TO_ENTRY_JOIN,
+        where: Prisma.sql`e."teacherId" = ${teacherId} AND c."videoUrl" IS NOT NULL`,
+      });
+      if (ids.length > 0) await tx.class.updateMany({ where: { id: { in: ids } }, data: { videoUrl: null } });
+    });
+  } catch (err) {
+    log.error({ err, teacherId }, 'teacher erasure: the class video links were not cleared');
+  }
 }

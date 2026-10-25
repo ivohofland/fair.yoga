@@ -127,13 +127,13 @@ number to weigh against the erasure's flat `{ timeout: 20_000 }` budget.
 ## Ordering WITHIN `Class`
 
 The list above orders the *tables*. It says nothing about the order of two rows
-of the SAME table, and `Class` is the one table where that matters: **six**
+of the SAME table, and `Class` is the one table where that matters: **seven**
 sites lock more than one `Class` row inside a single transaction, and two of
 them taking the same pair in opposite sequences is an AB-BA cycle exactly like
 any cross-table one.
 
-Re-derived on 2026-10-14 by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
-helper's definition plus six callers — rather than incremented, because a
+Re-derived on 2026-10-25 by `grep -rn 'lockClassRowsOrdered(' src --include='*.ts' | grep -v '\.test\.ts' | grep -vE ':[0-9]+: *(//|\*)'` — the
+helper's definition plus seven callers — rather than incremented, because a
 count stays plausible while its membership moves. A test holds the other half
 (#464):
 `src/lib/db-locks-verdict-census.test.ts` requires every production call site
@@ -3736,7 +3736,17 @@ mentioning `.catch()` with no call site, which the post-commit diagnostic in
   loop: `StudentPrivacy`, `TeacherStudent`, `Invitation`
   (deleted, not anonymized — the teacher is soft-deleted, not scrubbed like
   a student's identity is). `StudentPrivacy` before `TeacherStudent`;
-  conformant.
+  conformant. The video links (#911) are cleared inside it only where the
+  rows are already held: `Class.videoUrl` on `lockedIds`, and
+  `ClassTemplate.videoUrl` under the `FOR UPDATE OF ct` pre-lock. The
+  teacher's other classes — completed, or cancelled earlier — are cleared
+  after commit by `clearErasedTeacherClassLinks` (`gdpr.ts`), in a
+  transaction of its own whose only lock is one ordered
+  `lockClassRowsOrdered`. Writing them inside the erasure would have been a
+  second ordered `Class` lock after the first, taking a lower id after a
+  higher one: a cycle with any ascending locker, such as
+  `deleteStudentAccount`'s pre-lock, that holds a completed class of this
+  teacher and waits on a live one.
 - **`transitionClass`** (`src/services/class-lifecycle.ts`) — `Class` via
   `lockClassRow`, then its CAS `class.updateMany` on the same row. The CAS
   alone would not do (#327): it carries a conjunct on `CalendarEntry`, and
