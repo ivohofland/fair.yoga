@@ -34,6 +34,7 @@ const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '(student)/account/privacy': 'none',
   '(student)/account/tier': 'none',
   '(student)/bookings': 'none',
+  '(student)/bookings/[classId]/give': 'none',
   '(student)/bookings/[classId]/pay': 'none',
   '(student)/updates': 'none',
   '(teacher)/class/[id]/edit': 'neutral',

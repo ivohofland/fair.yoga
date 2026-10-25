@@ -99,8 +99,9 @@ next tick. The cancel in `DELETE /api/registrations/[id]` is not on this list:
 
 and read each hit's transaction for a `lockClassRow`/`lockClassRowsOrdered`
 before it. Hits that write no `status` (`completeClass`'s price write,
-`class-reminders.ts`'s `classReminderSentAt` claim, and the two
-`donationInvitedAt` claims in `donations.ts`) do not move the count.
+`class-reminders.ts`'s `classReminderSentAt` claim, the two
+`donationInvitedAt` claims in `donations.ts`, and `hideDonationPrompt`'s
+`donationPromptHiddenAt` write there, which takes no lock) do not move the count.
 
 `claimCorrectionInvitation` (`services/donations.ts`, #912) follows the
 attendance write above in its own transaction. It writes no `status`, takes

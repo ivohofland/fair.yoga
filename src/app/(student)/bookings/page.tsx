@@ -43,6 +43,8 @@ import { log } from '@/lib/log';
 import { LATE_CANCEL_CHARGE_NOTE } from '@/lib/charge-note';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
+import { DonationPrompt } from '@/components/student/donation-prompt';
+import { showsDonationPrompt } from '@/lib/donation-prompt';
 
 export const dynamic = 'force-dynamic';
 
@@ -444,6 +446,24 @@ export default async function StudentBookingsPage() {
                     )
                   )}
                 </div>
+                {showsDonationPrompt(
+                  {
+                    classStatus: cls.status,
+                    classCancelledAt: cls.calendarEntry.cancelledAt,
+                    pricingMode: cls.pricingMode,
+                    registrationStatus: reg.status,
+                    donationInvitedAt: reg.donationInvitedAt,
+                    donationPromptHiddenAt: reg.donationPromptHiddenAt,
+                  },
+                  now,
+                ) && (
+                  <DonationPrompt
+                    registrationId={reg.id}
+                    classId={cls.id}
+                    classType={cls.calendarEntry.classType}
+                    date={cls.calendarEntry.date.toISOString()}
+                  />
+                )}
                 {payment && claimLinked && (
                   <Link
                     href={payPagePath(cls.id)}
