@@ -20,6 +20,8 @@ import {
   TEACHER_INVITATION_PATH,
   PAY_NOW_LABEL,
   VIDEO_LINK_EMAIL_TYPES,
+  GIVE_LABEL,
+  givePagePath,
   isPaymentNotification,
   payPagePath,
 } from './notification-links';
@@ -156,6 +158,7 @@ const STUDENT_INTROS: Record<NotificationType, string> = {
   walk_in_added: 'Your teacher added you to a class.',
   class_reminder: 'Your class is coming up.',
   payment_refunded: 'Your teacher refunded a payment.',
+  donation_invitation: 'Thank you for coming to class.',
   processor_disconnected: 'Your teacher disconnected a payment processor.',
   payment_paid_twice: 'A payment was made twice.',
   payment_charged_back: 'A payment was charged back.',
@@ -260,6 +263,17 @@ function studentAction(
     return notification.payGuidance === 'methods'
       ? { label: PAY_NOW_LABEL, path: payPagePath(notification.relatedClassId) }
       : undefined;
+  }
+  if (notification.type === 'donation_invitation') {
+    if (!notification.relatedClassId) {
+      logDegraded(
+        'DONATION_INVITATION_WITHOUT_CLASS',
+        { notificationId: notification.id, type: notification.type },
+        'donation invitation has no related class; emailed without a How to give button',
+      );
+      return undefined;
+    }
+    return { label: GIVE_LABEL, path: givePagePath(notification.relatedClassId) };
   }
   return STUDENT_ACTION_LINKS[notification.type];
 }

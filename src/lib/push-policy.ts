@@ -37,6 +37,7 @@ export const STUDENT_PUSH_GROUP = {
   booking_cancelled: 'never',
   payment_received: 'never',
   payment_refunded: 'payments',
+  donation_invitation: 'payments',
   processor_disconnected: 'never',
   payment_paid_twice: 'never',
   payment_charged_back: 'never',

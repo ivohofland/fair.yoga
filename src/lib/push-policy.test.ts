@@ -30,7 +30,7 @@ describe('STUDENT_PUSH_GROUP', () => {
   it.each([
     ['waitlist_promoted', 'waitlist'], ['spot_available', 'waitlist'], ['spot_taken', 'waitlist'],
     ['class_cancelled', 'classChanges'], ['booking_removed', 'classChanges'], ['walk_in_added', 'classChanges'],
-    ['payment_request', 'payments'], ['reminder', 'payments'],
+    ['payment_request', 'payments'], ['reminder', 'payments'], ['donation_invitation', 'payments'],
     ['class_reminder', 'classReminders'], ['announcement', 'announcements'], ['teacher_invitation', 'invitations'],
     ['booking_confirmed', 'never'], ['booking_cancelled', 'never'], ['payment_received', 'never'],
   ] as const)('%s → %s', (type, group) => {
@@ -85,6 +85,7 @@ const STUDENT_COLUMN_FOR = {
   booking_cancelled: null,
   payment_received: null,
   payment_refunded: 'pushPayments',
+  donation_invitation: 'pushPayments',
   processor_disconnected: null,
   payment_paid_twice: null,
   payment_charged_back: null,
@@ -103,6 +104,7 @@ const TEACHER_COLUMN_FOR = {
   payment_charged_back: 'pushClassCompleted',
   refund_failed: 'pushClassCompleted',
   payment_refunded: null,
+  donation_invitation: null,
   waitlist_promoted: null,
   spot_available: null,
   spot_taken: null,

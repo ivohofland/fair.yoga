@@ -78,6 +78,7 @@ const CARRIES_VIDEO_LINK = {
   payment_charged_back: false,
   refund_failed: false,
   video_link_updated: true,
+  donation_invitation: false,
 } as const satisfies Record<NotificationType, boolean>;
 
 /**
@@ -97,6 +98,14 @@ export function payPagePath(classId: string): string {
 
 /** The label for that action, in the app and on the email's button. */
 export const PAY_NOW_LABEL = 'Pay now';
+
+/** The page where a student finds how to give for one donation class. */
+export function givePagePath(classId: string): string {
+  return `/bookings/${classId}/give`;
+}
+
+/** The label for that action, in the app and on the email's button. */
+export const GIVE_LABEL = 'How to give';
 
 /** Whether a notification type is about paying for its class. */
 export function isPaymentNotification(type: NotificationType): type is 'payment_request' | 'reminder' {
@@ -165,6 +174,9 @@ export function studentNotificationHref(notification: StudentNotificationTarget)
   }
   if (isPaymentNotification(notification.type)) {
     return notification.relatedClass ? payPagePath(notification.relatedClass.id) : null;
+  }
+  if (notification.type === 'donation_invitation') {
+    return notification.relatedClass ? givePagePath(notification.relatedClass.id) : null;
   }
   const cls = notification.relatedClass;
   if (cls && cls.status === 'open' && cls.calendarEntry.cancelledAt === null) {

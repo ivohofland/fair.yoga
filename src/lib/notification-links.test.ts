@@ -110,6 +110,13 @@ describe('studentNotificationHref', () => {
     ).toBe('/anna/book/class-1');
   });
 
+  it('sends a donation invitation to the give page of its class, and to null without one (#912)', () => {
+    expect(
+      studentNotificationHref({ type: 'donation_invitation', relatedClass: completedClass }),
+    ).toBe('/bookings/class-1/give');
+    expect(studentNotificationHref({ type: 'donation_invitation', relatedClass: null })).toBeNull();
+  });
+
   it('builds the pay page path from the class id', () => {
     expect(payPagePath('abc')).toBe('/bookings/abc/pay');
   });
