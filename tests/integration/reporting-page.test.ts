@@ -57,6 +57,10 @@ describe('GET /settings/reporting (reporting page)', () => {
   let vatTeacherAccountId: string;
   let vatTeacherToken: string;
 
+  let donationTeacherId: string;
+  let donationTeacherAccountId: string;
+  let donationTeacherToken: string;
+
   let roomId: string;
   let reportTeacherRoomId: string;
 
@@ -163,6 +167,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       floatTeacherId,
       negTeacherId,
       vatTeacherId,
+      donationTeacherId,
     ].filter(Boolean);
     const accountIds = [
       emptyTeacherAccountId,
@@ -172,6 +177,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       floatTeacherAccountId,
       negTeacherAccountId,
       vatTeacherAccountId,
+      donationTeacherAccountId,
     ].filter(Boolean);
 
     await prisma.payment.deleteMany({
@@ -211,8 +217,8 @@ describe('GET /settings/reporting (reporting page)', () => {
 
       expect(html).toContain('Reporting');
       expect(html).toContain('Nothing to report yet');
-      expect(html).toContain('Completed classes and what they charged appear here.');
-      expect(html).not.toContain('Total charged for teaching');
+      expect(html).toContain('Completed classes and what they earned appear here.');
+      expect(html).not.toContain('Earned from teaching');
       expect(html).not.toContain('>By month</h2>');
     });
   });
@@ -321,7 +327,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Top banner
-      expect(html).toContain('Total charged for teaching');
+      expect(html).toContain('Earned from teaching');
       expect(html).toContain('157.00');
       expect(html).toMatch(/3.*classes.*·.*2.*students.*reached/);
 
@@ -338,7 +344,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).toContain('MONTH');
       expect(html).toContain('CLASSES');
       expect(html).toContain('STUDENTS');
-      expect(html).toContain('CHARGED');
+      expect(html).toContain('EARNED');
 
       // August 2026: 2 classes (1 regular + 1 studio), 10 students (2 + 8), 127.00 charged (59.50 + 67.50)
       const augLabel = formatMonthLabel(2026, 7); // monthIndex 7 is August
@@ -514,6 +520,85 @@ describe('GET /settings/reporting (reporting page)', () => {
 
       expect(html).toContain('April 2026');
       expect(html).toMatch(/April 2026[\s\S]*?<span[^>]*type-number[^>]*>€80\.00<\/span>/);
+    });
+
+    it('puts donation classes on their own line and keeps an unrecorded one out of every earnings figure (#912)', async () => {
+      const email = `report-donation-${suffix}@test.local`;
+      const teacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Donation',
+          lastName: 'Teacher',
+          email,
+          account: { create: { email } },
+          bio: 'Donation reporting test',
+          pageSlug: `report-donation-${suffix}`,
+        },
+      });
+      donationTeacherId = teacher.id;
+      donationTeacherAccountId = teacher.accountId;
+      donationTeacherToken = await seedSession(prisma, teacher.accountId);
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: teacher.id, roomId, rentalRate: 20, capacityOverride: 10 },
+      });
+      const common = {
+        teacherId: teacher.id,
+        teacherRoomId: teacherRoom.id,
+        durationMinutes: 60,
+        roomCost: new Prisma.Decimal('20.00'),
+        totalStudents: 4,
+        minRate: 10,
+        targetRate: 20,
+        minStudents: 2,
+        maxStudents: 10,
+        status: 'completed' as const,
+      };
+      // Tiered earns 60 - 20 = 40; recorded donation 50 - 20 = 30; the
+      // unrecorded one earns nothing known and must not read -20 or 0.
+      await createClassFixture(prisma, {
+        ...common,
+        classType: 'Donation Tiered',
+        date: new Date('2026-03-02T00:00:00.000Z'),
+        startTime: hhmmToTime('09:00'),
+        totalRevenue: new Prisma.Decimal('60.00'),
+        vatTotal: 0,
+      });
+      await createClassFixture(prisma, {
+        ...common,
+        classType: 'Donation Recorded',
+        date: new Date('2026-03-03T00:00:00.000Z'),
+        startTime: hhmmToTime('09:00'),
+        pricingMode: 'donation',
+        donationTotal: new Prisma.Decimal('50.00'),
+      });
+      await createClassFixture(prisma, {
+        ...common,
+        classType: 'Donation Unrecorded',
+        date: new Date('2026-03-04T00:00:00.000Z'),
+        startTime: hhmmToTime('09:00'),
+        pricingMode: 'donation',
+      });
+
+      const res = await reportingPage(donationTeacherToken);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('Donation classes');
+      expect(html).toMatch(/1(<!-- -->)? without a recorded total/);
+      expect(html).toMatch(/data-testid="report-total"[^>]*>€70\.00</);
+      expect(html).toMatch(/Donation classes[\s\S]*?<span[^>]*type-number[^>]*>€30\.00<\/span>/);
+      expect(html).toMatch(/Your classes[\s\S]*?<span[^>]*type-number[^>]*>€40\.00<\/span>/);
+      expect(html).toMatch(/3.*classes.*·/);
+      expect(html).toMatch(/Room costs paid[\s\S]*?€60\.00/);
+      // tiered minus the unrecorded class's room cost
+      expect(html).not.toContain('€20.00</span>');
+      expect(html).not.toContain('−€20.00');
+    });
+
+    it('a tiered-only teacher sees no Donation classes line (#912)', async () => {
+      const res = await reportingPage(reportTeacherToken);
+      const html = await res.text();
+      expect(html).not.toContain('Donation classes');
+      expect(html).not.toContain('without a recorded total');
     });
 
     it('handles singular student reach and excludes cancelled registrations from reach count', async () => {
@@ -756,7 +841,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Total must include ONLY the 50.00 from Today's uncancelled studio class
-      expect(html).toContain('Total charged for teaching');
+      expect(html).toContain('Earned from teaching');
       expect(html).toContain('50.00');
       expect(html).toMatch(/1.*classes.*·.*0.*students.*reached/);
 
@@ -815,7 +900,7 @@ describe('GET /settings/reporting (reporting page)', () => {
       const html = await res.text();
 
       // Total must still be 50.00 from past class (not 110.00), class count still 1 (not 2)
-      expect(html).toContain('Total charged for teaching');
+      expect(html).toContain('Earned from teaching');
       expect(html).toContain('50.00');
       expect(html).not.toContain('60.00');
       expect(html).not.toContain('110.00');
