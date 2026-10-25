@@ -5,7 +5,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
-import { MethodPanel } from '@/components/student/method-panel';
+import { MethodChooser } from '@/components/student/method-chooser';
 import { MarkSentControl } from '@/components/student/mark-sent-control';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
@@ -16,8 +16,6 @@ import { chargeNoteFor } from '@/lib/charge-note';
 import { markedPaidLine, offersSentClaim, reportMissingPayment, sentClaimLine } from '@/lib/pay-page.server';
 import {
   PAYMENTS_PAUSED_COPY,
-  PAYMENT_METHOD_COPY,
-  paymentMethodLabel,
   paymentMethodsForTeacher,
   paymentReference,
   type PaymentMethodsAnswer,
@@ -245,24 +243,14 @@ function PayBody({
         <>
           <section className="mb-6">
             <h2 className="type-subtitle mb-3">How would you like to pay?</h2>
-            <div className="border-t border-border">
-              {methods.methods.map((method) => (
-                // A shared `name` makes the rows exclusive: opening one closes the others.
-                <details
-                  key={`${method.kind}:${method.kind === 'processor' ? method.method : ''}`}
-                  name="pay-method"
-                  className="border-b border-border"
-                >
-                  <summary className="min-h-14 py-3 cursor-pointer">
-                    <span className="text-base text-ink">{paymentMethodLabel(method)}</span>
-                    <span className="block type-caption">{PAYMENT_METHOD_COPY[method.kind].hint}</span>
-                  </summary>
-                  <div className="pb-4">
-                    <MethodPanel method={method} amount={{ kind: 'fixed', amount }} currency={currency} reference={reference} paymentId={paymentId} />
-                  </div>
-                </details>
-              ))}
-            </div>
+            <MethodChooser
+              name="pay-method"
+              methods={methods.methods}
+              amount={{ kind: 'fixed', amount }}
+              currency={currency}
+              reference={reference}
+              paymentId={paymentId}
+            />
           </section>
           {offersSentClaim(methods.methods, reportedAt) && sentControl}
         </>
