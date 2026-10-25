@@ -741,11 +741,11 @@ describe('templateUpdatedMessage', () => {
 });
 
 describe('linkKeptNotice (#911)', () => {
-  it('tells the teacher scheduled classes keep their link when the link changed with classes on the schedule', () => {
+  it('tells the teacher scheduled classes keep their link when an online template’s link changed with classes on the schedule', () => {
     expect(linkKeptNotice(true)).toBe('Classes already on your schedule keep their current link.');
   });
 
-  it('says nothing otherwise', () => {
+  it('says nothing otherwise, including a switch from in person, whose scheduled classes have no link', () => {
     expect(linkKeptNotice(false)).toBeNull();
   });
 });

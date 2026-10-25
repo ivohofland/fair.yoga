@@ -438,9 +438,10 @@ export function templateUpdatedMessage(
 }
 
 /**
- * The notice beside `templateUpdatedMessage` when an edit changed the link
- * while classes from the template are on the schedule (#911): a template is a
- * stamp, so those classes keep the link they were made with. `null` otherwise.
+ * The notice beside `templateUpdatedMessage` when an edit changed the link of
+ * a template that was online while classes from it are on the schedule
+ * (#911): a template is a stamp, so those classes keep the link they were
+ * made with. `null` otherwise.
  */
 export function linkKeptNotice(linkChangedWithScheduledClasses: boolean): string | null {
   return linkChangedWithScheduledClasses ? 'Classes already on your schedule keep their current link.' : null;

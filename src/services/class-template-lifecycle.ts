@@ -478,9 +478,10 @@ class InvalidTemplateFormat extends Error {
 export type UpdateClassTemplateResult =
   | (Extract<UpdateRuleResult<ClassTemplate>, { ok: true }> & {
       /**
-       * The edit changed the link and this template has a class on the
-       * schedule that is neither cancelled nor completed, dated from the
-       * teacher's today. That class keeps the link it was stamped with.
+       * The edit changed the link of a template that was online, and this
+       * template has a class on the schedule that is neither cancelled nor
+       * completed, dated from the teacher's today. That class keeps the link
+       * it was stamped with.
        */
       linkChangedWithScheduledClasses: boolean;
     })
@@ -528,8 +529,18 @@ export async function updateClassTemplate(
   const family: TemplateFamily<ClassTemplate, 'regular'> = {
     ...CLASS_FAMILY,
     updateChild: async (tx, id, childData, roomResult, template, raw) => {
-      const { row, previousVideoUrl } = await writeClassTemplateChild(tx, id, childData, roomResult, template, raw);
+      const { row, previousVideoUrl, previousFormat } = await writeClassTemplateChild(
+        tx,
+        id,
+        childData,
+        roomResult,
+        template,
+        raw,
+      );
+      // Only a template that was online stamped a link onto its scheduled
+      // classes; a switch from in person leaves them in a room.
       linkChangedWithScheduledClasses =
+        previousFormat === 'online' &&
         row.videoUrl !== previousVideoUrl &&
         (await hasScheduledClasses(tx, template.scheduleRuleId, template.scheduleRule.teacher.defaultTimezone));
       return row;
@@ -708,11 +719,12 @@ const FORMAT_SHAPE_FIELDS = {
 } as const satisfies Record<keyof FormatShapeRow, true>;
 
 /**
- * The class family's child write, and the link it replaced. Checked on the row
- * the write would leave, under the row lock `updateRule` took, and before the
- * write: the `CHECK`s raise at the write itself, as a 500. A patch sending no
- * economic or format-shape field reads nothing stored, since it cannot break
- * either rule and leaves the link as it was.
+ * The class family's child write, and the link and format it replaced.
+ * Checked on the row the write would leave, under the row lock `updateRule`
+ * took, and before the write: the `CHECK`s raise at the write itself, as a
+ * 500. A patch sending no economic or format-shape field reads nothing stored,
+ * since it cannot break either rule and leaves the link and format as they
+ * were.
  */
 async function writeClassTemplateChild(
   tx: TransactionClientOnly,
@@ -721,7 +733,7 @@ async function writeClassTemplateChild(
   roomResult: { isArchived: boolean } | null,
   template: ChildWithRule<ClassTemplate>,
   data: Record<string, unknown>,
-): Promise<{ row: ClassTemplate; previousVideoUrl: string | null }> {
+): Promise<{ row: ClassTemplate; previousVideoUrl: string | null; previousFormat: ClassFormat }> {
   const sendsEconomics = ECONOMIC_FIELDS.some((f) => childData[f] !== undefined);
   // Every economic field, `vatPercent` included, though only the rate and
   // capacity fields reach `economicsViolations` below.
@@ -731,6 +743,7 @@ async function writeClassTemplateChild(
   }
   const sendsShape = Object.keys(FORMAT_SHAPE_FIELDS).some((f) => childData[f] !== undefined);
   let previousVideoUrl: string | null | undefined;
+  let previousFormat: ClassFormat | undefined;
   if (sendsEconomics || sendsShape) {
     const stored = await tx.classTemplate.findUniqueOrThrow({
       where: { id: templateId },
@@ -746,6 +759,7 @@ async function writeClassTemplateChild(
       },
     });
     previousVideoUrl = stored.videoUrl;
+    previousFormat = stored.format;
     const roomCost = sentOr(childData, 'roomCost', Number(stored.roomCost), isNumber, 'a number');
     if (sendsEconomics) {
       const [first, ...rest] = economicsViolations({
@@ -782,7 +796,11 @@ async function writeClassTemplateChild(
           : {}),
     },
   });
-  return { row, previousVideoUrl: previousVideoUrl === undefined ? row.videoUrl : previousVideoUrl };
+  return {
+    row,
+    previousVideoUrl: previousVideoUrl === undefined ? row.videoUrl : previousVideoUrl,
+    previousFormat: previousFormat ?? row.format,
+  };
 }
 
 /**
