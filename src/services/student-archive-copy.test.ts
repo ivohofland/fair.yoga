@@ -58,13 +58,13 @@ describe('unbilledRefusal', () => {
     expect(unbilledRefusal(1)).toEqual({
       code: 'STUDENT_HAS_UNBILLED_CLASSES',
       status: 409,
-      message: "This student is booked on 1 class that hasn't been billed yet. Remove them from it, or archive once it's completed.",
+      message: "This student is booked on 1 class that hasn't finished yet. Remove them from it, or archive once it's completed.",
     });
   });
 
   it('plural', () => {
     expect(unbilledRefusal(3).message).toBe(
-      "This student is booked on 3 classes that haven't been billed yet. Remove them from those classes, or archive once they're completed.",
+      "This student is booked on 3 classes that haven't finished yet. Remove them from those classes, or archive once they're completed.",
     );
   });
 });

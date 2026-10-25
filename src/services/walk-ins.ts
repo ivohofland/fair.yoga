@@ -15,7 +15,7 @@
  * teacher's act must not lift a student's refusal.
  */
 import { videoLinkPendingSuffix } from '@/lib/class-location';
-import type { ClassFormat, InvitationStatus, Prisma } from '@/lib/prisma-client';
+import type { ClassFormat, InvitationStatus, PricingMode, Prisma } from '@/lib/prisma-client';
 import type { z } from 'zod';
 import { requireNormalised, type createInvitationSchema } from '@/lib/schemas';
 import { isErasedAddress } from '@/lib/erased-address';
@@ -52,12 +52,22 @@ export interface ResolvedWalkIn {
   readonly created: boolean;
 }
 
+const WALK_IN_CLAUSES = {
+  tiered: 'Your price is calculated after class.',
+  donation: 'This class is by donation.',
+} as const satisfies Record<PricingMode, string>;
+
+function walkInClause(mode: PricingMode): string {
+  return WALK_IN_CLAUSES[mode];
+}
+
 export interface WalkInNotice {
   readonly teacherName: string;
   readonly classType: string;
   readonly dateLabel: string;
   /** The class's shape, from which the body says whether a link is still to come. */
   readonly videoLink: { readonly format: ClassFormat; readonly videoUrl: string | null };
+  readonly pricingMode: PricingMode;
 }
 
 interface SubjectContact {
@@ -218,7 +228,7 @@ export async function completeWalkIn(
     recipientId: resolved.studentId,
     type: 'walk_in_added',
     title: `You're in ${input.notice.classType}`,
-    body: `${input.notice.teacherName} added you to ${input.notice.classType} on ${input.notice.dateLabel}. Your price is calculated after class.${videoLinkPendingSuffix(input.notice.videoLink)}`,
+    body: `${input.notice.teacherName} added you to ${input.notice.classType} on ${input.notice.dateLabel}. ${walkInClause(input.notice.pricingMode)}${videoLinkPendingSuffix(input.notice.videoLink)}`,
     relatedClassId: input.classId,
   }]);
 }

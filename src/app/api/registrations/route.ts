@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { videoLinkPendingSuffix } from '@/lib/class-location';
-import type { RegistrationStatus, Student } from '@/lib/prisma-client';
+import type { PricingMode, RegistrationStatus, Student } from '@/lib/prisma-client';
 import { prisma } from '@/lib/db';
 import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import {
@@ -86,6 +86,15 @@ type Subject =
   | { kind: 'self' }
   | { kind: 'roster'; studentId: string }
   | { kind: 'walkIn'; walkIn: WalkInSubject };
+
+const BOOKING_CONFIRMED_BODIES = {
+  tiered: (classType) => `You're booked for ${classType}. The final price settles after class.`,
+  donation: (classType) => `You're booked for ${classType}.`,
+} as const satisfies Record<PricingMode, (classType: string) => string>;
+
+function bookingConfirmedBody(mode: PricingMode, classType: string): string {
+  return BOOKING_CONFIRMED_BODIES[mode](classType);
+}
 
 function subjectOf(body: CreateRegistrationBody): Subject {
   if ('studentId' in body) return { kind: 'roster', studentId: body.studentId };
@@ -361,6 +370,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             classType: cls.calendarEntry.classType,
             dateLabel: formatDayHeader(cls.calendarEntry.date),
             videoLink: cls,
+            pricingMode: cls.pricingMode,
           },
         });
       }
@@ -422,7 +432,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             recipientId: studentId,
             type: 'booking_confirmed',
             title: 'Booking confirmed',
-            body: `You're booked for ${cls.calendarEntry.classType}. The final price settles after class.${videoLinkPendingSuffix(cls)}`,
+            body: `${bookingConfirmedBody(cls.pricingMode, cls.calendarEntry.classType)}${videoLinkPendingSuffix(cls)}`,
             relatedClassId: cls.id,
           },
           ...(bookingNotifications === 'off'

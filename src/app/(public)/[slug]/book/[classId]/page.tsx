@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import type { ComponentProps } from 'react';
 import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import type { PricingMode } from '@/lib/prisma-client';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { estimateTierPrices } from '@/lib/tier-estimates';
@@ -36,6 +38,44 @@ export async function generateMetadata({
     select: { isPrivate: true },
   });
   return cls?.isPrivate ? { robots: { index: false } } : {};
+}
+
+type BookingPricing = ComponentProps<typeof BookingFlow>['pricing'];
+
+/** The estimates are computed only where the class shows them. */
+function bookingPricingFor(cls: {
+  pricingMode: PricingMode;
+  roomCost: { toString(): string };
+  minRate: { toString(): string };
+  targetRate: { toString(): string };
+  minStudents: number;
+  maxStudents: number;
+  vatPercent: { toString(): string };
+  registrations: { id: string; tierAtBooking: number }[];
+}): BookingPricing {
+  switch (cls.pricingMode) {
+    case 'tiered':
+      return {
+        mode: 'tiered',
+        tierPrices: estimateTierPrices({
+          roomCost: Number(cls.roomCost),
+          minRate: Number(cls.minRate),
+          targetRate: Number(cls.targetRate),
+          minStudents: cls.minStudents,
+          maxStudents: cls.maxStudents,
+          vatPercent: Number(cls.vatPercent),
+          registeredTiers: cls.registrations.map((r) =>
+            toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
+          ),
+        }),
+      };
+    case 'donation':
+      return { mode: 'donation' };
+    default: {
+      const unhandled: never = cls.pricingMode;
+      throw new Error(`Unhandled pricing mode: ${String(unhandled)}`);
+    }
+  }
 }
 
 // Tier selection + confirmation — the most philosophically important screen.
@@ -89,17 +129,7 @@ export default async function BookClassPage({
 
   const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
   const isFull = activeCount >= cls.maxStudents;
-  const estimates = estimateTierPrices({
-    roomCost: Number(cls.roomCost),
-    minRate: Number(cls.minRate),
-    targetRate: Number(cls.targetRate),
-    minStudents: cls.minStudents,
-    maxStudents: cls.maxStudents,
-    vatPercent: Number(cls.vatPercent),
-    registeredTiers: cls.registrations.map((r) =>
-      toIncomeTier(r.tierAtBooking, { registrationId: r.id }),
-    ),
-  });
+  const pricing = bookingPricingFor(cls);
 
   const session = await getSession();
   const student = session?.studentId
@@ -210,7 +240,7 @@ export default async function BookClassPage({
           alreadyBooked={alreadyBooked}
           currentTier={viewer.tier}
           studentId={viewer.id}
-          tierPrices={estimates}
+          pricing={pricing}
           currency={cls.currency}
           // The income-selection moment belongs to the student: the picker
           // shows until they have chosen a tier themselves, no matter what

@@ -10,7 +10,7 @@
 
 import { videoLinkPendingSuffix } from '@/lib/class-location';
 import { Prisma } from '@/lib/prisma-client';
-import type { PrismaClient, CancelDeadline, ClassStatus, WaitlistEntry, WaitlistStatus } from '@/lib/prisma-client';
+import type { PrismaClient, CancelDeadline, PricingMode, ClassStatus, WaitlistEntry, WaitlistStatus } from '@/lib/prisma-client';
 import { classStartInstant, formatInstantInZone } from '@/lib/timezone';
 import { cancelDeadlineFrom, freeCancelUntil, keepsPromotionGrace } from '@/lib/cancel-deadline';
 import { CLAIM_WINDOW_MINUTES } from '@/lib/claim-window';
@@ -71,6 +71,19 @@ export class WaitlistJoinError extends Error {
     this.name = 'WaitlistJoinError';
   }
 }
+
+/** What a student who late-cancelled this booking before is told on promotion. */
+const LATE_CANCELLED_BEFORE_TERMS = {
+  tiered: 'You cancelled this class after the deadline before, so it stays charged if you cancel again.',
+  donation: 'You cancelled this class after the deadline before.',
+} as const satisfies Record<PricingMode, string>;
+
+/** The confirmation a final-hour claim sends. */
+const CLAIM_BODIES = {
+  tiered: (classType) =>
+    `You claimed the open spot in ${classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.`,
+  donation: (classType) => `You claimed the open spot in ${classType}.`,
+} as const satisfies Record<PricingMode, (classType: string) => string>;
 
 /** What a claim did. A refused claim throws `WaitlistPromotionError` instead. */
 export type ClaimResult =
@@ -761,7 +774,7 @@ export async function promoteNext(
     const cancelTerms =
       keepsPromotionGrace(registration)
         ? `You can cancel for free until ${formatInstantInZone(freeCancelUntil(deadline, now), tz)}.`
-        : 'You cancelled this class after the deadline before, so it stays charged if you cancel again.';
+        : LATE_CANCELLED_BEFORE_TERMS[cls.pricingMode];
 
     await createBulkNotifications(tx, [
       {
@@ -893,7 +906,7 @@ export async function claimSpot(
         recipientId: studentId,
         type: 'booking_confirmed',
         title: 'Spot claimed',
-        body: `You claimed the open spot in ${cls.calendarEntry.classType}. It's past the cancellation deadline, so this class is charged even if you can't make it.${videoLinkPendingSuffix(cls)}`,
+        body: `${CLAIM_BODIES[cls.pricingMode](cls.calendarEntry.classType)}${videoLinkPendingSuffix(cls)}`,
         relatedClassId: classId,
       },
       ...(await teacherBookingNotice(tx, {

@@ -40,7 +40,7 @@ import { readIncomeTier } from '@/lib/tiers.server';
 import { isUpcomingRegistration } from '@/lib/booking-ledger';
 import { CHARGED_STATUSES, TERMINAL_CLASS_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
-import { LATE_CANCEL_CHARGE_NOTE } from '@/lib/charge-note';
+import { lateCancelNoteFor } from '@/lib/charge-note';
 import { PaymentBreakdown } from '@/components/student/payment-breakdown';
 import { resolveReportedPaymentBreakdown } from '@/lib/payment-breakdown.server';
 import { DonationPrompt } from '@/components/student/donation-prompt';
@@ -371,12 +371,13 @@ export default async function StudentBookingsPage() {
                     </>
                   )}
                   {reg.status === 'late_cancel' ? (
-                    <p className="type-caption mt-2">{LATE_CANCEL_CHARGE_NOTE}</p>
+                    <p className="type-caption mt-2">{lateCancelNoteFor(cls.pricingMode)}</p>
                   ) : (
                     cls.status === 'open' && !cancelled && (
                       <div className="mt-3">
                         <CancelBookingButton
                           registrationId={reg.id}
+                          pricingMode={cls.pricingMode}
                           freeCancelUntilAt={freeCancelUntil.toISOString()}
                           freeCancelUntilLabel={formatInstantInZone(freeCancelUntil, tz)}
                         />

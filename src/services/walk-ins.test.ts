@@ -20,6 +20,7 @@ import {
   completeWalkIn,
   WalkInRefusedError,
   type ResolvedWalkIn,
+  type WalkInNotice,
   type WalkInRefusal,
   type WalkInSubject,
 } from './walk-ins';
@@ -36,7 +37,7 @@ const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function _completeWalkInRejectsABareClient(client: PrismaClient, resolved: ResolvedWalkIn): Promise<void> {
-  const notice = { teacherName: 'x', classType: 'x', dateLabel: 'x', videoLink: { format: 'in_person' as const, videoUrl: null } };
+  const notice: WalkInNotice = { teacherName: 'x', classType: 'x', dateLabel: 'x', pricingMode: 'tiered', videoLink: { format: 'in_person', videoUrl: null } };
   // @ts-expect-error A bare PrismaClient must never satisfy the brand.
   await completeWalkIn(client, { teacherId: 'never-called', classId: 'never-called', resolved, notice });
 }
@@ -161,7 +162,10 @@ async function seedClaimedStudent(email: string): Promise<string> {
   return student.id;
 }
 
-const notice = { teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October', videoLink: { format: 'in_person' as const, videoUrl: null } };
+const notice: WalkInNotice = {
+  teacherName: 'Tess Teacher', classType: 'Vinyasa', dateLabel: 'Monday, 5 October', pricingMode: 'tiered',
+  videoLink: { format: 'in_person', videoUrl: null },
+};
 
 async function walkIn(teacherId: string, classId: string, subject: WalkInSubject) {
   return prisma.$transaction(async (tx) => {
@@ -221,6 +225,23 @@ describe('resolveWalkInStudent + completeWalkIn', () => {
 
     const n = await prisma.notification.findFirstOrThrow({ where: { recipientId: resolved.studentId, type: 'walk_in_added' } });
     expect(n.body.endsWith(' Your teacher will share the video link before class.')).toBe(true);
+  });
+
+  it('says a donation class is by donation, with no price line (#912)', async () => {
+    const { teacherId, classId } = await seedTeacher('donation');
+    const email = `walkin-donation-${suffix}@test.local`;
+    const resolved = await prisma.$transaction(async (tx) => {
+      const r = await resolveWalkInStudent(tx, {
+        teacherId,
+        subject: { kind: 'newContact', firstName: 'Dora', lastName: 'Gift', email },
+      });
+      await completeWalkIn(tx, { teacherId, classId, resolved: r, notice: { ...notice, pricingMode: 'donation' } });
+      return r;
+    });
+    studentIds.push(resolved.studentId);
+    const n = await prisma.notification.findFirstOrThrow({ where: { recipientId: resolved.studentId, type: 'walk_in_added' } });
+    expect(n.body.endsWith('This class is by donation.')).toBe(true);
+    expect(n.body).not.toContain('price');
   });
 
   it('uses the existing student for a known address and seeds no privacy row', async () => {
