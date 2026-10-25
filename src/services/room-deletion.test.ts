@@ -113,6 +113,15 @@ describe('countRoomDeleteBlockers', () => {
   });
 });
 
+describe('delete blockers ignore online rows (#911)', () => {
+  it('counts no blocker from the teacher\'s online class and template', async () => {
+    const f = await fx.makeFixture(prisma);
+    await fx.addOnlineRows(prisma, f, { daysAhead: 15, dayOfWeek: 4 });
+    expect(await countTeacherRoomDeleteBlockers(prisma, f.linkId)).toEqual({ classes: 0, templates: 0 });
+    expect(await countRoomDeleteBlockers(prisma, f.roomId)).toEqual({ classes: 0, templates: 0 });
+  });
+});
+
 describe('the shared constants', () => {
   // Pins the exact string the room delete returns. The `Class` guard already
   // shipped this wording; a template blocker reuses it deliberately (spec

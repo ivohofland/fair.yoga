@@ -2,10 +2,10 @@ import { ListRow } from '@/components/ui/list-row';
 import { EmptyState } from '@/components/ui/empty-state';
 import type { TeacherRoom, Room } from '@/lib/prisma-client';
 import type { ClassTemplateWithSlot } from '@/services/class-template-lifecycle';
-import { formatRoomLocation } from '@/lib/format';
+import { classLocation, locationLabel } from '@/lib/class-location';
 
 type TemplateWithRoom = ClassTemplateWithSlot & {
-  teacherRoom: TeacherRoom & { room: Room };
+  teacherRoom: (TeacherRoom & { room: Room }) | null;
 };
 
 interface TemplateListProps {
@@ -39,7 +39,7 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
               {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
             </span>
             <span className="type-caption">
-              {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
+              {locationLabel(classLocation(t))}
             </span>
           </div>
           <span className="text-[13px] text-teal pt-1">active</span>
@@ -62,7 +62,7 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
                   {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
                 </span>
                 <span className="type-caption">
-                  {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
+                  {locationLabel(classLocation(t))}
                 </span>
               </div>
               <span className="type-caption pt-1">paused</span>
@@ -87,7 +87,7 @@ export function TemplateList({ templates, emptyMessage = 'No recurring classes y
                   {DAY_LABELS[t.dayOfWeek]} {t.startTime} &middot; {t.durationMinutes} min
                 </span>
                 <span className="type-caption">
-                  {formatRoomLocation(t.teacherRoom.room.roomName, t.teacherRoom.room.venueName)}
+                  {locationLabel(classLocation(t))}
                 </span>
               </div>
               <span className="type-caption pt-1">archived</span>

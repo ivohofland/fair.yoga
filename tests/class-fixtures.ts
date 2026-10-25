@@ -87,10 +87,11 @@ export async function createClassFixture(
   // before this fixture ever reaches what the test is about. `classFields`
   // never sets `roomArchived` itself, so this always wins — explicit rather
   // than relying on that non-overlap, so a future field on `classFields`
-  // can't silently start winning instead.
-  const room = await db.teacherRoom.findUniqueOrThrow({
-    where: { id: classFields.teacherRoomId },
-  });
+  // can't silently start winning instead. A roomless (online) class has no
+  // room to copy from and holds `false` (`Class_format_shape`).
+  const roomArchived = classFields.teacherRoomId == null
+    ? false
+    : (await db.teacherRoom.findUniqueOrThrow({ where: { id: classFields.teacherRoomId } })).isArchived;
 
   const entry = await db.calendarEntry.create({
     data: {
@@ -108,7 +109,7 @@ export async function createClassFixture(
         create: {
           ...classFields,
           currency: classFields.currency ?? 'EUR',
-          roomArchived: room.isArchived,
+          roomArchived,
           ...(classFields.status === 'completed' ? { status: 'in_progress' as const } : {}),
         },
       },

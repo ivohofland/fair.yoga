@@ -70,7 +70,9 @@ export const CLASS_GENERATOR: GeneratorFamily<ClassTemplate, 'regular'> = {
       data: entries.map((entry) => ({
         calendarEntryId: entry.id,
         kind: 'regular' as const,
+        format: template.format,
         teacherRoomId: template.teacherRoomId,
+        videoUrl: template.videoUrl,
         // The template's own mirror, not a fresh read. Accurate by the lock
         // this path already holds: `claimTemplateForGeneration` keeps this
         // row `FOR UPDATE` across this insert, and archiving the room

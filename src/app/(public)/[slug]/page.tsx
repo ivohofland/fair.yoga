@@ -7,7 +7,8 @@ import { RegistrationProgress } from '@/components/ui/registration-progress';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Avatar } from '@/components/ui/avatar';
-import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
+import { publicClassLocation, locationLabel } from '@/lib/class-location';
 import { startOfLocalDay } from '@/lib/timezone';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { ClassPriceLine } from '@/components/booking/price-range';
@@ -62,6 +63,8 @@ export default async function TeacherBookingPage({
       calendarEntry: { teacherId: teacher.id, cancelledAt: null, date: { gte: today } },
     },
     orderBy: [{ calendarEntry: { date: 'asc' } }, { calendarEntry: { startTime: 'asc' } }],
+    // A public page: the video link is not even read (#911).
+    omit: { videoUrl: true },
     include: {
       calendarEntry: true,
       teacherRoom: { include: { room: true } },
@@ -160,7 +163,7 @@ export default async function TeacherBookingPage({
                   <Icon name="chevron-right" size={20} className="text-brown-light" />
                 </div>
                 <p className="type-caption mt-0.5">
-                  {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+                  {locationLabel(publicClassLocation(cls))}
                   {' · '}{cls.calendarEntry.durationMinutes} min
                 </p>
                 <RegistrationProgress

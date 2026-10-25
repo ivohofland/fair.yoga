@@ -236,3 +236,98 @@ describe('the CHECK and BLOCKING_CLASS_STATUSES agree', () => {
     }
   });
 });
+
+describe('Class_format_shape', () => {
+  const SHAPE = 'Class_format_shape';
+
+  /**
+   * A fresh entry and a class on it, with the shape columns the caller names.
+   * Defaults describe a valid ONLINE draft; each case overrides the one column
+   * its arm is about. `draft` keeps `Class_live_needs_open_room` out of every
+   * case but the last, which asks for a live row on purpose.
+   */
+  async function makeShaped(over: {
+    format: 'in_person' | 'online';
+    teacherRoomId?: string | null;
+    roomArchived?: boolean;
+    roomCost?: number;
+    videoUrl?: string | null;
+    status?: ClassStatus;
+  }): Promise<string> {
+    const entry = await prisma.calendarEntry.create({
+      data: {
+        teacherId,
+        kind: 'regular',
+        classType: `c-${suffix}`,
+        date: new Date(Date.UTC(2027, 0, 4 + slotOffset++)),
+        startTime: new Date('1970-01-01T10:00:00Z'),
+        durationMinutes: 60,
+      },
+    });
+    const cls = await prisma.class.create({
+      data: {
+        calendarEntryId: entry.id,
+        kind: 'regular',
+        currency: 'EUR',
+        format: over.format,
+        teacherRoomId: over.teacherRoomId ?? null,
+        roomArchived: over.roomArchived ?? false,
+        roomCost: over.roomCost ?? 0,
+        videoUrl: over.videoUrl ?? null,
+        minRate: 0, targetRate: 0, minStudents: 1, maxStudents: 10,
+        status: over.status ?? 'draft',
+      },
+    });
+    return cls.id;
+  }
+
+  const refusedByShape = (e: unknown): boolean => isCheckViolationOn(e, SHAPE);
+
+  it('refuses in_person without a room', async () => {
+    await expect(makeShaped({ format: 'in_person', teacherRoomId: null }))
+      .rejects.toSatisfy(refusedByShape);
+  });
+
+  it('refuses in_person with a video link', async () => {
+    await expect(makeShaped({
+      format: 'in_person', teacherRoomId: openRoomId, videoUrl: 'https://meet.example/abc',
+    })).rejects.toSatisfy(refusedByShape);
+  });
+
+  it('refuses online with a room', async () => {
+    await expect(makeShaped({ format: 'online', teacherRoomId: openRoomId }))
+      .rejects.toSatisfy(refusedByShape);
+  });
+
+  it('refuses online with a room cost', async () => {
+    await expect(makeShaped({ format: 'online', roomCost: 10 }))
+      .rejects.toSatisfy(refusedByShape);
+  });
+
+  it('refuses online claiming an archived room', async () => {
+    await expect(makeShaped({ format: 'online', roomArchived: true }))
+      .rejects.toSatisfy(refusedByShape);
+  });
+
+  it('accepts online with no room, no cost and no link', async () => {
+    const id = await makeShaped({ format: 'online' });
+    const row = await prisma.class.findUniqueOrThrow({ where: { id } });
+    expect(row).toMatchObject({ format: 'online', teacherRoomId: null, videoUrl: null });
+  });
+
+  it('accepts online with a video link', async () => {
+    const id = await makeShaped({ format: 'online', videoUrl: 'https://meet.example/abc' });
+    expect(id).toBeTruthy();
+  });
+
+  it('accepts a live, published online class (the room CHECK does not refuse a roomless row)', async () => {
+    const id = await makeShaped({ format: 'online', status: 'open' });
+    expect(id).toBeTruthy();
+  });
+
+  it('defaults an existing-shape row to in_person', async () => {
+    const id = await makeClass(openRoomId, 'draft');
+    const row = await prisma.class.findUniqueOrThrow({ where: { id } });
+    expect(row).toMatchObject({ format: 'in_person', videoUrl: null });
+  });
+});

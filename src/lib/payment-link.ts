@@ -1,8 +1,9 @@
 import { PAYMENT_LINK_MAX } from '@/lib/input-bounds';
 
 /**
- * A teacher's open-ended payment link (#785): the rules a stored link
- * satisfies. Client-safe, so the settings form and the server agree.
+ * A teacher's open-ended payment link (#785) and a class's video link (#911):
+ * the rules a stored link satisfies. Client-safe, so the forms and the server
+ * agree.
  */
 
 export type PaymentLinkFailure = 'required' | 'too_long' | 'invalid' | 'not_https' | 'has_userinfo';
@@ -16,12 +17,30 @@ export const PAYMENT_LINK_MESSAGES = {
   has_userinfo: 'Enter the link without a name and @ before the address.',
 } as const satisfies Record<PaymentLinkFailure, string>;
 
-export function parsePaymentLink(
+/**
+ * Messages for a video link. The link is optional, so an empty value means "no
+ * link" rather than `required`; that message is worded anyway so the record
+ * stays total over `PaymentLinkFailure`.
+ */
+export const VIDEO_LINK_MESSAGES = {
+  required: 'Enter the video link.',
+  too_long: 'That link is too long.',
+  invalid: 'Paste the whole link — it starts with https://',
+  not_https: 'Use a secure link — one that starts with https://',
+  has_userinfo: 'Enter the link without a name and @ before the address.',
+} as const satisfies Record<PaymentLinkFailure, string>;
+
+/**
+ * An `https://` link with no userinfo, at most `max` characters before and
+ * after normalisation. The query string and fragment are kept.
+ */
+export function parseHttpsLink(
   raw: string,
+  max: number,
 ): ({ ok: true } & ParsedPaymentLink) | { ok: false; error: PaymentLinkFailure } {
   const trimmed = raw.trim();
   if (trimmed === '') return { ok: false, error: 'required' };
-  if (trimmed.length > PAYMENT_LINK_MAX) return { ok: false, error: 'too_long' };
+  if (trimmed.length > max) return { ok: false, error: 'too_long' };
   let url: URL;
   try {
     url = new URL(trimmed);
@@ -33,8 +52,14 @@ export function parsePaymentLink(
   // host label exists so the student sees where the link goes.
   if (url.username !== '' || url.password !== '') return { ok: false, error: 'has_userinfo' };
   // The href can outgrow the input once percent-encoded, and the stored value is the href.
-  if (url.href.length > PAYMENT_LINK_MAX) return { ok: false, error: 'too_long' };
+  if (url.href.length > max) return { ok: false, error: 'too_long' };
   return { ok: true, url: url.href, host: url.hostname.replace(/^www\./, '') };
+}
+
+export function parsePaymentLink(
+  raw: string,
+): ({ ok: true } & ParsedPaymentLink) | { ok: false; error: PaymentLinkFailure } {
+  return parseHttpsLink(raw, PAYMENT_LINK_MAX);
 }
 
 /** A stored value re-parsed for display; null when it does not parse. */

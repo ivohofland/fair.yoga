@@ -649,7 +649,9 @@ calendar-shaped, through this row.
 |---|---|---|
 | **id** (PK) | uuid | |
 | *schedule_rule_id* (FK) | → ScheduleRule, unique | The calendar identity — teacher, day/time, active/archived state — moved to the rule (#298); this row reaches Teacher through it, not directly |
-| *teacher_room_id* (FK) | → TeacherRoom | |
+| format | enum `ClassFormat`: in_person, online; default in_person | Stamped onto each generated Class (#911). `ClassTemplate_format_shape` ties it to the two columns below and to `room_cost` — see Design Notes |
+| *teacher_room_id* (FK) | → TeacherRoom, nullable | Set exactly when `format = in_person` |
+| video_url | text, nullable | An online template's video link, stamped onto each generated Class; null for `in_person`. Editing it changes no existing class (#194, #911) |
 | description | text, nullable | |
 | **Economics** | | Copied to each instance at generation time — a later template edit does not re-copy (#194) |
 | room_cost | decimal | From TeacherRoom.rental_rate. This and the two rates below are in the teacher's current currency; each generated class stamps that currency on itself |
@@ -744,7 +746,9 @@ child, and the reverse does not.
 | **id** (PK) | uuid | |
 | *calendar_entry_id* (FK) | → CalendarEntry, unique | The calendar identity — teacher, date/time, cancellation — moved to the entry (#327); this row reaches Teacher through it, not directly, and a generated class reaches its ClassTemplate through the entry's ScheduleRule |
 | kind | enum: regular, studio | Always `regular` here, pinned by a `CHECK`; half of the composite FK above |
-| *teacher_room_id* (FK) | → TeacherRoom | |
+| format | enum `ClassFormat`: in_person, online; default in_person | Copied from the template for a generated class (#911). `Class_format_shape` ties it to the two columns below and to `room_cost` — see Design Notes |
+| *teacher_room_id* (FK) | → TeacherRoom, nullable | Set exactly when `format = in_person` |
+| video_url | text, nullable | An online class's video link; null for `in_person`. Never one of `LOCKED_FIELDS`; shown only to the teacher and to students with a live registration |
 | description | text, nullable | |
 | **Economics** | | Locked after first registration |
 | currency | enum `Currency`, not null | Snapshot of the teacher's currency, stamped by every writer of a class. `room_cost`, `min_rate`, `target_rate`, and every derived amount (`Registration.price`, `Payment.amount`, `total_revenue`) are denominated in it. Frozen — `class_currency_frozen_guard` refuses a change — once `settings_locked`, `completed`, or the entry is cancelled; before that a currency switch relabels it with the numbers unchanged |
@@ -1185,6 +1189,8 @@ No foreign keys, and no personal data by construction: the allowlist admits ids 
     ```
   - **200 is duplicated from `MAX_CLASS_SIZE`** (`src/lib/schemas.ts`) into both range constraints' upper bound. The two must move together — `MAX_CLASS_SIZE`'s own docblock points back here.
   - **`economicsViolations`** (`src/lib/class-economics.ts`) and the three cross-field constraints (`_students_order_check`, `_rate_order_check`, `_room_subsidy_check`) state the same three rules — the function is what the update services check before writing, the database is the backstop for any writer that skips it (decision 3, `docs/superpowers/specs/2026-09-24-class-economic-invariants-design.md`).
+
+- **`Class_format_shape` and `ClassTemplate_format_shape`** (#911, `20261025120932_online_class_format`) tie `format` to the columns it decides: `in_person` has a `teacher_room_id` and no `video_url`; `online` has no `teacher_room_id`, `room_cost = 0` and `room_archived = false`. An online row may have no `video_url` — a missing link is timing, nagged about in the UI, not shape. The two room foreign keys (`Class_teacherRoomId_roomArchived_fkey`, `ClassTemplate_teacherRoomId_roomArchived_fkey`) needed no change to allow a roomless row: both are `MATCH SIMPLE` (re-derive: `SELECT conname, confmatchtype FROM pg_constraint WHERE conname LIKE '%teacherRoomId_roomArchived_fkey'`, expect `s`), so a row with a NULL `teacher_room_id` is not checked against `TeacherRoom` at all. That leaves `room_archived` unconstrained by the key on such a row, which is why the shape CHECK pins it to `false`: `*_live_needs_open_room` then holds for every online row, whether live or not, without being rewritten. The room services (archive, delete, switch) find rows by `teacher_room_id` and so never see an online row; `src/lib/class-location.ts` is the one reader that turns a row into a location.
 
 ## Open Questions
 

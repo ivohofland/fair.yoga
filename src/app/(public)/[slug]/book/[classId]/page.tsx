@@ -6,7 +6,8 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { estimateTierPrices } from '@/lib/tier-estimates';
-import { formatRoomLocation, formatDayHeader } from '@/lib/format';
+import { formatDayHeader } from '@/lib/format';
+import { publicClassLocation, locationLabel, type PublicClassLocation } from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { resolvePriceLine } from '@/lib/price-line';
@@ -47,6 +48,9 @@ export default async function BookClassPage({
 
   const cls = await prisma.class.findUnique({
     where: { id: classId },
+    // Booked or not, this page shows only the public location: the video link
+    // is not even read (#911).
+    omit: { videoUrl: true },
     include: {
       calendarEntry: {
         include: {
@@ -81,6 +85,7 @@ export default async function BookClassPage({
     notFound();
   }
   const entry = cls.calendarEntry;
+  const location: PublicClassLocation = publicClassLocation(cls);
 
   const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
   const isFull = activeCount >= cls.maxStudents;
@@ -180,7 +185,7 @@ export default async function BookClassPage({
         <p className="type-caption mt-1">Shared by link — not on {entry.teacher.firstName}&apos;s public schedule.</p>
       )}
       <p className="type-caption mt-0.5">
-        {formatRoomLocation(cls.teacherRoom.room.roomName, cls.teacherRoom.room.venueName)}
+        {locationLabel(location)}
       </p>
       <ClassPriceLine
         line={resolvePriceLine({

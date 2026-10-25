@@ -276,6 +276,21 @@ describe('setTeacherRoomArchived — ownership, idempotency, release valve', () 
   });
 });
 
+describe('setTeacherRoomArchived — online rows hold no room (#911)', () => {
+  it('archives a room the teacher\'s live online class and template do not hold', async () => {
+    const f = await makeFixture();
+    const online = await fx.addOnlineRows(prisma, f, { daysAhead: 15, dayOfWeek: 4 });
+
+    const result = await setTeacherRoomArchived(prisma, f.linkId, f.teacherId, 'archived');
+
+    expect(result).toMatchObject({ ok: true, action: 'archived', isArchived: true });
+    const cls = await prisma.class.findUniqueOrThrow({ where: { id: online.cls.id } });
+    const tmpl = await prisma.classTemplate.findUniqueOrThrow({ where: { id: online.template.id } });
+    expect(cls).toMatchObject({ teacherRoomId: null, roomArchived: false, updatedAt: online.cls.updatedAt });
+    expect(tmpl).toMatchObject({ teacherRoomId: null, roomArchived: false, updatedAt: online.template.updatedAt });
+  });
+});
+
 describe('describeRoomBlockers', () => {
   it.each([
     [{ classes: 1, templates: 0 }, '1 unfinished class still uses this room. Cancel or finish it first.'],

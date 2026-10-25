@@ -129,6 +129,62 @@ export function fixtureRun(prefix: string) {
   }
 
   /**
+   * An ONLINE class and an ONLINE template (#911) owned by `f`'s teacher: no
+   * room, no room cost, a video link. The template is live, and so is the class
+   * unless `classStatus` says `draft`. The room services find rows by
+   * `teacherRoomId`, and these hold none. `daysAhead` and `dayOfWeek` follow
+   * `addClass` and `addTemplate` — keep them clear of this fixture's other rows.
+   */
+  async function addOnlineRows(
+    db: PrismaClient,
+    f: RoomFixture,
+    opts: { daysAhead: number; dayOfWeek: number; classStatus?: 'draft' | 'open' },
+  ) {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() + opts.daysAhead);
+    const cls = await createClassFixture(db, {
+      teacherId: f.teacherId,
+      format: 'online',
+      teacherRoomId: null,
+      videoUrl: 'https://meet.example/online-fixture',
+      classType: 'Online flow',
+      date,
+      startTime: hhmmToTime('20:00'),
+      durationMinutes: 60,
+      roomCost: new Prisma.Decimal(0),
+      minRate: new Prisma.Decimal(15),
+      targetRate: new Prisma.Decimal(25),
+      minStudents: 2,
+      maxStudents: 10,
+      status: opts.classStatus ?? 'open',
+    });
+    const template = await db.classTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId: f.teacherId,
+            kind: 'regular',
+            classType: 'Online flow',
+            dayOfWeek: opts.dayOfWeek,
+            startTime: hhmmToTime('20:00'),
+            durationMinutes: 60,
+            isActive: true,
+          },
+        },
+        format: 'online',
+        videoUrl: 'https://meet.example/online-fixture',
+        roomCost: new Prisma.Decimal(0),
+        minRate: new Prisma.Decimal(15),
+        targetRate: new Prisma.Decimal(25),
+        minStudents: 2,
+        maxStudents: 10,
+      },
+    });
+    return { cls, template };
+  }
+
+  /**
    * A SHARED room with `f`'s identity (issue 259). `f`'s private room is first
    * given a run-unique `roomName`, because two runs' twins would otherwise
    * collide on `Room_public_identity_unique`. The twin's creator is `f`'s
@@ -177,5 +233,5 @@ export function fixtureRun(prefix: string) {
     await db.account.deleteMany({ where: { email: { startsWith: suffix } } });
   }
 
-  return { suffix, makeFixture, addClass, addTemplate, addSharedTwin, cleanup };
+  return { suffix, makeFixture, addClass, addTemplate, addOnlineRows, addSharedTwin, cleanup };
 }

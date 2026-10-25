@@ -1252,6 +1252,87 @@ describe('generateClassInstances (DB)', () => {
     });
   });
 
+  describe('format and videoUrl on generated classes (#911)', () => {
+    const from = new Date('2026-04-06T00:00:00.000Z');
+    const LINK = 'https://us02web.zoom.us/j/123?pwd=abc';
+    let onlineTemplateId: string;
+    let onlineRuleId: string;
+
+    const readOnlineTemplate = () =>
+      prisma.classTemplate.findUniqueOrThrow({
+        where: { id: onlineTemplateId },
+        include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
+      });
+    const generatedOnline = () =>
+      prisma.class.findMany({ where: { calendarEntry: { scheduleRuleId: onlineRuleId } } });
+
+    beforeAll(async () => {
+      // A weekday the shared in-person template does not hold.
+      const template = await prisma.classTemplate.create({
+        data: {
+          scheduleRule: {
+            create: {
+              teacherId, kind: 'regular', classType: 'Online flow', dayOfWeek: 3,
+              startTime: hhmmToTime('09:00'), durationMinutes: 60, isActive: true,
+            },
+          },
+          format: 'online',
+          videoUrl: LINK,
+          roomCost: 0, minRate: 15, targetRate: 30, minStudents: 2, maxStudents: 12,
+        },
+      });
+      onlineTemplateId = template.id;
+      onlineRuleId = template.scheduleRuleId;
+    });
+
+    beforeEach(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+    });
+
+    afterAll(async () => {
+      await prisma.calendarEntry.deleteMany({ where: { teacherId } });
+      await prisma.scheduleRule.delete({ where: { id: onlineRuleId } });
+    });
+
+    it("stamps an online template's format and link, with no room and no room cost", async () => {
+      const result = await generateInstancesForTemplate(prisma, await readOnlineTemplate(), from);
+      expect(result.created).toBe(4);
+
+      const generated = await generatedOnline();
+      expect(generated).toHaveLength(4);
+      for (const cls of generated) {
+        expect(cls.format).toBe('online');
+        expect(cls.videoUrl).toBe(LINK);
+        expect(cls.teacherRoomId).toBeNull();
+        expect(cls.roomArchived).toBe(false);
+        expect(cls.roomCost.toString()).toBe('0');
+      }
+    });
+
+    it("a template link change leaves already-generated classes' links as they are (#194)", async () => {
+      expect((await generateInstancesForTemplate(prisma, await readOnlineTemplate(), from)).created).toBe(4);
+
+      await prisma.classTemplate.update({
+        where: { id: onlineTemplateId }, data: { videoUrl: 'https://meet.jit.si/new-room' },
+      });
+      expect((await generateInstancesForTemplate(prisma, await readOnlineTemplate(), from)).created).toBe(0);
+
+      const after = await generatedOnline();
+      expect(after).toHaveLength(4);
+      expect(after.every((c) => c.videoUrl === LINK)).toBe(true);
+      await prisma.classTemplate.update({ where: { id: onlineTemplateId }, data: { videoUrl: LINK } });
+    });
+
+    it('an in-person template still stamps in_person with no link', async () => {
+      expect((await generateInstancesForTemplate(prisma, await freshTemplate(), from)).created).toBe(4);
+      const generated = await prisma.class.findMany({
+        where: { calendarEntry: { scheduleRule: { classTemplates: { some: { id: templateId } } } } },
+      });
+      expect(generated).toHaveLength(4);
+      expect(generated.every((c) => c.format === 'in_person' && c.videoUrl === null)).toBe(true);
+    });
+  });
+
   describe('roomArchived on generated classes (#339)', () => {
     /**
      * The safe half of the pairing (issue 339): a PAUSED template's `ruleLive`

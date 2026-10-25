@@ -78,6 +78,20 @@ describe('ClassCard', () => {
     render(<ClassCard cls={classRow('cls-1', 'open', [])} isPast={false} />);
     expect(screen.queryByText(/Private/)).toBeNull();
   });
+
+  it('says Online where an online class has no room, and never shows its link (#911)', () => {
+    const online = {
+      ...classRow('cls-1', 'open', []),
+      format: 'online' as const,
+      teacherRoomId: null,
+      teacherRoom: null,
+      roomCost: new Prisma.Decimal(0),
+      videoUrl: 'https://meet.example/secret-room',
+    };
+    const { container } = render(<ClassCard cls={online} isPast={false} />);
+    expect(screen.getByText(/^Online/)).toBeTruthy();
+    expect(container.innerHTML).not.toContain('meet.example');
+  });
 });
 
 describe('ClassCardSkeleton', () => {

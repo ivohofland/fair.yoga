@@ -82,6 +82,14 @@ enum ClassStatus {
   completed
 }
 
+/// Where a `Class` or `ClassTemplate` happens (#911). Which columns each member
+/// requires is `Class_format_shape` / `ClassTemplate_format_shape`, hand-authored
+/// in the migration because Prisma cannot express them.
+enum ClassFormat {
+  in_person
+  online
+}
+
 enum RegistrationStatus {
   registered
   attended
@@ -553,7 +561,9 @@ model ClassTemplate {
   id             String      @id @default(uuid())
   scheduleRuleId String      @unique
   kind           ClassFamily
-  teacherRoomId  String
+  format         ClassFormat @default(in_person)
+  teacherRoomId  String?
+  videoUrl       String?     @db.Text
 
   /// MIRRORS. Neither column is state this row owns, and neither may disagree
   /// with the parent it mirrors — but they are not written the same way.
@@ -579,6 +589,9 @@ model ClassTemplate {
   /// active template may not sit on an archived room" unrepresentable rather
   /// than merely guarded (issue 272).
   ///
+  /// A roomless (online) row holds `roomArchived = false`, by
+  /// `ClassTemplate_format_shape`.
+  ///
   /// THIS IS NOT #298 BEING UNDONE. #298 moved the OWNERSHIP of
   /// `ClassTemplate.isActive`/`.isArchived` to `ScheduleRule`, and that is
   /// still the only place either is written. (Said explicitly because the
@@ -601,7 +614,7 @@ model ClassTemplate {
   updatedAt       DateTime        @updatedAt
 
   scheduleRule ScheduleRule @relation(fields: [scheduleRuleId, kind, ruleLive], references: [id, kind, live], onDelete: Cascade)
-  teacherRoom  TeacherRoom  @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
+  teacherRoom  TeacherRoom? @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
 
   /// The REFERENCING side of `ClassTemplate_teacherRoomId_roomArchived_fkey`.
   /// PostgreSQL indexes the referenced side automatically and this one never,
@@ -656,7 +669,9 @@ model Class {
   id              String      @id @default(uuid())
   calendarEntryId String      @unique
   kind            ClassFamily
-  teacherRoomId   String
+  format          ClassFormat @default(in_person)
+  teacherRoomId   String?
+  videoUrl        String?     @db.Text
 
   /// MIRRORS. Neither column is state this row owns, and neither may disagree
   /// with the parent it mirrors. `entryLive` mirrors `CalendarEntry.live`
@@ -684,6 +699,9 @@ model Class {
   /// migration because Prisma cannot express it — the constraint that makes "a
   /// live class may not sit in an archived room" unrepresentable rather than
   /// merely guarded (issue 339).
+  ///
+  /// A roomless (online) row holds `roomArchived = false`, by
+  /// `Class_format_shape`.
   entryLive            Boolean         @default(true)
   isPrivate            Boolean         @default(false)
   roomArchived         Boolean         @default(false)
@@ -733,7 +751,7 @@ model Class {
   teacherReminderSentAt DateTime?
 
   calendarEntry   CalendarEntry   @relation(fields: [calendarEntryId, kind, entryLive], references: [id, kind, live], onDelete: Cascade)
-  teacherRoom     TeacherRoom     @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
+  teacherRoom     TeacherRoom?    @relation(fields: [teacherRoomId, roomArchived], references: [id, isArchived])
   registrations   Registration[]
   waitlistEntries WaitlistEntry[]
   notifications   Notification[]

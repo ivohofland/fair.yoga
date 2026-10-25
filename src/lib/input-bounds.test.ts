@@ -47,6 +47,7 @@ describe('limit values', () => {
       BANK_FIELD_MAX: 64,
       HOLDER_NAME_MAX: 200,
       PAYMENT_LINK_MAX: 500,
+      VIDEO_URL_MAX: 500,
       DURATION_MAX_MINUTES: 1440,
       MONEY_MAX: 100000,
       MONEY_DECIMALS: 2,
