@@ -1304,8 +1304,6 @@ export type UpdateClassResult =
   | {
       ok: true;
       cls: ClassWithEntry;
-      /** The link before this write, read under the lock; null when it held none. */
-      previousVideoUrl: string | null;
     }
   | { ok: false; reason: 'not_found' }
   | { ok: false; reason: 'locked'; fields: readonly [LockedField, ...LockedField[]] }
@@ -1811,7 +1809,7 @@ export async function updateClass(
       // rolls back with the edit. Its inserts take `FOR KEY SHARE` on this
       // class, a row the lock above already holds.
       await notifyVideoLinkChanged(tx, { classId, previous, next: updated.videoUrl });
-      return { ok: true, cls: updated, previousVideoUrl: previous };
+      return { ok: true, cls: updated };
     });
   } catch (err) {
     if (err instanceof UpdateClassRefusal) return err.result;
