@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@/lib/prisma-client';
+import type { TransactionClientOnly } from '@/lib/db-locks';
 import { formatDayHeader } from '@/lib/format';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { ACTIVE_REGISTRATION_STATUSES } from '@/lib/registration-status';
@@ -13,14 +13,15 @@ import { createBulkNotifications, type CreateNotificationInput } from './notific
  * leave two rows that both point at the second link.
  *
  * Awaited, not `FireAndForget`: it writes inbox rows and sends nothing, so
- * there is no provider whose outage or latency could reach the caller. The
- * edit has already committed, so the caller owns a failure here, and answers
- * the teacher as before.
+ * there is no provider whose outage or latency could reach the caller. Takes
+ * a transaction client so the rows commit or roll back with the edit; the
+ * inserts' `relatedClassId` takes `FOR KEY SHARE` on the class, so the caller
+ * holds that class's row lock first.
  *
  * Returns the number of students notified.
  */
 export async function notifyVideoLinkChanged(
-  db: PrismaClient,
+  db: TransactionClientOnly,
   input: { classId: string; previous: string | null; next: string | null },
 ): Promise<number> {
   if (input.next === null || input.next === input.previous) return 0;
