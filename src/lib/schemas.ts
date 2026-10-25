@@ -5,8 +5,9 @@ import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
 import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
-import { economicsViolations } from '@/lib/class-economics';
+import { economicsViolations, type ClassEconomics } from '@/lib/class-economics';
 import { vatPercentViolation } from '@/lib/vat';
+import { parseHttpsLink, VIDEO_LINK_MESSAGES } from '@/lib/payment-link';
 import { RESERVED_SLUGS } from '@/lib/reserved-slugs';
 import {
   singleLineText,
@@ -33,6 +34,7 @@ import {
   CAPACITY_MAX,
   BANK_FIELD_MAX,
   PAYMENT_LINK_MAX,
+  VIDEO_URL_MAX,
   HOLDER_NAME_MAX,
 } from '@/lib/input-bounds';
 
@@ -582,28 +584,108 @@ export const switchRoomSchema = z.object({
 // CLASSES
 // ============================================================================
 
-export const createClassSchema = z.object({
-  teacherRoomId: z.string().uuid(),
-  classType: linkFreeText(CLASS_TYPE_MAX).min(1),
-  description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
-  date: isoDate,
-  startTime: timeHHmm,
-  durationMinutes: durationMinutesField(),
-  roomCost: moneyField(),
-  minRate: signedMoneyField(), // can be negative (teacher subsidizes)
-  targetRate: signedMoneyField(),
-  minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
-  maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
-  vatPercent: vatPercentField().optional(),
-  cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
-  autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
-  isPrivate: z.boolean().optional(),
-})
-  .superRefine((d, ctx) => {
-    for (const v of economicsViolations(d)) {
-      ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
-    }
-  });
+/**
+ * A video link as a request carries it: trimmed, normalised to the href
+ * `parseHttpsLink` returns, null (or a blank string) for none. The wire bound
+ * is twice the stored one so an overlong link reaches the parser and answers
+ * with its own `too_long` copy.
+ */
+const videoUrlField = () =>
+  singleLineCharacters(z.string().trim(), VIDEO_URL_MAX * 2)
+    .max(VIDEO_URL_MAX * 2)
+    .transform((raw, ctx) => {
+      if (raw === '') return null;
+      const parsed = parseHttpsLink(raw, VIDEO_URL_MAX);
+      if (parsed.ok) return parsed.url;
+      ctx.addIssue({ code: 'custom', message: VIDEO_LINK_MESSAGES[parsed.error] });
+      return z.NEVER;
+    })
+    .nullable()
+    .optional();
+
+/**
+ * The rate and capacity fields of a body the schema has already validated.
+ * `classFormatUnion` is generic over its schedule fields, which leaves the
+ * refinement's argument opaque to the compiler; the shape is read back here.
+ * The guard cannot fail for a validated body, and refuses it as a missing
+ * field if it ever did.
+ */
+function economicsOf(d: object, onlineRoomCost?: 0): ClassEconomics {
+  const roomCost = onlineRoomCost ?? ('roomCost' in d && typeof d.roomCost === 'number' ? d.roomCost : null);
+  if (
+    roomCost !== null &&
+    'minRate' in d && typeof d.minRate === 'number' &&
+    'targetRate' in d && typeof d.targetRate === 'number' &&
+    'minStudents' in d && typeof d.minStudents === 'number' &&
+    'maxStudents' in d && typeof d.maxStudents === 'number'
+  ) {
+    return { roomCost, minRate: d.minRate, targetRate: d.targetRate, minStudents: d.minStudents, maxStudents: d.maxStudents };
+  }
+  throw new Error('A validated class body lacks its economic fields.');
+}
+
+/**
+ * A class or template body that is either in a room or online (#911).
+ * `schedule` holds the one field set the two callers differ in (a class has a
+ * `date`, a template a `dayOfWeek`); everything else is shared. The
+ * format-specific fields are added here so a body contradicting its format (a
+ * room on an online class, a link on an in-person one, a room cost online) is
+ * refused by the schema. A body with no `format` key is in person.
+ * `economicsViolations` runs on both arms.
+ */
+export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
+  const shared = {
+    classType: linkFreeText(CLASS_TYPE_MAX).min(1),
+    description: multiLineText(LONG_TEXT_MAX).nullable().optional(),
+    startTime: timeHHmm,
+    durationMinutes: durationMinutesField(),
+    minRate: signedMoneyField(), // can be negative (teacher subsidizes)
+    targetRate: signedMoneyField(),
+    minStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+    maxStudents: z.number().int().positive().max(MAX_CLASS_SIZE),
+    vatPercent: vatPercentField().optional(),
+    cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
+    autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
+    isPrivate: z.boolean().optional(),
+  };
+  const inPerson = z
+    .object({
+      format: z.literal('in_person'),
+      teacherRoomId: z.string().uuid(),
+      roomCost: moneyField(),
+      videoUrl: z.undefined('Only an online class has a video link.').optional(),
+      ...shared,
+    })
+    .extend(schedule)
+    .superRefine((d, ctx) => {
+      for (const v of economicsViolations(economicsOf(d))) {
+        ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
+      }
+    });
+  const online = z
+    .object({
+      format: z.literal('online'),
+      teacherRoomId: z.undefined('An online class has no room.').optional(),
+      roomCost: z.literal(0, 'An online class has no room cost.').optional(),
+      videoUrl: videoUrlField(),
+      ...shared,
+    })
+    .extend(schedule)
+    .superRefine((d, ctx) => {
+      for (const v of economicsViolations(economicsOf(d, 0))) {
+        ctx.addIssue({ code: 'custom', message: v.message, path: [v.path] });
+      }
+    });
+  return z.preprocess(
+    (raw) =>
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw) && !('format' in raw)
+        ? { ...raw, format: 'in_person' }
+        : raw,
+    z.discriminatedUnion('format', [inPerson, online]),
+  );
+}
+
+export const createClassSchema = classFormatUnion({ date: isoDate });
 
 export const updateClassSchema = z.object({
   classType: linkFreeText(CLASS_TYPE_MAX).min(1).optional(),
@@ -613,6 +695,9 @@ export const updateClassSchema = z.object({
   durationMinutes: durationMinutesField().optional(),
   // Not economic and never locked (#910); see LOCKED_FIELDS in src/lib/class-fields.ts.
   isPrivate: z.boolean().optional(),
+  // Never locked either: a link is added when the teacher has one, booked or not.
+  // The format and the room are fixed at creation, so they are not accepted.
+  videoUrl: videoUrlField(),
   // Economic fields — only accepted when settings not locked (enforced by
   // updateClass in src/services/class-lifecycle.ts)
   roomCost: moneyField().optional(),

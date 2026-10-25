@@ -93,6 +93,8 @@ export const PUT = withErrorHandler(async (
 
   const result = await updateClass(prisma, id, data);
   if (result.ok) {
+    // `result.previousVideoUrl` is the link before this write. Held here for the
+    // notice that follows a change of link; nothing is sent from this route yet.
     const { calendarEntry, ...updated } = result.cls;
     return respondOk({
       ...updated,
@@ -245,6 +247,14 @@ export const PUT = withErrorHandler(async (
   // schema's refusal of the same rule.
   if (result.reason === 'invalid_economics') {
     return respondError(formatEconomicsViolations(result.violations), 400);
+  }
+  // A link sent for a class held in a room. A 400 field error like the
+  // economics refusal above, not a coded 409: the format never changes after
+  // creation, so the request can never succeed against this class and no
+  // other state is in conflict with it. The same rule refuses the body on
+  // create, as a schema issue on `videoUrl`.
+  if (result.reason === 'video_url_on_room_class') {
+    return respondError('videoUrl: Only an online class has a video link.', 400);
   }
   // Exhaustiveness: a new UpdateClassResult variant becomes a compile error
   // here rather than being silently answered as though it were `locked`.

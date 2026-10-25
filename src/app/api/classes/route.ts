@@ -77,10 +77,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if ('error' in parsed) return parsed.error;
   const body = parsed.data;
 
-  // Verify teacherRoomId belongs to this teacher
-  const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: body.teacherRoomId } });
-  if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
-    return roomNotOnListResponse();
+  // Verify teacherRoomId belongs to this teacher. An online class has no room.
+  const teacherRoomId = body.format === 'in_person' ? body.teacherRoomId : null;
+  if (teacherRoomId !== null) {
+    const teacherRoom = await prisma.teacherRoom.findUnique({ where: { id: teacherRoomId } });
+    if (!teacherRoom || teacherRoom.teacherId !== session.teacherId) {
+      return roomNotOnListResponse();
+    }
   }
 
   // Two Prisma calls, not one nested `create`. Prisma already wraps a single
@@ -118,10 +121,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     // so flipping it is a KEY update and takes `FOR UPDATE`. It does not
     // conflict with the `KEY SHARE` the insert below takes on the same row,
     // nor with the generator's.
-    const [room] = await tx.$queryRaw<{ isArchived: boolean }[]>`
-      SELECT "isArchived" FROM "TeacherRoom"
-       WHERE "id" = ${body.teacherRoomId}
-       FOR KEY SHARE`;
+    // An online class has no room to read and holds `roomArchived: false`
+    // (`Class_format_shape`).
+    const [room] = teacherRoomId === null
+      ? [{ isArchived: false }]
+      : await tx.$queryRaw<{ isArchived: boolean }[]>`
+          SELECT "isArchived" FROM "TeacherRoom"
+           WHERE "id" = ${teacherRoomId}
+           FOR KEY SHARE`;
     // Discriminated from the entry's own `{ ok: false }` below: this room
     // existed at the ownership check above but is gone by now — a race with
     // a concurrent delete, not a slot conflict — and the caller answers it
@@ -160,7 +167,9 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       data: {
         calendarEntryId: entry.id,
         kind: 'regular',
-        teacherRoomId: body.teacherRoomId,
+        format: body.format,
+        teacherRoomId,
+        videoUrl: body.format === 'online' ? (body.videoUrl ?? null) : null,
         // COPIED, not asserted: see the transaction's opening comment. A
         // draft may legally sit in an archived room, so the value has to be
         // the room's actual current one rather than the Prisma default
@@ -168,7 +177,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         roomArchived: room.isArchived,
         currency: teacher.currency,
         description: body.description ?? null,
-        roomCost: body.roomCost,
+        roomCost: body.roomCost ?? 0,
         minRate: body.minRate,
         targetRate: body.targetRate,
         minStudents: body.minStudents,
@@ -201,7 +210,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
       // never sees a response that was RETURNED rather than thrown, so this
       // line is what leaves a server-side record of the refusal.
       log.warn(
-        { teacherId: session.teacherId, teacherRoomId: body.teacherRoomId },
+        { teacherId: session.teacherId, teacherRoomId },
         'class create refused: the room was deleted while the create was parked on it',
       );
       return roomNotOnListResponse();

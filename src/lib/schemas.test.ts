@@ -69,8 +69,22 @@ import {
  * for a `z.union`. An entry is `undefined` where no shape can be read.
  */
 function memberShapes(schema: z.ZodType): Array<Record<string, z.ZodType> | undefined> {
-  const members = schema instanceof z.ZodUnion ? schema.options : [schema];
-  return members.map((member) => (member as { shape?: Record<string, z.ZodType> }).shape);
+  return unionMembers(schema).map((member) => (member as { shape?: Record<string, z.ZodType> }).shape);
+}
+
+/**
+ * The members of a `z.union`, or of the format union `classFormatUnion`
+ * builds (a discriminated union behind a preprocess); the schema itself for
+ * anything else.
+ */
+function unionMembers(schema: z.ZodType): z.ZodType[] {
+  if (schema instanceof z.ZodPipe && schema.def.in instanceof z.ZodTransform) {
+    return unionMembers(schema.def.out as z.ZodType);
+  }
+  if (schema instanceof z.ZodUnion || schema instanceof z.ZodDiscriminatedUnion) {
+    return schema.options as z.ZodType[];
+  }
+  return [schema];
 }
 
 describe('transitionClassSchema', () => {
@@ -258,13 +272,16 @@ describe('createClassSchema', () => {
   // too — but it means a client may send that name, and it is one handler edit
   // away from being written.
   it('accepts exactly the client-settable create field set', () => {
-    expect(Object.keys(createClassSchema.shape).sort()).toEqual([
+    // Both arms of the format union, so a key either one declares is listed.
+    const keys = new Set(createClassSchema.def.out.options.flatMap((arm) => Object.keys(arm.shape)));
+    expect([...keys].sort()).toEqual([
       'autoCancelCheck',
       'cancelDeadline',
       'classType',
       'date',
       'description',
       'durationMinutes',
+      'format',
       'isPrivate',
       'maxStudents',
       'minRate',
@@ -274,7 +291,44 @@ describe('createClassSchema', () => {
       'targetRate',
       'teacherRoomId',
       'vatPercent',
+      'videoUrl',
     ]);
+  });
+
+  describe('the class format union (#911)', () => {
+    const room = '4f7c2a10-1111-4222-8333-444455556666';
+    const common = {
+      classType: 'Hatha', date: '2099-06-01', startTime: '09:00', durationMinutes: 60,
+      minRate: 10, targetRate: 20, minStudents: 1, maxStudents: 4,
+    };
+
+    it('reads a body without a format as in person', () => {
+      const r = createClassSchema.safeParse({ ...common, teacherRoomId: room, roomCost: 5 });
+      expect(r.success && r.data.format).toBe('in_person');
+    });
+
+    it('takes an online body with no room, no room cost and a normalised link', () => {
+      const r = createClassSchema.safeParse({ ...common, format: 'online', videoUrl: ' https://Meet.Example.com/a ' });
+      expect(r.success && r.data.format === 'online' && r.data.videoUrl).toBe('https://meet.example.com/a');
+    });
+
+    it.each([
+      ['a room', { teacherRoomId: room }],
+      ['a room cost', { roomCost: 5 }],
+      ['an http link', { videoUrl: 'http://meet.example.com/a' }],
+    ])('refuses an online body with %s', (_label, extra) => {
+      expect(createClassSchema.safeParse({ ...common, format: 'online', ...extra }).success).toBe(false);
+    });
+
+    it('refuses an in-person body with a link', () => {
+      const r = createClassSchema.safeParse({ ...common, teacherRoomId: room, roomCost: 5, videoUrl: 'https://a.example.com' });
+      expect(r.success).toBe(false);
+    });
+
+    it('runs the economics rules on an online body, where the room cost is 0', () => {
+      const r = createClassSchema.safeParse({ ...common, format: 'online', minRate: -1, targetRate: 20 });
+      expect(r.success).toBe(false);
+    });
   });
 
   it('reports every broken economics rule at once, not just the first (#221)', () => {
@@ -354,6 +408,7 @@ describe('updateClassSchema', () => {
       'startTime',
       'targetRate',
       'vatPercent',
+      'videoUrl',
     ]);
   });
 });
@@ -1167,10 +1222,7 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     const discovered: string[] = [];
     for (const [name, schema] of Object.entries(schemas)) {
       if (!(schema instanceof z.ZodType)) continue;
-      const shape =
-        (schema as { shape?: Record<string, unknown> }).shape ??
-        (schema as { _def?: { schema?: { shape?: Record<string, unknown> } } })._def?.schema?.shape;
-      if (!shape || !('classType' in shape)) continue;
+      if (!memberShapes(schema).some((shape) => shape !== undefined && 'classType' in shape)) continue;
       discovered.push(name);
     }
     expect(discovered.sort()).toEqual([...classTypeSchemas].sort());
@@ -1180,10 +1232,7 @@ describe('classType and location whitespace trimming and validation (#311)', () 
     const discovered: string[] = [];
     for (const [name, schema] of Object.entries(schemas)) {
       if (!(schema instanceof z.ZodType)) continue;
-      const shape =
-        (schema as { shape?: Record<string, unknown> }).shape ??
-        (schema as { _def?: { schema?: { shape?: Record<string, unknown> } } })._def?.schema?.shape;
-      if (!shape || !('location' in shape)) continue;
+      if (!memberShapes(schema).some((shape) => shape !== undefined && 'location' in shape)) continue;
       discovered.push(name);
     }
     expect(discovered.sort()).toEqual([...locationSchemas].sort());
@@ -1200,22 +1249,22 @@ describe('classType and location whitespace trimming and validation (#311)', () 
 
   it.each(classTypeSchemas)('%s trims padded classType before validation and storage', (name) => {
     const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
-    const shape =
-      (schema as { shape?: Record<string, z.ZodType> }).shape ??
-      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
-    const field = shape?.classType;
-    expect(field).toBeDefined();
-    expect(field!.parse('  Vinyasa Flow  ')).toBe('Vinyasa Flow');
+    const fields = memberShapes(schema).map((shape) => shape?.classType);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field).toBeDefined();
+        expect(field!.parse('  Vinyasa Flow  ')).toBe('Vinyasa Flow');
+    }
   });
 
   it.each(locationSchemas)('%s trims padded location before validation and storage', (name) => {
     const schema = (schemas as Record<string, unknown>)[name] as z.ZodType;
-    const shape =
-      (schema as { shape?: Record<string, z.ZodType> }).shape ??
-      (schema as { _def?: { schema?: { shape?: Record<string, z.ZodType> } } })._def?.schema?.shape;
-    const field = shape?.location;
-    expect(field).toBeDefined();
-    expect(field!.parse('  Studio Centrum  ')).toBe('Studio Centrum');
+    const fields = memberShapes(schema).map((shape) => shape?.location);
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      expect(field).toBeDefined();
+        expect(field!.parse('  Studio Centrum  ')).toBe('Studio Centrum');
+    }
   });
 });
 
@@ -1263,7 +1312,7 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
     const bare: string[] = [];
     const visit = (label: string, field: z.ZodType): void => {
       if (field.safeParse('').success) return; // blank is legal here — exempt
-      checked.push(label);
+      if (!checked.includes(label)) checked.push(label);
       for (const blank of BLANKS) {
         if (field.safeParse(blank).success) {
           offenders.push(`${label} accepts ${JSON.stringify(blank)}`);
@@ -1272,7 +1321,7 @@ describe('a field that refuses blank refuses whitespace too (#405)', () => {
     };
     for (const [name, schema] of Object.entries(schemas)) {
       if (!(schema instanceof z.ZodType)) continue;
-      const shapes = (schema instanceof z.ZodUnion ? schema.options : [schema]).map(shapeOf);
+      const shapes = unionMembers(schema).map(shapeOf);
       const readable = shapes.filter((s): s is Record<string, z.ZodType> => s !== undefined);
       if (readable.length === shapes.length) {
         for (const shape of readable) {
@@ -1390,9 +1439,23 @@ function fieldAt(schemaName: string, path: string): z.ZodType {
     const inner = unwrapWrappers(node);
     if (token === '[*]') node = (inner as z.ZodArray<z.ZodType>).element;
     else if (token.startsWith('|')) node = (inner as z.ZodUnion<z.ZodType[]>).options[Number(token.slice(1))] as z.ZodType;
-    else node = (inner as z.ZodObject).shape[token] as z.ZodType;
+    else if (inner instanceof z.ZodObject) node = inner.shape[token] as z.ZodType;
+    else {
+      // A format union (`classFormatUnion`): the field of its first arm that has one.
+      const arms = unionArms(inner);
+      const arm = arms.find((a) => a instanceof z.ZodObject && token in a.shape);
+      if (!(arm instanceof z.ZodObject)) throw new Error(`${schemaName}: no object arm has ${token}`);
+      node = arm.shape[token] as z.ZodType;
+    }
   }
   return node;
+}
+
+/** The arms of a (possibly preprocessed) discriminated union; empty for any other schema. */
+function unionArms(schema: z.ZodType): readonly z.ZodType[] {
+  if (schema instanceof z.ZodPipe) return unionArms(schema.def.out as z.ZodType);
+  if (schema instanceof z.ZodDiscriminatedUnion) return schema.options as z.ZodType[];
+  return [];
 }
 
 function unwrapWrappers(schema: z.ZodType): z.ZodType {
@@ -1662,8 +1725,18 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
   const bag = schema._zod.bag as { maximum?: number; format?: string; patterns?: Set<RegExp> };
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault) {
     walkLeaves(path, schema._zod.def.innerType as z.ZodType, out);
+  } else if (schema instanceof z.ZodDiscriminatedUnion) {
+    // Each arm under the same path, a field both carry listed once.
+    for (const option of schema.options as z.ZodType[]) {
+      const arm = emptyWalk();
+      walkLeaves(path, option, arm);
+      for (const key of ['offenders', 'unboundedStrings', 'unboundedNumbers', 'acceptsHidden'] as const) {
+        for (const entry of arm[key]) if (!out[key].includes(entry)) out[key].push(entry);
+      }
+    }
   } else if (schema instanceof z.ZodPipe) {
-    walkLeaves(path, schema._zod.def.in as z.ZodType, out);
+    // A preprocess has a transform for its input; there is no leaf there.
+    if (!(schema._zod.def.in instanceof z.ZodTransform)) walkLeaves(path, schema._zod.def.in as z.ZodType, out);
     if (!(schema._zod.def.out instanceof z.ZodTransform)) walkLeaves(path, schema._zod.def.out as z.ZodType, out);
   } else if (schema instanceof z.ZodObject) {
     for (const [k, v] of Object.entries(schema.shape)) walkLeaves(path ? `${path}.${k}` : k, v as z.ZodType, out);
@@ -1697,6 +1770,7 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
     }
   } else if (
     schema instanceof z.ZodBoolean ||
+    schema instanceof z.ZodUndefined ||
     schema instanceof z.ZodEnum ||
     schema instanceof z.ZodLiteral
   ) {
