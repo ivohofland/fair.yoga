@@ -231,3 +231,22 @@ describe('DELETE /api/account — a transient failure logs at its kind\'s level'
     }
   });
 });
+
+describe('DELETE /api/account — a teacher failure does not claim the data is untouched (#911)', () => {
+  it('says the video links of finished classes may already be removed', async () => {
+    session = TEACHER_SESSION;
+    deleteTeacherAccount.mockReset();
+    deleteTeacherAccount.mockRejectedValueOnce(new Error('boom'));
+    const spy = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const res = await del();
+
+      expect(res.status).toBe(500);
+      const { error: { message: error } } = (await res.json()) as { error: { message: string } };
+      expect(error).toContain('video links on your completed and cancelled classes may already have been removed');
+      expect(error).not.toContain('data is unchanged');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

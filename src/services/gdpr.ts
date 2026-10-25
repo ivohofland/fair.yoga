@@ -1183,10 +1183,9 @@ const CLASS_STATUS_CANCELLABILITY = {
  * The statuses a teacher erasure cancels, DERIVED from
  * `CLASS_STATUS_CANCELLABILITY` above rather than restated beside it.
  *
- * Two readers in `deleteTeacherAccount` have to agree: the ordered
- * pre-lock's `WHERE` (through `CANCELLABLE_STATUSES_SQL` below) and the
- * per-class cancel CAS's own `where` in the loop — both derive from this
- * array rather than restating the statuses, so neither can drift from it.
+ * Every reader has to agree on it, so each derives from this array rather
+ * than restating the statuses: Prisma filters spread it, raw SQL goes through
+ * `CANCELLABLE_STATUSES_SQL` below.
  * What restating costs was measured rather than argued —
  * `SCHEDULED_STATUSES_SQL`'s own docblock (`class-template-lifecycle.ts`)
  * records dropping a status from one of two hand-written lists as having
@@ -1209,11 +1208,10 @@ const CLASS_STATUS_CANCELLABILITY = {
 const CANCELLABLE_STATUSES: readonly ClassStatus[] = statusesWhere(CLASS_STATUS_CANCELLABILITY);
 
 /**
- * `CANCELLABLE_STATUSES` as SQL text, for the ordered pre-lock's predicate —
- * the one reader of that list which cannot go through a Prisma
- * `{ in: [...] }` filter, because `FOR UPDATE OF c` and `ORDER BY` have no
- * query-builder equivalent. Why the rendering is `Prisma.raw` and why that is
- * safe: `statusInList` (`db-locks.ts`).
+ * `CANCELLABLE_STATUSES` as SQL text, for the raw-SQL predicates — the readers
+ * of that list that cannot go through a Prisma `{ in: [...] }` filter,
+ * because `FOR UPDATE OF c` and `ORDER BY` have no query-builder equivalent.
+ * Why the rendering is `Prisma.raw` and why that is safe: `statusInList` (`db-locks.ts`).
  */
 const CANCELLABLE_STATUSES_SQL = statusInList(CANCELLABLE_STATUSES);
 
@@ -1308,9 +1306,9 @@ export async function deleteTeacherAccount(
   }
 
   // #911. The video links on the teacher's completed and cancelled classes,
-  // cleared BEFORE the erasure and allowed to throw: a failure reaches the
-  // route while the session still lives, so the teacher can retry. Not inside
-  // the transaction below, whose only `Class` lock is its live classes — a
+  // cleared BEFORE the erasure and allowed to throw: a transient failure
+  // (55P03) reaches the route as a retryable 503 while the session still
+  // lives. Not inside the transaction below, whose only `Class` lock is its live classes — a
   // second ordered lock there could take a lower id after a higher one
   // (`docs/lock-order.md`, "Ordering WITHIN `Class`"). The live classes'
   // links are cleared inside it, under its own pre-lock.
@@ -1921,7 +1919,8 @@ export async function deleteTeacherAccount(
  * Clears the video link on a teacher's classes (#911): the link is a URL the
  * teacher typed, often naming them, and a completed or cancelled class
  * outlives the erasure as its students' bookkeeping. `terminal` limits it to
- * completed and cancelled classes, whose link no one can use any more, so
+ * classes the erasure does not cancel (a status `CLASS_STATUS_CANCELLABILITY`
+ * marks false) and cancelled ones, whose link no one can use any more, so
  * clearing it before an erasure that then fails loses nothing; `all` also
  * reaches a class still live. Its own transaction, whose one lock is the
  * ordered pre-lock below; idempotent. Throws on failure.
