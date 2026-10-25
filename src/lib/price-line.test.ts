@@ -9,6 +9,7 @@ const BASE = {
   minStudents: 4,
   maxStudents: 8,
   vatPercent: 0,
+  pricingMode: 'tiered' as const,
 };
 
 describe('resolvePriceLine', () => {
@@ -155,5 +156,15 @@ describe('resolvePriceLine', () => {
       expect(withNine.estimates).toEqual(expected);
       expect(withNine.estimates[4]).toBeGreaterThan(withZero.estimates[4]);
     }
+  });
+
+  it('returns donation for a donation class, whatever the viewer (#912)', () => {
+    const result = resolvePriceLine({
+      ...BASE,
+      pricingMode: 'donation',
+      registrations: [{ id: 'r1', studentId: 's1', tierAtBooking: 4, status: 'registered' }],
+      viewer: { studentId: 's1', tier: 4, tierSelectedAt: new Date() },
+    });
+    expect(result).toEqual({ kind: 'donation' });
   });
 });

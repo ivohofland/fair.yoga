@@ -1,4 +1,4 @@
-import type { ClassStatus, RegistrationStatus } from '@/lib/prisma-client';
+import type { ClassStatus, PricingMode, RegistrationStatus } from '@/lib/prisma-client';
 import { logDegraded } from '@/lib/degradation';
 import { formatInstantInZone, startOfLocalDay } from '@/lib/timezone';
 import { formatDateShort } from '@/lib/format';
@@ -74,7 +74,10 @@ export function reportMissingPayment(found: {
   registrationId: string;
   registrationStatus: RegistrationStatus;
   classStatus: ClassStatus;
+  pricingMode: PricingMode;
 }): void {
+  // A donation class never has a payment (#912).
+  if (found.pricingMode === 'donation') return;
   if (found.classStatus !== 'completed' || !CHARGED_STATUSES.includes(found.registrationStatus)) return;
   logDegraded(
     'CHARGED_REGISTRATION_WITHOUT_PAYMENT',

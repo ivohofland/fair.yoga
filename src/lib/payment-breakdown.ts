@@ -1,5 +1,5 @@
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
-import type { ClassStatus, PaymentStatus, Prisma } from '@/lib/prisma-client';
+import type { ClassStatus, PaymentStatus, PricingMode, Prisma } from '@/lib/prisma-client';
 
 /** The lines of a completed class's breakdown, in whole cents. */
 export interface PaymentBreakdownLines {
@@ -19,6 +19,7 @@ export type PaymentBreakdownResult =
   | { kind: 'snapshot_missing' };
 
 export interface ResolvePaymentBreakdownInput {
+  pricingMode: PricingMode;
   classStatus: ClassStatus;
   roomCost: Prisma.Decimal;
   totalRevenue: Prisma.Decimal | null;
@@ -57,6 +58,17 @@ function toCents(value: Prisma.Decimal): number {
  */
 export function resolvePaymentBreakdown(input: ResolvePaymentBreakdownInput): PaymentBreakdownResult {
   const { classStatus, roomCost, totalRevenue, vatTotal, vatPercent, totalStudents, payment } = input;
+
+  switch (input.pricingMode) {
+    case 'donation':
+      return { kind: 'hidden' };
+    case 'tiered':
+      break;
+    default: {
+      const unhandled: never = input.pricingMode;
+      throw new Error(`resolvePaymentBreakdown: unhandled pricing mode ${String(unhandled)}`);
+    }
+  }
 
   if (classStatus !== 'completed') return { kind: 'hidden' };
   if (totalRevenue === null || vatTotal === null || totalStudents === null) return { kind: 'snapshot_missing' };

@@ -6,6 +6,7 @@ const d = (value: string) => new Prisma.Decimal(value);
 
 const COMPLETED: ResolvePaymentBreakdownInput = {
   classStatus: 'completed',
+  pricingMode: 'tiered',
   roomCost: d('40.00'),
   totalRevenue: d('56.25'),
   vatTotal: d('0'),
@@ -115,5 +116,11 @@ describe('resolvePaymentBreakdown', () => {
       kind: 'shown',
       lines: { roomCents: 4010, teacherCents: 1620, totalCents: 5630 },
     });
+  });
+
+  it('hides the breakdown of a donation class, whose snapshot is null by design (#912)', () => {
+    expect(
+      resolvePaymentBreakdown({ ...COMPLETED, pricingMode: 'donation', totalRevenue: null, vatTotal: null, payment: null }),
+    ).toEqual({ kind: 'hidden' });
   });
 });

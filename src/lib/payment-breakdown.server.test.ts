@@ -6,6 +6,7 @@ import { resolveReportedPaymentBreakdown } from './payment-breakdown.server';
 const d = (v: string) => new Prisma.Decimal(v);
 const COMPLETED = {
   classStatus: 'completed' as const,
+  pricingMode: 'tiered' as const,
   roomCost: d('40.00'),
   totalRevenue: d('56.25'),
   vatTotal: d('0'),

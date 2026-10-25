@@ -57,7 +57,16 @@ interface ClassPriceLineProps {
 // Renders whichever variant resolvePriceLine picked — the one place that
 // switches on `line.kind`, so no page duplicates the branch.
 export function ClassPriceLine({ line, currency, className }: ClassPriceLineProps) {
-  return line.kind === 'personal'
-    ? <PersonalPriceRange spread={line.spread} currency={currency} className={className} />
-    : <PriceRange estimates={line.estimates} currency={currency} className={className} />;
+  switch (line.kind) {
+    case 'personal':
+      return <PersonalPriceRange spread={line.spread} currency={currency} className={className} />;
+    case 'anonymous':
+      return <PriceRange estimates={line.estimates} currency={currency} className={className} />;
+    case 'donation':
+      return <p className={`type-caption ${className ?? ''}`.trim()}>By donation</p>;
+    default: {
+      const unhandled: never = line;
+      throw new Error(`ClassPriceLine: unhandled price line ${String((unhandled as { kind?: unknown }).kind)}`);
+    }
+  }
 }
