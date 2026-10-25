@@ -1311,6 +1311,26 @@ describe('NewClassPage', () => {
       expect(screen.queryByText(/room capacity/)).toBeNull();
     });
 
+    it('accepts 31 max students, past the default room capacity, with no error', async () => {
+      stubFetch();
+      await chooseOnline();
+      fillBasics();
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      fireEvent.change(await screen.findByLabelText('Max students'), { target: { value: '31' } });
+      fireEvent.click(screen.getByRole('button', { name: /next/i }));
+      expect(await screen.findByText(/Cancellation deadline/)).toBeInTheDocument();
+      expect(screen.queryByText(/cannot exceed/i)).toBeNull();
+    });
+
+    it('a failed rooms fetch still lets Online be chosen', async () => {
+      fetchMock.mockResolvedValue({ ok: false, json: async () => ({}) });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<NewClassForm currency="EUR" defaultVatPercent={0} />);
+      expect(await screen.findByText(/Couldn.t load your rooms/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      expect(await screen.findByLabelText('Class type')).toBeInTheDocument();
+    });
+
     it('lets a teacher with no rooms create an online class', async () => {
       fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
       vi.stubGlobal('fetch', fetchMock);
