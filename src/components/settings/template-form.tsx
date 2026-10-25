@@ -279,6 +279,17 @@ export function TemplateForm(props: TemplateFormProps) {
     }
   }
 
+  // #910, the same adoption for Private: an untouched box follows the stored
+  // flag across a refresh, so it neither shows nor resends this tab's old one.
+  const initialPrivate = edit?.initial.isPrivate;
+  const [prevInitialPrivate, setPrevInitialPrivate] = useState(initialPrivate);
+  if (initialPrivate !== prevInitialPrivate) {
+    setPrevInitialPrivate(initialPrivate);
+    if (initialPrivate !== undefined) {
+      setForm((prev) => (prev.isPrivate === prevInitialPrivate ? { ...prev, isPrivate: initialPrivate } : prev));
+    }
+  }
+
   useEffect(() => {
     async function fetchRooms() {
       try {
@@ -419,6 +430,8 @@ export function TemplateForm(props: TemplateFormProps) {
       const { teacherRoomId, ...withoutRoom } = full;
       const payload =
         edit !== null && teacherRoomId === edit.initial.teacherRoomId ? withoutRoom : full;
+      // #910. Private likewise goes out on an edit only as a change.
+      if (edit !== null && payload.isPrivate === edit.initial.isPrivate) delete payload.isPrivate;
 
       let res: Response;
       try {

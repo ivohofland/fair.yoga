@@ -138,6 +138,15 @@ export function ClassEditForm({
   // Client-only, so `undefined` for the server render and the hydration pass.
   const minDate = useTodayLocal();
   const [form, setForm] = useState(initial);
+  // #910, the shape #685 gave the template form's room. `form` is seeded once,
+  // so a refreshed `initial` would leave the box on the flag this tab loaded;
+  // an untouched box adopts the stored one, a box the teacher changed is kept.
+  // Adjusted during render: React's pattern for state that follows a prop.
+  const [prevInitialPrivate, setPrevInitialPrivate] = useState(initial.isPrivate);
+  if (initial.isPrivate !== prevInitialPrivate) {
+    setPrevInitialPrivate(initial.isPrivate);
+    setForm((prev) => (prev.isPrivate === prevInitialPrivate ? { ...prev, isPrivate: initial.isPrivate } : prev));
+  }
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -254,6 +263,9 @@ export function ClassEditForm({
     if (settingsLocked) {
       for (const f of LOCKED_FIELDS) delete payload[f];
     }
+    // Private goes out only as a change from the stored flag, so a tab opened
+    // before it changed elsewhere does not send its old value back.
+    if (payload.isPrivate === initial.isPrivate) delete payload.isPrivate;
 
     let res: Response;
     try {

@@ -87,7 +87,7 @@ describe('TemplateForm', () => {
     stubRooms([roomRow(ROOM_A, 'Studio A'), roomRow(ROOM_B, 'Studio B')]);
   }
 
-  /** What an edit of `initial` sends when the room is left alone. */
+  /** What an edit of `initial` sends when the room and Private are left alone. */
   const EDIT_BODY_WITHOUT_ROOM = {
     classType: 'Vinyasa',
     description: 'Bring a mat.',
@@ -102,7 +102,6 @@ describe('TemplateForm', () => {
     vatPercent: 0,
     cancelDeadline: 'HOURS_24',
     autoCancelCheck: 'HOURS_2',
-    isPrivate: false,
   };
 
   /**
@@ -2159,7 +2158,7 @@ describe('TemplateForm', () => {
       fireEvent.change(await screen.findByLabelText(/^Class type/), { target: { value: 'Yin' } });
       const { body } = await submit();
       expect(body.classType).toBe('Yin');
-      expect(body.isPrivate).toBe(false);
+      expect(body).not.toHaveProperty('isPrivate');
       await screen.findByText(/^Template updated\./);
       expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
     });
@@ -2182,6 +2181,27 @@ describe('TemplateForm', () => {
       const { body } = await submit();
       expect(body.isPrivate).toBe(false);
       expect(await screen.findByText(NOTICE)).toBeInTheDocument();
+    });
+
+    // A refresh landing a flag changed in another tab: an untouched box adopts
+    // it, and the save does not send this tab's old value back.
+    it('an untouched box follows the refreshed flag and the edit leaves it out', async () => {
+      stubFetch();
+      const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, isPrivate: true }} />);
+      expect(await screen.findByLabelText(/Private class/)).toBeChecked();
+      const { body } = await submit();
+      expect(body).not.toHaveProperty('isPrivate');
+    });
+
+    it('a box the teacher ticked survives a refresh that leaves the flag alone, and is sent', async () => {
+      stubFetch();
+      const { rerender } = render(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial }} />);
+      fireEvent.click(await screen.findByLabelText(/Private class/));
+      rerender(<TemplateForm currency="EUR" mode="edit" templateId="tpl-1" initial={{ ...initial, description: 'Refreshed.' }} />);
+      expect(screen.getByLabelText(/Private class/)).toBeChecked();
+      const { body } = await submit();
+      expect(body.isPrivate).toBe(true);
     });
 
     it('create sends isPrivate and never shows the notice', async () => {
