@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { elementsOf } from '../../../../../../tests/react-tree';
 import { CompleteClassButton } from '@/components/class/complete-class-button';
 import { ShareBookingLink } from '@/components/class/share-booking-link';
 import { RefreshAt } from '@/components/class/refresh-at';
+import { DonationsReceivedCard } from '@/components/class/donations-received-card';
+import { PaymentChecklist } from '@/components/class/payment-checklist';
 
 const { requireTeacherSession, findUnique, waitlistCount } = vi.hoisted(() => ({
   requireTeacherSession: vi.fn(),
@@ -30,6 +32,7 @@ describe('ClassDetailPage', () => {
     findUnique.mockResolvedValue({
       id: 'c-9',
       status: 'in_progress',
+      pricingMode: 'tiered',
       calendarEntry: {
         teacherId: 'teacher-1',
         cancelledAt: null,
@@ -61,6 +64,7 @@ describe('ClassDetailPage', () => {
     const classOn = (status: string, date: string) => ({
       id: 'c-7',
       status,
+      pricingMode: 'tiered',
       calendarEntry: {
         teacherId: 'teacher-1',
         cancelledAt: null,
@@ -114,6 +118,75 @@ describe('ClassDetailPage', () => {
       const { shares, captions } = await render();
       expect(shares).toHaveLength(0);
       expect(captions).toHaveLength(0);
+    });
+  });
+
+  describe('a donation class (#912)', () => {
+    const session = {
+      sessionId: 's1',
+      accountId: 'acct-1',
+      teacherId: 'teacher-1',
+      studentId: null,
+      defaultTimezone: 'UTC',
+    };
+    const donationClass = (status: string, registrationStatuses: string[]) => ({
+      id: 'c-5',
+      status,
+      pricingMode: 'donation',
+      roomCost: 30,
+      vatPercent: 0,
+      currency: 'EUR',
+      donationTotal: status === 'completed' ? 84.5 : null,
+      calendarEntry: {
+        teacherId: 'teacher-1',
+        cancelledAt: null,
+        classType: 'Hatha',
+        date: new Date('2026-01-05T00:00:00Z'),
+        startTime: new Date('1970-01-01T10:00:00Z'),
+        durationMinutes: 60,
+        teacher: { defaultTimezone: 'UTC', pageSlug: 'anna' },
+      },
+      registrations: registrationStatuses.map((status, i) => ({
+        id: `r-${i}`, studentId: `s-${i}`, status, tierAtBooking: 3, price: null, payment: null,
+        student: { firstName: 'A', lastName: 'B', studentPrivacy: [] },
+      })),
+      _count: { waitlistEntries: 0 },
+    });
+    const texts = (tree: unknown) =>
+      [...elementsOf(tree as Parameters<typeof elementsOf>[0])]
+        .map((el) => (el.props as { children?: unknown } | null)?.children)
+        .filter((c): c is string => typeof c === 'string');
+
+    afterEach(() => vi.useRealTimers());
+
+    it('captions the finish with the invitations, and gives the button the count of who came', async () => {
+      // Finish is open (from 10:45), the automatic finish is not yet (11:15).
+      vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-01-05T11:00:00Z') });
+      requireTeacherSession.mockResolvedValue(session);
+      findUnique.mockResolvedValue(donationClass('in_progress', ['attended', 'attended', 'no_show']));
+      const tree = await ClassDetailPage({ params: Promise.resolve({ id: 'c-5' }) });
+      expect(texts(tree)).toContain('Invitations to give go out at 11:15.');
+      const button = [...elementsOf(tree)].find((el) => el.type === CompleteClassButton);
+      expect(button?.props).toMatchObject({ pricingMode: 'donation', invitedCount: 2 });
+    });
+
+    it('never promises payment requests when no one came', async () => {
+      vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-01-05T11:00:00Z') });
+      requireTeacherSession.mockResolvedValue(session);
+      findUnique.mockResolvedValue(donationClass('in_progress', ['no_show']));
+      const tree = await ClassDetailPage({ params: Promise.resolve({ id: 'c-5' }) });
+      expect(texts(tree)).toContain('This class finishes automatically at 11:15.');
+    });
+
+    it('shows the donations received, and no payment checklist, once completed', async () => {
+      requireTeacherSession.mockResolvedValue(session);
+      findUnique.mockResolvedValue(donationClass('completed', ['attended']));
+      const tree = await ClassDetailPage({ params: Promise.resolve({ id: 'c-5' }) });
+      const elements = [...elementsOf(tree)];
+      expect(elements.find((el) => el.type === DonationsReceivedCard)?.props).toMatchObject({
+        classId: 'c-5', donationTotal: 84.5, vatPercent: 0, currency: 'EUR',
+      });
+      expect(elements.some((el) => el.type === PaymentChecklist)).toBe(false);
     });
   });
 });
