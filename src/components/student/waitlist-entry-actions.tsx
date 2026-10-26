@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import type { PricingMode } from '@/lib/prisma-client';
 import { isRefusal, logRequestFailure, readError, readErrorMessage } from '@/lib/client-errors';
 
 interface WaitlistEntryActionsProps {
@@ -16,7 +17,14 @@ interface WaitlistEntryActionsProps {
   classLabel: string;
   /** True during the first-come-first-claimed window with a free seat. */
   canClaim: boolean;
+  pricingMode: PricingMode;
 }
+
+/** What a claim costs, said before the button; null where a mode charges nothing. */
+const CLAIM_CHARGE_SENTENCE: Record<PricingMode, string | null> = {
+  tiered: "Claiming books you in, and you'll pay your share even if you can't make it.",
+  donation: null,
+};
 
 /**
  * Claim an open spot (final hour before class — first claim wins) or leave
@@ -24,7 +32,7 @@ interface WaitlistEntryActionsProps {
  * rejoining goes to the back of the queue. The confirmation takes focus when
  * it opens, and the trigger gets it back when the student stays.
  */
-export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim }: WaitlistEntryActionsProps) {
+export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim, pricingMode }: WaitlistEntryActionsProps) {
   const router = useRouter();
   const [busy, setBusy] = useState<'claim' | 'leave' | null>(null);
   const [error, setError] = useState('');
@@ -113,9 +121,9 @@ export function WaitlistEntryActions({ entryId, classId, classLabel, canClaim }:
           {/* Every claim lands past the cancel deadline — #236's free-cancel
               grace is for an auto-promotion, never for the student's own
               claim — so this is said before the button, not after a tap. */}
-          <p className="type-caption mb-2">
-            Claiming books you in, and you&apos;ll pay your share even if you can&apos;t make it.
-          </p>
+          {CLAIM_CHARGE_SENTENCE[pricingMode] && (
+            <p className="type-caption mb-2">{CLAIM_CHARGE_SENTENCE[pricingMode]}</p>
+          )}
           <Button onClick={handleClaim} disabled={busy !== null}>
             {busy === 'claim' ? 'Claiming...' : (
               <>Claim the spot{' '}<span className="sr-only">for {classLabel}</span></>

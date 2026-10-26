@@ -285,6 +285,7 @@ export default async function StudentBookingsPage() {
                   classId={cls.id}
                   classLabel={`${cls.calendarEntry.classType}, ${formatDayHeader(cls.calendarEntry.date)} ${timeToHHmm(cls.calendarEntry.startTime)}`}
                   canClaim={canClaim}
+                  pricingMode={cls.pricingMode}
                 />
               </ListRow>
             );

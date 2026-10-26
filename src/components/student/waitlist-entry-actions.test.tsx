@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import type { PricingMode } from '@/lib/prisma-client';
 import { WaitlistEntryActions } from './waitlist-entry-actions';
 import { routerRefresh } from '../../../tests/setup/components';
 
@@ -15,9 +16,9 @@ describe('WaitlistEntryActions', () => {
     vi.unstubAllGlobals();
   });
 
-  function renderActions(canClaim: boolean): void {
+  function renderActions(canClaim: boolean, pricingMode: PricingMode = 'tiered'): void {
     render(
-      <WaitlistEntryActions entryId="entry-1" classId="class-1" classLabel="Yin, Friday 18:00" canClaim={canClaim} />,
+      <WaitlistEntryActions entryId="entry-1" classId="class-1" classLabel="Yin, Friday 18:00" canClaim={canClaim} pricingMode={pricingMode} />,
     );
   }
 
@@ -36,6 +37,17 @@ describe('WaitlistEntryActions', () => {
       screen.getByText('Claiming books you in, and you\'ll pay your share even if you can\'t make it.'),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Claim the spot for Yin, Friday 18:00' })).toBeInTheDocument();
+  });
+
+  it('says nothing of a charge on a donation class, and still offers the claim (#912)', () => {
+    renderActions(true, 'donation');
+    expect(screen.queryByText(/you.ll pay your share/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Claim the spot for Yin, Friday 18:00' })).toBeInTheDocument();
+  });
+
+  it('keeps the charge sentence on a tiered class (#912)', () => {
+    renderActions(true, 'tiered');
+    expect(screen.getByText(/you.ll pay your share even if you can.t make it/)).toBeInTheDocument();
   });
 
   describe('claim', () => {
