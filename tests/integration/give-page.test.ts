@@ -6,6 +6,8 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { PAYMENTS_PAUSED_COPY } from '@/lib/payment-methods';
 import { givePagePath } from '@/lib/notification-links';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { MOLLIE_METHODS } from '@/lib/processor-methods';
+import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 
 const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
@@ -35,10 +37,13 @@ describe('the give page and the donation prompt (#912)', () => {
   let listToken = '';
   const classIds = {
     bank: '', noMethod: '', paused: '', linkOnly: '', tiered: '', inProgress: '',
-    noShow: '', uninvited: '', cancelled: '', list: '',
+    noShow: '', uninvited: '', cancelled: '', list: '', mollieOnly: '', stale: '', anon: '',
   };
-  const regIds = { bank: '', uninvited: '', list: '' };
+  const regIds = { bank: '', uninvited: '', list: '', anon: '' };
   const listClassType = `Give List ${suffix}`;
+  const staleClassType = `Give Stale ${suffix}`;
+  let staleToken = '';
+  let bankTeacherToken = '';
 
   async function makeTeacher(key: string, withBank: boolean, paymentLink: string | null = null, paused = false): Promise<TeacherFixture> {
     const email = `give-${key}-${suffix}@test.local`;
@@ -96,6 +101,7 @@ describe('the give page and the donation prompt (#912)', () => {
       cancelled?: boolean;
       registrationStatus?: 'attended' | 'no_show';
       invited?: boolean;
+      invitedAt?: Date;
     } = {},
   ): Promise<{ classId: string; registrationId: string }> {
     dayOffset += 1;
@@ -123,7 +129,7 @@ describe('the give page and the donation prompt (#912)', () => {
         studentId,
         status: o.registrationStatus ?? 'attended',
         tierAtBooking: 3,
-        donationInvitedAt: o.invited === false ? null : new Date(),
+        donationInvitedAt: o.invited === false ? null : (o.invitedAt ?? new Date()),
       },
       select: { id: true },
     });
@@ -148,6 +154,22 @@ describe('the give page and the donation prompt (#912)', () => {
     const noMethodTeacher = await makeTeacher('nomethod', false);
     const pausedTeacher = await makeTeacher('paused', true, LINK, true);
     const linkTeacher = await makeTeacher('link', false, LINK);
+    // A live, full-scope Mollie connection and no bank account or link.
+    const mollieTeacher = await makeTeacher('mollie', false);
+    await prisma.processorConnection.create({
+      data: {
+        teacherId: mollieTeacher.id,
+        processor: 'mollie',
+        organizationId: `org_give${suffix}`,
+        profileId: `pfl_give${suffix}`,
+        scopes: [...MOLLIE_SCOPES],
+        testmode: true,
+        accessToken: new Uint8Array([1, 2, 3]),
+        refreshToken: new Uint8Array([1, 2, 3]),
+        accessTokenExpiresAt: new Date(Date.now() + 3_600_000),
+      },
+    });
+    bankTeacherToken = await seedSession(prisma, bankTeacher.accountId);
 
     const student = await makeStudent('main');
     studentToken = await seedSession(prisma, student.accountId);
@@ -155,6 +177,8 @@ describe('the give page and the donation prompt (#912)', () => {
     otherStudentToken = await seedSession(prisma, other.accountId);
     const listStudent = await makeStudent('list');
     listToken = await seedSession(prisma, listStudent.accountId);
+    const staleStudent = await makeStudent('stale');
+    staleToken = await seedSession(prisma, staleStudent.accountId);
 
     const bank = await booking(bankTeacher, student.id);
     classIds.bank = bank.classId;
@@ -162,6 +186,14 @@ describe('the give page and the donation prompt (#912)', () => {
     classIds.noMethod = (await booking(noMethodTeacher, student.id)).classId;
     classIds.paused = (await booking(pausedTeacher, student.id)).classId;
     classIds.linkOnly = (await booking(linkTeacher, student.id)).classId;
+    classIds.mollieOnly = (await booking(mollieTeacher, student.id)).classId;
+    const anon = await booking(bankTeacher, student.id);
+    classIds.anon = anon.classId;
+    regIds.anon = anon.registrationId;
+    classIds.stale = (await booking(bankTeacher, staleStudent.id, {
+      classType: staleClassType,
+      invitedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+    })).classId;
     classIds.tiered = (await booking(bankTeacher, student.id, { pricingMode: 'tiered' })).classId;
     classIds.inProgress = (await booking(bankTeacher, student.id, { status: 'in_progress' })).classId;
     // Invited as attended, then corrected to no_show: the invitation stamp stays.
@@ -187,6 +219,7 @@ describe('the give page and the donation prompt (#912)', () => {
     if (teacherIds.length > 0) {
       await prisma.calendarEntry.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherBankAccount.deleteMany({ where: { teacherId: { in: teacherIds } } });
+      await prisma.processorConnection.deleteMany({ where: { teacherId: { in: teacherIds } } });
       await prisma.teacherRoom.deleteMany({ where: { teacherId: { in: teacherIds } } });
     }
     if (roomIds.length > 0) await prisma.room.deleteMany({ where: { id: { in: roomIds } } });
@@ -225,6 +258,14 @@ describe('the give page and the donation prompt (#912)', () => {
     const html = await (await give(studentToken, classIds.paused)).text();
     expect(html).toContain(PAYMENTS_PAUSED_COPY);
     expect(html).not.toContain(IBAN_SHOWN);
+    expect(html).not.toContain(LINK.replace('https://', ''));
+  });
+
+  it('(#912) tells a Mollie-only teacher\'s student to give directly, with no processor row', async () => {
+    const html = await (await give(studentToken, classIds.mollieOnly)).text();
+    expect(html).toContain('Give your teacher directly, however suits you.');
+    expect(html).not.toContain('name="give-method"');
+    for (const { label } of Object.values(MOLLIE_METHODS)) expect(html).not.toContain(label);
   });
 
   it.each([
@@ -244,6 +285,21 @@ describe('the give page and the donation prompt (#912)', () => {
       await expectUnchanged(await hide(studentToken, regIds.bank));
       expect((await give(studentToken, classIds.bank)).status).toBe(200);
     });
+    it('(#912) a Hide leaves the teacher roster GET and Registration.updatedAt unchanged', async () => {
+      const roster = () =>
+        fetch(`${BASE_URL}/api/classes/${classIds.anon}/registrations`, { headers: cookie(bankTeacherToken) });
+      const rowBefore = await prisma.registration.findUniqueOrThrow({ where: { id: regIds.anon } });
+      const before = await roster();
+      expect(before.status).toBe(200);
+      const bodyBefore = await before.text();
+
+      const applied = (await expectApplied(await hide(studentToken, regIds.anon))) as { hiddenAt: string };
+
+      const rowAfter = await prisma.registration.findUniqueOrThrow({ where: { id: regIds.anon } });
+      expect(rowAfter.donationPromptHiddenAt?.toISOString()).toBe(applied.hiddenAt);
+      expect(rowAfter.updatedAt).toEqual(rowBefore.updatedAt);
+      expect(await (await roster()).text()).toBe(bodyBefore);
+    });
     it('(#912) refuses another student with 403', async () => {
       expect((await hide(otherStudentToken, regIds.bank)).status).toBe(403);
     });
@@ -253,6 +309,13 @@ describe('the give page and the donation prompt (#912)', () => {
     it('(#912) answers NOT_FOUND for a booking that does not exist', async () => {
       await expectRefusal(await hide(studentToken, '00000000-0000-4000-8000-000000000000'), 'NOT_FOUND');
     });
+  });
+
+  it('(#912) the bookings list shows no prompt once 30 days have passed since the invitation', async () => {
+    const html = await (await bookingsPage(staleToken)).text();
+    expect(html).toContain(staleClassType);
+    expect(html).not.toContain(PROMPT_LABEL);
+    expect(html).not.toContain(givePagePath(classIds.stale));
   });
 
   it('(#912) the bookings list offers the prompt, then not after Hide, and never a price', async () => {

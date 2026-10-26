@@ -99,9 +99,11 @@ next tick. The cancel in `DELETE /api/registrations/[id]` is not on this list:
 
 and read each hit's transaction for a `lockClassRow`/`lockClassRowsOrdered`
 before it. Hits that write no `status` (`completeClass`'s price write,
-`class-reminders.ts`'s `classReminderSentAt` claim, the two
-`donationInvitedAt` claims in `donations.ts`, and `hideDonationPrompt`'s
-`donationPromptHiddenAt` write there, which takes no lock) do not move the count.
+`class-reminders.ts`'s `classReminderSentAt` claim, the
+`donationInvitedAt` claims in `donations.ts`) do not move the count.
+`hideDonationPrompt` (`donations.ts`) writes `donationPromptHiddenAt` with a raw
+`UPDATE`, so the grep does not find it; it writes no `status` and takes no lock.
+It is raw so that `Registration.updatedAt` does not move (#912, spec §4.5).
 
 `claimCorrectionInvitation` (`services/donations.ts`, #912) follows the
 attendance write above in its own transaction. It writes no `status`, takes

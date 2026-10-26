@@ -37,7 +37,6 @@ export const GET = withErrorHandler(async (
       isWalkIn: true,
       registeredAt: true,
       cancelledAt: true,
-      updatedAt: true,
       student: { select: studentVisibilitySelect(session.teacherId) },
     },
     orderBy: { registeredAt: 'asc' },
