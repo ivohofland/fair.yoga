@@ -1060,8 +1060,9 @@ void _entryUpdateFieldsAreSent;
  *                            A `CalendarEntry` column since #327, which is why
  *                            `_forbiddenColumnsExist` below pins the forbidden
  *                            list against BOTH tables' inputs
- *   - the financial totals → a guard lives outside this service; read it
- *                            before granting
+ *   - the financial totals → written only by `completeClass` here;
+ *                            `donationTotal` has its own writer (see
+ *                            docs/data-model.md, donation_total)
  * — because the compiler will not. For the columns above, the forbidden pin
  * below refuses the grant outright; for anything else, the judgement is yours.
  */
