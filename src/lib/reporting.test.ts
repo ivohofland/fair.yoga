@@ -84,6 +84,42 @@ describe('buildReport', () => {
     ]);
   });
 
+  it('a currency earned only from unrecorded donation classes is unknown, not zero (#912)', () => {
+    const r = buildReport([unrecorded], [], 'EUR');
+    expect(r.total).toEqual([{ currency: 'EUR', cents: null }]);
+    expect(r.months[0]?.earnings).toEqual([{ currency: 'EUR', cents: null }]);
+  });
+
+  it('an unknown currency sits beside a known one, and a known earning wins in its own currency (#912)', () => {
+    const gbpUnrecorded: ReportClass = { ...unrecorded, currency: 'GBP' };
+    const r = buildReport([tiered, unrecorded, gbpUnrecorded], [], 'EUR');
+    expect(r.total).toEqual([
+      { currency: 'EUR', cents: 4000 },
+      { currency: 'GBP', cents: null },
+    ]);
+  });
+
+  it('a month of unrecorded donation classes is unknown while its neighbour is not (#912)', () => {
+    const july: ReportClass = { ...unrecorded, calendarEntry: { date: new Date('2026-07-10T00:00:00Z') } };
+    const r = buildReport([tiered, july], [], 'EUR');
+    expect(r.months.map((m) => m.earnings)).toEqual([
+      [{ currency: 'EUR', cents: null }],
+      [{ currency: 'EUR', cents: 4000 }],
+    ]);
+  });
+
+  it('a studio class makes an otherwise unrecorded month known (#912)', () => {
+    const studio: ReportStudioClass = {
+      currency: 'EUR',
+      hourlyRate: d('45.00'),
+      studentCount: 8,
+      calendarEntry: { date: new Date('2026-06-15T00:00:00Z'), durationMinutes: 60 },
+    };
+    const r = buildReport([unrecorded], [studio], 'EUR');
+    expect(r.total).toEqual([{ currency: 'EUR', cents: 4500 }]);
+    expect(r.months[0]?.earnings).toEqual([{ currency: 'EUR', cents: 4500 }]);
+  });
+
   it('an empty report reads zero in the fallback currency (#912)', () => {
     const r = buildReport([], [], 'GBP');
     expect(r.total).toEqual([{ currency: 'GBP', cents: 0 }]);

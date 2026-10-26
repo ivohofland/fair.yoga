@@ -5,18 +5,17 @@ import { startOfLocalDay, classStartInstant } from '@/lib/timezone';
 import { PageHeader } from '@/components/layout/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatMoneyCents } from '@/lib/format';
-import type { MoneyTotals } from '@/lib/money-totals';
-import { buildReport } from '@/lib/reporting';
+import { buildReport, type EarningsTotals } from '@/lib/reporting';
 
 export const dynamic = 'force-dynamic';
 
 /** One line per currency, right-aligned, where a single figure used to stand. */
-function MoneyLines({ totals, className }: { totals: MoneyTotals; className: string }) {
+function MoneyLines({ totals, className }: { totals: EarningsTotals; className: string }) {
   return (
     <span className="flex flex-col items-end">
       {totals.map((t) => (
         <span key={t.currency} className={className}>
-          {formatMoneyCents(t.cents, t.currency)}
+          {t.cents === null ? '—' : formatMoneyCents(t.cents, t.currency)}
         </span>
       ))}
     </span>
@@ -112,9 +111,16 @@ export default async function ReportingPage() {
             <p className="type-label">Earned from teaching</p>
             {report.total.map((t) => (
               <p key={t.currency} data-testid="report-total" className="type-number text-[28px] leading-[1.25] mt-1">
-                {formatMoneyCents(t.cents, t.currency)}
+                {t.cents === null ? '—' : formatMoneyCents(t.cents, t.currency)}
               </p>
             ))}
+            {report.total.map((t) =>
+              t.cents === null ? (
+                <p key={t.currency} className="type-caption mt-0.5">
+                  {report.total.length > 1 ? `${t.currency} · ` : ''}Not recorded yet
+                </p>
+              ) : null,
+            )}
             <p className="type-caption mt-0.5">
               {report.classCount} classes · {distinctStudents.length}{' '}
               {distinctStudents.length === 1 ? 'student' : 'students'} reached

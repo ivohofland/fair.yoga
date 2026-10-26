@@ -594,6 +594,54 @@ describe('GET /settings/reporting (reporting page)', () => {
       expect(html).not.toContain('−€20.00');
     });
 
+    it('a teacher whose only classes are unrecorded donations sees a dash, not 0, in the hero and the month (#912)', async () => {
+      const email = `report-unrecorded-${suffix}@test.local`;
+      const teacher = await prisma.teacher.create({
+        data: {
+          firstName: 'Unrecorded',
+          lastName: 'Teacher',
+          email,
+          account: { create: { email } },
+          bio: 'Unrecorded donation reporting test',
+          pageSlug: `report-unrecorded-${suffix}`,
+        },
+      });
+      const token = await seedSession(prisma, teacher.accountId);
+      const teacherRoom = await prisma.teacherRoom.create({
+        data: { teacherId: teacher.id, roomId, rentalRate: 20, capacityOverride: 10 },
+      });
+      try {
+        await createClassFixture(prisma, {
+          teacherId: teacher.id,
+          teacherRoomId: teacherRoom.id,
+          durationMinutes: 60,
+          roomCost: new Prisma.Decimal('20.00'),
+          totalStudents: 4,
+          minRate: 10,
+          targetRate: 20,
+          minStudents: 2,
+          maxStudents: 10,
+          status: 'completed' as const,
+          classType: 'Only Unrecorded',
+          date: new Date('2026-03-04T00:00:00.000Z'),
+          startTime: hhmmToTime('09:00'),
+          pricingMode: 'donation',
+        });
+        const html = await (await reportingPage(token)).text();
+        expect(html).toMatch(/data-testid="report-total"[^>]*>—</);
+        expect(html).toContain('Not recorded yet');
+        expect(html).toMatch(/March 2026[\s\S]*?<span[^>]*type-number[^>]*>—<\/span>/);
+        expect(html).not.toMatch(/data-testid="report-total"[^>]*>€/);
+        expect(html).not.toContain('−€20.00');
+      } finally {
+        await prisma.calendarEntry.deleteMany({ where: { teacherId: teacher.id } });
+        await prisma.teacherRoom.delete({ where: { id: teacherRoom.id } });
+        await prisma.session.deleteMany({ where: { accountId: teacher.accountId } });
+        await prisma.teacher.delete({ where: { id: teacher.id } });
+        await prisma.account.delete({ where: { id: teacher.accountId } });
+      }
+    });
+
     it('a tiered-only teacher sees no Donation classes line (#912)', async () => {
       const res = await reportingPage(reportTeacherToken);
       const html = await res.text();

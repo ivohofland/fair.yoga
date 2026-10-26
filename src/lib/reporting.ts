@@ -1,5 +1,5 @@
 import type { Currency, Prisma, PricingMode } from '@/lib/prisma-client';
-import { formatMonthLabel } from '@/lib/format';
+import { CURRENCIES, formatMonthLabel } from '@/lib/format';
 import { orZero, totalsByCurrency, type MoneyTotals } from '@/lib/money-totals';
 import { teacherEarningsCents } from '@/lib/teacher-earnings';
 import { includedVatCents, vatThousandths } from '@/lib/vat';
@@ -24,19 +24,26 @@ export interface ReportStudioClass {
 }
 
 /**
+ * One earnings figure per currency present. `cents` is null where every class
+ * counted in that currency is an unrecorded donation class: nothing is known,
+ * which is not the same as nothing earned.
+ */
+export type EarningsTotals = ReadonlyArray<{ currency: Currency; cents: number | null }>;
+
+/**
  * `donation` and `unrecordedDonationCount` carry what is known: a donation
  * class without a recorded total is counted, and contributes to no earnings
  * list. `donation` is empty, not zero, when nothing was recorded.
  */
 export interface Report {
-  total: MoneyTotals;
+  total: EarningsTotals;
   tiered: MoneyTotals;
   donation: MoneyTotals;
   unrecordedDonationCount: number;
   studio: MoneyTotals;
   roomCosts: MoneyTotals;
   classCount: number;
-  months: { label: string; classes: number; students: number; earnings: MoneyTotals }[];
+  months: { label: string; classes: number; students: number; earnings: EarningsTotals }[];
 }
 
 function monthKey(date: Date): string {
@@ -46,6 +53,21 @@ function monthKey(date: Date): string {
 
 const toCents = (val: Prisma.Decimal | number | string | null | undefined): number =>
   Math.round(Number(val ?? 0) * 100);
+
+/**
+ * `known` plus a null line for each currency in `unrecorded` that `known` does
+ * not cover. Nothing present at all reads zero in `fallback`.
+ */
+function withUnknown(known: MoneyTotals, unrecorded: readonly Currency[], fallback: Currency): EarningsTotals {
+  const unknown = new Set(unrecorded.filter((c) => !known.some((t) => t.currency === c)));
+  if (known.length === 0 && unknown.size === 0) return orZero(known, fallback);
+  const order = [fallback, ...CURRENCIES.filter((c) => c !== fallback)];
+  return order.flatMap<EarningsTotals[number]>((currency) => {
+    const total = known.find((t) => t.currency === currency);
+    if (total !== undefined) return [total];
+    return unknown.has(currency) ? [{ currency, cents: null }] : [];
+  });
+}
 
 /** What one class earned, or null when nothing is known (an unrecorded donation class). */
 export function classEarningsCents(c: ReportClass): number | null {
@@ -93,11 +115,16 @@ export function buildReport(
 
   const byMonth = new Map<
     string,
-    { classes: number; students: number; earnings: { currency: Currency; amount: number }[] }
+    {
+      classes: number;
+      students: number;
+      earnings: { currency: Currency; amount: number }[];
+      unrecorded: Currency[];
+    }
   >();
   const month = (date: Date) => {
     const key = monthKey(date);
-    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [] };
+    const entry = byMonth.get(key) ?? { classes: 0, students: 0, earnings: [], unrecorded: [] };
     byMonth.set(key, entry);
     return entry;
   };
@@ -106,7 +133,8 @@ export function buildReport(
     entry.classes += 1;
     entry.students += c.totalStudents ?? 0;
     const cents = classEarningsCents(c);
-    if (cents !== null) entry.earnings.push({ currency: c.currency, amount: cents / 100 });
+    if (cents === null) entry.unrecorded.push(c.currency);
+    else entry.earnings.push({ currency: c.currency, amount: cents / 100 });
   }
   for (const s of studio) {
     const entry = month(s.calendarEntry.date);
@@ -116,7 +144,11 @@ export function buildReport(
   }
 
   return {
-    total: orZero(totalsByCurrency([...known, ...studioEarnings], fallback), fallback),
+    total: withUnknown(
+      totalsByCurrency([...known, ...studioEarnings], fallback),
+      classes.filter((c) => classEarningsCents(c) === null).map((c) => c.currency),
+      fallback,
+    ),
     tiered: orZero(totalsByCurrency(tieredEarnings, fallback), fallback),
     donation: totalsByCurrency(donationEarnings, fallback),
     unrecordedDonationCount: classes.filter(
@@ -141,7 +173,7 @@ export function buildReport(
           label: formatMonthLabel(Number(year), Number(mon)),
           classes: v.classes,
           students: v.students,
-          earnings: orZero(totalsByCurrency(v.earnings, fallback), fallback),
+          earnings: withUnknown(totalsByCurrency(v.earnings, fallback), v.unrecorded, fallback),
         };
       }),
   };
