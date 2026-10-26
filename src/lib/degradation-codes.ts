@@ -63,7 +63,7 @@ export const DEGRADATION_CODES = {
   DONATION_INVITATION_WITHOUT_CLASS: {
     level: 'warn',
     description:
-      'A donation invitation for a student had no related class although every writer of one sets it. Its email went out without a How to give button.',
+      'A donation invitation for a student had no related class. Its email went out without a How to give button.',
     contextKeys: ['notificationId', 'type'],
   },
   PAYMENT_PAID_WITHOUT_TIMESTAMP: {

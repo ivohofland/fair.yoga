@@ -775,7 +775,7 @@ child, and the reverse does not.
 | total_students | int, nullable | Number of charged registrations at completion |
 | total_revenue | decimal, nullable | Sum of the payments created at completion. A class below its minimum is priced on a pool padded to the minimum, and the padding seats bill no one, so this is less than `(room_cost + min_rate) × (1 + vat_percent / 100)` there (#836) |
 | vat_total | decimal(10,2), nullable | The VAT contained in `total_revenue`: the sum of the class's payments' `vat_amount`, written at completion. A snapshot, like `total_revenue`: `Class_vat_total_snapshot_check` makes it null exactly when `total_revenue` is, and `Class_vat_total_nonnegative_check` keeps it `>= 0` |
-| donation_total | decimal(10,2), nullable | What the teacher recorded for a donation class. NULL is not recorded, distinct from 0. Written only by `recordDonationTotal`; VAT is derived on read, never stored (#912) |
+| donation_total | decimal(10,2), nullable | What the teacher recorded for a donation class. NULL is not recorded, distinct from 0. Written only by `recordDonationTotal` (re-derive: `git grep -n donationTotal -- src ':!*.test.*'`); VAT is derived on read, never stored (#912) |
 | **Timestamps** | | |
 | created_at | datetime | |
 | updated_at | datetime | |
@@ -1073,7 +1073,9 @@ At most one live refund exists per attempt — neither `failed` nor `canceled` (
 | created_at | datetime | |
 | updated_at | datetime | |
 
-Notification types: booking_confirmed, booking_cancelled, booking_removed, class_cancelled, payment_received, payment_request, waitlist_promoted, spot_available, spot_taken, reminder, announcement, teacher_invitation, walk_in_added, class_reminder, video_link_updated (#911: sent to students with a live registration when a class's `video_url` becomes a new non-null value, from null or from another link; clearing it sends nothing; the inbox row never carries the link, the email renders the current one at send time — `docs/superpowers/specs/2026-10-25-online-classes-design.md`), donation_invitation (#912).
+Notification types: the members of the `NotificationType` enum (`prisma/schema.prisma`).
+
+`video_link_updated` (#911) is sent to students with a live registration when a class's `video_url` becomes a new non-null value, from null or from another link; clearing it sends nothing; the inbox row never carries the link, the email renders the current one at send time — `docs/superpowers/specs/2026-10-25-online-classes-design.md`.
 
 `donation_invitation` (#912) is student-only and optional (not in `ESSENTIAL_NOTIFICATION_TYPES`, so a student who opted out of optional messages is not emailed it). Retention is 30 days, its push group is `payments` (the lock screen shows the fixed line, never the body), and it links to `/bookings/{classId}/give`. Its body carries no amount, IBAN, QR or payment link. The teacher's completion notice for a donation class is a `payment_request`.
 

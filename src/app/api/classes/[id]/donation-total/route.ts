@@ -17,7 +17,7 @@ import { CLASS_CANCELLED, CLASS_GONE, CLASS_NOT_COMPLETED, DONATION_CLASS_REQUIR
 
 type RefusalReason = Extract<RecordDonationTotalResult, { ok: false }>['reason'];
 
-/** Every coded refusal; `forbidden` is answered before this map, as the sibling class routes answer it. */
+/** Every coded refusal; `forbidden` is answered before this map. */
 const REFUSALS = {
   not_found: CLASS_GONE,
   cancelled: CLASS_CANCELLED,

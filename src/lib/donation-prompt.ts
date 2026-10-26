@@ -29,7 +29,7 @@ export function canSeeGivePage(s: DonationBookingState): boolean {
   }
 }
 
-/** The prompt hides itself when the invitation's inbox row is reaped. */
+/** How long the prompt shows, counted from `donationInvitedAt`: the invitation's retention window. */
 export const DONATION_PROMPT_DAYS = NOTIFICATION_RETENTION_DAYS.donation_invitation;
 
 const DAY_MS = 86_400_000;
