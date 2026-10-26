@@ -1852,25 +1852,46 @@ describe('PUT /api/registrations/[id] — attendance is scoped by source status 
       });
       expect((await completeClass(prisma, classId, { sweepAt: new Date('2099-01-01T00:00:00Z') })).ok).toBe(true);
 
-      let releaseHolder = false;
+      // The holder takes the class row and says so before the PUT starts; the
+      // PUT must then answer without any backend waiting on the holder.
+      let openLocked!: () => void;
+      const locked = new Promise<void>((r) => { openLocked = r; });
+      let openRelease!: () => void;
+      const release = new Promise<void>((r) => { openRelease = r; });
+      let holderPid = 0;
       const holder = prisma.$transaction(
         async (tx) => {
+          const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid()::int AS pid`;
+          if (row === undefined) throw new Error('pg_backend_pid returned no row');
+          holderPid = row.pid;
           await tx.$queryRaw`SELECT id FROM "Class" WHERE id = ${classId} FOR UPDATE`;
-          while (!releaseHolder) await new Promise((r) => setTimeout(r, 25));
+          openLocked();
+          await release;
         },
         { timeout: 10_000 },
       );
-      await new Promise((r) => setTimeout(r, 200));
+      let waited = false;
+      let answer: Response | undefined;
       try {
-        // Answered while the class row is held: the claim's lock path is not taken.
-        expect(await expectApplied(await putStatus(attendanceToken, reg.id, 'attended'))).toEqual({
-          id: reg.id,
-          status: 'attended',
-        });
+        await locked;
+        let settled = false;
+        const put = putStatus(attendanceToken, reg.id, 'attended').finally(() => { settled = true; });
+        while (!settled && !waited) {
+          const [blocked] = await prisma.$queryRaw<Array<{ pid: number }>>`
+            SELECT pid FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND ${holderPid} = ANY(pg_blocking_pids(pid))
+             LIMIT 1`;
+          waited = blocked !== undefined;
+          if (!waited) await new Promise((r) => setTimeout(r, 25));
+        }
+        answer = await put;
       } finally {
-        releaseHolder = true;
+        openRelease();
         await holder;
       }
+      expect(waited).toBe(false);
+      // Answered while the class row is held: the claim's lock path is not taken.
+      expect(await expectApplied(answer)).toEqual({ id: reg.id, status: 'attended' });
       expect(await invitations(classId)).toBe(0);
       expect((await prisma.registration.findUniqueOrThrow({ where: { id: reg.id } })).donationInvitedAt).toBeNull();
     });
