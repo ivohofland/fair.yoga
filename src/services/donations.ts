@@ -103,8 +103,8 @@ export type HidePromptResult =
 
 /**
  * Hides a student's own donation prompt (#912). Takes no class lock: it writes
- * only `donationPromptHiddenAt`, which no count and no status reads, and the
- * conditional write makes a concurrent Hide answer `unchanged` with the
+ * only `donationPromptHiddenAt` (no `status`; `docs/lock-order.md` lists it),
+ * and the conditional write makes a concurrent Hide answer `unchanged` with the
  * instant that won. A caller must pass the session's own student id.
  */
 export async function hideDonationPrompt(
@@ -142,9 +142,7 @@ const toCents = (v: number | null): number | null => (v === null ? null : Math.r
 
 /**
  * Records, replaces or clears (`null`) what a donation class took in (#912).
- * The only statement that writes `Class.donationTotal`, and its own: a
- * completed class is terminal, so `updateClass` refuses every field of it and
- * this never goes through that freeze. A caller must pass the session's own
+ * Its own statement, not a field of `updateClass`. A caller must pass the session's own
  * teacher id.
  *
  * The refusals are read in the order the spec fixes (ownership, cancelled,

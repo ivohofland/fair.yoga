@@ -56,7 +56,7 @@ export default async function GivePage({ params }: { params: Promise<{ classId: 
   }
 
   const answer = paymentMethodsForTeacher(teacher, cls.currency);
-  // `paymentMethodsForTeacher` never returns a processor method; the filter states it for the type.
+  // The give page has no `Payment` for a processor to collect, so a processor row is dropped.
   const methods = answer.kind === 'methods' ? answer.methods.filter((m) => m.kind !== 'processor') : [];
 
   return (

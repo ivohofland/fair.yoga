@@ -226,7 +226,7 @@ export const PUT = withErrorHandler(async (
   // test pinning this as a product requirement. A teacher reaches it through
   // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //
-  // The `attended` write is followed by its invitation claim in its own
+  // On a donation class the `attended` write is followed by its invitation claim in its own
   // transaction (`claimCorrectionInvitation`, `services/donations.ts`), so
   // this handler's write still holds no class lock.
   //
