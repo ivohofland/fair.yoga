@@ -23,6 +23,9 @@ describe('classEarningsCents', () => {
     expect(classEarningsCents(recorded)).toBe(3000);
     expect(classEarningsCents(recordedVat)).toBe(6050 - 2000 - 1050);
   });
+  it('(#912) a donation class recorded as 0 earns minus its room cost, not null', () => {
+    expect(classEarningsCents({ ...recorded, donationTotal: d('0.00') })).toBe(-2000);
+  });
   it('an unrecorded donation class earns null, never -roomCost (#912)', () => {
     expect(classEarningsCents(unrecorded)).toBeNull();
   });
