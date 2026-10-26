@@ -30,13 +30,14 @@ describe('MethodPanel', () => {
     expect(container.textContent).toContain('€12.50');
   });
 
-  it('renders nothing and logs for a processor method with an open amount (#912)', () => {
+  it('(#912) an open amount admits no processor method, and one forced through renders nothing', () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const { container } = render(
+      // @ts-expect-error -- the open arm's method is a `GiftMethod`, which has no processor kind.
       <MethodPanel method={{ kind: 'processor', method: 'ideal' }} amount={{ kind: 'open' }} currency="EUR" reference="r" />,
     );
     expect(container).toBeEmptyDOMElement();
-    expect(error).toHaveBeenCalledWith({ kind: 'processor' }, 'method panel: a processor method cannot take an open amount');
+    expect(error).toHaveBeenCalledWith({ kind: 'processor' }, 'pay page: unhandled payment method kind');
     error.mockRestore();
   });
 });
