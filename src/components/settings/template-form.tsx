@@ -13,16 +13,17 @@ import {
   MONEY_MAX,
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
-import { currencyLabel, formatMoney } from '@/lib/format';
+import { currencyLabel } from '@/lib/format';
 import { startTimeInputProps } from '@/lib/time-of-day';
 import { vatPercentViolation } from '@/lib/vat';
-import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
+import { economicsViolations } from '@/lib/class-economics';
+import { economicsMessage } from '@/lib/class-economics-copy';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { FormatChoice, VideoLinkField, TEMPLATE_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { formatRoomLocation } from '@/lib/format';
@@ -173,29 +174,6 @@ function readLateFirstClass(value: unknown, site: string): LateFirstClass | null
  * comparing one literal to itself could catch.
  */
 const RECURRING_LIST_PATH = '/settings/recurring';
-
-/** This form's own wording for each rule `economicsViolations` can report. */
-const ECONOMICS_COPY = {
-  students_order: 'Min students cannot exceed max students',
-  rate_order: 'Min rate cannot exceed target rate',
-  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
-} as const satisfies Record<EconomicsRule, string>;
-
-/**
- * A donation template holds its tiered rates unseen, so a rule they break is
- * named as the saved rates', not as a field that is not on screen.
- */
-const DONATION_ECONOMICS_COPY = {
-  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
-  room_subsidy: ({ minRate }, currency) =>
-    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
-} as const satisfies Partial<
-  Record<EconomicsRule, (e: Pick<TemplateFormValues, 'minRate'>, currency: Currency) => string>
->;
-
-/** An online donation template has no room cost to name. */
-const DONATION_ONLINE_SUBSIDY_COPY =
-  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
 
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
@@ -452,15 +430,10 @@ export function TemplateForm(props: TemplateFormProps) {
     // which the server checks in `createClassTemplateSchema` on create and in
     // `updateClassTemplate` on edit. Checked here through the same function so
     // a teacher sees the message immediately instead of after a round trip, on
-    // create and edit alike. `ECONOMICS_COPY` above is this form's own wording.
+    // create and edit alike. `economicsMessage` is the wording.
     const [violation] = economicsViolations({ ...form, roomCost });
     if (violation !== undefined) {
-      const noRoom = online && violation.rule === 'room_subsidy';
-      if (form.pricingMode === 'donation' && violation.rule !== 'students_order') {
-        setError(noRoom ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[violation.rule](form, currency));
-      } else {
-        setError(noRoom ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
-      }
+      setError(economicsMessage(violation.rule, { ...form, online }, currency));
       return;
     }
 

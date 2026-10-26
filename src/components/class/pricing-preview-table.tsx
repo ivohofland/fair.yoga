@@ -5,6 +5,7 @@ import { normalSpread, emptyCounts, studentsIn, type TierCounts } from '@/lib/pr
 import { isIncomeTier } from '@/lib/tiers';
 import { vatPercentViolation } from '@/lib/vat';
 import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
+import { ONLINE_SUBSIDY_COPY } from '@/lib/class-economics-copy';
 import { PricingPreviewResult, type PricingPreviewInputs } from './pricing-preview-result';
 
 /** The preview's own wording for each rule `economicsViolations` can report. */
@@ -13,9 +14,6 @@ const ECONOMICS_COPY = {
   rate_order: 'Min rate cannot exceed target rate',
   room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
 } as const satisfies Record<EconomicsRule, string>;
-
-/** The same rule for a class with no room, where the most a rate can subsidize is nothing. */
-export const ONLINE_SUBSIDY_COPY = 'Min rate cannot be negative for an online class — prices would go negative';
 
 // ---------------------------------------------------------------------------
 // Distribution logic

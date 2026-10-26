@@ -8,7 +8,8 @@ import { MAX_CLASS_SIZE, type createClassSchema } from '@/lib/schemas';
 import { vatPercentViolation } from '@/lib/vat';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LONG_TEXT_MAX, MONEY_DECIMALS, MONEY_MAX } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
-import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
+import { economicsViolations } from '@/lib/class-economics';
+import { economicsMessage, isEconomicsMessage } from '@/lib/class-economics-copy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -17,7 +18,7 @@ import { Select } from '@/components/ui/select';
 import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { SettledNotice } from '@/components/ui/settled-notice';
-import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { currencyLabel, formatRoomLocation, formatDateWithYear, formatMoney } from '@/lib/format';
 import { FormatChoice, VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
@@ -104,43 +105,6 @@ type StepErrors = Record<string, string>;
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
 
-/** This form's own wording for each rule `economicsViolations` can report. */
-const ECONOMICS_COPY = {
-  students_order: 'Min students cannot exceed max students',
-  rate_order: 'Min rate cannot exceed target rate',
-  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
-} as const satisfies Record<EconomicsRule, string>;
-
-/**
- * A donation class holds its tiered rates unseen, so a rule they break is named
- * as the saved rates', not as a field that is not on screen.
- */
-const DONATION_ECONOMICS_COPY = {
-  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
-  room_subsidy: ({ minRate }, currency) =>
-    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
-} as const satisfies Partial<
-  Record<EconomicsRule, (e: Pick<FormData, 'minRate'>, currency: Currency) => string>
->;
-
-/** An online donation class has no room cost to name. */
-const DONATION_ONLINE_SUBSIDY_COPY =
-  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
-
-const DONATION_MESSAGE_PREFIX = 'Your saved tiered rates';
-
-/**
- * The wording for `rule` under the pricing mode and format `f` holds. A class
- * with no room has none to subsidize from, and the copy says so.
- */
-function economicsMessage(rule: EconomicsRule, f: FormData, currency: Currency): string {
-  const online = f.format === 'online';
-  if (f.pricingMode === 'donation' && rule !== 'students_order') {
-    return online && rule === 'room_subsidy' ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[rule](f, currency);
-  }
-  return online && rule === 'room_subsidy' ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[rule];
-}
-
 /** The review's Pricing line, before any VAT clause. An online class has no room cost to show. */
 function pricingSummary(f: FormData, currency: Currency): string {
   const room = f.format === 'online' ? null : `Room cost: ${formatMoney(f.roomCost, currency)}`;
@@ -157,12 +121,6 @@ function pricingSummary(f: FormData, currency: Currency): string {
       return unreachable;
     }
   }
-}
-
-const ECONOMICS_MESSAGES: ReadonlySet<string> = new Set([...Object.values(ECONOMICS_COPY), ONLINE_SUBSIDY_COPY]);
-
-function isEconomicsMessage(message: string): boolean {
-  return ECONOMICS_MESSAGES.has(message) || message.startsWith(DONATION_MESSAGE_PREFIX);
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +285,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
     const nextForm = { ...form, [key]: value };
     const stillFiring: ReadonlySet<string> = new Set(
       economicsViolations({ ...nextForm, roomCost: nextForm.format === 'online' ? 0 : nextForm.roomCost }).map((v) =>
-        economicsMessage(v.rule, nextForm, currency),
+        economicsMessage(v.rule, { ...nextForm, online: nextForm.format === 'online' }, currency),
       ),
     );
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -420,7 +378,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
       // single-field message already on that field wins, and so does the first
       // rule to claim it.
       for (const v of economicsViolations({ ...form, roomCost })) {
-        errs[v.path] ??= economicsMessage(v.rule, form, currency);
+        errs[v.path] ??= economicsMessage(v.rule, { ...form, online }, currency);
       }
     }
 
