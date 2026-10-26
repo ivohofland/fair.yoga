@@ -7,19 +7,49 @@ import { formatMoney } from '@/lib/format';
 import { log } from '@/lib/log';
 import { MOLLIE_METHODS } from '@/lib/processor-methods';
 import type { PaymentMethod } from '@/lib/payment-methods';
+import type { MethodAmount } from '@/lib/method-amount';
 
-export type MethodPanelProps = { method: PaymentMethod; currency: Currency; reference: string } & (
-  | { amount: { kind: 'fixed'; amount: number }; paymentId: string }
-  | { amount: { kind: 'open' }; paymentId?: never }
-);
+/** A method that can name no amount: a processor needs a `Payment` to collect. */
+export type GiftMethod = Exclude<PaymentMethod, { kind: 'processor' }>;
+
+/** The method with what it may name: a fixed amount owed against a payment, or none, for a gift. */
+export type MethodPanelArm =
+  | { method: PaymentMethod; amount: { kind: 'fixed'; amount: number }; paymentId: string }
+  | { method: GiftMethod; amount: { kind: 'open' }; paymentId?: never };
+
+export type MethodPanelProps = { currency: Currency; reference: string } & MethodPanelArm;
 
 /**
  * One method's details, inside its chooser row. A fixed amount is owed and
- * named; an open one is a gift and names none. A processor method needs a
- * payment to pay, so it has no open form.
+ * named; an open one is a gift and names none.
  */
 export function MethodPanel(props: MethodPanelProps) {
-  const { method, amount, currency, reference } = props;
+  const { amount, currency, reference } = props;
+  if (isGift(props)) {
+    return <ManualPanel method={props.method} amount={amount} currency={currency} reference={reference} />;
+  }
+  const { method, paymentId } = props;
+  if (method.kind === 'processor') {
+    return <ProcessorPayButton paymentId={paymentId} method={method.method} label={MOLLIE_METHODS[method.method].label} />;
+  }
+  return <ManualPanel method={method} amount={amount} currency={currency} reference={reference} />;
+}
+
+function isGift(props: MethodPanelProps): props is Extract<MethodPanelProps, { amount: { kind: 'open' } }> {
+  return props.amount.kind === 'open';
+}
+
+function ManualPanel({
+  method,
+  amount,
+  currency,
+  reference,
+}: {
+  method: GiftMethod;
+  amount: MethodAmount;
+  currency: Currency;
+  reference: string;
+}) {
   switch (method.kind) {
     case 'bank_transfer':
       return (
@@ -57,12 +87,6 @@ export function MethodPanel(props: MethodPanelProps) {
           reference={reference}
         />
       );
-    case 'processor':
-      if (props.amount.kind === 'open' || props.paymentId === undefined) {
-        log.error({ kind: 'processor' }, 'method panel: a processor method cannot take an open amount');
-        return null;
-      }
-      return <ProcessorPayButton paymentId={props.paymentId} method={method.method} label={MOLLIE_METHODS[method.method].label} />;
     default: {
       // A kind added to `PaymentMethod` without a panel fails the build here.
       const unhandled: never = method;

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Currency, OnboardingStep, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@/lib/prisma-enums';
+import { Currency, OnboardingStep, PricingMode, ReminderChannel, ReminderTiming, TeacherBookingNotifications } from '@/lib/prisma-enums';
 import { isSafeRelativePath, REDIRECT_MAX_LENGTH, URL_STRIPPED_CHARS } from '@/lib/safe-path';
 import { isIncomeTier } from '@/lib/tiers';
 import { parseBirthday } from '@/lib/birthday';
@@ -588,6 +588,9 @@ export const switchRoomSchema = z.object({
 // CLASSES
 // ============================================================================
 
+/** The `PricingMode` enum as an optional body field: every member parses, nothing else does. */
+const pricingModeField = z.enum(PricingMode).optional();
+
 /**
  * A video link as a request carries it: trimmed, normalised to the href
  * `parseHttpsLink` returns, null (or a blank string) for none. The wire bound
@@ -651,7 +654,7 @@ export function classFormatUnion<S extends z.ZodRawShape>(schedule: S) {
     cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
     autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
     isPrivate: z.boolean().optional(),
-    pricingMode: z.enum(['tiered', 'donation']).optional(),
+    pricingMode: pricingModeField,
   };
   const inPerson = z
     .object({
@@ -704,7 +707,7 @@ export const updateClassSchema = z.object({
   // The format and the room are fixed at creation, so they are not accepted.
   videoUrl: videoUrlField(),
   // Locked with the economics (#912); see PRICING_LOCKED_FIELDS in src/lib/class-fields.ts.
-  pricingMode: z.enum(['tiered', 'donation']).optional(),
+  pricingMode: pricingModeField,
   // Economic fields — only accepted when settings not locked (enforced by
   // updateClass in src/services/class-lifecycle.ts)
   roomCost: moneyField().optional(),
@@ -759,7 +762,7 @@ export const updateClassTemplateSchema = z.object({
   cancelDeadline: z.enum(['HOURS_48', 'HOURS_24', 'HOURS_12', 'HOURS_6']).optional(),
   autoCancelCheck: z.enum(['HOURS_4', 'HOURS_2', 'HOURS_1']).optional(),
   isPrivate: z.boolean().optional(),
-  pricingMode: z.enum(['tiered', 'donation']).optional(),
+  pricingMode: pricingModeField,
 }).strict();
 // Cross-field economics and the format shape are checked on the merged row by
 // the update service (economicsViolations, formatShapeViolations).

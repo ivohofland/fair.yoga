@@ -2,7 +2,7 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { Currency } from '@/lib/prisma-client';
+import { Currency, PricingMode } from '@/lib/prisma-client';
 import type { Prisma } from '@/lib/prisma-client';
 import * as schemas from './schemas';
 import { MOLLIE_METHODS } from './processor-methods';
@@ -2166,5 +2166,17 @@ describe('vatPercent on the four class and template schemas (#819)', () => {
 describe('processorAttemptSchema', () => {
   it.each(Object.keys(MOLLIE_METHODS))('accepts the allowlisted method %s', (method) => {
     expect(schemas.processorAttemptSchema.safeParse({ method }).success).toBe(true);
+  });
+});
+
+describe('pricingMode body field', () => {
+  it.each([
+    ['updateClassSchema', schemas.updateClassSchema],
+    ['updateClassTemplateSchema', schemas.updateClassTemplateSchema],
+  ] as const)('(#912) %s accepts every PricingMode member and nothing else', (_name, schema) => {
+    for (const mode of Object.values(PricingMode)) {
+      expect(schema.safeParse({ pricingMode: mode }).success).toBe(true);
+    }
+    expect(schema.safeParse({ pricingMode: 'flat' }).success).toBe(false);
   });
 });
