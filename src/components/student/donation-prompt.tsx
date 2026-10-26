@@ -3,9 +3,11 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { logRequestFailure } from '@/lib/client-errors';
+import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { givePagePath } from '@/lib/notification-links';
 import { formatDayHeader } from '@/lib/format';
+
+const HIDE_FAILED = 'Could not hide this. Try again.';
 
 interface DonationPromptProps {
   registrationId: string;
@@ -19,21 +21,23 @@ interface DonationPromptProps {
 export function DonationPrompt({ registrationId, classId, classType, date }: DonationPromptProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function hide() {
     setBusy(true);
-    setFailed(false);
+    setError(null);
     try {
       const res = await fetch(`/api/registrations/${registrationId}/donation-prompt/hide`, { method: 'POST' });
       if (!res.ok) {
-        setFailed(true);
+        const message = await readErrorMessage(res, HIDE_FAILED);
+        logRequestFailure('donation-prompt', { registrationId, status: res.status }, new Error(message));
+        setError(message);
         return;
       }
       router.refresh();
     } catch (err) {
       logRequestFailure('donation-prompt', { registrationId }, err);
-      setFailed(true);
+      setError(HIDE_FAILED);
     } finally {
       setBusy(false);
     }
@@ -51,9 +55,9 @@ export function DonationPrompt({ registrationId, classId, classType, date }: Don
       <button type="button" onClick={hide} disabled={busy} className="type-label text-teal min-h-[44px] px-1">
         Hide
       </button>
-      {failed && (
+      {error !== null && (
         <p role="alert" className="type-caption text-danger">
-          Could not hide this. Try again.
+          {error}
         </p>
       )}
     </div>
