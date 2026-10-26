@@ -103,9 +103,9 @@ export type HidePromptResult =
 
 /**
  * Hides a student's own donation prompt (#912). Takes no class lock: it writes
- * only `donationPromptHiddenAt` (no `status`; `docs/lock-order.md` lists it),
- * and the conditional write makes a concurrent Hide answer `unchanged` with the
- * instant that won. A caller must pass the session's own student id.
+ * only `donationPromptHiddenAt`, no `status`, and the conditional write makes a
+ * concurrent Hide answer `unchanged` with the instant that won. `studentId` is
+ * matched against the booking's owner.
  */
 export async function hideDonationPrompt(
   db: PrismaClient,
@@ -121,11 +121,14 @@ export async function hideDonationPrompt(
   if (found.donationInvitedAt === null) return { kind: 'not_invited' };
   if (found.donationPromptHiddenAt !== null) return { kind: 'unchanged', hiddenAt: found.donationPromptHiddenAt };
   const hiddenAt = new Date();
-  const { count } = await db.registration.updateMany({
-    where: { id: registrationId, donationInvitedAt: { not: null }, donationPromptHiddenAt: null },
-    data: { donationPromptHiddenAt: hiddenAt },
-  });
-  if (count === 1) return { kind: 'hidden', hiddenAt };
+  // Raw so `updatedAt` is not bumped: a change to it after completion would show who hid.
+  const written = await db.$queryRaw<{ id: string }[]>`
+    UPDATE "Registration" SET "donationPromptHiddenAt" = ${hiddenAt}
+    WHERE id = ${registrationId}
+      AND "donationInvitedAt" IS NOT NULL
+      AND "donationPromptHiddenAt" IS NULL
+    RETURNING id`;
+  if (written.length === 1) return { kind: 'hidden', hiddenAt };
   const reread = await db.registration.findUnique({
     where: { id: registrationId },
     select: { donationPromptHiddenAt: true },
