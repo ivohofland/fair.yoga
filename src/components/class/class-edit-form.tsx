@@ -13,11 +13,12 @@ import {
   MONEY_MAX,
 } from '@/lib/input-bounds';
 import type { NoneOf } from '@/lib/type-pins';
-import { economicsViolations, type EconomicsRule } from '@/lib/class-economics';
+import { economicsViolations } from '@/lib/class-economics';
+import { economicsMessage } from '@/lib/class-economics-copy';
 import { vatPercentViolation } from '@/lib/vat';
 import { LOCKED_FIELDS } from '@/lib/class-fields';
 import { BOOKED_SCHEDULE_FIXED_MESSAGE } from '@/lib/booked-class-schedule-copy';
-import { currencyLabel, formatMoney } from '@/lib/format';
+import { currencyLabel } from '@/lib/format';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { MAX_TIMEOUT_MS } from '@/lib/timer-bounds';
@@ -33,7 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
-import { PricingPreviewTable, ONLINE_SUBSIDY_COPY } from '@/components/class/pricing-preview-table';
+import { PricingPreviewTable } from '@/components/class/pricing-preview-table';
 import { VideoLinkField, CLASS_VIDEO_LINK_HINT, readVideoLink } from '@/components/class/format-fields';
 import { PricingModeChoice } from '@/components/class/pricing-mode-choice';
 import { LatePublishNotice } from '@/components/class/late-publish-notice';
@@ -57,29 +58,6 @@ export interface ClassEditInitial {
 }
 
 type UpdateClassWire = z.infer<typeof updateClassSchema>;
-
-/** This form's own wording for each rule `economicsViolations` can report. */
-const ECONOMICS_COPY = {
-  students_order: 'Min students cannot exceed max students',
-  rate_order: 'Min rate cannot exceed target rate',
-  room_subsidy: 'Min rate cannot subsidize more than the room cost — prices would go negative',
-} as const satisfies Record<EconomicsRule, string>;
-
-/**
- * A donation class holds its tiered rates unseen, so a rule they break is named
- * as the saved rates', not as a field that is not on screen.
- */
-const DONATION_ECONOMICS_COPY = {
-  rate_order: () => 'Your saved tiered rates are out of order. Switch to Tiered to change them.',
-  room_subsidy: ({ minRate }, currency) =>
-    `Your saved tiered rates need a room cost of at least ${formatMoney(-minRate, currency)}. Switch to Tiered to change them.`,
-} as const satisfies Partial<
-  Record<EconomicsRule, (e: Pick<ClassEditInitial, 'minRate'>, currency: Currency) => string>
->;
-
-/** An online donation class has no room cost to name. */
-const DONATION_ONLINE_SUBSIDY_COPY =
-  'Your saved tiered rates have a negative min rate, which an online class cannot have. Switch to Tiered to change them.';
 
 const MONEY_LIMIT = MONEY_MAX.toLocaleString('en-US');
 const DURATION_TOO_LONG = `Duration cannot exceed ${DURATION_MAX_MINUTES.toLocaleString('en-US')} minutes (${DURATION_MAX_MINUTES / 60} hours)`;
@@ -262,7 +240,7 @@ export function ClassEditForm({
     // The same three cross-field rules `updateClass` enforces
     // (class-economics.ts), checked through the same `economicsViolations`
     // function so a teacher sees the message immediately instead of after a
-    // round trip. `ECONOMICS_COPY` above is this form's own wording.
+    // round trip. `economicsMessage` is the wording.
     //
     // Only checked while unlocked: locked economics are stripped from the
     // payload below and so are never sent for the schema to validate either,
@@ -270,12 +248,7 @@ export function ClassEditForm({
     if (!settingsLocked) {
       const [violation] = economicsViolations(form);
       if (violation !== undefined) {
-        const noRoom = online && violation.rule === 'room_subsidy';
-        if (form.pricingMode === 'donation' && violation.rule !== 'students_order') {
-          setError(noRoom ? DONATION_ONLINE_SUBSIDY_COPY : DONATION_ECONOMICS_COPY[violation.rule](form, currency));
-        } else {
-          setError(noRoom ? ONLINE_SUBSIDY_COPY : ECONOMICS_COPY[violation.rule]);
-        }
+        setError(economicsMessage(violation.rule, { ...form, online }, currency));
         return;
       }
     }
