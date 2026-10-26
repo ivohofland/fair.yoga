@@ -258,6 +258,7 @@ export default async function ClassDetailPage({
       case 'donation':
         return (
           <DonationSummary
+            format={cls.format}
             roomCost={Number(cls.roomCost)}
             vatPercent={Number(cls.vatPercent)}
             currency={cls.currency}

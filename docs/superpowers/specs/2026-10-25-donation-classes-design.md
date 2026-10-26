@@ -355,7 +355,9 @@ No copy says or implies a donation is VAT-free. No surface suggests an amount.
 - **Class detail, before completion.** `PricingPreview` → a *"By donation"* line
   and, at 0% VAT, *"Room cost {€}: your break-even."*; above 0%, *"Room cost
   {€}: your break-even is {room × (1 + VAT)} in donations, VAT included."* —
-  what has to come in for the room to be covered.
+  what has to come in for the room to be covered. An online class (#911) has no
+  room, so it shows the *"By donation"* line alone, as `PricingPreview` and
+  `PricingBreakdown` leave out their room line for it.
 - **Class detail, completed.** No `PricingBreakdown`, no `PaymentChecklist`. A
   **Donations received** card: the amount (with *"incl. {€} VAT"* when
   `vatPercent > 0`), or *"Not recorded yet"* with **Record**; editable and
