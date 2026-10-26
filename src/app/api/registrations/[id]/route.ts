@@ -27,10 +27,9 @@ import { createNotification, type CreateNotificationInput } from '@/services/not
 import type { AttendanceBody } from '@/lib/api-types';
 
 /**
- * Whether a correction to `attended` can ever invite, by pricing mode. Read
- * before any lock: `pricingMode` is locked once the class is booked, and this
- * registration exists. A pre-check on class STATUS would not be safe — it
- * reopens the race with an uncommitted completion that the claim's lock closes.
+ * Whether a correction to `attended` can ever invite, by pricing mode. Static
+ * per class: `pricingMode` is in `LOCKED_FIELDS`. Do not pre-check class status
+ * here; the claim re-checks it under the class lock (`claimCorrectionInvitation`).
  */
 const MODE_CAN_INVITE = {
   tiered: false,
@@ -220,9 +219,10 @@ export const PUT = withErrorHandler(async (
   // teacher recording what happened in their own room.
   //
   // `completed` is DELIBERATELY absent from the class clause. A teacher learns
-  // the exact no-shows after the class, not during it. All three values
-  // `updateRegistrationSchema` accepts are in `CHARGED_STATUSES`, so a
-  // correction made after completion cannot change who is billed. There is a
+  // the exact no-shows after the class, not during it. Every status
+  // `updateRegistrationSchema` accepts is in `CHARGED_STATUSES`, so a
+  // correction made after completion cannot change who is billed (on a
+  // donation class it can invite; below). There is a
   // test pinning this as a product requirement. A teacher reaches it through
   // the completed class's "Edit attendance" (`attendance-list.tsx`, `locked`).
   //

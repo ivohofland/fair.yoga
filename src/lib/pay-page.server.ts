@@ -76,8 +76,17 @@ export function reportMissingPayment(found: {
   classStatus: ClassStatus;
   pricingMode: PricingMode;
 }): void {
-  // A donation class never has a payment (#912).
-  if (found.pricingMode === 'donation') return;
+  switch (found.pricingMode) {
+    case 'tiered':
+      break;
+    case 'donation':
+      // A donation class has no `Payment` to look up (#912).
+      return;
+    default: {
+      const unhandled: never = found.pricingMode;
+      throw new Error(`reportMissingPayment: unhandled pricing mode ${String(unhandled)}`);
+    }
+  }
   if (found.classStatus !== 'completed' || !CHARGED_STATUSES.includes(found.registrationStatus)) return;
   logDegraded(
     'CHARGED_REGISTRATION_WITHOUT_PAYMENT',

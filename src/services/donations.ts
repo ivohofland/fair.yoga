@@ -10,7 +10,7 @@ export type InvitedRow = { id: string; studentId: string };
 /**
  * Stamps every booking of `classId` that came and was not yet invited, and
  * returns exactly the rows it stamped — the invitations go to these, never
- * to a re-read. The caller holds the class lock and passes its transaction.
+ * to a re-read. Requires a transaction holding `lockClassRow` for `classId`.
  */
 export async function claimCompletionInvitations(
   tx: Prisma.TransactionClient,
@@ -60,11 +60,10 @@ export function donationCompletionNotice(cls: DonationNoticeClass, invited: numb
 
 /**
  * Invites a booking a teacher has just corrected to `attended`, if this is the
- * first time it has been invited (#912). The caller's status write has already
- * committed and holds no class lock; the lock taken here is what closes the
- * race with `completeClass`, which stamps from the statuses it can see. The
- * argument is in `docs/lock-order.md` ("`Registration` status writers outside
- * the class lock"), where the lock order this takes is also fixed.
+ * first time it has been invited (#912). Takes `lockClassRow` first
+ * (`docs/lock-order.md`, "`Registration` status writers outside the class
+ * lock"); invites only if this booking is `attended`, uninvited, and its class
+ * is a completed, uncancelled donation class.
  */
 export async function claimCorrectionInvitation(
   db: PrismaClient,
@@ -145,14 +144,11 @@ const toCents = (v: number | null): number | null => (v === null ? null : Math.r
 
 /**
  * Records, replaces or clears (`null`) what a donation class took in (#912).
- * Its own statement, not a field of `updateClass`. A caller must pass the session's own
- * teacher id.
+ * `teacherId` is matched against the class's teacher.
  *
- * The refusals are read in the order the spec fixes (ownership, cancelled,
- * mode, completed). The write repeats those conditions, so a class that stopped
- * qualifying between the read and the write is not written. A write that
- * matches no row is classified from one fresh read; a second miss throws,
- * because nothing that reaches the write can move a completed class.
+ * Reads the refusals in order ownership, cancelled, mode, completed, and
+ * repeats them in the write's WHERE. One re-read on a miss; a second miss
+ * throws.
  */
 export async function recordDonationTotal(
   db: PrismaClient,

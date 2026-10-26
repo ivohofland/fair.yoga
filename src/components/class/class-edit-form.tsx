@@ -237,10 +237,9 @@ export function ClassEditForm({
       return;
     }
 
-    // The same three cross-field rules `updateClass` enforces
-    // (class-economics.ts), checked through the same `economicsViolations`
-    // function so a teacher sees the message immediately instead of after a
-    // round trip. `economicsMessage` is the wording.
+    // The cross-field rules `economicsViolations` reports (class-economics.ts),
+    // checked here so a teacher sees the message immediately instead of after
+    // a round trip. `economicsMessage` is the wording.
     //
     // Only checked while unlocked: locked economics are stripped from the
     // payload below and so are never sent for the schema to validate either,

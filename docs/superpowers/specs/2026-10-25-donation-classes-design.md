@@ -89,9 +89,13 @@ generator (`class-generator.ts`) copies it onto each generated class; that copy
 has no compiler tether, so a test pins it as #910 did for `isPrivate`. A template
 is a stamp: changing a template's mode changes no existing class.
 
-Every reader that shows money switches on `pricingMode` with a `never` default,
-so a new mode, or a reader that forgot donation, fails to compile rather than
-showing a price.
+Every reader that chooses what a student is shown or charged switches on
+`pricingMode` with a `never` default, or keys a `Record<PricingMode, …>` checked
+with `satisfies`, so a new mode, or a reader that forgot donation, fails to
+compile rather than showing a price. Teacher-side filters (form field
+visibility, reporting's per-mode partitions, the economics wording) compare
+against one literal instead; re-derive them with
+`git grep -nE "pricingMode [!=]== '" -- src ':!*.test.*'`.
 
 ### 3.2 Locking
 
@@ -139,7 +143,8 @@ the only writer is `recordDonationTotal` (§4.5).
   `"donationPromptHiddenAt" IS NULL OR "donationInvitedAt" IS NOT NULL`
 - "Only a donation class's bookings are invited" cannot be a `CHECK` (it would
   read the `Class` row); `completeClass` and the attendance claim (§4.2) are the
-  only writers of `donationInvitedAt` and both gate on the class's mode.
+  only writers of `donationInvitedAt` and both gate on the class's mode
+  (re-derive: `git grep -n donationInvitedAt -- src ':!*.test.*'`).
 
 `price` and `tierRatio` stay null on a donation registration.
 
@@ -194,13 +199,10 @@ finds the status already `attended`. The route runs the claim on that path too,
 and answers *applied* when it stamps — inviting is a change, so the answer is
 not `respondUnchanged`.
 
-**Why this closes the race with completion.** The status write commits before
-the claim takes the lock. If `completeClass` holds the lock, the claim waits;
-completion's `UPDATE` either saw `attended` (and stamped it — the claim finds 0
-rows) or ran before the status commit (and committed `completed` first — the
-claim then sees a completed class and stamps). If completion has not started,
-the claim sees a non-completed class and does nothing, and completion later
-reads `attended`. No interleaving invites twice or misses.
+**Why this closes the race with completion.** The interleavings are argued once,
+in `docs/lock-order.md` ("`Registration` status writers outside the class
+lock", the `claimCorrectionInvitation` paragraph): no interleaving invites twice
+or misses.
 
 A correction to `no_show` after an invitation changes no stamp, so flipping back
 to `attended` does not resend. The give page and the bookings prompt check status
@@ -288,7 +290,7 @@ clears back to "not recorded". This is the only post-completion write to a
 `Class` economic value, and it bypasses `updateClass`'s terminal freeze by being
 its own statement, not a field of that update.
 
-New codes in `src/lib/api-error-codes.ts`, all 409 and none registered today:
+New codes in `src/lib/api-error-codes.ts`, all 409:
 `DONATION_CLASS_REQUIRED`, `CLASS_NOT_COMPLETED`, `DONATION_NOT_INVITED`.
 
 ### 4.7 Payout pause (#786)
