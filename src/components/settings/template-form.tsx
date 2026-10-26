@@ -267,7 +267,7 @@ export function TemplateForm(props: TemplateFormProps) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [late, setLate] = useState<LateFirstClass | null>(null);
-  // A saved edit that changed Private leaves the classes already generated as
+  // A saved edit that changed Private or Pricing leaves the classes already generated as
   // they were; this is the line that says so.
   const [existingKeepTheirs, setExistingKeepTheirs] = useState(false);
   // The sentence for a saved edit that changed the link while classes made

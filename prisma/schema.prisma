@@ -731,7 +731,7 @@ model Class {
   totalRevenue         Decimal?        @db.Decimal(10, 2)
   vatTotal             Decimal?        @db.Decimal(10, 2)
   /// What a donation class's students gave in total, as the teacher recorded it.
-  /// NULL is "not recorded", distinct from 0. Written only by `recordDonationTotal`.
+  /// NULL is "not recorded", distinct from 0.
   donationTotal        Decimal?        @db.Decimal(10, 2)
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
