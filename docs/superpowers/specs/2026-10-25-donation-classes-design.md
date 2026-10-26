@@ -420,5 +420,6 @@ classes only if most fail, since a code that usually errors is worse than none.
 ## 10. Out of scope
 
 Level 2 (Mollie/Stripe) donations; suggested amounts; any per-student record of
-giving; re-notifying on resume; donation `StudioClass`es. **#910 and #911 are
-unaffected.**
+giving; re-notifying on resume; donation `StudioClass`es. **#910 is unaffected.**
+An online class (#911) combines with donation as §7 states — no room line, and
+#911's own online wording otherwise unchanged.
