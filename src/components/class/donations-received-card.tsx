@@ -22,6 +22,9 @@ export function DonationsReceivedCard({ classId, donationTotal, vatPercent, curr
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(donationTotal ?? 0);
+  // `NumberInput` holds 0 for an empty field, so with nothing recorded the
+  // draft is only an amount once the teacher has typed it.
+  const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -50,6 +53,7 @@ export function DonationsReceivedCard({ classId, donationTotal, vatPercent, curr
 
   function startEditing() {
     setDraft(donationTotal ?? 0);
+    setTouched(false);
     setEditing(true);
   }
 
@@ -69,10 +73,13 @@ export function DonationsReceivedCard({ classId, donationTotal, vatPercent, curr
               label={`Total received (${currency})`}
               decimals={MONEY_DECIMALS}
               value={draft}
-              onValueChange={setDraft}
+              onValueChange={(v) => {
+                setDraft(v);
+                setTouched(true);
+              }}
             />
             <div className="flex items-center gap-3">
-              <Button type="button" onClick={() => put(draft)} disabled={submitting || Number.isNaN(draft)}>
+              <Button type="button" onClick={() => put(draft)} disabled={submitting || Number.isNaN(draft) || (donationTotal === null && !touched)}>
                 {submitting ? 'Saving…' : 'Save'}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setEditing(false)} disabled={submitting}>
