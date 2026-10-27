@@ -2272,6 +2272,8 @@ describe('TemplateForm', () => {
       fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '20' } });
       expect(screen.getByLabelText('Max students')).toHaveValue(8);
       expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (8)');
+      // Under the Max box, not the Min one: the notice is the second grid column's.
+      expect(screen.getByText('Cannot exceed room capacity (8)')).toHaveClass('col-start-2');
       expect(screen.getByLabelText('Max students')).not.toBeInvalid();
     });
 
