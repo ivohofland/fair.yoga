@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@/lib/prisma-client';
 import { ClassList, ClassListSkeleton } from './class-list';
 import { type ClassRow, classRow } from './class-list-fixtures';
+import { tuesdayOfNextLocalWeek } from '../../../tests/week-fixtures';
 
 /**
  * Pins `PaymentRollup`'s (class-card.tsx) branching: a priority order
@@ -174,6 +175,41 @@ describe('ClassList timezone handling', () => {
       />,
     );
     expect(screen.getByText('This week')).toBeInTheDocument();
+  });
+});
+
+/**
+ * #920. Between 00:00 and 01:00 CET on a Monday (two hours in summer) UTC is
+ * still Sunday, so a "Tuesday of next week" read off the UTC clock is this
+ * week's Tuesday and the heading says "This week". `tuesdayOfNextLocalWeek`
+ * reads the teacher's week, the one this list groups by.
+ */
+describe('ClassList heading around the Monday boundary (#920)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['Monday 00:30 CET', '2026-10-25T23:30:00.000Z'],
+    ['Monday midday CET', '2026-10-26T11:00:00.000Z'],
+    ['Monday 00:30 CEST', '2026-05-31T22:30:00.000Z'],
+    ['Monday midday CEST', '2026-06-01T10:00:00.000Z'],
+    ['Sunday 23:30 CET', '2026-10-25T22:30:00.000Z'],
+  ])('reads "Next week" at %s', (_label, instant) => {
+    const now = new Date(instant);
+    vi.setSystemTime(now);
+    render(
+      <ClassList
+        classes={[classRow('cls-1', 'open', [], { date: tuesdayOfNextLocalWeek(now, 'Europe/Amsterdam') })]}
+        timeZone="Europe/Amsterdam"
+      />,
+    );
+    expect(screen.getByText('Next week')).toBeInTheDocument();
+    expect(screen.queryByText('This week')).not.toBeInTheDocument();
   });
 });
 

@@ -8,6 +8,7 @@ import { hydrationSignal } from './page-helpers';
 import { uniqueSuffix, seedSession, sessionCookie } from '../helpers';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { createClassFixture } from '../class-fixtures';
+import { tuesdayOfNextLocalWeek } from '../week-fixtures';
 
 /**
  * Visual regression: screenshot baselines for the design system's key
@@ -216,6 +217,10 @@ async function freezeDates(page: Page): Promise<void> {
 
 const hideDevOverlay = path.join(__dirname, 'visual-hide-dev-overlay.css');
 
+// The seeded teacher's zone: the one the fixture's week is read in and the
+// one the schedule page reads it in.
+const TEACHER_TIME_ZONE = 'Europe/Amsterdam';
+
 test.describe('Visual regression', () => {
   // Outside CI a missing baseline should fail loudly (it writes the actual
   // for review); in CI a baseline-less platform silently has no coverage.
@@ -232,6 +237,7 @@ test.describe('Visual regression', () => {
         account: { create: { email: `e2e-visual-${suffix}@test.local` } },
         bio: 'Calm vinyasa in a warm room.',
         pageSlug: slug,
+        defaultTimezone: TEACHER_TIME_ZONE,
       },
     });
     teacherId = teacher.id;
@@ -257,14 +263,14 @@ test.describe('Visual regression', () => {
     // Tuesday of next week: always inside the window, and the schedule's
     // week header reads the stable "Next week" on any run day (a farther
     // date would render a changing "Week of …" heading, which is not
-    // masked — headers share type-subtitle with card titles).
-    const soon = new Date();
-    soon.setUTCDate(soon.getUTCDate() + (8 - (soon.getUTCDay() || 7)) + 1);
+    // masked — headers share type-subtitle with card titles). "Next" is the
+    // teacher's week, which is what the page reads it in.
+    const soon = tuesdayOfNextLocalWeek(new Date(), TEACHER_TIME_ZONE);
     const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
         classType: 'Visual Vinyasa',
-        date: new Date(Date.UTC(soon.getUTCFullYear(), soon.getUTCMonth(), soon.getUTCDate())),
+        date: soon,
         startTime: hhmmToTime('09:00'),
         durationMinutes: 60,
         roomCost: 20,
