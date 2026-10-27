@@ -369,6 +369,22 @@ export function TemplateForm(props: TemplateFormProps) {
     setLinkKept(null);
   }
 
+  // Online keeps the room the form already names, and its sizes may have grown
+  // past that room's seats; going back to it holds them to what it can seat.
+  function handleFormatChange(format: ClassFormat) {
+    update('format', format);
+    if (format !== 'in_person') return;
+    setForm((prev) => {
+      const room = teacherRooms.find((tr) => tr.id === prev.teacherRoomId);
+      if (!room) return prev;
+      return {
+        ...prev,
+        maxStudents: Math.min(prev.maxStudents, room.capacityOverride),
+        minStudents: Math.min(prev.minStudents, room.capacityOverride),
+      };
+    });
+  }
+
   function handleRoomChange(teacherRoomId: string) {
     const room = teacherRooms.find((tr) => tr.id === teacherRoomId);
     setForm((prev) => {
@@ -702,7 +718,7 @@ export function TemplateForm(props: TemplateFormProps) {
   }
 
   const formatChoice = (
-    <FormatChoice name="format" value={form.format} onChange={(format) => update('format', format)} />
+    <FormatChoice name="format" value={form.format} onChange={handleFormatChange} />
   );
 
   if (loading) {
