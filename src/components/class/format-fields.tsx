@@ -28,7 +28,7 @@ export function readVideoLink(raw: string): { ok: true; url: string | null } | {
   return parsed.ok ? { ok: true, url: parsed.url } : { ok: false, message: VIDEO_LINK_MESSAGES[parsed.error] };
 }
 
-/** Two radio rows, each at least 44px tall. */
+/** Two radios side by side, wrapping when the column is too narrow; each at least 44px tall. */
 export function FormatChoice({
   value,
   onChange,
@@ -39,20 +39,22 @@ export function FormatChoice({
   name: string;
 }) {
   return (
-    <fieldset className="flex flex-col gap-1">
+    <fieldset>
       <legend className="type-label mb-1">Format</legend>
-      {FORMAT_CHOICES.map((choice) => (
-        <label key={choice.value} className="flex items-center gap-3 min-h-12 type-body">
-          <input
-            type="radio"
-            className="h-5 w-5 accent-teal"
-            name={name}
-            checked={value === choice.value}
-            onChange={() => onChange(choice.value)}
-          />
-          {choice.label}
-        </label>
-      ))}
+      <div className="flex flex-wrap gap-x-6">
+        {FORMAT_CHOICES.map((choice) => (
+          <label key={choice.value} className="flex items-center gap-3 min-h-12 type-body">
+            <input
+              type="radio"
+              className="h-5 w-5 accent-teal"
+              name={name}
+              checked={value === choice.value}
+              onChange={() => onChange(choice.value)}
+            />
+            {choice.label}
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }

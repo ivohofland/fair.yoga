@@ -63,7 +63,7 @@ export function ClassPriceLine({ line, currency, className }: ClassPriceLineProp
     case 'anonymous':
       return <PriceRange estimates={line.estimates} currency={currency} className={className} />;
     case 'donation':
-      return <p className={`type-caption ${className ?? ''}`.trim()}>By donation</p>;
+      return <p className={`type-caption ${className ?? ''}`.trim()}>By donation · give what you like after class</p>;
     default: {
       const unhandled: never = line;
       throw new Error(`ClassPriceLine: unhandled price line ${String((unhandled as { kind?: unknown }).kind)}`);

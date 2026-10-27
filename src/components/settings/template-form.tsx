@@ -851,7 +851,7 @@ export function TemplateForm(props: TemplateFormProps) {
           hint="Included in student prices. Use 0 if you don't charge VAT."
         />
         {form.pricingMode === 'tiered' && (
-          <>
+          <div className="col-span-2 grid grid-cols-2 gap-3">
           <NumberInput
             label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
             decimals={MONEY_DECIMALS}
@@ -866,7 +866,7 @@ export function TemplateForm(props: TemplateFormProps) {
             value={form.targetRate}
             onValueChange={(n) => update('targetRate', n)}
           />
-          </>
+          </div>
         )}
       </div>
 

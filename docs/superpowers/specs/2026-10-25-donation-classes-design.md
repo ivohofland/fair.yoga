@@ -341,7 +341,7 @@ Each site switches on `pricingMode`; tiered copy is unchanged.
 | `complete-class-button.tsx` — "Payment requests go to N students now" | *"{n} students will be invited to give."* |
 | class detail — "Payment requests go out automatically at …" | *"Invitations to give go out at …"* |
 | `class-lifecycle.ts` teacher completion notice | §4.1 |
-| `price-line.ts` / `PriceRange` | `{ kind: 'donation' }` → *"By donation"* (`/[slug]`, booking page, bookings list) |
+| `price-line.ts` / `PriceRange` | `{ kind: 'donation' }` → *"By donation · give what you like after class"* (`/[slug]`, booking page, bookings list) |
 
 No copy says or implies a donation is VAT-free. No surface suggests an amount.
 
