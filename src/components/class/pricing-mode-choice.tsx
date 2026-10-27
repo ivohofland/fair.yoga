@@ -24,19 +24,21 @@ export function PricingModeChoice({
   return (
     <fieldset disabled={disabled} aria-describedby={describedBy}>
       <legend className="type-label">Pricing</legend>
-      {MODES.map((mode) => (
-        <label key={mode} className="flex items-center gap-3 min-h-11 type-body">
-          <input
-            type="radio"
-            name={name}
-            value={mode}
-            checked={value === mode}
-            onChange={() => onChange(mode)}
-            className="h-5 w-5 accent-teal"
-          />
-          {PRICING_MODE_LABELS[mode]}
-        </label>
-      ))}
+      <div className="flex flex-wrap gap-x-6">
+        {MODES.map((mode) => (
+          <label key={mode} className="flex items-center gap-3 min-h-11 type-body">
+            <input
+              type="radio"
+              name={name}
+              value={mode}
+              checked={value === mode}
+              onChange={() => onChange(mode)}
+              className="h-5 w-5 accent-teal"
+            />
+            {PRICING_MODE_LABELS[mode]}
+          </label>
+        ))}
+      </div>
     </fieldset>
   );
 }

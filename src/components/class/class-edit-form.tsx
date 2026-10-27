@@ -429,7 +429,7 @@ export function ClassEditForm({
             hint="Included in student prices. Use 0 if you don't charge VAT."
           />
           {form.pricingMode === 'tiered' && (
-            <>
+            <div className="col-span-2 grid grid-cols-2 gap-3">
               <NumberInput
                 label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
                 decimals={MONEY_DECIMALS}
@@ -446,7 +446,7 @@ export function ClassEditForm({
                 disabled={settingsLocked}
                 onValueChange={(n) => set('targetRate', n)}
               />
-            </>
+            </div>
           )}
         </div>
         <div className="grid grid-cols-2 gap-3 mt-3 max-w-[320px]">

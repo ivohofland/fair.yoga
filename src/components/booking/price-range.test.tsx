@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import { PriceRange, PersonalPriceRange } from './price-range';
+import { PriceRange, PersonalPriceRange, ClassPriceLine } from './price-range';
 
 describe('PriceRange', () => {
   it('renders the anonymous range in the class currency', () => {
@@ -12,5 +12,10 @@ describe('PriceRange', () => {
   it('renders the personal range in the class currency', () => {
     const { container } = render(<PersonalPriceRange spread={{ low: 9, high: 15 }} currency="GBP" />);
     expect(container.textContent).toContain('£9.00 – £15.00');
+  });
+
+  it('says when a donation class asks for a gift, and suggests no amount (#912)', () => {
+    const { container } = render(<ClassPriceLine line={{ kind: 'donation' }} currency="EUR" />);
+    expect(container.textContent).toBe('By donation · give what you like after class');
   });
 });

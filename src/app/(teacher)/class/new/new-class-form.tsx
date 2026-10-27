@@ -706,7 +706,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
               error={errors.vatPercent}
             />
             {form.pricingMode === 'tiered' && (
-              <>
+              <div className="col-span-2 grid grid-cols-2 gap-3">
               <NumberInput
                 id="minRate"
                 label={`Min rate${chargesVat ? ' excl. VAT' : ''} (${currencyLabel(currency)})`}
@@ -725,7 +725,7 @@ export function NewClassForm({ currency, defaultVatPercent }: { currency: Curren
                 onValueChange={(n) => updateField('targetRate', n)}
                 error={errors.targetRate}
               />
-              </>
+              </div>
             )}
           </div>
 
