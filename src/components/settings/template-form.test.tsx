@@ -2250,6 +2250,23 @@ describe('TemplateForm', () => {
       expect(screen.getByLabelText('Video link (optional)')).toHaveAccessibleDescription(TEMPLATE_HINT);
     });
 
+    it('create: back to a room after Online, the sizes are held to the room the form still names', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(roomsResponse([roomRow(ROOM_A, 'Studio A', { capacityOverride: 8 })])),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_A } });
+      fireEvent.click(screen.getByRole('radio', { name: 'Online' }));
+      fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '200' } });
+      fireEvent.change(screen.getByLabelText('Min students'), { target: { value: '150' } });
+      expect(screen.getByLabelText('Max students')).toHaveValue(200);
+      fireEvent.click(screen.getByRole('radio', { name: 'In a room' }));
+      expect(screen.getByLabelText('Room')).toHaveValue(ROOM_A);
+      expect(screen.getByLabelText('Max students')).toHaveValue(8);
+      expect(screen.getByLabelText('Min students')).toHaveValue(8);
+    });
+
     it('create: sends format online, no teacherRoomId, roomCost 0 and the normalised link', async () => {
       stubFetch();
       render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
