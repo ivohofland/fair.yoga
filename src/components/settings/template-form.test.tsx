@@ -2250,6 +2250,29 @@ describe('TemplateForm', () => {
       expect(screen.getByLabelText('Video link (optional)')).toHaveAccessibleDescription(TEMPLATE_HINT);
     });
 
+    it('create: a max past the 200 cap is held there and says why, until a fitting number is typed', async () => {
+      stubFetch();
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.click(await screen.findByRole('radio', { name: 'Online' }));
+      fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '250' } });
+      expect(screen.getByLabelText('Max students')).toHaveValue(200);
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students cannot exceed 200');
+      fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '30' } });
+      expect(screen.getByLabelText('Max students')).not.toHaveAccessibleDescription('Max students cannot exceed 200');
+    });
+
+    it('create: a max past the chosen room is held at its capacity and says so', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(roomsResponse([roomRow(ROOM_A, 'Studio A', { capacityOverride: 8 })])),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+      render(<TemplateForm currency="EUR" mode="create" defaultVatPercent={0} />);
+      fireEvent.change(await screen.findByLabelText('Room'), { target: { value: ROOM_A } });
+      fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '20' } });
+      expect(screen.getByLabelText('Max students')).toHaveValue(8);
+      expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (8)');
+    });
+
     it('create: back to a room after Online, the sizes are held to the room the form still names', async () => {
       fetchMock.mockImplementation(() =>
         Promise.resolve(roomsResponse([roomRow(ROOM_A, 'Studio A', { capacityOverride: 8 })])),

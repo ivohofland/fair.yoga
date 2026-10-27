@@ -251,6 +251,8 @@ export function TemplateForm(props: TemplateFormProps) {
   // The sentence for a saved edit that changed the link while classes made
   // from the template are on the schedule; `null` otherwise.
   const [linkKept, setLinkKept] = useState<string | null>(null);
+  // Why the Max students field holds a smaller number than was typed; empty when it holds what was typed.
+  const [maxNotice, setMaxNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState(false);
   // The filter below keys off this prop rather than `form.teacherRoomId` so
@@ -373,6 +375,7 @@ export function TemplateForm(props: TemplateFormProps) {
   // past that room's seats; going back to it holds them to what it can seat.
   function handleFormatChange(format: ClassFormat) {
     update('format', format);
+    setMaxNotice('');
     if (format !== 'in_person') return;
     setForm((prev) => {
       const room = teacherRooms.find((tr) => tr.id === prev.teacherRoomId);
@@ -387,6 +390,7 @@ export function TemplateForm(props: TemplateFormProps) {
 
   function handleRoomChange(teacherRoomId: string) {
     const room = teacherRooms.find((tr) => tr.id === teacherRoomId);
+    setMaxNotice('');
     setForm((prev) => {
       const maxStudents = room
         ? Math.min(prev.maxStudents, room.capacityOverride, MAX_CLASS_SIZE)
@@ -898,9 +902,18 @@ export function TemplateForm(props: TemplateFormProps) {
         <NumberInput
           label="Max students"
           value={form.maxStudents}
-          onValueChange={(n) =>
-            update('maxStudents', Math.min(n, roomCapacity, MAX_CLASS_SIZE))
-          }
+          error={maxNotice || undefined}
+          onValueChange={(n) => {
+            const cap = Math.min(roomCapacity, MAX_CLASS_SIZE);
+            setMaxNotice(
+              n <= cap
+                ? ''
+                : online || roomCapacity > MAX_CLASS_SIZE
+                  ? `Max students cannot exceed ${MAX_CLASS_SIZE}`
+                  : `Cannot exceed room capacity (${roomCapacity})`,
+            );
+            update('maxStudents', Math.min(n, cap));
+          }}
         />
       </div>
 
