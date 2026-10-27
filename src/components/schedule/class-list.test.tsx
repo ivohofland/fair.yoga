@@ -3,7 +3,6 @@ import { render, screen } from '@testing-library/react';
 import type { PaymentStatus } from '@/lib/prisma-client';
 import { ClassList, ClassListSkeleton } from './class-list';
 import { type ClassRow, classRow } from './class-list-fixtures';
-import { tuesdayOfNextLocalWeek } from '../../../tests/week-fixtures';
 
 /**
  * Pins `PaymentRollup`'s (class-card.tsx) branching: a priority order
@@ -179,10 +178,11 @@ describe('ClassList timezone handling', () => {
 });
 
 /**
- * #920. Between 00:00 and 01:00 CET on a Monday (two hours in summer) UTC is
- * still Sunday, so a "Tuesday of next week" read off the UTC clock is this
- * week's Tuesday and the heading says "This week". `tuesdayOfNextLocalWeek`
- * reads the teacher's week, the one this list groups by.
+ * #920. The week this list groups by is the teacher's. Between 00:00 and 01:00
+ * CET (00:00 and 02:00 CEST) on a Monday UTC is still Sunday, so a fixture
+ * dated "Tuesday of next week" from the UTC clock lands in the current local
+ * week and the heading says "This week". Each case gives the Tuesday of the
+ * following local week for its instant, worked by hand.
  */
 describe('ClassList heading around the Monday boundary (#920)', () => {
   beforeEach(() => {
@@ -194,17 +194,16 @@ describe('ClassList heading around the Monday boundary (#920)', () => {
   });
 
   it.each([
-    ['Monday 00:30 CET', '2026-10-25T23:30:00.000Z'],
-    ['Monday midday CET', '2026-10-26T11:00:00.000Z'],
-    ['Monday 00:30 CEST', '2026-05-31T22:30:00.000Z'],
-    ['Monday midday CEST', '2026-06-01T10:00:00.000Z'],
-    ['Sunday 23:30 CET', '2026-10-25T22:30:00.000Z'],
-  ])('reads "Next week" at %s', (_label, instant) => {
-    const now = new Date(instant);
-    vi.setSystemTime(now);
+    ['Monday 00:30 CET', '2026-10-25T23:30:00.000Z', '2026-11-03'],
+    ['Monday midday CET', '2026-10-26T11:00:00.000Z', '2026-11-03'],
+    ['Monday 00:30 CEST', '2026-05-31T22:30:00.000Z', '2026-06-09'],
+    ['Monday midday CEST', '2026-06-01T10:00:00.000Z', '2026-06-09'],
+    ['Sunday 23:30 CET, still last week locally', '2026-10-25T22:30:00.000Z', '2026-10-27'],
+  ])('reads "Next week" at %s', (_label, instant, tuesday) => {
+    vi.setSystemTime(new Date(instant));
     render(
       <ClassList
-        classes={[classRow('cls-1', 'open', [], { date: tuesdayOfNextLocalWeek(now, 'Europe/Amsterdam') })]}
+        classes={[classRow('cls-1', 'open', [], { date: new Date(`${tuesday}T00:00:00.000Z`) })]}
         timeZone="Europe/Amsterdam"
       />,
     );

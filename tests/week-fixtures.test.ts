@@ -31,20 +31,35 @@ describe('tuesdayOfNextLocalWeek (#920)', () => {
     expect(isoDate(tuesdayOfNextLocalWeek(new Date('2026-10-25T22:30:00Z'), AMSTERDAM))).toBe('2026-10-27');
   });
 
-  // Whatever the zone and the half-hour, the date is a Tuesday and falls
-  // between two and eight days after the teacher's own today — a Tuesday
-  // read off the UTC clock lands one day out for the hours the two disagree.
+  // Now before the clocks go back (Monday 12:00 CEST), the target Tuesday
+  // after.
+  it('crosses the autumn change: Monday 2026-10-19 names 2026-10-27', () => {
+    expect(isoDate(tuesdayOfNextLocalWeek(new Date('2026-10-19T10:00:00Z'), AMSTERDAM))).toBe('2026-10-27');
+  });
+
+  // Now before the clocks go forward on 2026-03-29 (Monday 12:00 CET), the
+  // target Tuesday after.
+  it('crosses the spring change: Monday 2026-03-23 names 2026-03-31', () => {
+    expect(isoDate(tuesdayOfNextLocalWeek(new Date('2026-03-23T11:00:00Z'), AMSTERDAM))).toBe('2026-03-31');
+  });
+
+  // In each zone below and at every half hour, the date is a Tuesday between
+  // two and eight days after the teacher's own today. A Tuesday read off the
+  // UTC clock falls outside that range for the hours the two zones disagree
+  // about the day. The two windows hold the autumn and the spring change.
   it.each([AMSTERDAM, 'America/Los_Angeles', 'Pacific/Auckland'])(
     'is a Tuesday two to eight local days ahead, at every half hour in %s',
     (zone) => {
-      const start = Date.parse('2026-10-22T00:00:00Z');
-      for (let t = start; t < start + 14 * DAY_MS; t += DAY_MS / 48) {
-        const now = new Date(t);
-        const result = tuesdayOfNextLocalWeek(now, zone);
-        const daysAhead = (result.getTime() - startOfLocalDay(now, zone).getTime()) / DAY_MS;
-        expect(result.getUTCDay(), `${now.toISOString()} in ${zone}`).toBe(2);
-        expect(daysAhead, `${now.toISOString()} in ${zone}`).toBeGreaterThanOrEqual(2);
-        expect(daysAhead, `${now.toISOString()} in ${zone}`).toBeLessThanOrEqual(8);
+      for (const from of ['2026-10-22T00:00:00Z', '2026-03-25T00:00:00Z']) {
+        const start = Date.parse(from);
+        for (let t = start; t < start + 14 * DAY_MS; t += DAY_MS / 48) {
+          const now = new Date(t);
+          const result = tuesdayOfNextLocalWeek(now, zone);
+          const daysAhead = (result.getTime() - startOfLocalDay(now, zone).getTime()) / DAY_MS;
+          expect(result.getUTCDay(), `${now.toISOString()} in ${zone}`).toBe(2);
+          expect(daysAhead, `${now.toISOString()} in ${zone}`).toBeGreaterThanOrEqual(2);
+          expect(daysAhead, `${now.toISOString()} in ${zone}`).toBeLessThanOrEqual(8);
+        }
       }
     },
   );
