@@ -10,4 +10,4 @@ const paths = {
   migrations: { path: 'prisma/migrations', seed: 'pnpm exec tsx prisma/seed.ts' },
 };
 
-export default defineConfig(url === undefined ? paths : { ...paths, engine: 'classic', datasource: { url } });
+export default defineConfig(url === undefined ? paths : { ...paths, datasource: { url } });

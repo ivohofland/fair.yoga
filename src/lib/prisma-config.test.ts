@@ -11,6 +11,8 @@ vi.mock('dotenv/config', () => ({}));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const PRISMA_BIN = path.join(REPO_ROOT, 'node_modules', '.bin', 'prisma');
 const CLI_TIMEOUT_MS = 90_000;
+/** The CLI's refusal when a command needs a URL and the config holds none. */
+const NO_URL = 'The datasource.url property is required in your Prisma config file';
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -44,7 +46,7 @@ function freshClone(): string {
  * The Prisma CLI in `cwd`, with no database URL inherited from the worker
  * unless `extraEnv` sets one. It must report loading the config file: without
  * it the CLI falls back to the schema's own URL and loads no `.env`, so the
- * `.env` case fails with `P1012` while the `generate` case would still pass.
+ * `.env` case fails with `NO_URL` while the `generate` case would still pass.
  */
 function runPrisma(
   cwd: string,
@@ -73,7 +75,7 @@ describe('prisma.config.ts', () => {
     expect(status).not.toBe(0);
     expect(output).toContain('P1001');
     expect(output).toContain('203.0.113.1');
-    expect(output).not.toContain('P1012');
+    expect(output).not.toContain(NO_URL);
   }, CLI_TIMEOUT_MS);
 
   it('prefers an explicit DATABASE_URL over .env', () => {
@@ -91,11 +93,11 @@ describe('prisma.config.ts', () => {
     expect(output).not.toContain('203.0.113.1');
   }, CLI_TIMEOUT_MS);
 
-  it('fails loudly with P1012 when a command needs a URL and none is set', () => {
+  it('fails loudly naming datasource.url when a command needs a URL and none is set', () => {
     const dir = freshClone();
     const { status, output } = runPrisma(dir, ['migrate', 'status']);
     expect(status).not.toBe(0);
-    expect(output).toContain('P1012');
+    expect(output).toContain(NO_URL);
   }, CLI_TIMEOUT_MS);
 
   it('lets generate run with no .env and no DATABASE_URL', () => {

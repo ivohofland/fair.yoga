@@ -73,9 +73,16 @@ describe.each(['colorless', 'minimal'] as const)('real Prisma errors reach the l
   it('a CHECK violation names its constraint', async () => {
     const primary = 'violates check constraint';
     const out = await logged(() => prisma.student.update({ where: { email }, data: { incomeTier: 9 } }), primary);
-    // The failing row is on the thrown value, so its absence below is redaction.
-    expect(JSON.stringify((out.thrown as { cause?: unknown }).cause)).toContain('Alicepii');
-    expect(out.err).toMatchObject({ name: 'DriverAdapterError', sqlState: '23514', constraint: 'Student_income_tier_check' });
+    // The failing row is on the thrown value's meta, so its absence below is redaction.
+    expect(JSON.stringify((out.thrown as { meta?: unknown }).meta)).toContain('Alicepii');
+    expect(out.err).toMatchObject({
+      name: 'PrismaClientKnownRequestError',
+      code: 'P2039',
+      sqlState: '23514',
+      constraint: 'Student_income_tier_check',
+      meta: { modelName: 'Student' },
+    });
+    expect(out.err.meta).toEqual({ modelName: 'Student' });
     const line = JSON.stringify(out.err);
     expect(line).not.toContain(primary);
     expect(line).not.toContain('Failing row contains');
@@ -86,20 +93,19 @@ describe.each(['colorless', 'minimal'] as const)('real Prisma errors reach the l
     // The row id appears at most once, as the rowIds facet: never in the message or stack.
     expect(JSON.stringify(out.err).split(completedClassId).length).toBeLessThanOrEqual(2);
     expect(JSON.stringify(out.err)).not.toContain('which is terminal');
-    expect(out.err.message).toBe('Driver adapter error (detail withheld from the log)');
-    expect(out.err).toMatchObject({ name: 'DriverAdapterError', sqlState: '23514', trigger: 'status', rowIds: [completedClassId] });
+    expect(out.err.message).toBe('Invalid `prisma.class.update()` invocation (detail withheld from the log)');
+    expect(out.err).toMatchObject({ name: 'PrismaClientKnownRequestError', code: 'P2039', sqlState: '23514', trigger: 'status', rowIds: [completedClassId] });
+    expect(out.err.meta).toEqual({ modelName: 'Class' });
   });
 
-  it("a produced DriverAdapterError keeps its own class, its frames, and has no code", async () => {
+  it('a produced typed 23514 is a Known P2039 whose frames are logged and whose adapter error is not', async () => {
     const out = await logged(() => prisma.class.update({ where: { id: completedClassId }, data: { status: 'open' } }), completedClassId);
-    expect(out.thrown.constructor.name).toBe('DriverAdapterError');
-    expect(Object.prototype.hasOwnProperty.call(out.thrown, 'code')).toBe(false);
-    expect(out.thrown.stack).toMatch(/^DriverAdapterError: Class [0-9a-f-]+ is completed/);
-    expect(out.err.type).toBe('DriverAdapterError');
-    expect(out.err).not.toHaveProperty('code');
+    expect(out.thrown.constructor.name).toBe('PrismaClientKnownRequestError');
+    expect((out.thrown as { code?: string }).code).toBe('P2039');
+    expect(out.err.type).toBe('PrismaClientKnownRequestError');
     expect(out.err).not.toHaveProperty('cause');
     expect(out.err).not.toHaveProperty('causeTruncated');
-    expect(out.err.stack).toMatch(/^DriverAdapterError: Driver adapter error \(detail withheld from the log\)\n {4}at /);
+    expect(out.err.stack).toMatch(/^PrismaClientKnownRequestError: Invalid `prisma\.class\.update\(\)` invocation \(detail withheld from the log\)\n {4}at /);
   });
 
   it('a raw-query error', async () => {

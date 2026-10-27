@@ -66,13 +66,17 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
   };
 }
 
+/** How far past the pool bound `maxWait` sits, so pg-pool's timeout is always the first to fire. */
+export const MAX_WAIT_MARGIN_MS = 1_000;
+
 /**
  * The client's default interactive-transaction options for `pool`: `maxWait`
- * equals the pool's wait bound, so pg-pool's timeout is the bound a waiting
- * transaction meets. Why: `docs/technical-architecture.md`, "Database errors".
+ * a margin past the pool's wait bound, so pg-pool's timeout, not `maxWait`,
+ * is the bound a waiting transaction meets. Why: `docs/technical-architecture.md`,
+ * "Database errors".
  */
 export function transactionOptionsFor(pool: PgPoolConfig): { readonly maxWait: number } {
-  return { maxWait: pool.connectionTimeoutMillis };
+  return { maxWait: pool.connectionTimeoutMillis + MAX_WAIT_MARGIN_MS };
 }
 
 /**

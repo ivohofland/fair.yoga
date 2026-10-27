@@ -19,7 +19,7 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
   const original = { originalCode: sqlState, originalMessage: message };
   switch (sqlState) {
     case '23505':
-      return { ...original, kind: 'UniqueConstraintViolation', constraint: undefined, ...extra };
+      return { ...original, kind: 'UniqueConstraintViolation', constraint: undefined, table: undefined, ...extra };
     case '23503':
       return { ...original, kind: 'ForeignKeyConstraintViolation', constraint: undefined, ...extra };
     case '40001':

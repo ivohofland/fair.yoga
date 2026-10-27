@@ -42,7 +42,7 @@ afterAll(async () => {
 /**
  * The compile-time half of this file, and the reason it exists at all.
  *
- * `lockClassRow`'s `{ $transaction?: never }` brand is what stops a caller
+ * `lockClassRow`'s `{ $connect?: never }` brand is what stops a caller
  * passing the bare `PrismaClient`, which would compile cleanly and fail
  * silently: on a bare client each statement is its own autocommit
  * transaction, so `SET LOCAL` and `FOR UPDATE` would each apply to a

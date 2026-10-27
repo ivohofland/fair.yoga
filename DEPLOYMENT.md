@@ -261,9 +261,9 @@ no deployed code reads it.
 
 The migrate image carries `prisma.config.ts` and takes `DATABASE_URL` from
 compose; it has no `.env`. The migrate output contains
-`Loaded Prisma config from prisma.config.ts` when the file was found. Without the file the CLI would
-still migrate through the schema's own URL, so that line is how to tell, and
-CI's migration-image step asserts it.
+`Loaded Prisma config from prisma.config.ts` when the file was found. Without
+the file Prisma 7 has no database URL to migrate with and refuses, so a missing
+file fails loudly; CI's migration-image step asserts the line all the same.
 
 The deploy only moves forward along `origin/main`. A commit already deployed (the one
 recorded in `.deployed`; a run that finds no such file records the checkout's

@@ -12,7 +12,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import crypto from 'crypto';
 import { Prisma, type PrismaClient } from '@/lib/prisma-client';
-import { pgErrorOf } from '@/lib/pg-error';
 import { SWEEP_PAGE_SIZE } from '@/lib/read-in-pages';
 import { autoCancelClasses, autoCompleteClasses, autoTransitionToInProgress } from './class-transitions';
 import { createReconciliationStreaks, reconcileWaitlists } from './waitlist-reconciliation';
@@ -25,6 +24,7 @@ import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   analyzeSeed,
   BIND_LIMIT_PARENTS,
+  BIND_REFUSED_PARENTS,
   CEILING_ROWS,
   CEILING_STACK,
   expectLowered,
@@ -844,10 +844,10 @@ describe('bind-parameter limit', () => {
     await teachers?.cleanup();
   });
 
-  it('an unpaged composite load over BIND_LIMIT_PARENTS + 1 parents fails 08P01; BIND_LIMIT_PARENTS resolves', async () => {
+  it('an unpaged composite load over BIND_REFUSED_PARENTS parents is refused with P2029; BIND_LIMIT_PARENTS resolves', async () => {
     teachers = await seedTeachers(prisma, 1, 'ceiling-bind-limit');
-    const ids = await seedClassesBySql(prisma, teachers, BIND_LIMIT_PARENTS + 1);
-    expect(ids).toHaveLength(BIND_LIMIT_PARENTS + 1);
+    const ids = await seedClassesBySql(prisma, teachers, BIND_REFUSED_PARENTS);
+    expect(ids).toHaveLength(BIND_REFUSED_PARENTS);
     await analyzeSeed(prisma);
     const load = (n: number, client: PrismaClient = prisma) =>
       client.class.findMany({ where: { id: { in: ids.slice(0, n) } }, include: { calendarEntry: true } });
@@ -858,10 +858,11 @@ describe('bind-parameter limit', () => {
     } finally {
       await low.$disconnect();
     }
-    const err: unknown = await load(BIND_LIMIT_PARENTS + 1).then(
+    const err: unknown = await load(BIND_REFUSED_PARENTS).then(
       () => 'resolved',
       (e: unknown) => e,
     );
-    expect(pgErrorOf(err)?.sqlState).toBe('08P01');
+    expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2029');
   }, 120_000);
 });

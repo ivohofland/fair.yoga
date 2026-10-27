@@ -22,7 +22,7 @@ export const ADAPTER_KINDS = [
   'DatabaseNotReachable', 'DatabaseDoesNotExist', 'DatabaseAlreadyExists', 'DatabaseAccessDenied',
   'ConnectionClosed', 'TlsConnectionError', 'AuthenticationFailed', 'TransactionWriteConflict',
   'TableDoesNotExist', 'ColumnNotFound', 'TooManyConnections', 'ValueOutOfRange',
-  'MissingFullTextSearchIndex', 'SocketTimeout', 'InconsistentColumnData',
+  'MissingFullTextSearchIndex', 'SocketTimeout', 'InconsistentColumnData', 'RestrictViolation', 'InvalidInputValue',
   'TransactionAlreadyClosed', 'postgres',
 ] as const;
 export type AdapterKind = (typeof ADAPTER_KINDS)[number];
