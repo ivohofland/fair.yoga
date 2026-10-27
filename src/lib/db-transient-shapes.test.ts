@@ -16,7 +16,7 @@ import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure, type TransientKind } from './api-errors';
 import { serializeErr } from './log-serializers';
 import { isPgPoolTimeout, pgErrorOf } from './pg-error';
-import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 
 type Db = ReturnType<typeof createPrismaClient>;
 
@@ -88,24 +88,24 @@ describe('transient kinds produced against the real database', () => {
   }
 
   describe('lock_timeout', () => {
-    it('typed: a DriverAdapterError with 55P03, at warn', async () => {
+    it('typed: a Known P2039 with 55P03, at warn', async () => {
       const err = await behindRowLock(() =>
         db.$transaction(async (tx) => {
           await tx.$executeRaw`SET LOCAL lock_timeout = '100ms'`;
           await tx.account.update({ where: { id: rowA }, data: { email: newEmail() } });
         }),
       );
-      expect(err).toBeInstanceOf(Error);
-      expect((err as Error).name).toBe('DriverAdapterError');
+      expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2039');
       expect(pgErrorOf(err)?.sqlState).toBe('55P03');
       expectKind(err, 'lock_timeout', 'warn');
       // The helper's fabrication of the same case reads identically.
       const pg = pgErrorOf(err);
       if (pg === null) throw new Error('no Postgres error on the produced value');
-      const fake = driverAdapterError(pgCause('55P03', pg.message));
+      const fake = knownWithAdapterCause('P2039', pgCause('55P03', pg.message), { modelName: 'Account' });
       expect(pgErrorOf(fake)).toEqual(pg);
       expect(ownKeys(fake)).toEqual(ownKeys(err));
-      expect(ownKeys((fake as { cause: object }).cause)).toEqual(ownKeys((err as { cause: object }).cause));
+      expect(ownKeys(fake.meta as object)).toEqual(ownKeys((err as Prisma.PrismaClientKnownRequestError).meta as object));
     });
 
     it('raw: a P2010 with 55P03, at warn', async () => {
@@ -146,11 +146,12 @@ describe('transient kinds produced against the real database', () => {
       return results.flatMap((r) => (r.status === 'rejected' ? [r.reason as unknown] : []));
     }
 
-    it('typed: the killed transaction throws a DriverAdapterError with 40P01, at error', async () => {
+    it('typed: the killed transaction throws a Known P2034 with 40P01, read as a deadlock, at error', async () => {
       const killed = await deadlock((tx, id) => tx.account.update({ where: { id }, data: { email: newEmail() } }));
       expect(killed).toHaveLength(1);
       const [err] = killed;
-      expect((err as Error).name).toBe('DriverAdapterError');
+      expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+      expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2034');
       expect(pgErrorOf(err)?.sqlState).toBe('40P01');
       expectKind(err, 'deadlock', 'error');
     });
@@ -263,7 +264,7 @@ describe('transient kinds produced against the real database', () => {
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'expired' });
     });
 
-    it('an explicit maxWait below the pool bound, exceeded with the connection freed inside it: P2028 with meta {}, at warn', async () => {
+    it('an explicit maxWait below the pool bound: P2028 with meta {} at its own deadline, at warn', async () => {
       let waited = 0;
       const err = await behindHeldConnection(5_000, async (single, release) => {
         const started = Date.now();
@@ -278,14 +279,16 @@ describe('transient kinds produced against the real database', () => {
       expect(isPgPoolTimeout(err)).toBe(false);
       expectKind(err, 'tx_budget', 'warn');
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
-      // `maxWait` is judged once the pool hands over a connection, not at its own deadline.
-      expect(waited).toBeGreaterThanOrEqual(600);
+      // `maxWait` fires at its own deadline, not once the pool hands over a connection.
+      expect(waited).toBeGreaterThanOrEqual(300);
+      expect(waited).toBeLessThan(600);
     });
   });
 
   it('pool_exhausted: an interactive transaction whose wait outlives the pool bound', async () => {
+    // The client's own default `maxWait`: a margin past the pool bound, so pg-pool's timeout fires first.
     const err = await behindHeldConnection(200, (single) =>
-      rejectionOf(() => single.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 100 })),
+      rejectionOf(() => single.$transaction(async (tx) => tx.$queryRaw`SELECT 1`)),
     );
     expect(isPgPoolTimeout(err)).toBe(true);
     expectKind(err, 'pool_exhausted', 'error');

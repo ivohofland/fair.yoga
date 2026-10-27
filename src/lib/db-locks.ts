@@ -102,7 +102,7 @@ import { ClassStatus, Currency, Prisma } from '@/lib/prisma-client';
  * parameter is changed at the one adopting site rather than re-pointing that
  * alias, which would have branded the three skipped ones by side effect.
  */
-export type TransactionClientOnly = Prisma.TransactionClient & { $transaction?: never };
+export type TransactionClientOnly = Prisma.TransactionClient & { $connect?: never };
 
 declare const classLockBrand: unique symbol;
 
@@ -195,7 +195,7 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * them in this order, `class_sync_entry_completed` (the trigger, which fires on
  * `Class` and writes the entry) included; `docs/lock-order.md` carries the rule.
  *
- * `tx`'s type carries an extra `{ $transaction?: never }` brand on top of
+ * `tx`'s type carries an extra `{ $connect?: never }` brand on top of
  * `Prisma.TransactionClient`, and that brand is load-bearing, not
  * decorative: `Prisma.TransactionClient` is `Omit<PrismaClient,
  * ITXClientDenyList>`, and `Omit` only drops members from the *type* — a
@@ -205,12 +205,14 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * each statement is its own autocommit transaction, so `SET LOCAL` and `FOR
  * UPDATE` would each apply to a transaction that no longer exists by the time
  * the caller's next statement runs, protecting nothing. A real interactive
- * transaction client has no `$transaction` method at all (that is what
- * `ITXClientDenyList` removes), so `$transaction?: never` costs it nothing;
- * `PrismaClient` has one, and a method is never assignable to `never`, so
- * `lockClassRow(prisma, classId)` — the full client — is now a compile
- * error: `Argument of type 'PrismaClient<...>' is not assignable to
- * parameter of type 'TransactionClient & { $transaction?: undefined; }'`.
+ * transaction client has no `$connect` method (`ITXClientDenyList` removes
+ * it), so `$connect?: never` costs it nothing; `PrismaClient` has one, and a
+ * method is never assignable to `never`, so `lockClassRow(prisma, classId)` —
+ * the full client — is a compile error: `Argument of type
+ * 'PrismaClient<...>' is not assignable to parameter of type
+ * 'TransactionClient & { $connect?: undefined; }'`. The brand names
+ * `$connect` because it is a member `ITXClientDenyList` is guaranteed to
+ * drop; `$transaction` is not one, so a brand on it makes the type `never`.
  * That was originally verified with a throwaway call site that was then
  * deleted, which threw the verification away with it; `db-locks.test.ts`
  * now keeps it permanently, as a `// @ts-expect-error` on a never-called

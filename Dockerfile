@@ -51,8 +51,9 @@ COPY prisma ./prisma
 # The scripts below import the generated client; generating it here keeps this
 # stage from depending on whether deps' postinstall ran, as the build stage does.
 RUN pnpm exec prisma generate
-# The CLI's config. Without it migrate still runs on the schema's own URL, so
-# CI checks the file loads (DEPLOYMENT.md §6).
+# The CLI's config, and the only place the database URL is declared: without
+# it every command that needs one refuses. CI checks the file loads
+# (DEPLOYMENT.md §6).
 COPY prisma.config.ts ./
 # Not a migration: the operator's admin-grant CLI, run from this stage
 # (DEPLOYMENT.md §8).

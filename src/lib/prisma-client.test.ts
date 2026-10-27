@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
-import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, Prisma, ClassStatus, Currency } from './prisma-client';
+import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, MAX_WAIT_MARGIN_MS, Prisma, ClassStatus, Currency } from './prisma-client';
 import * as enums from './prisma-enums';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
@@ -180,9 +180,9 @@ describe('prisma funnel imports', () => {
 });
 
 describe('transactionOptionsFor', () => {
-  it.each([undefined, 200, 4_000])('sets maxWait to the pool bound (connectionTimeoutMs %s)', (connectionTimeoutMs) => {
+  it.each([undefined, 200, 4_000])('sets maxWait a margin past the pool bound (connectionTimeoutMs %s)', (connectionTimeoutMs) => {
     const pool = poolConfigFor({ connectionTimeoutMs });
-    expect(transactionOptionsFor(pool)).toEqual({ maxWait: pool.connectionTimeoutMillis });
+    expect(transactionOptionsFor(pool)).toEqual({ maxWait: pool.connectionTimeoutMillis + MAX_WAIT_MARGIN_MS });
   });
 });
 

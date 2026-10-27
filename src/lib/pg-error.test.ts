@@ -101,7 +101,8 @@ describe('adapterKindOf', () => {
     expect(adapterKindOf(knownWithAdapterCause('P2010', { kind: 'constructor' }))).toBeUndefined();
   });
   it('ADAPTER_KINDS is MappedError\'s kinds minus the other databases\'', () => {
-    const dts = readFileSync(path.join(process.cwd(), 'node_modules/@prisma/client/runtime/client.d.ts'), 'utf8');
+    const entry = createRequire(path.join(process.cwd(), 'node_modules/@prisma/adapter-pg/package.json')).resolve('@prisma/driver-adapter-utils');
+    const dts = readFileSync(path.join(path.dirname(entry), 'index.d.ts'), 'utf8');
     const start = dts.indexOf('declare type MappedError = {');
     const end = dts.indexOf('\n};', start);
     expect(start).toBeGreaterThan(-1);
@@ -370,14 +371,18 @@ describe('produced against the real database: conflict codes', () => {
     return (err as { meta: { driverAdapterError: { cause: object } } }).meta;
   }
 
-  it('the helper fabricates a typed DriverAdapterError identical to a produced one', async () => {
+  it('the helper fabricates a Known P2039 (typed 23514) identical to a produced one', async () => {
     const real = await rejectionOf(() => db.class.update({ where: { id: frozen.id }, data: { status: 'open' } }));
+    expect(real).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     const pg = pgErrorOf(real);
     if (pg === null) throw new Error('no Postgres error on the produced value');
-    const fake = driverAdapterError(pgCause('23514', pg.message));
+    const fake = knownWithAdapterCause('P2039', pgCause('23514', pg.message), { modelName: 'Class' });
     expect(pgErrorOf(fake)).toEqual(pg);
+    expect((fake as Prisma.PrismaClientKnownRequestError).code).toBe((real as Prisma.PrismaClientKnownRequestError).code);
     expect(ownKeys(fake)).toEqual(ownKeys(real));
-    expect(ownKeys((fake as { cause: object }).cause)).toEqual(ownKeys((real as { cause: object }).cause));
+    expect(ownKeys(metaOf(fake))).toEqual(ownKeys(metaOf(real)));
+    expect(ownKeys(metaOf(fake).driverAdapterError)).toEqual(ownKeys(metaOf(real).driverAdapterError));
+    expect(ownKeys(metaOf(fake).driverAdapterError.cause)).toEqual(ownKeys(metaOf(real).driverAdapterError.cause));
   });
 
   it('the helper fabricates a Known P2010 (raw 23514) identical to a produced one', async () => {

@@ -321,13 +321,16 @@ a second statement that binds the parent keys as parameters. For a
 **composite** relation — one keyed on more than one column, such as
 `Class.calendarEntry` — the query compiler sends one scalar `IN` list per key
 column, `"id" IN ($1…) AND "kind" IN (…) AND "live" IN (…)`, so the statement
-binds 3n + 1 parameters for n parents. Postgres's wire protocol carries at
-most 65,535 parameters in one statement, and the query compiler does not split
-a composite relation load: 21,844 parents resolve, and 21,845 fail with
-`08P01` (`bind message supplies 0 parameters, but prepared statement ""
-requires 65536`), which reaches the caller as a 500. A scalar `IN` list is
-flat in Postgres, so the load no longer overflows the parser's stack: 21,844
-parents resolve even under a 200 kB `max_stack_depth`. Relation **filters**
+binds 3n + 1 parameters for n parents. The query compiler does not split a
+composite relation load, and since Prisma 7 it refuses one past its own
+ceiling: measured on 7.10.1, 16,000 parents (48,001 parameters) resolve and
+21,844 (65,533, inside Postgres's wire limit of 65,535) are refused with
+`P2029`, which reaches the caller as a 500. The edge between them is not a
+clean line: 16,375 parents resolve, 16,377 to 16,382 dropped the connection or
+stalled, and 16,383 and up are refused, so no test pins a boundary, only the
+two sides. A scalar `IN` list is flat in Postgres, so the load no longer
+overflows the parser's stack: 16,000 parents resolve even under a 200 kB
+`max_stack_depth`. Relation **filters**
 (`where: { calendarEntry: { cancelledAt: null } }`) compile to a `JOIN`, not
 an `IN` list, and are unaffected.
 
@@ -342,15 +345,15 @@ refused before it is sent, with `P2029` (`The query parameter limit supported
 by your database is exceeded.`), which also reaches the caller as a 500.
 Measured refused past the cap: `count`, `groupBy`, `updateMany`,
 `deleteMany`, a `findMany` with `orderBy` or `take`, and an `in:` nested under
-a relation filter. The composite relation load above is the exception to both:
-neither split nor refused, it fails in Postgres. So an `in:` list that grows
+a relation filter. The composite relation load above is refused too, at a higher
+ceiling than 32,766, and never split. So an `in:` list that grows
 with the platform needs a bound whatever operation carries it, and
 `readInSlices` (`src/lib/read-in-pages.ts`) hands the list over
 `SWEEP_PAGE_SIZE` keys at a time.
 
 Re-deriving the numbers: the composite limit is the `bind-parameter limit`
-test, which seeds 21,845 classes by `generate_series` and loads 21,844 and
-21,845 of them unpaged (about 4 s of seed and loads on a dev machine):
+test, which seeds 21,844 classes by `generate_series` and loads 16,000 and
+21,844 of them unpaged (about 4 s of seed and loads on a dev machine):
 
 ```bash
 pnpm exec vitest run --project unit-sweeps src/services/sweep-page-ceiling.test.ts -t "bind-parameter limit"
@@ -419,8 +422,8 @@ real. The per-site tests live in `src/services/sweep-page-ceiling.test.ts`.
 history is left unpaged — including the GDPR export, `/schedule/past`,
 reporting, and the unfiltered `GET /api/classes` / `GET /api/studio-classes`,
 among other per-tenant reads. At 6
-classes a week, one teacher reaches 21,845 calendar entries only after about
-70 years (21,845 ÷ 6 ÷ 52 ≈ 70), and a student's bookings or GDPR export is
+classes a week, one teacher reaches 16,000 calendar entries only after about
+51 years (16,000 ÷ 6 ÷ 52 ≈ 51), and a student's bookings or GDPR export is
 smaller again. Not a defect anyone will hit.
 
 **Re-deriving the census.** Composite relations:
@@ -1542,7 +1545,7 @@ engine (its query compiler) and run through the `@prisma/adapter-pg` driver
 adapter, which owns a `pg.Pool`. `createPrismaClient` builds
 `new PrismaClient({ adapter: new PrismaPg(pool), transactionOptions: transactionOptionsFor(pool), errorFormat, log })`
 with `pool = poolConfigFor(options)`; `transactionOptionsFor` sets the
-client's default `maxWait` to the pool bound ("Database errors").
+client's default `maxWait` a margin past the pool bound ("Database errors").
 It never passes `datasources` or `datasourceUrl`: Prisma refuses either beside
 an adapter at construction, with `PrismaClientInitializationError: Custom
 datasource configuration is not compatible with Prisma Driver Adapters`. The
@@ -1633,14 +1636,15 @@ The Prisma CLI gets its configuration from `prisma.config.ts` at the repo root
 silent no-op when there is none and never overrides a variable already set, so
 an explicit `DATABASE_URL` (CI, `src/lib/db-provision.ts`, compose) wins over
 `.env`. With the variable set, the file passes it as the datasource URL; with
-it unset, it adds no datasource and, on Prisma 6, the schema's
-`env("DATABASE_URL")` applies. So `prisma generate` (the `postinstall`, which
-can run before any `.env` exists: a fresh clone's install, the image's `deps`
-stage) still works and a command that needs a URL fails with `P1012`. The
+it unset, it adds no datasource (the schema's `datasource` block carries no
+`url`, which Prisma 7 refuses there). So `prisma generate` (the
+`postinstall`, which can run before any `.env` exists: a fresh clone's
+install, the image's `deps` stage) still works and a command that needs a URL
+fails with "The datasource.url property is required in your Prisma config file". The
 `env()` helper from `prisma/config` is not used because it throws while the
 config loads, and every command loads it, `generate` included.
 `src/lib/prisma-config.test.ts` drives the real CLI for the `.env`-only case,
-the explicit-env-wins case, the no-URL `generate` case and the no-URL `P1012`
+the explicit-env-wins case, the no-URL `generate` case and the no-URL refusal
 case.
 
 Run the Prisma CLI from the repo root. The config is found only in the working
@@ -1667,7 +1671,9 @@ follows `Error.cause`; a caller that walks a chain calls it once per link. It
 finds the adapter's cause object on exactly one of two paths:
 
 1. `err` is an `Error` whose `name` is `'DriverAdapterError'` (identified by
-   name, never by import) and whose `cause` is an object → `err.cause`.
+   name, never by import) and whose `cause` is an object → `err.cause`. No
+   typed call measured under 7.10.1 throws one bare; the path stays for a
+   runtime that does.
 2. `err` is a `Prisma.PrismaClientKnownRequestError` whose
    `meta.driverAdapterError` is an object named `'DriverAdapterError'` with an
    object `cause` → that `cause`.
@@ -1682,23 +1688,25 @@ answers `null`. There is no `detail` field: it carries row
 values (`Failing row contains (…)`, `Key (…)=(…)`) and nothing reads it.
 
 The shapes it reads, measured on the client engine plus the pg adapter
-(C+A), Prisma 6.19.3, on 2026-10-17. Source: the adapter's `convertDriverError`
+(C+A), Prisma 7.10.1, on 2026-10-27. Source: the adapter's `convertDriverError`
 and `mapDriverError` in
-`node_modules/.pnpm/@prisma+adapter-pg@6.19.3/node_modules/@prisma/adapter-pg/dist/index.js`.
+`node_modules/.pnpm/@prisma+adapter-pg@7.10.1/node_modules/@prisma/adapter-pg/dist/index.js`.
+`src/lib/db-transient-shapes.test.ts` and `src/lib/pg-error.test.ts` produce
+each row against the real database.
 
 | What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
 |---|---|---|---|---|
-| Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`, `40P01`, `54001`, `57014`…) | `DriverAdapterError` (not a Prisma class), `message` = Postgres primary message | `err.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
+| Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`, `54001`, `57014`…) | `PrismaClientKnownRequestError` `P2039`, `meta {modelName, driverAdapterError}` | `err.meta.driverAdapterError.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
+| `40P01` on a typed call | Known `P2034` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
 | Same SQLSTATE on a raw call | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
-| `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint.fields` (truncated on expression keys); **no `message`** |
+| `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint` (`{index}` for a named unique index), `table`; **no `message`** |
 | `23503` (typed `P2003`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `ForeignKeyConstraintViolation` | `originalCode`, `originalMessage`, `constraint.index`; no `message` |
 | `40001` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode: '40001'`, `originalMessage`; **no `code`** |
 | `P2025` | Known | none | — | `meta {modelName, operation}` |
 | `P2028` budget expired | Known | none | — | `meta {modelName, operation, timeout, timeTaken}` |
 | `P2028` `maxWait` exceeded | Known | none | — | `meta {}` |
 | Pool wait exceeded `connectionTimeoutMillis` (`$queryRaw`, `$executeRaw`, a model call, a batch `$transaction([…])`, each behind a raw or an interactive-transaction holder) | plain `Error('timeout exceeded when trying to connect')`, own key `clientVersion` only | none | — | — |
-| Bind-parameter count over 65,535 | `DriverAdapterError` | `err.cause` | `postgres` | `originalCode: '08P01'` |
-| Over 32,766 parameters in one statement Prisma does not split, refused before it is sent | `PrismaClientKnownRequestError` `P2029` | none | — | — |
+| Over 32,766 parameters in one statement Prisma does not split, or a composite relation load of 16,383 parents or more, refused before it is sent | `PrismaClientKnownRequestError` `P2029` | none | — | — |
 | Connect exceeded `connectionTimeoutMillis` | plain `Error('Connection terminated due to connection timeout')` | none | — | — |
 | `ENETUNREACH` / `EHOSTUNREACH` (raw, model) | Known, `code: 'ENETUNREACH'` | none | — | — |
 | Same, inside an interactive transaction | the raw pg `Error`, `code: 'ENETUNREACH'` | — | — | — |
@@ -1757,36 +1765,28 @@ the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
 Every kind is produced against the real database, typed and raw where both
 are reachable, in `src/lib/db-transient-shapes.test.ts`.
 
-What `pool_exhausted` covers, measured there on 2026-10-18 (`poolMax: 1`, the
+What `pool_exhausted` covers, measured there on 2026-10-27 (`poolMax: 1`, the
 one connection held by an interactive transaction): any call whose wait for a
 pooled connection outlives `connectionTimeoutMs`. That is a model call, a
-`$queryRaw`, a batch `$transaction([…])`, **and an interactive transaction**.
-Prisma's `maxWait` is not a deadline that fires while an interactive
-transaction waits at the pool; it is judged once the pool hands over a
-connection and the adapter's `BEGIN` has returned, and a transaction judged
-late is rolled back and refused even though it holds a connection.
+`$queryRaw`, a batch `$transaction([…])`, **and an interactive transaction**
+that runs on the client's default `maxWait`.
+Prisma's `maxWait` is a real deadline: it fires at its own time whether or not
+a connection has arrived, so a `maxWait` equal to the pool bound races
+pg-pool's timeout and the race went to `P2028` (6 of 6 runs), which logs at
+`warn` where the pool timeout logs at `error`.
 
-So `createPrismaClient` sets the client's default `maxWait` to the pool bound
-(`transactionOptionsFor`), and pg-pool's wait is the one bound a waiting
-interactive transaction meets. Under pool saturation its 503 arrives at the
-pool bound (10 s by default), as `pool_exhausted` at `error`, rather than at
-Prisma's own 2 s default `maxWait`; and a transaction that acquires its
-connection inside the bound proceeds instead of being refused after
-acquiring it. The one exception is a connection handed over so close to the
-bound that its `BEGIN` returns past it. `src/lib/prisma-client.test.ts`
-tests it: a connection freed at 2.5 s, past Prisma's default and inside a 4 s
-pool bound, is used.
+So `createPrismaClient` sets the client's default `maxWait` a margin
+(`MAX_WAIT_MARGIN_MS`) past the pool bound (`transactionOptionsFor`), and
+pg-pool's wait is the one bound a waiting interactive transaction meets. Under
+pool saturation its 503 arrives at the pool bound (10 s by default), as
+`pool_exhausted` at `error`. A transaction that acquires its connection inside
+the bound proceeds: `src/lib/prisma-client.test.ts` tests it with a connection
+freed at 2.5 s, past Prisma's own 2 s default and inside a 4 s pool bound.
 
-An explicit `maxWait` below the pool bound reopens the `P2028` arm, and
-`db-transient-shapes.test.ts` measures both outcomes with one:
-
-- the pool frees a connection within `connectionTimeoutMs` but after
-  `maxWait` → `P2028` with `meta {}`, `tx_budget` at `warn` (measured:
-  `maxWait: 300`, pool bound 5 s, connection freed at 600 ms → `P2028` after
-  ≥ 600 ms);
-- the wait outlives `connectionTimeoutMs` → pg-pool's timeout,
-  `pool_exhausted` at `error`, whatever `maxWait` says (measured: `maxWait:
-  100`, pool bound 200 ms).
+An explicit `maxWait` below the pool bound always wins, at its own deadline,
+as `P2028` with `meta {}`, `tx_budget` at `warn`; `db-transient-shapes.test.ts`
+measures it (`maxWait: 300`, pool bound 5 s, connection freed at 600 ms →
+`P2028` after about 300 ms).
 
 An expired transaction budget (`timeout`) is a different
 `P2028`, with `meta.timeout` and `meta.timeTaken`, also `tx_budget`.
@@ -1877,7 +1877,7 @@ Prisma handles migrations. Every schema change produces a migration file that's 
 #### What the drift check enforces
 
 CI's `Check schema/migration drift` step runs `prisma migrate diff
---from-schema-datasource … --to-schema-datamodel … --exit-code` against a
+--from-config-datasource --to-schema … --exit-code` against a
 database built by `migrate deploy`. It was added to catch a schema edit
 committed without a migration, and it does. What it enforces is wider, and
 that is a decision this project made (#329), not an accident of the tool:

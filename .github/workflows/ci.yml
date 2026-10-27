@@ -217,7 +217,7 @@ jobs:
       # so it cannot detect an amendment that leaves the deployed schema consistent
       # with schema.prisma, which is precisely the case #302 demonstrated.)
       - name: Check schema/migration drift
-        run: pnpm exec prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
+        run: pnpm exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
       # THE SEED IS THE FIRST THING THAT CAN VIOLATE A NEW CONSTRAINT, and
       # `20260826080000_calendar_entry`'s own comment rests the placement of
