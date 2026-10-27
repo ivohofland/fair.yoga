@@ -902,7 +902,7 @@ export function TemplateForm(props: TemplateFormProps) {
         <NumberInput
           label="Max students"
           value={form.maxStudents}
-          error={maxNotice || undefined}
+          aria-describedby={maxNotice ? 'maxStudentsNotice' : undefined}
           onValueChange={(n) => {
             const cap = Math.min(roomCapacity, MAX_CLASS_SIZE);
             setMaxNotice(
@@ -916,6 +916,11 @@ export function TemplateForm(props: TemplateFormProps) {
           }}
         />
       </div>
+      {maxNotice && (
+        <p id="maxStudentsNotice" className="type-caption -mt-2">
+          {maxNotice}
+        </p>
+      )}
 
       {form.pricingMode === 'tiered' && (
         <PricingPreviewTable

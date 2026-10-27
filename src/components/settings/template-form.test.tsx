@@ -2257,6 +2257,7 @@ describe('TemplateForm', () => {
       fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '250' } });
       expect(screen.getByLabelText('Max students')).toHaveValue(200);
       expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Max students cannot exceed 200');
+      expect(screen.getByLabelText('Max students')).not.toBeInvalid();
       fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '30' } });
       expect(screen.getByLabelText('Max students')).not.toHaveAccessibleDescription('Max students cannot exceed 200');
     });
@@ -2271,6 +2272,7 @@ describe('TemplateForm', () => {
       fireEvent.change(screen.getByLabelText('Max students'), { target: { value: '20' } });
       expect(screen.getByLabelText('Max students')).toHaveValue(8);
       expect(screen.getByLabelText('Max students')).toHaveAccessibleDescription('Cannot exceed room capacity (8)');
+      expect(screen.getByLabelText('Max students')).not.toBeInvalid();
     });
 
     it('create: back to a room after Online, the sizes are held to the room the form still names', async () => {
