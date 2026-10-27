@@ -915,12 +915,12 @@ export function TemplateForm(props: TemplateFormProps) {
             update('maxStudents', Math.min(n, cap));
           }}
         />
+        {maxNotice && (
+          <p id="maxStudentsNotice" className="col-start-2 type-caption -mt-2">
+            {maxNotice}
+          </p>
+        )}
       </div>
-      {maxNotice && (
-        <p id="maxStudentsNotice" className="type-caption -mt-2">
-          {maxNotice}
-        </p>
-      )}
 
       {form.pricingMode === 'tiered' && (
         <PricingPreviewTable
