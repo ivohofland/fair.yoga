@@ -16,6 +16,26 @@ function notification(over: Partial<Notification>): Notification {
   };
 }
 
+describe('NotificationList — the unread dot is the mark-read control', () => {
+  it('carries no visible text, and holds the dot inside a 44px tap target', () => {
+    render(<NotificationList notifications={[notification({ title: 'Booked' })]} />);
+
+    const mark = screen.getByRole('button', { name: 'Mark "Booked" read' });
+
+    expect(mark).toHaveTextContent('');
+    expect(mark).toHaveClass('min-w-[44px]', 'min-h-[44px]');
+    expect(mark.querySelector('.bg-gold')).not.toBeNull();
+  });
+
+  it('keeps the same tap target, hidden with no dot, once the row is read', () => {
+    render(<NotificationList notifications={[notification({ title: 'Booked', isRead: true })]} />);
+
+    const mark = screen.getByRole('button', { name: 'Mark "Booked" read' });
+
+    expect(mark).toHaveClass('invisible', 'min-w-[44px]');
+  });
+});
+
 describe('NotificationList — where a teacher row goes (#172)', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
