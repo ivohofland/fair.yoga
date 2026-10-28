@@ -1696,11 +1696,13 @@ and `mapDriverError` in
 `node_modules/.pnpm/@prisma+adapter-pg@7.10.1/node_modules/@prisma/adapter-pg/dist/index.js`.
 Where each row is produced against the real database:
 `src/lib/db-transient-shapes.test.ts` and `src/lib/pg-error.test.ts` for the
-SQLSTATE rows and the pool-wait and `P2028` rows,
-`src/services/sweep-page-ceiling.test.ts` for `P2029` and for `54001`, and
-`src/lib/prisma-client.test.ts` for the connect timeout. The `ENETUNREACH` /
-`EHOSTUNREACH` and `ECONNREFUSED` rows are read from the adapter source and
-produced by no test.
+SQLSTATE rows, the `P2028` rows, and the pool wait behind an
+interactive-transaction holder; `src/services/sweep-page-ceiling.test.ts` for
+`P2029` and for `54001`; `src/lib/prisma-client.test.ts` for the connect
+timeout and the raw half of `ECONNREFUSED`. No test produces the `P2025` row,
+the pool wait behind a raw holder, the model and transaction half of
+`ECONNREFUSED`, or the `ENETUNREACH` / `EHOSTUNREACH` rows; those were
+measured once, on the date above, and are not re-checked.
 
 | What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
 |---|---|---|---|---|
@@ -1797,7 +1799,7 @@ freed at 2.5 s, past Prisma's own 2 s default and inside a 4 s pool bound.
 An explicit `maxWait` below the pool bound always wins, at its own deadline,
 as `P2028` with `meta {}`, `tx_budget` at `warn`; `db-transient-shapes.test.ts`
 measures it (`maxWait: 300`, pool bound 5 s, connection freed at 1.5 s →
-`P2028` at or after 300 ms and before 1.5 s).
+`P2028` after about 300 ms, well before 1.5 s).
 
 An expired transaction budget (`timeout`) is a different
 `P2028`, with `meta.timeout` and `meta.timeTaken`, also `tx_budget`.

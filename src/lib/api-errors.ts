@@ -179,7 +179,9 @@ export interface TransientDbFailure {
  *   `updateClass` × `updateClass` slot-key cycle, kept live by decision
  *   rather than fixed. `docs/lock-order.md` ("The slot key is a wait edge,
  *   and the ascending-by-`id` rule cannot see it") owns which deadlock
- *   cycles exist and their status; this file owns only the level.
+ *   cycles exist and their status; this file owns only the level. A
+ *   cause-less `P2034` gets it too (see `TransientKind`), because it may be
+ *   a deadlock.
  * - `serialization` is `warn` — a serialization failure is the database
  *   asking for the retry this classification already advises, not a fault.
  * - `pool_exhausted` is **`error`** — an operational fault, a leak or a

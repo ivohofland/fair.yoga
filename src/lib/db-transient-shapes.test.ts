@@ -16,7 +16,7 @@ import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure, type TransientKind } from './api-errors';
 import { serializeErr } from './log-serializers';
 import { isPgPoolTimeout, pgErrorOf } from './pg-error';
-import { knownWithAdapterCause, pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
+import { pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
 
 type Db = ReturnType<typeof createPrismaClient>;
 
@@ -201,8 +201,10 @@ describe('transient kinds produced against the real database', () => {
       expectKind(err, 'serialization', 'warn');
       const pg = pgErrorOf(err);
       if (pg === null) throw new Error('no Postgres error on the produced value');
-      const fake = knownWithAdapterCause('P2034', pgCause('40001', pg.message));
+      const fake = typedCallError(pgCause('40001', pg.message), 'Account');
       expect(pgErrorOf(fake)).toEqual(pg);
+      expect(fake.code).toBe('P2034');
+      expect(ownKeys(fake.meta as object)).toEqual(ownKeys((err as Prisma.PrismaClientKnownRequestError).meta as object));
     });
 
     it('raw: a P2010 with 40001, the same kind', async () => {
@@ -290,7 +292,8 @@ describe('transient kinds produced against the real database', () => {
       expect(isPgPoolTimeout(err)).toBe(false);
       expectKind(err, 'tx_budget', 'warn');
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
-      // `maxWait` fires at its own deadline, not once the pool hands over a connection.
+      // `maxWait` fires at its own deadline, not once the pool hands over a
+      // connection. 290, not 300: a timer can fire a few ms early against `Date.now()`.
       expect(waited).toBeGreaterThanOrEqual(290);
       expect(waited).toBeLessThan(1_500);
     });

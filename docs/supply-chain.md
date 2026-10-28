@@ -721,7 +721,7 @@ warns about, from a fresh package.
 
 | Package | Reached through | Forward fix |
 |---|---|---|
-| `zod` (GHSA-mrhx-c7xc-m3w5, `<4.6.6`) | a direct production dependency, `^4.4.3` resolved to `4.4.3` | `pnpm update zod`: the declared range admits the patched `>=4.6.6` |
+| `zod` (GHSA-mrhx-c7xc-m3w5, `<4.6.6`) | a direct production dependency, `^4.4.3` resolved to `4.4.3` | `pnpm update zod`, which the range admits; not yet taken, because zod 4.6 no longer fills the internal `_zod.bag` that `src/lib/schemas.test.ts`'s bounds audit (#769) reads, so that audit must change in the same PR |
 
 Re-derive the "reached through" column with `pnpm why <package> --prod`, and
 the dev-only paragraph below with `pnpm why <package> --dev` — these edges
@@ -746,7 +746,9 @@ inside the eslint/typescript-eslint toolchain), `@humanfs/node` (through
 `vitest` (a direct devDependency) and `@vitest/mocker` (not one: it arrives
 through `vitest` and `@vitest/coverage-v8`, which are), the last two sharing
 one advisory — a path-traversal / arbitrary-file-read via `@vitest/mocker`'s
-redirect mock, GHSA-82fw-gwwq-j7x9; `vite` (through `vitest`), `undici`
+redirect mock, GHSA-82fw-gwwq-j7x9, and `@vitest/mocker` alone carrying a
+second, code injection via unauthenticated manual-mock registration,
+GHSA-qxg6-89mg-rqv8; `vite` (through `vitest`), `undici`
 (through `jsdom`) and `fast-copy` (through `pino-pretty`). They run against
 this repo's own source on a developer's machine and on CI, and every advisory
 among them needs hostile input fed to the tool — which here would mean this

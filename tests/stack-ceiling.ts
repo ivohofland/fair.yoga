@@ -24,7 +24,7 @@ export const CEILING_STACK = '200kB';
  */
 export const CEILING_ROWS = 1000;
 
-/** A composite relation load that still resolves: 3n + 1 = 48,001 parameters, a margin below Prisma's refusal at about 16,383 parents. */
+/** A composite relation load that still resolves: 3n + 1 = 48,001 parameters, below the measured edge (`docs/technical-architecture.md`, "Relation loads over platform-wide sets"). */
 export const BIND_RESOLVED_PARENTS = 16_000;
 
 /** A composite relation load Prisma refuses with `P2029`: 3n + 1 = 65,533 parameters, still inside Postgres's own 65,535. */

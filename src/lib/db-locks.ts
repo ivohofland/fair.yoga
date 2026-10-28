@@ -213,10 +213,11 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * 'TransactionClient & { $connect?: undefined; }'`. The brand names
  * `$connect` because `ITXClientDenyList` drops it; `$transaction` is not
  * dropped, so a brand on it rejects every transaction client. The deny list
- * is Prisma's own and can change, which is why `db-locks.test.ts` asserts
- * the premise as well. `db-locks.test.ts` holds both halves as never-called
- * functions — a `// @ts-expect-error` per branded function for the bare
- * client, and a plain call with a real `tx` as the positive control.
+ * is Prisma's own and can change, so `db-locks.test.ts` asserts the premise
+ * (`_transactionClientHasNoConnect`) as well as both halves of the brand: a
+ * never-called `// @ts-expect-error` per branded function for the bare
+ * client, and a never-called plain call with a real `tx` as the positive
+ * control.
  * `tsconfig.json` includes every `.ts` file in the repo, test files among
  * them, so weakening or breaking the brand is a failing `tsc --noEmit`
  * rather than a silently-passing suite.

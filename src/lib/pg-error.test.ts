@@ -59,8 +59,8 @@ describe('pgErrorOf (fabricated branches)', () => {
   it.each([
     ['no cause', Object.assign(new Error('x'), { name: 'DriverAdapterError' })],
     ['a non-Error impostor', { name: 'DriverAdapterError', cause: pgCause('23514', 'm') }],
-    ['an Unknown request error', new Prisma.PrismaClientUnknownRequestError('code: "23514"', { clientVersion: '6.19.3' })],
-    ['a Known error without driverAdapterError', new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: '6.19.3', meta: { target: ['email'] } })],
+    ['an Unknown request error', new Prisma.PrismaClientUnknownRequestError('code: "23514"', { clientVersion: 'test' })],
+    ['a Known error without driverAdapterError', new Prisma.PrismaClientKnownRequestError('x', { code: 'P2002', clientVersion: 'test', meta: { target: ['email'] } })],
     ['a lowercase SQLSTATE', driverAdapterError(pgCause('2351x', 'm'))],
     ['a missing originalMessage', driverAdapterError({ kind: 'postgres', originalCode: '23514' })],
     ['a kind with no Postgres error', knownWithAdapterCause('P2010', { kind: 'DatabaseNotReachable', host: 'h', port: 1 })],
@@ -83,7 +83,7 @@ describe('isPgPoolTimeout', () => {
     expect(isPgPoolTimeout(pgPoolTimeout())).toBe(true);
   });
   it.each([
-    ['a different message', Object.assign(new Error('timeout exceeded when trying to connect.'), { clientVersion: '6.19.3' })],
+    ['a different message', Object.assign(new Error('timeout exceeded when trying to connect.'), { clientVersion: 'test' })],
     ['an own code', Object.assign(pgPoolTimeout(), { code: 'ETIMEDOUT' })],
     ['a non-Error', { message: 'timeout exceeded when trying to connect' }],
   ])('rejects %s', (_label, err) => {
@@ -395,6 +395,19 @@ describe('produced against the real database: conflict codes', () => {
     expect((fake as Prisma.PrismaClientKnownRequestError).code).toBe((real as Prisma.PrismaClientKnownRequestError).code);
     expect(ownKeys(metaOf(fake))).toEqual(ownKeys(metaOf(real)));
     expect(ownKeys(metaOf(fake).driverAdapterError)).toEqual(ownKeys(metaOf(real).driverAdapterError));
+    expect(ownKeys(metaOf(fake).driverAdapterError.cause)).toEqual(ownKeys(metaOf(real).driverAdapterError.cause));
+  });
+
+  it('the helper fabricates a Known P2010 (raw 22P02) identical to a produced one', async () => {
+    const real = await rejectionOf(() => db.$queryRaw`SELECT 'not-a-number'::int`);
+    expect(real).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+    const pg = pgErrorOf(real);
+    if (pg === null) throw new Error('no Postgres error on the produced value');
+    const fake = knownWithAdapterCause('P2010', pgCause('22P02', pg.message));
+    expect(pgErrorOf(fake)).toEqual(pg);
+    expect((fake as Prisma.PrismaClientKnownRequestError).code).toBe((real as Prisma.PrismaClientKnownRequestError).code);
+    expect(metaOf(fake).driverAdapterError.cause).toMatchObject({ kind: 'InvalidInputValue' });
+    expect(metaOf(real).driverAdapterError.cause).toMatchObject({ kind: 'InvalidInputValue' });
     expect(ownKeys(metaOf(fake).driverAdapterError.cause)).toEqual(ownKeys(metaOf(real).driverAdapterError.cause));
   });
 

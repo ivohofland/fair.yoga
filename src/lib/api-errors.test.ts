@@ -971,7 +971,7 @@ describe('transientDbFailure', () => {
     ['40P01 raw (P2010)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
     ['40001 raw (P2010)', rawPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
-    ['P2034', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')), 'serialization', 'warn'],
+    ['40001 typed (Known P2034)', typedPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     // P2034 is a write conflict or a deadlock; with no SQLSTATE to tell them apart, the louder kind.
     ['P2034 with no adapter cause', prismaError('P2034'), 'deadlock', 'error'],
   ])('classifies %s', (_label, error, kind, level) => {

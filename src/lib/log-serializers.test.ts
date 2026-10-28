@@ -316,7 +316,7 @@ describe('serializeErr: the shape', () => {
   });
 });
 
-/** A typed refusal: a Known error (`P2039` for a SQLSTATE with no code of its own), Postgres's fields on its adapter cause. */
+/** A typed refusal: a Known error whose code follows the adapter's kind (`typedCallError`), Postgres's fields on its adapter cause. */
 const typed = (sqlState: string, message: string, extra: Record<string, unknown> = {}) => typedCallError(pgCause(sqlState, message, extra));
 
 /** Every position in `out`, a repeated node counted wherever it appears. */
