@@ -18,7 +18,7 @@ import { STUDIO_GENERATOR } from './studio-class-generator';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { log } from '@/lib/log';
 import { createPrismaClient } from '@/lib/prisma-client';
-import { driverAdapterError, pgCause } from '../../tests/adapter-errors';
+import { typedCallError, pgCause } from '../../tests/adapter-errors';
 
 const prisma = createPrismaClient();
 const uniqueSuffix = Date.now();
@@ -455,7 +455,7 @@ describe('the shared lifecycle verbs (DB)', () => {
       data: { isActive: false },
     });
 
-    const checkViolation = driverAdapterError(
+    const checkViolation = typedCallError(
       pgCause(
         '23514',
         'new row for relation "ClassTemplate" violates check constraint "__c1b_never_a_real_constraint"',

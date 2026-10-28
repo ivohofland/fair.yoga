@@ -1,7 +1,7 @@
 import { Prisma } from '@/lib/prisma-client';
 import { PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
 
-/** The plain object the pg driver adapter puts in a DriverAdapterError's `cause`. */
+/** The plain object the pg driver adapter puts in its DriverAdapterError's `cause`. */
 export interface AdapterCause {
   readonly kind: string;
   readonly [key: string]: unknown;
@@ -22,6 +22,10 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
       return { ...original, kind: 'UniqueConstraintViolation', constraint: undefined, table: undefined, ...extra };
     case '23503':
       return { ...original, kind: 'ForeignKeyConstraintViolation', constraint: undefined, ...extra };
+    case '23001':
+      return { ...original, kind: 'RestrictViolation', constraint: undefined, ...extra };
+    case '22P02':
+      return { ...original, kind: 'InvalidInputValue', message, ...extra };
     case '40001':
     case '40P01':
       return { ...original, kind: 'TransactionWriteConflict', ...extra };
@@ -30,7 +34,12 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
   }
 }
 
-/** A typed call's shape: a DriverAdapterError whose `cause` is the adapter's object. */
+/**
+ * The adapter's own error, not wrapped by the client runtime: a
+ * DriverAdapterError whose `cause` is the adapter's object. A typed model
+ * call does not throw this; `typedCallError` is that shape. `pgErrorOf`
+ * still reads this one, and these tests hold it to that.
+ */
 export function driverAdapterError(cause: AdapterCause): Error {
   const message = typeof cause.message === 'string' ? cause.message : cause.kind;
   const err = new Error(message);
@@ -40,7 +49,22 @@ export function driverAdapterError(cause: AdapterCause): Error {
   return err;
 }
 
-/** A raw or mapped call's shape: a Known error carrying the adapter's error in `meta`. */
+/** The Prisma code a typed call's error carries for each adapter `kind` `pgCause` builds. */
+const TYPED_CODE: Readonly<Record<string, string>> = {
+  UniqueConstraintViolation: 'P2002',
+  ForeignKeyConstraintViolation: 'P2003',
+  TransactionWriteConflict: 'P2034',
+  postgres: 'P2039',
+};
+
+/** A typed model call's shape: a Known error whose code follows the cause's `kind`. */
+export function typedCallError(cause: AdapterCause, modelName = 'Class'): Prisma.PrismaClientKnownRequestError {
+  const code = TYPED_CODE[cause.kind];
+  if (code === undefined) throw new Error(`no typed code for adapter kind ${cause.kind}`);
+  return knownWithAdapterCause(code, cause, { modelName });
+}
+
+/** A raw call's shape, or a typed one given its code: a Known error carrying the adapter's error in `meta`. */
 export function knownWithAdapterCause(
   code: string,
   cause: AdapterCause,

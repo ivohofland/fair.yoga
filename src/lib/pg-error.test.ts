@@ -16,7 +16,7 @@ import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import type { ClassWithEntry } from '../../tests/class-fixtures';
 
 describe('pgErrorOf (fabricated branches)', () => {
-  it('reads a typed DriverAdapterError from its own cause', () => {
+  it('reads a bare DriverAdapterError from its own cause', () => {
     const err = driverAdapterError(pgCause('23514', 'Class abc is completed, which is terminal; cannot change status to open'));
     expect(pgErrorOf(err)).toEqual({ sqlState: '23514', message: 'Class abc is completed, which is terminal; cannot change status to open' });
   });

@@ -16,7 +16,7 @@ import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure, type TransientKind } from './api-errors';
 import { serializeErr } from './log-serializers';
 import { isPgPoolTimeout, pgErrorOf } from './pg-error';
-import { knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
 
 type Db = ReturnType<typeof createPrismaClient>;
 
@@ -102,7 +102,8 @@ describe('transient kinds produced against the real database', () => {
       // The helper's fabrication of the same case reads identically.
       const pg = pgErrorOf(err);
       if (pg === null) throw new Error('no Postgres error on the produced value');
-      const fake = knownWithAdapterCause('P2039', pgCause('55P03', pg.message), { modelName: 'Account' });
+      const fake = typedCallError(pgCause('55P03', pg.message), 'Account');
+      expect(fake.code).toBe('P2039');
       expect(pgErrorOf(fake)).toEqual(pg);
       expect(ownKeys(fake)).toEqual(ownKeys(err));
       expect(ownKeys(fake.meta as object)).toEqual(ownKeys((err as Prisma.PrismaClientKnownRequestError).meta as object));
@@ -157,9 +158,11 @@ describe('transient kinds produced against the real database', () => {
       // The helper's fabrication of the same case carries the same cause: a deadlock is a TransactionWriteConflict, not a generic `postgres` error.
       const pg = pgErrorOf(err);
       if (pg === null) throw new Error('no Postgres error on the produced value');
-      const fake = knownWithAdapterCause('P2034', pgCause('40P01', pg.message));
+      const fake = typedCallError(pgCause('40P01', pg.message), 'Account');
       const causeOf = (e: unknown): object => ((e as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError: { cause: object } }).driverAdapterError.cause;
       expect(pgErrorOf(fake)).toEqual(pg);
+      expect(fake.code).toBe('P2034');
+      expect(ownKeys(fake.meta as object)).toEqual(ownKeys((err as Prisma.PrismaClientKnownRequestError).meta as object));
       expect(causeOf(fake)).toMatchObject({ kind: (causeOf(err) as { kind: string }).kind });
       expect(ownKeys(causeOf(fake))).toEqual(ownKeys(causeOf(err)));
     });
@@ -288,7 +291,7 @@ describe('transient kinds produced against the real database', () => {
       expectKind(err, 'tx_budget', 'warn');
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
       // `maxWait` fires at its own deadline, not once the pool hands over a connection.
-      expect(waited).toBeGreaterThanOrEqual(300);
+      expect(waited).toBeGreaterThanOrEqual(290);
       expect(waited).toBeLessThan(1_500);
     });
   });

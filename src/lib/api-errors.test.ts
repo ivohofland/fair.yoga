@@ -15,11 +15,11 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
-import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
- * — Prisma 6 takes the code and clientVersion in an options object.
+ * — Prisma takes the code and clientVersion in an options object.
  */
 function prismaError(code: string, meta?: Record<string, unknown>) {
   return new Prisma.PrismaClientKnownRequestError('constraint failed', {
@@ -31,9 +31,9 @@ function prismaError(code: string, meta?: Record<string, unknown>) {
 
 const LOCK_TIMEOUT_MESSAGE = 'canceling statement due to lock timeout';
 
-/** A Postgres error on a typed call's shape: a `DriverAdapterError`. */
-function typedPg(sqlState: string, message: string): Error {
-  return driverAdapterError(pgCause(sqlState, message));
+/** A Postgres error on a typed call's shape: a Known error whose code follows the adapter's kind. */
+function typedPg(sqlState: string, message: string): Prisma.PrismaClientKnownRequestError {
+  return typedCallError(pgCause(sqlState, message));
 }
 
 /** A Postgres error on a raw call's shape: a Known `P2010` with the adapter's cause in `meta`. */
@@ -144,10 +144,10 @@ $$ LANGUAGE plpgsql;
 /**
  * Built from the real message `src/services/class-terminal-status.test.ts`
  * observed for an actual trigger fire, not a hand-written approximation. A
- * typed write's shape: a `DriverAdapterError` whose cause carries the SQLSTATE
- * and the trigger's own wording.
+ * typed write's shape: a Known `P2039` whose adapter cause carries the
+ * SQLSTATE and the trigger's own wording.
  */
-const terminalStatusErrorFixture = driverAdapterError(pgCause('23514', 'Class 824c3362-c21f-466e-a741-7301d469730f is cancelled, which is terminal; cannot change status to open'));
+const terminalStatusErrorFixture = typedCallError(pgCause('23514', 'Class 824c3362-c21f-466e-a741-7301d469730f is cancelled, which is terminal; cannot change status to open'));
 
 /**
  * The SECOND trigger to reach the same branch (#247), which since #327 is
@@ -163,7 +163,7 @@ const terminalStatusErrorFixture = driverAdapterError(pgCause('23514', 'Class 82
  * one trigger — turns schedule violations into 500s, and this is the test that
  * refuses to let that happen quietly.
  */
-const terminalDateErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 6c218048-a8f5-4478-a846-5722ec90278d is completed, which is terminal; cannot change its date, start time or duration'));
+const terminalDateErrorFixture = typedCallError(pgCause('23514', 'CalendarEntry 6c218048-a8f5-4478-a846-5722ec90278d is completed, which is terminal; cannot change its date, start time or duration'));
 
 /**
  * The THIRD, `entry_terminal_liveness_guard` (#327,
@@ -176,7 +176,7 @@ const terminalDateErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEn
  * triggers write different rows on different tables, and a facet that called
  * both `status` could not tell an operator which CAS was losing races.
  */
-const terminalLivenessErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry dbdb2fe7-0571-44e3-9a68-89080663a0f8 is cancelled, which is terminal; cannot change its cancellation'));
+const terminalLivenessErrorFixture = typedCallError(pgCause('23514', 'CalendarEntry dbdb2fe7-0571-44e3-9a68-89080663a0f8 is cancelled, which is terminal; cannot change its cancellation'));
 
 /**
  * The FOURTH, `entry_completion_marker_guard` (#327,
@@ -192,21 +192,21 @@ const terminalLivenessErrorFixture = driverAdapterError(pgCause('23514', 'Calend
  * the two guards defend one guarantee from its two ends and an operator must
  * read them the same way.
  */
-const terminalCompletionErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion'));
+const terminalCompletionErrorFixture = typedCallError(pgCause('23514', 'CalendarEntry 33d69dc9-6cf5-4fd1-bb72-4da83761b059 is completed, which is terminal; cannot change its completion'));
 
 /**
  * The SIXTH, `entry_rule_kind_mismatch_guard` (#328,
  * `20260829120000_entry_rule_kind_guard`) — an entry referencing a rule of a
  * different kind.
  */
-const terminalEntryRuleKindErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry e3b0c442-98fc-1c14-9afb-4c8996fb9242 references ScheduleRule 12345678-1234-1234-1234-123456789abc of kind studio, which is terminal; cannot attach to mismatched rule kind'));
+const terminalEntryRuleKindErrorFixture = typedCallError(pgCause('23514', 'CalendarEntry e3b0c442-98fc-1c14-9afb-4c8996fb9242 references ScheduleRule 12345678-1234-1234-1234-123456789abc of kind studio, which is terminal; cannot attach to mismatched rule kind'));
 
 /**
  * The SEVENTH, `schedule_rule_kind_immutability_guard` (#328,
  * `20260829120000_entry_rule_kind_guard`) — an attempt to change a ScheduleRule's
  * kind after creation.
  */
-const terminalRuleKindErrorFixture = driverAdapterError(pgCause('23514', 'ScheduleRule 12345678-1234-1234-1234-123456789abc is regular, which is terminal; cannot change its kind'));
+const terminalRuleKindErrorFixture = typedCallError(pgCause('23514', 'ScheduleRule 12345678-1234-1234-1234-123456789abc is regular, which is terminal; cannot change its kind'));
 
 /**
  * The EIGHTH shape, and the one that is not a trigger: a `23514` terminality
@@ -225,15 +225,15 @@ const terminalRuleKindErrorFixture = driverAdapterError(pgCause('23514', 'Schedu
  * exists, which is the point. The sweep further down is what keeps it that way
  * — every live `23514` function must own one of the four known tails.
  */
-const terminalUnplaceableErrorFixture = driverAdapterError(pgCause('23514', 'CalendarEntry 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is completed, which is terminal; cannot change its room'));
+const terminalUnplaceableErrorFixture = typedCallError(pgCause('23514', 'CalendarEntry 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is completed, which is terminal; cannot change its room'));
 
 
-/** A typed write's `23P01`: a `DriverAdapterError` carrying Postgres's own message. */
-const exclusionConflictErrorFixture = driverAdapterError(
+/** A typed write's `23P01`: a Known `P2039` carrying Postgres's own message. */
+const exclusionConflictErrorFixture = typedCallError(
   pgCause('23P01', 'conflicting key value violates exclusion constraint "ScheduleRule_teacher_slot_excl"'),
 );
 
-const calendarEntryExclusionConflictErrorFixture = driverAdapterError(
+const calendarEntryExclusionConflictErrorFixture = typedCallError(
   pgCause('23P01', 'conflicting key value violates exclusion constraint "CalendarEntry_teacher_slot_excl"'),
 );
 
@@ -455,7 +455,7 @@ describe('classifyApiError', () => {
    * paragraph someone has to have read.
    */
   it('does not classify the terminality wording as terminal without the SQLSTATE', () => {
-    const wrongSqlstate = driverAdapterError(pgCause('P0001', 'Class 4f2b1c90-6d1e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
+    const wrongSqlstate = typedCallError(pgCause('P0001', 'Class 4f2b1c90-6d1e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
 
     const failure = classifyApiError(wrongSqlstate);
 
@@ -468,8 +468,8 @@ describe('classifyApiError', () => {
   /**
    * BOTH error shapes of the same violation reach the 409. Which arrives is
    * decided by how the statement was issued, not by what failed: a typed
-   * `class.update` throws a `DriverAdapterError`, and a `$executeRaw` throws
-   * a `P2010` carrying the same cause. `class-terminal-date.test.ts` catches
+   * `class.update` throws a `P2039`, and a `$executeRaw` throws a `P2010`
+   * carrying the same cause. `class-terminal-date.test.ts` catches
    * both from the one trigger, against a real database.
    *
    * Still not transient: a terminal class is still terminal on the retry, so
@@ -497,7 +497,7 @@ describe('classifyApiError', () => {
    * SQLSTATE.
    */
   it('does not treat the digits 23514 in the message as the SQLSTATE', () => {
-    const digitsInAnId = driverAdapterError(pgCause('P0001', 'Class 23514fbc-1d0e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
+    const digitsInAnId = typedCallError(pgCause('P0001', 'Class 23514fbc-1d0e-4a55-9f0b-2c7e8d3a1b64 is completed, which is terminal; cannot change its date from 2026-06-01 to 2020-01-01'));
 
     expect(classifyApiError(digitsInAnId).status).toBe(500);
   });
@@ -591,7 +591,7 @@ describe('classifyApiError', () => {
       'Studio class 4b0a1f3e-9c2d-4f51-8a7b-1d6e5c0f2a93 is a past income record and cannot change its currency',
     ],
   ] as const)('classifies %s as a 500, not CLASS_FROZEN', (_guard, message) => {
-    const error = driverAdapterError(pgCause('23514', message));
+    const error = typedCallError(pgCause('23514', message));
 
     const failure = classifyApiError(error);
 
@@ -651,7 +651,7 @@ describe('classifyApiError', () => {
    * trigger vs another.
    */
   it('does not classify an unrelated check_violation as a terminality trigger', () => {
-    const otherCheckViolation = driverAdapterError(
+    const otherCheckViolation = typedCallError(
       pgCause('23514', 'new row for relation "Student" violates check constraint "Student_income_tier_check"'),
     );
 
@@ -663,7 +663,8 @@ describe('classifyApiError', () => {
 
   /**
    * The two shapes a transient SQLSTATE arrives in under the pg driver
-   * adapter: a typed call's `DriverAdapterError` and a raw call's `P2010`.
+   * adapter: a typed call's (`P2039`, or `P2034` for a deadlock) and a raw
+   * call's `P2010`. The SQLSTATE, not the Prisma code, decides the kind.
    * `lockClassRow` emits both from the same helper (the raw `FOR UPDATE`,
    * then every model write after it in the transaction it bounded). Each is
    * produced against the real database in `db-transient-shapes.test.ts`; the
@@ -671,13 +672,10 @@ describe('classifyApiError', () => {
    * `pg-error.test.ts`.
    */
   it.each<[string, Error, TransientKind, 'warn' | 'error']>([
-    ['a model write (typed DriverAdapterError, 55P03)', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['a model write (typed Known P2039, 55P03)', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
     ['a raw FOR UPDATE (Known P2010, 55P03)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
-    ['a deadlock victim (typed DriverAdapterError, 40P01)', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['a deadlock victim (typed Known P2034, 40P01)', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
     ['a deadlock victim (Known P2010, 40P01)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
-    // What a typed call throws under Prisma 7: the SQLSTATE, not the Prisma code, decides the kind.
-    ['a model write (Known P2039, 55P03)', knownWithAdapterCause('P2039', pgCause('55P03', LOCK_TIMEOUT_MESSAGE), { modelName: 'Account' }), 'lock_timeout', 'warn'],
-    ['a deadlock victim (Known P2034, 40P01)', knownWithAdapterCause('P2034', pgCause('40P01', 'deadlock detected')), 'deadlock', 'error'],
   ])('maps %s to a 503 at its kind\'s level, telling the caller to try again', (_label, thrown, kind, level) => {
     expect(isTransientDbError(thrown)).toBe(true);
 
@@ -967,16 +965,15 @@ describe('isTransientDbError', () => {
 
 describe('transientDbFailure', () => {
   it.each<[string, unknown, TransientKind, 'warn' | 'error']>([
-    ['55P03 typed', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
+    ['55P03 typed (Known P2039)', typedPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
     ['55P03 raw (P2010)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
-    ['40P01 typed', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['40P01 typed (Known P2034)', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
     ['40P01 raw (P2010)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
-    ['55P03 typed (Known P2039)', knownWithAdapterCause('P2039', pgCause('55P03', LOCK_TIMEOUT_MESSAGE), { modelName: 'Account' }), 'lock_timeout', 'warn'],
-    ['40P01 typed (Known P2034), not the P2034 code\'s serialization', knownWithAdapterCause('P2034', pgCause('40P01', 'deadlock detected')), 'deadlock', 'error'],
     ['40001 raw (P2010)', rawPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
     ['P2034', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')), 'serialization', 'warn'],
-    ['P2034 with no adapter cause', prismaError('P2034'), 'serialization', 'warn'],
+    // P2034 is a write conflict or a deadlock; with no SQLSTATE to tell them apart, the louder kind.
+    ['P2034 with no adapter cause', prismaError('P2034'), 'deadlock', 'error'],
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
@@ -1010,7 +1007,7 @@ describe('transientDbFailure', () => {
 });
 
 describe('isLockTimeout', () => {
-  it('matches a model write\'s typed 55P03 (DriverAdapterError)', () => {
+  it('matches a model write\'s typed 55P03 (Known P2039)', () => {
     expect(isLockTimeout(typedPg('55P03', LOCK_TIMEOUT_MESSAGE))).toBe(true);
   });
 

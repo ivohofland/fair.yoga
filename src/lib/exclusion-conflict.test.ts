@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { isExclusionConflictOn } from './exclusion-conflict';
-import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
+import { typedCallError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 const violation = (constraint: string): string =>
   `conflicting key value violates exclusion constraint "${constraint}"`;
 
-/** A typed model call: a DriverAdapterError carrying the adapter's cause. */
-const raise = (constraint: string) => driverAdapterError(pgCause('23P01', violation(constraint)));
+/** A typed model call: a Known `P2039` carrying the adapter's cause in `meta`. */
+const raise = (constraint: string) => typedCallError(pgCause('23P01', violation(constraint)));
 
 describe('isExclusionConflictOn', () => {
   it('matches the named constraint', () => {
@@ -23,7 +23,7 @@ describe('isExclusionConflictOn', () => {
   });
 
   it('does not match the clause under another SQLSTATE', () => {
-    const err = driverAdapterError(pgCause('23514', violation('ScheduleRule_teacher_slot_excl')));
+    const err = typedCallError(pgCause('23514', violation('ScheduleRule_teacher_slot_excl')));
     expect(isExclusionConflictOn(err, 'ScheduleRule_teacher_slot_excl')).toBe(false);
   });
 

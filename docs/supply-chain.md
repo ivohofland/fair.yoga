@@ -669,7 +669,13 @@ high), even though the whole-tree number moved.
 
 Measured 2026-10-23, after the `next` 16.4.1 / `sharp` 0.35.5 bump: whole
 tree `{ low: 4, moderate: 15, high: 15, critical: 0 }`; `--prod` `{ high: 1 }`
-— `deepmerge-ts` alone, the table below.
+— `deepmerge-ts` alone, which `@prisma/config@6.19.3` pinned exactly to
+`7.1.5` below the patched `>=8.0.0`.
+
+Measured 2026-10-28, after the Prisma 7.10.1 bump: whole tree `{ low: 4,
+moderate: 19, high: 19, critical: 0 }`; `--prod` `{ high: 1 }` — `zod` alone,
+the table below. `deepmerge-ts` is gone from it: `@prisma/config@7.10.1`
+resolves `deepmerge-ts@8.0.2`.
 
 **`--prod` is a proxy for "could plausibly execute at runtime somewhere", not
 a description of any image this repo builds.** Neither of the two stages
@@ -711,12 +717,11 @@ standalone-image check above confirms it: `browserslist` never reaches the
 image that actually ships. It is exactly the situation this section already
 warns about, from a fresh package.
 
-**In the production dependency tree** — it is not a direct *production*
-dependency; it arrives through one:
+**In the production dependency tree:**
 
 | Package | Reached through | Forward fix |
 |---|---|---|
-| `deepmerge-ts` | `@prisma/client` → `prisma` → `@prisma/config` (also directly via the `prisma` devDependency) | **None.** `@prisma/config@6.19.3` pins `deepmerge-ts` to the **exact** version `7.1.5` (no range), and the patched version is `>=8.0.0` — no lockfile refresh can satisfy an exact pin |
+| `zod` (GHSA-mrhx-c7xc-m3w5, `<4.6.6`) | a direct production dependency, `^4.4.3` resolved to `4.4.3` | `pnpm update zod`: the declared range admits the patched `>=4.6.6` |
 
 Re-derive the "reached through" column with `pnpm why <package> --prod`, and
 the dev-only paragraph below with `pnpm why <package> --dev` — these edges
@@ -728,9 +733,10 @@ only `pnpm audit` carries no `fixAvailable` object to read that distinction
 off directly, so it is re-derived by hand: compare each dependent's declared
 range (from its own `package.json` inside `node_modules/.pnpm`) against the
 advisory's `patched_versions`. Where the range admits the patched version,
-`pnpm update <package> --depth 99` clears it. `deepmerge-ts` is the case where
-that comparison fails — an exact pin, not a range — which is what makes it a
-"no forward fix" entry. An `overrides` block would work for a range and is the
+`pnpm update <package> --depth 99` clears it. Where that comparison fails — a
+dependent pinning an exact version below the patch, as `@prisma/config@6.19.3`
+did `deepmerge-ts` — the entry has no forward fix short of bumping the
+dependent. An `overrides` block would work for a range and is the
 wrong tool regardless: heavier, and pinned against a range that will drift.
 Every version that update resolves still has to clear `minimumReleaseAge`.
 

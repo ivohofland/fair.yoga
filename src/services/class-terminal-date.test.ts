@@ -215,8 +215,8 @@ describe('entry_frozen_schedule_guard', () => {
       }
 
       // A `$executeRaw` failure is a PrismaClientKnownRequestError (P2010)
-      // carrying the adapter's cause — NOT the DriverAdapterError the typed
-      // path below produces. Where each shape carries the SQLSTATE:
+      // carrying the adapter's cause — NOT the P2039 the typed path below
+      // produces. Where each shape carries the SQLSTATE:
       // `docs/technical-architecture.md`, "Database errors".
       expect(caughtRaw).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
       expect(pgErrorOf(caughtRaw)?.sqlState).toBe('23514');

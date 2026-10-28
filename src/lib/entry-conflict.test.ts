@@ -275,7 +275,7 @@ describe('probeConflictingEntry', () => {
  * That is why the parameter is what it is, and this device is what pins it.
  *
  * It is true today only by the shape of `Omit`: `Prisma.TransactionClient` is
- * `Omit<PrismaClient, ITXClientDenyList>`, so it is MISSING `$transaction` and
+ * `Omit<PrismaClient, ITXClientDenyList>`, so it is MISSING `$connect` and
  * friends and is therefore not assignable to the full client. Nothing keeps
  * that true — a signature widened to `PrismaClient | Prisma.TransactionClient`
  * (which `probeOverlappingCandidates` beside it deliberately IS) would compile

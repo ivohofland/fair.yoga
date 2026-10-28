@@ -137,10 +137,11 @@ function terminalViolationOf(error: unknown): PgError | null {
  * - `deadlock` (`40P01`) — Postgres broke an AB-BA cycle by killing one
  *   side. `docs/lock-order.md` ("The slot key is a wait edge, and the
  *   ascending-by-`id` rule cannot see it") owns which cycles are reachable
- *   and at what rate; this file owns only the kind.
- * - `serialization` (`40001`, `P2034`) — a serialization failure, read from
- *   its SQLSTATE on either shape; `P2034` is matched as well, for a typed
- *   error that carries no adapter cause. Which code paths can raise one is
+ *   and at what rate; this file owns only the kind. Also a `P2034` that
+ *   carries no adapter cause: Prisma raises that code for either `40001` or
+ *   `40P01`, and with no SQLSTATE to tell them apart the louder kind wins.
+ * - `serialization` (`40001`) — a serialization failure, read from its
+ *   SQLSTATE on either shape. Which code paths can raise one is
  *   `docs/lock-order.md`'s.
  * - `pool_exhausted` (pg-pool's wait timeout) — the connection pool handing
  *   out nothing in time. The pool timeout's shape, and which waits end as
@@ -214,7 +215,9 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
  */
 const TRANSIENT_PRISMA_CODE_KIND: ReadonlyMap<string, TransientKind> = new Map([
   ['P2028', 'tx_budget'],
-  ['P2034', 'serialization'],
+  // A write conflict or a deadlock (40001 or 40P01); reached only with no
+  // SQLSTATE to tell them apart, so the kind that pages.
+  ['P2034', 'deadlock'],
 ]);
 
 /**

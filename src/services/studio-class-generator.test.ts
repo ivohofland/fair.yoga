@@ -24,7 +24,7 @@ import {
 import { classStartInstant } from '@/lib/timezone';
 import { hhmmToTime, timeToHHmm } from '@/lib/time-of-day';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
-import { driverAdapterError, pgCause } from '../../tests/adapter-errors';
+import { typedCallError, pgCause } from '../../tests/adapter-errors';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -1569,7 +1569,7 @@ describe('generateStudioClassInstances (per-template isolation)', () => {
   function contendedStub(contended: ReadonlySet<string>, failing: ReadonlySet<string> = new Set()) {
     const created: string[] = [];
     const failure = new Error('genuine failure');
-    const lockTimeoutError = driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+    const lockTimeoutError = typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
     const stub = {
       studioClassTemplate: {
         findMany: async () => [tmpl('A', 't1'), tmpl('B', 't1')],

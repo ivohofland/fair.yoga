@@ -39,7 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # prisma.config.ts declares the datasource only when DATABASE_URL is set.
+      # prisma.config.ts declares the datasource only when DATABASE_URL is set,
+      # so `prisma validate` below checks the config every deploy runs with.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,8 +152,8 @@ jobs:
     timeout-minutes: 10
     env:
       # Nothing connects here. The value exists so that a transitive
-      # PrismaClient construction at import time resolves env("DATABASE_URL")
-      # rather than throwing — same reason the `checks` job sets it.
+      # createPrismaClient() at import time builds its pool rather than
+      # throwing: poolConfigFor refuses when DATABASE_URL is not set.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

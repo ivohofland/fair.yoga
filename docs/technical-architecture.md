@@ -1543,17 +1543,16 @@ plus the probe.
 `engineType = "client"`: queries are planned by Prisma's TypeScript client
 engine (its query compiler) and run through the `@prisma/adapter-pg` driver
 adapter, which owns a `pg.Pool`. `createPrismaClient` builds
-`new PrismaClient({ adapter: new PrismaPg(pool), transactionOptions: transactionOptionsFor(pool), errorFormat, log })`
+`new PrismaClient({ adapter: new PrismaPg(pool, { onPoolError, onConnectionError }), transactionOptions: transactionOptionsFor(pool), errorFormat, log })`
 with `pool = poolConfigFor(options)`; `transactionOptionsFor` sets the
 client's default `maxWait` a margin past the pool bound ("Database errors").
-It never passes `datasources` or `datasourceUrl`: Prisma 7 has neither option,
-and the connection string reaches the pool through `poolConfigFor`. The
-factory forwards `onPoolError` and `onConnectionError` to `PrismaPg`, which
-otherwise drops an error on an idle or transaction-held connection with only a
-`debug` line; `src/lib/db.ts` logs both at `error`. The
-connection string goes to the adapter, so a different database or a startup
-parameter (`lowStackClient`'s `options=-c max_stack_depth=…`) travels in the
-`url` option.
+`PrismaPg` drops an error on an idle or transaction-held connection with only
+a `debug` line unless given those two hooks; `src/lib/db.ts` logs both at
+`error`. The factory never passes `datasources` or `datasourceUrl`: Prisma 7
+has neither option. The connection string reaches the pool through
+`poolConfigFor`, so a different database or a startup parameter
+(`lowStackClient`'s `options=-c max_stack_depth=…`) travels in the `url`
+option.
 
 `PrismaClientFactoryOptions`, all optional:
 
@@ -1695,13 +1694,18 @@ The shapes it reads, measured on the client engine plus the pg adapter
 (C+A), Prisma 7.10.1, on 2026-10-27. Source: the adapter's `convertDriverError`
 and `mapDriverError` in
 `node_modules/.pnpm/@prisma+adapter-pg@7.10.1/node_modules/@prisma/adapter-pg/dist/index.js`.
-`src/lib/db-transient-shapes.test.ts` and `src/lib/pg-error.test.ts` produce
-each row against the real database.
+Where each row is produced against the real database:
+`src/lib/db-transient-shapes.test.ts` and `src/lib/pg-error.test.ts` for the
+SQLSTATE rows and the pool-wait and `P2028` rows,
+`src/services/sweep-page-ceiling.test.ts` for `P2029` and for `54001`, and
+`src/lib/prisma-client.test.ts` for the connect timeout. The `ENETUNREACH` /
+`EHOSTUNREACH` and `ECONNREFUSED` rows are read from the adapter source and
+produced by no test.
 
 | What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
 |---|---|---|---|---|
-| Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`, `54001`, `57014`…) | `PrismaClientKnownRequestError` `P2039`, `meta {modelName, driverAdapterError}` | `err.meta.driverAdapterError.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
-| Same SQLSTATE on a raw call | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
+| Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`…) | `PrismaClientKnownRequestError` `P2039`, `meta {modelName, driverAdapterError}` | `err.meta.driverAdapterError.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
+| Same SQLSTATE on a raw call, and `54001`, `57014`, which only raw calls here raise | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
 | `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint` (`{index}` for a named unique index), `table`; **no `message`** |
 | `23503` (typed `P2003`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `ForeignKeyConstraintViolation` | `originalCode`, `originalMessage`, `constraint.index`; no `message` |
 | `40001` or `40P01` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode` (`'40001'` or `'40P01'`), `originalMessage`; **no `code`** |
@@ -1715,8 +1719,8 @@ each row against the real database.
 | Same, inside an interactive transaction | the raw pg `Error`, `code: 'ENETUNREACH'` | — | — | — |
 | `ECONNREFUSED` | raw: `P2010`; model / tx: `P1001` | `meta.driverAdapterError.cause` | `DatabaseNotReachable` | `host`, `port`; no `originalCode` |
 
-So a `40001` is recognised by `originalCode` on both its typed and its raw
-shape (`code` is absent on both), and the primary message is `originalMessage`,
+So a `40001` or a `40P01` is recognised by `originalCode` on both its typed and
+its raw shape (`code` is absent on both), and the primary message is `originalMessage`,
 which every kind carries, not `cause.message`, which only `postgres` does.
 
 **`constraint`** comes from `CONSTRAINT_SOURCE`, keyed by SQLSTATE and typed
@@ -1730,9 +1734,11 @@ cannot be added without saying where its name comes from:
 | `23514` | Postgres's primary message | `/ violates check constraint "([^"]+)"$/` on `originalMessage`. A terminality trigger's own text never matches, so a trigger raise has no `constraint` |
 | `23P01` | Postgres's primary message | `/^conflicting key value violates exclusion constraint "([^"]+)"$/` on `originalMessage` |
 
-The `23505`, `23514` and `23P01` names have no structured carrier: the adapter
-drops pg's `DatabaseError.constraint` for every code but `23503`
-(`mapDriverError`). The primary message is Postgres's own text, and the
+The `23514` and `23P01` names have no structured carrier: their `postgres`
+cause carries no `constraint` (`mapDriverError`). `23505` has one, since the
+adapter writes `{index}` when pg names the constraint, but its name is read
+from the message like the other two, so all three name matches share one
+source and one locale exposure. The primary message is Postgres's own text, and the
 clauses are anchored, so free text that merely quotes a clause (a template
 name, a trigger's message) names no constraint.
 
@@ -1761,7 +1767,9 @@ a test.
 the `TransientKind` link by link along `Error.cause`, from structured fields
 only: first the SQLSTATE `pgErrorOf` reads (`55P03` → `lock_timeout`, `40P01`
 → `deadlock`, `40001` → `serialization`), then Prisma's code (`P2028` →
-`tx_budget`, `P2034` → `serialization`), then `isPgPoolTimeout` →
+`tx_budget`, `P2034` → `deadlock`: that code means a `40001` or a `40P01`,
+and only one with no SQLSTATE reaches this step, so it takes the kind that
+logs at `error`), then `isPgPoolTimeout` →
 `pool_exhausted`. No error text is read, so a message quoting a SQLSTATE is
 never relabelled transient. `P2024` is in no map: on the client engine with
 the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
@@ -1788,8 +1796,8 @@ freed at 2.5 s, past Prisma's own 2 s default and inside a 4 s pool bound.
 
 An explicit `maxWait` below the pool bound always wins, at its own deadline,
 as `P2028` with `meta {}`, `tx_budget` at `warn`; `db-transient-shapes.test.ts`
-measures it (`maxWait: 300`, pool bound 5 s, connection freed at 600 ms →
-`P2028` after about 300 ms).
+measures it (`maxWait: 300`, pool bound 5 s, connection freed at 1.5 s →
+`P2028` at or after 300 ms and before 1.5 s).
 
 An expired transaction budget (`timeout`) is a different
 `P2028`, with `meta.timeout` and `meta.timeTaken`, also `tx_budget`.
