@@ -25,9 +25,9 @@ describe('isUniqueConflictOn', () => {
   });
 
   it('matches an expression key whose reported fields are truncated', () => {
-    // When pg names no constraint, the adapter's `constraint.fields` is what
-    // Postgres's detail line held, cut off mid-expression; the name read
-    // from the message is whole.
+    // A defensive fabrication: the adapter writes `{fields}` only when pg names
+    // no constraint, which a real unique violation always does. The case pins
+    // that a truncated `fields` cannot mislead, since the name comes from the message.
     const err = uniqueViolation('Room_private_identity_unique', 'P2002', {
       constraint: { fields: ['"createdById"', 'lower(TRIM(BOTH FROM address'] },
     });

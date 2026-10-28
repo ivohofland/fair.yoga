@@ -10,27 +10,47 @@ export interface AdapterCause {
 const CLIENT_VERSION = Prisma.prismaVersion.client;
 
 /**
+ * The Prisma code a typed call's error carries for each adapter `kind`
+ * `pgCause` builds — the runtime's own kind-to-code mapping, for these kinds.
+ * `pgCause` tags every `kind` it writes `satisfies PgCauseKind`, so a new
+ * case cannot compile without an entry here.
+ */
+const TYPED_CODE = {
+  UniqueConstraintViolation: 'P2002',
+  NullConstraintViolation: 'P2011',
+  ForeignKeyConstraintViolation: 'P2003',
+  InvalidInputValue: 'P2007',
+  TransactionWriteConflict: 'P2034',
+  postgres: 'P2039',
+} as const;
+
+type PgCauseKind = keyof typeof TYPED_CODE;
+
+/**
  * The cause the adapter builds for a pg `DatabaseError` with this SQLSTATE:
- * the kind and the fields it sets per code. The fidelity tests in
- * `src/lib/pg-error.test.ts` and `src/lib/db-transient-shapes.test.ts` hold
- * each shape to a produced one.
+ * the kind and the fields it sets per code. `src/lib/pg-error.test.ts` and
+ * `src/lib/db-transient-shapes.test.ts` hold each case to a produced one,
+ * except `23502`, whose case is read from the adapter's `mapDriverError`.
+ * The `postgres` default is right only for a SQLSTATE `mapDriverError` does
+ * not map; re-derive the mapped ones with
+ * `grep -n 'case "' node_modules/@prisma/adapter-pg/dist/index.js`.
  */
 export function pgCause(sqlState: string, message: string, extra: Partial<AdapterCause> = {}): AdapterCause {
   const original = { originalCode: sqlState, originalMessage: message };
   switch (sqlState) {
     case '23505':
-      return { ...original, kind: 'UniqueConstraintViolation', constraint: undefined, table: undefined, ...extra };
+      return { ...original, kind: 'UniqueConstraintViolation' satisfies PgCauseKind, constraint: undefined, table: undefined, ...extra };
+    case '23502':
+      return { ...original, kind: 'NullConstraintViolation' satisfies PgCauseKind, constraint: undefined, ...extra };
     case '23503':
-      return { ...original, kind: 'ForeignKeyConstraintViolation', constraint: undefined, ...extra };
-    case '23001':
-      return { ...original, kind: 'RestrictViolation', constraint: undefined, ...extra };
+      return { ...original, kind: 'ForeignKeyConstraintViolation' satisfies PgCauseKind, constraint: undefined, ...extra };
     case '22P02':
-      return { ...original, kind: 'InvalidInputValue', message, ...extra };
+      return { ...original, kind: 'InvalidInputValue' satisfies PgCauseKind, message, ...extra };
     case '40001':
     case '40P01':
-      return { ...original, kind: 'TransactionWriteConflict', ...extra };
+      return { ...original, kind: 'TransactionWriteConflict' satisfies PgCauseKind, ...extra };
     default:
-      return { ...original, kind: 'postgres', code: sqlState, severity: 'ERROR', message, detail: undefined, column: undefined, hint: undefined, ...extra };
+      return { ...original, kind: 'postgres' satisfies PgCauseKind, code: sqlState, severity: 'ERROR', message, detail: undefined, column: undefined, hint: undefined, ...extra };
   }
 }
 
@@ -38,7 +58,8 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
  * The adapter's own error, not wrapped by the client runtime: a
  * DriverAdapterError whose `cause` is the adapter's object. A typed model
  * call does not throw this; `typedCallError` is that shape. `pgErrorOf`
- * still reads this one, and these tests hold it to that.
+ * still reads this one, which `src/lib/pg-error.test.ts` ("reads a bare
+ * DriverAdapterError from its own cause") holds.
  */
 export function driverAdapterError(cause: AdapterCause): Error {
   const message = typeof cause.message === 'string' ? cause.message : cause.kind;
@@ -49,19 +70,10 @@ export function driverAdapterError(cause: AdapterCause): Error {
   return err;
 }
 
-/** The Prisma code a typed call's error carries for each adapter `kind` `pgCause` builds. */
-const TYPED_CODE: Readonly<Record<string, string>> = {
-  UniqueConstraintViolation: 'P2002',
-  ForeignKeyConstraintViolation: 'P2003',
-  TransactionWriteConflict: 'P2034',
-  postgres: 'P2039',
-};
-
 /** A typed model call's shape: a Known error whose code follows the cause's `kind`. */
 export function typedCallError(cause: AdapterCause, modelName = 'Class'): Prisma.PrismaClientKnownRequestError {
-  const code = TYPED_CODE[cause.kind];
-  if (code === undefined) throw new Error(`no typed code for adapter kind ${cause.kind}`);
-  return knownWithAdapterCause(code, cause, { modelName });
+  if (!Object.hasOwn(TYPED_CODE, cause.kind)) throw new Error(`no typed code for adapter kind ${cause.kind}`);
+  return knownWithAdapterCause(TYPED_CODE[cause.kind as PgCauseKind], cause, { modelName });
 }
 
 /** A raw call's shape, or a typed one given its code: a Known error carrying the adapter's error in `meta`. */
