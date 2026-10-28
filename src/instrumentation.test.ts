@@ -38,15 +38,17 @@ describe('register', () => {
     expect(startScheduler).not.toHaveBeenCalled();
   });
 
-  // Next 16.4's server bundle drops zod's own `config(en())` side effect
-  // (zod declares `sideEffects: false`), leaving every message the bare
-  // "Invalid input". Clearing the locale reproduces that bundle here.
+  // With no locale installed every message is the bare "Invalid input".
+  // Clearing the locale reproduces a bundle that lost zod's own default. zod
+  // installs that default whenever a schema is constructed, so the schema is
+  // built before the clear, or its construction would put English back.
   it.each(['nodejs', 'edge'])('gives zod its English messages on the %s runtime', async (runtime) => {
     process.env.NEXT_RUNTIME = runtime;
+    const schema = z.string();
     z.config({ localeError: undefined });
-    expect(z.string().safeParse(1).error?.issues[0]?.message).toBe('Invalid input');
+    expect(schema.safeParse(1).error?.issues[0]?.message).toBe('Invalid input');
     await register();
-    expect(z.string().safeParse(1).error?.issues[0]?.message).toBe(
+    expect(schema.safeParse(1).error?.issues[0]?.message).toBe(
       'Invalid input: expected string, received number',
     );
   });
