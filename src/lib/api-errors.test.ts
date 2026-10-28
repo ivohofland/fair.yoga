@@ -675,6 +675,9 @@ describe('classifyApiError', () => {
     ['a raw FOR UPDATE (Known P2010, 55P03)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
     ['a deadlock victim (typed DriverAdapterError, 40P01)', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
     ['a deadlock victim (Known P2010, 40P01)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    // What a typed call throws under Prisma 7: the SQLSTATE, not the Prisma code, decides the kind.
+    ['a model write (Known P2039, 55P03)', knownWithAdapterCause('P2039', pgCause('55P03', LOCK_TIMEOUT_MESSAGE), { modelName: 'Account' }), 'lock_timeout', 'warn'],
+    ['a deadlock victim (Known P2034, 40P01)', knownWithAdapterCause('P2034', pgCause('40P01', 'deadlock detected')), 'deadlock', 'error'],
   ])('maps %s to a 503 at its kind\'s level, telling the caller to try again', (_label, thrown, kind, level) => {
     expect(isTransientDbError(thrown)).toBe(true);
 
@@ -968,6 +971,8 @@ describe('transientDbFailure', () => {
     ['55P03 raw (P2010)', rawPg('55P03', LOCK_TIMEOUT_MESSAGE), 'lock_timeout', 'warn'],
     ['40P01 typed', typedPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
     ['40P01 raw (P2010)', rawPg('40P01', 'deadlock detected'), 'deadlock', 'error'],
+    ['55P03 typed (Known P2039)', knownWithAdapterCause('P2039', pgCause('55P03', LOCK_TIMEOUT_MESSAGE), { modelName: 'Account' }), 'lock_timeout', 'warn'],
+    ['40P01 typed (Known P2034), not the P2034 code\'s serialization', knownWithAdapterCause('P2034', pgCause('40P01', 'deadlock detected')), 'deadlock', 'error'],
     ['40001 raw (P2010)', rawPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     ['P2028', prismaError('P2028'), 'tx_budget', 'warn'],
     ['P2034', knownWithAdapterCause('P2034', pgCause('40001', 'could not serialize access due to concurrent update')), 'serialization', 'warn'],

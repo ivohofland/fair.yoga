@@ -23,6 +23,7 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
     case '23503':
       return { ...original, kind: 'ForeignKeyConstraintViolation', constraint: undefined, ...extra };
     case '40001':
+    case '40P01':
       return { ...original, kind: 'TransactionWriteConflict', ...extra };
     default:
       return { ...original, kind: 'postgres', code: sqlState, severity: 'ERROR', message, detail: undefined, column: undefined, hint: undefined, ...extra };

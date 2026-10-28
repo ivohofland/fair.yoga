@@ -154,6 +154,14 @@ describe('transient kinds produced against the real database', () => {
       expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2034');
       expect(pgErrorOf(err)?.sqlState).toBe('40P01');
       expectKind(err, 'deadlock', 'error');
+      // The helper's fabrication of the same case carries the same cause: a deadlock is a TransactionWriteConflict, not a generic `postgres` error.
+      const pg = pgErrorOf(err);
+      if (pg === null) throw new Error('no Postgres error on the produced value');
+      const fake = knownWithAdapterCause('P2034', pgCause('40P01', pg.message));
+      const causeOf = (e: unknown): object => ((e as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError: { cause: object } }).driverAdapterError.cause;
+      expect(pgErrorOf(fake)).toEqual(pg);
+      expect(causeOf(fake)).toMatchObject({ kind: (causeOf(err) as { kind: string }).kind });
+      expect(ownKeys(causeOf(fake))).toEqual(ownKeys(causeOf(err)));
     });
 
     it('raw: the killed transaction throws a P2010 with 40P01, at error', async () => {
