@@ -673,9 +673,13 @@ tree `{ low: 4, moderate: 15, high: 15, critical: 0 }`; `--prod` `{ high: 1 }`
 `7.1.5` below the patched `>=8.0.0`.
 
 Measured 2026-10-28, after the Prisma 7.10.1 bump: whole tree `{ low: 4,
-moderate: 19, high: 19, critical: 0 }`; `--prod` `{ high: 1 }` — `zod` alone,
-the table below. `deepmerge-ts` is gone from it: `@prisma/config@7.10.1`
-resolves `deepmerge-ts@8.0.2`.
+moderate: 19, high: 19, critical: 0 }`; `--prod` `{ high: 1 }` — `zod` alone
+(GHSA-mrhx-c7xc-m3w5, `<4.6.6`). `deepmerge-ts` is gone from it:
+`@prisma/config@7.10.1` resolves `deepmerge-ts@8.0.2`.
+
+Measured 2026-10-28, after the `zod` 4.6.7 bump (#928): whole tree `{ low: 4,
+moderate: 19, high: 18, critical: 0 }` — the zod finding was the one high it
+lost; `--prod` `{}`, no finding.
 
 **`--prod` is a proxy for "could plausibly execute at runtime somewhere", not
 a description of any image this repo builds.** Neither of the two stages
@@ -717,11 +721,9 @@ standalone-image check above confirms it: `browserslist` never reaches the
 image that actually ships. It is exactly the situation this section already
 warns about, from a fresh package.
 
-**In the production dependency tree:**
-
-| Package | Reached through | Forward fix |
-|---|---|---|
-| `zod` (GHSA-mrhx-c7xc-m3w5, `<4.6.6`) | a direct production dependency, `^4.4.3` resolved to `4.4.3` | `pnpm update zod`, which the range admits; not yet taken, because zod 4.6 no longer fills the internal `_zod.bag` that `src/lib/schemas.test.ts`'s bounds audit (#769) reads, so that audit must change in the same PR |
+**In the production dependency tree:** none, as of the 2026-10-28 zod
+measurement above. A finding that appears goes in a table here with the
+columns Package, Reached through, and Forward fix.
 
 Re-derive the "reached through" column with `pnpm why <package> --prod`, and
 the dev-only paragraph below with `pnpm why <package> --dev` — these edges
