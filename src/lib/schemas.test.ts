@@ -1765,7 +1765,9 @@ const HIDDEN_PROBES = ['a\u0000b', 'a\u202Eb'] as const;
 
 /**
  * Which bounds a number schema carries. `.minValue`/`.maxValue` fold `.gt`/`.lt`
- * in, so an exclusive bound reads like an inclusive one.
+ * in, so an exclusive bound reads like an inclusive one, and an absent bound
+ * reads as ±Infinity rather than null, which the `SAFE_INT_LIMIT` comparison
+ * is what rejects.
  */
 function numberBounds(schema: z.ZodType): { upper: boolean; lower: boolean } {
   const { minValue, maxValue } = schema as unknown as Pick<z.ZodNumber, 'minValue' | 'maxValue'>;
@@ -1774,7 +1776,12 @@ function numberBounds(schema: z.ZodType): { upper: boolean; lower: boolean } {
   return { upper, lower };
 }
 
-/** The defs of a schema's checks, where zod keeps the bounds it has no public accessor for. */
+/**
+ * The defs of the checks chained onto a schema: where an array's length cap and
+ * a string's `.regex()` patterns live, since neither has a public accessor. A
+ * top-level format (`z.email()`) is the schema itself, not one of its checks,
+ * so its own pattern is not here.
+ */
 function checkDefs(schema: z.ZodType): Array<{ check: string; pattern?: RegExp }> {
   return (schema._zod.def.checks ?? []).map((c) => c._zod.def as { check: string; pattern?: RegExp });
 }
@@ -1805,7 +1812,8 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
     walkLeaves(`${path}[*]`, schema.element as z.ZodType, out);
   } else if (schema._zod.def.type === 'string') {
     // By def type, not `instanceof z.ZodString`: a top-level `z.uuid()` is a
-    // string format whose class does not extend `ZodString`.
+    // string format whose class does not extend `ZodString`, though it carries
+    // the same `.maxLength`/`.format` accessors read below.
     const { maxLength, format } = schema as unknown as Pick<z.ZodString, 'maxLength' | 'format'>;
     const patterns = checkDefs(schema).flatMap((d) => (d.check === 'string_format' && d.pattern ? [d.pattern] : []));
     const bounded =
@@ -1928,14 +1936,19 @@ describe('every string, array and number leaf is bounded, and every text leaf re
     ]);
   });
 
-  it('fails an array with no max and a type it does not know', () => {
+  it('fails an array with no max or only a floor, passes a fixed-length one, and fails a type it does not know', () => {
     const out = emptyWalk();
     walkLeaves('probe', z.object({
       a: z.array(z.uuid()),
       fixed: z.array(z.uuid()).length(2),
+      floor: z.array(z.uuid()).min(1),
       r: z.record(z.string(), z.string()),
     }), out);
-    expect(out.offenders).toEqual(['probe.a: array with no max', 'probe.r: unknown def type record']);
+    expect(out.offenders).toEqual([
+      'probe.a: array with no max',
+      'probe.floor: array with no max',
+      'probe.r: unknown def type record',
+    ]);
   });
 
   it("reads a string's bound from its max, its length, a bounded format or every regex being fixed-shape", () => {

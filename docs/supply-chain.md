@@ -679,7 +679,7 @@ moderate: 19, high: 19, critical: 0 }`; `--prod` `{ high: 1 }` — `zod` alone
 
 Measured 2026-10-28, after the `zod` 4.6.7 bump (#928): whole tree `{ low: 4,
 moderate: 19, high: 18, critical: 0 }` — the zod finding was the one high it
-lost; `--prod` `{}`, no finding.
+lost; `--prod` every severity 0, no finding.
 
 **`--prod` is a proxy for "could plausibly execute at runtime somewhere", not
 a description of any image this repo builds.** Neither of the two stages
