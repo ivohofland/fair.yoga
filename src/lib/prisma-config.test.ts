@@ -45,8 +45,8 @@ function freshClone(): string {
 /**
  * The Prisma CLI in `cwd`, with no database URL inherited from the worker
  * unless `extraEnv` sets one. It must report loading the config file: without
- * it the CLI falls back to the schema's own URL and loads no `.env`, so the
- * `.env` case fails with `NO_URL` while the `generate` case would still pass.
+ * it the CLI has no datasource URL and loads no `.env`, so the `.env` case
+ * fails with `NO_URL` while the `generate` case would still pass.
  */
 function runPrisma(
   cwd: string,

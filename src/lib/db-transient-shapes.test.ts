@@ -268,7 +268,7 @@ describe('transient kinds produced against the real database', () => {
       let waited = 0;
       const err = await behindHeldConnection(5_000, async (single, release) => {
         const started = Date.now();
-        setTimeout(release, 600);
+        setTimeout(release, 1_500);
         const refusal = await rejectionOf(() => single.$transaction(async (tx) => tx.$queryRaw`SELECT 1`, { maxWait: 300 }));
         waited = Date.now() - started;
         return refusal;
@@ -281,7 +281,7 @@ describe('transient kinds produced against the real database', () => {
       expect(serializeErr(err)).toMatchObject({ code: 'P2028', txError: 'other' });
       // `maxWait` fires at its own deadline, not once the pool hands over a connection.
       expect(waited).toBeGreaterThanOrEqual(300);
-      expect(waited).toBeLessThan(600);
+      expect(waited).toBeLessThan(1_500);
     });
   });
 

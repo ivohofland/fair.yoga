@@ -1279,9 +1279,9 @@ trusted (#196), measured on Prisma's library engine and against
 writes racing with no synchronisation, throwaway database, hit on attempt 5 of
 a 150-attempt budget, and `classifyApiError` answered 503, "The system was
 busy … Please try again". On the client engine, `updateClass`'s write is a model
-call, so a `40P01` from it is a typed `DriverAdapterError` whose `cause`
-carries `originalCode: '40P01'`, and `transientDbFailure` reads the SQLSTATE
-there (`docs/technical-architecture.md`, "Database errors"). Both shapes of a
+call, so a `40P01` from it is a `PrismaClientKnownRequestError` `P2034` whose
+`meta.driverAdapterError.cause` carries `originalCode: '40P01'`, and
+`transientDbFailure` reads the SQLSTATE there (`docs/technical-architecture.md`, "Database errors"). Both shapes of a
 deadlock, typed and raw, are produced against the real database in
 `src/lib/db-transient-shapes.test.ts`; the classification is pinned at
 `src/lib/api-errors.test.ts` ("maps a slot-key deadlock (a model write's typed

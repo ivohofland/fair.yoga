@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      # prisma validate resolves env("DATABASE_URL") even without connecting.
+      # prisma.config.ts declares the datasource only when DATABASE_URL is set.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -521,8 +521,8 @@ jobs:
       # with an explicit `|| true` and asserted on instead; a docker failure
       # (no image, no daemon) prints no P1001 and so still fails the step.
       # The same output must carry the CLI's line for loading prisma.config.ts:
-      # without that file the CLI falls back to the schema's own url and
-      # still reaches P1001, so P1001 alone cannot show the file is there.
+      # the file is the only place the URL is declared, so without it the CLI
+      # refuses before it connects and prints no P1001 at all.
       - name: Prisma schema engine loads in the migration image
         run: |
           OUT="$(docker run --rm --network none -e DATABASE_URL='postgresql://u:p@203.0.113.1:5432/none?connect_timeout=3' fairyoga-migrate pnpm exec prisma migrate status 2>&1)" || true
