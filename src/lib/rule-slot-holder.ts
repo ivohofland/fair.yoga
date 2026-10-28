@@ -45,7 +45,7 @@ export function minutesSinceMidnight(t: Date): number {
  * Postgres transaction aborts it, so a probe issued on the aborted `tx` would
  * answer `25P02` rather than a `RuleSlotHolder`; that is why the parameter is
  * `PrismaClient`, which `Prisma.TransactionClient` — `Omit<PrismaClient,
- * ITXClientDenyList>`, missing `$transaction` — cannot satisfy. Passing `tx`
+ * ITXClientDenyList>`, missing `$connect` — cannot satisfy. Passing `tx`
  * therefore does not compile, and `rule-slot-holder.test.ts` keeps a
  * never-called `@ts-expect-error` over that call so a parameter widened to
  * accept a transaction client fails `tsc` rather than shipping.

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { isUniqueConflictOn } from './unique-conflict';
-import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
+import { typedCallError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 function uniqueViolation(name: string, code = 'P2002', extra: Record<string, unknown> = {}) {
   return knownWithAdapterCause(code, pgCause('23505', `duplicate key value violates unique constraint "${name}"`, extra));
@@ -25,8 +25,9 @@ describe('isUniqueConflictOn', () => {
   });
 
   it('matches an expression key whose reported fields are truncated', () => {
-    // The adapter's `constraint.fields` for this index is what Postgres's
-    // detail line held, cut off mid-expression; the name is whole.
+    // When pg names no constraint, the adapter's `constraint.fields` is what
+    // Postgres's detail line held, cut off mid-expression; the name read
+    // from the message is whole.
     const err = uniqueViolation('Room_private_identity_unique', 'P2002', {
       constraint: { fields: ['"createdById"', 'lower(TRIM(BOTH FROM address'] },
     });
@@ -38,8 +39,8 @@ describe('isUniqueConflictOn', () => {
     expect(isUniqueConflictOn(uniqueViolation('Teacher_pageSlug_key', 'P2010'), ['Teacher_pageSlug_key'])).toBe(true);
   });
 
-  it('matches a typed DriverAdapterError carrying a 23505 on a listed name', () => {
-    const err = driverAdapterError(pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"'));
+  it('matches a typed P2002 carrying a 23505 on a listed name', () => {
+    const err = typedCallError(pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"'));
     expect(isUniqueConflictOn(err, ['Teacher_pageSlug_key'])).toBe(true);
   });
 

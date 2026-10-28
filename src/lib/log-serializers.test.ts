@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Prisma } from '@/lib/prisma-client';
 import { serializeErr, type SerializedErr, type SerializedPrismaMeta } from './log-serializers';
 import { TERMINAL_TRIGGER_TAILS } from './api-errors';
-import { driverAdapterError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
+import { driverAdapterError, typedCallError, knownWithAdapterCause, pgCause } from '../../tests/adapter-errors';
 
 const PII = ['Alicepii', 'Surnamepii', 'pii.test@example.com'];
 const V = { clientVersion: '6.19.3' };
@@ -27,9 +27,9 @@ const QUERY_HEADER = '\nInvalid `prisma.class.update()` invocation:\n\n\n';
 // rather than about any one carrier.
 const ROW_MSG = 'new row for relation "Student" violates check constraint "Student_income_tier_check"\nFailing row contains (4ad7b519, Alicepii, Surnamepii, pii.test@example.com, 9).';
 const CHECK_SENTENCE = 'new row for relation "Student" violates check constraint "Student_income_tier_check"';
-/** A typed CHECK violation as the adapter throws it: the failing row is in `cause.detail`. */
+/** A typed CHECK violation: a Known `P2039` whose adapter cause holds the failing row in `detail`. */
 const checkViolation = (detail = 'Failing row contains (4ad7b519, Alicepii, Surnamepii, pii.test@example.com, 9).') =>
-  driverAdapterError(pgCause('23514', CHECK_SENTENCE, { detail }));
+  typedCallError(pgCause('23514', CHECK_SENTENCE, { detail }));
 /** A raw call's 22P02 as Prisma rethrows it: a Known P2010 carrying the adapter's error in `meta`. */
 const rawCast = (value: string) =>
   new Prisma.PrismaClientKnownRequestError(
@@ -316,8 +316,8 @@ describe('serializeErr: the shape', () => {
   });
 });
 
-/** A typed refusal the adapter maps to no Prisma code: a DriverAdapterError, Postgres's fields on its cause. */
-const typed = (sqlState: string, message: string, extra: Record<string, unknown> = {}) => driverAdapterError(pgCause(sqlState, message, extra));
+/** A typed refusal: a Known error (`P2039` for a SQLSTATE with no code of its own), Postgres's fields on its adapter cause. */
+const typed = (sqlState: string, message: string, extra: Record<string, unknown> = {}) => typedCallError(pgCause(sqlState, message, extra));
 
 /** Every position in `out`, a repeated node counted wherever it appears. */
 function entries(out: SerializedErr): number {

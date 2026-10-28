@@ -196,7 +196,7 @@ describe('ruleSlotHolder', () => {
  * `Prisma.TransactionClient`, and that exclusion is doing real work: the
  * docblock's "always against `db`, never `tx`" holds today only because
  * `Prisma.TransactionClient` happens to be `Omit<PrismaClient,
- * ITXClientDenyList>`, which is missing `$transaction` and so fails to satisfy
+ * ITXClientDenyList>`, which is missing `$connect` and so fails to satisfy
  * the parameter — an accident of how Prisma derives that type, not a check
  * anyone wrote. Nothing stops a future edit from widening the parameter to
  * `PrismaClient | Prisma.TransactionClient`, which would compile every call

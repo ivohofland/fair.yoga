@@ -23,7 +23,7 @@ import { processClassReminders } from './class-reminders';
 import { scopeSweep } from '../../tests/scoped-sweep';
 import {
   analyzeSeed,
-  BIND_LIMIT_PARENTS,
+  BIND_RESOLVED_PARENTS,
   BIND_REFUSED_PARENTS,
   CEILING_ROWS,
   CEILING_STACK,
@@ -844,17 +844,17 @@ describe('bind-parameter limit', () => {
     await teachers?.cleanup();
   });
 
-  it('an unpaged composite load over BIND_REFUSED_PARENTS parents is refused with P2029; BIND_LIMIT_PARENTS resolves', async () => {
+  it('an unpaged composite load of BIND_REFUSED_PARENTS parents is refused with P2029; BIND_RESOLVED_PARENTS resolves', async () => {
     teachers = await seedTeachers(prisma, 1, 'ceiling-bind-limit');
     const ids = await seedClassesBySql(prisma, teachers, BIND_REFUSED_PARENTS);
     expect(ids).toHaveLength(BIND_REFUSED_PARENTS);
     await analyzeSeed(prisma);
     const load = (n: number, client: PrismaClient = prisma) =>
       client.class.findMany({ where: { id: { in: ids.slice(0, n) } }, include: { calendarEntry: true } });
-    await expect(load(BIND_LIMIT_PARENTS)).resolves.toHaveLength(BIND_LIMIT_PARENTS);
+    await expect(load(BIND_RESOLVED_PARENTS)).resolves.toHaveLength(BIND_RESOLVED_PARENTS);
     const low = await lowStackClient();
     try {
-      await expect(load(BIND_LIMIT_PARENTS, low)).resolves.toHaveLength(BIND_LIMIT_PARENTS);
+      await expect(load(BIND_RESOLVED_PARENTS, low)).resolves.toHaveLength(BIND_RESOLVED_PARENTS);
     } finally {
       await low.$disconnect();
     }

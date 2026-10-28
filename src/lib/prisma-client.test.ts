@@ -209,6 +209,29 @@ describe('createPrismaClient pool error hooks', () => {
       await Promise.all([client.$disconnect(), killer.$disconnect()]);
     }
   });
+
+  it('onConnectionError hears a transaction-held connection the server terminated', async () => {
+    const heard: Error[] = [];
+    const client = createPrismaClient({ poolMax: 1, onConnectionError: (err) => { heard.push(err); } });
+    const killer = createPrismaClient({ poolMax: 1 });
+    try {
+      const outcome = await client
+        .$transaction(async (tx) => {
+          const [{ pid } = { pid: 0 }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          await killer.$queryRaw`SELECT pg_terminate_backend(${pid})`;
+          const deadline = Date.now() + 3_000;
+          while (heard.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+        }, { timeout: 10_000 })
+        .then(() => 'committed', (e: unknown) => e);
+      // At least once: the dead socket can error again before the transaction's cleanup detaches the hook.
+      expect(heard.length).toBeGreaterThanOrEqual(1);
+      expect(heard.every((err) => err instanceof Error)).toBe(true);
+      // The hook only reports; the transaction on the dead connection still fails.
+      expect(outcome).not.toBe('committed');
+    } finally {
+      await Promise.all([client.$disconnect(), killer.$disconnect()]);
+    }
+  });
 });
 
 describe('poolConfigFor', () => {

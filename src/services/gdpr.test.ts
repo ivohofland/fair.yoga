@@ -16,7 +16,7 @@ import { hhmmToTime } from '@/lib/time-of-day';
 import { startOfLocalDay } from '@/lib/timezone';
 import { createClassFixture, createStudioClassFixture } from '../../tests/class-fixtures';
 import { expectErased } from '../../tests/erasure-assertions';
-import { driverAdapterError, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
+import { typedCallError, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
 import type { StudentPushPrefs, TeacherPushPrefs } from '@/lib/push-policy';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -2778,7 +2778,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
             async findUnique({ args, query }) {
               const where = args.where as { id?: string } | undefined;
               if (where?.id !== fixture.classId || !('include' in args)) return query(args);
-              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+              throw typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
         },
@@ -2846,7 +2846,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
               if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
                 return query(args);
               }
-              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+              throw typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
         },
@@ -2929,7 +2929,7 @@ describe('student erasure is retry-safe against a concurrent duplicate (#196)', 
               if (!Array.isArray(rows) || !rows.some((r) => r.type === 'spot_available')) {
                 return query(args);
               }
-              throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+              throw typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
             },
           },
           waitlistEntry: {
@@ -4025,7 +4025,7 @@ describe('online class links in the teacher export and erasure (#911)', () => {
     // The pre-clear is the erasure's first lock call without `entries`.
     const original = dbLocks.lockClassRowsOrdered;
     const spy = vi.spyOn(dbLocks, 'lockClassRowsOrdered').mockImplementation(async (tx, source) => {
-      if (source.entries !== true) throw driverAdapterError(pgCause('55P03', 'canceling statement due to lock timeout'));
+      if (source.entries !== true) throw typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
       return original(tx, source);
     });
     onTestFinished(() => spy.mockRestore());

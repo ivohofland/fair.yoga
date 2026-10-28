@@ -211,9 +211,10 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * the full client — is a compile error: `Argument of type
  * 'PrismaClient<...>' is not assignable to parameter of type
  * 'TransactionClient & { $connect?: undefined; }'`. The brand names
- * `$connect` because it is a member `ITXClientDenyList` is guaranteed to
- * drop; `$transaction` is not one, so a brand on it rejects every
- * transaction client. `db-locks.test.ts` holds both halves as never-called
+ * `$connect` because `ITXClientDenyList` drops it; `$transaction` is not
+ * dropped, so a brand on it rejects every transaction client. The deny list
+ * is Prisma's own and can change, which is why `db-locks.test.ts` asserts
+ * the premise as well. `db-locks.test.ts` holds both halves as never-called
  * functions — a `// @ts-expect-error` per branded function for the bare
  * client, and a plain call with a real `tx` as the positive control.
  * `tsconfig.json` includes every `.ts` file in the repo, test files among
