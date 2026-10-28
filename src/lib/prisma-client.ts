@@ -28,6 +28,10 @@ export interface PrismaClientFactoryOptions {
   errorFormat?: Prisma.PrismaClientOptions['errorFormat'];
   /** Passed through to `PrismaClient`. */
   log?: Prisma.PrismaClientOptions['log'];
+  /** Heard when an idle pooled connection errors (server restart, reset socket). Omitted, the adapter drops it. */
+  onPoolError?: (err: Error) => void;
+  /** Heard when a connection held by a transaction errors. Omitted, the adapter drops it. */
+  onConnectionError?: (err: Error) => void;
 }
 
 /** The `pg.Pool` config `PrismaPg` is built from. */
@@ -66,12 +70,12 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
   };
 }
 
-/** How far past the pool bound `maxWait` sits, so pg-pool's timeout is always the first to fire. */
+/** How far past the pool bound `maxWait` sits, so pg-pool's timeout fires first. */
 export const MAX_WAIT_MARGIN_MS = 1_000;
 
 /**
  * The client's default interactive-transaction options for `pool`: `maxWait`
- * a margin past the pool's wait bound, so pg-pool's timeout, not `maxWait`,
+ * sits a margin past the pool's wait bound, so pg-pool's timeout, not `maxWait`,
  * is the bound a waiting transaction meets. Why: `docs/technical-architecture.md`,
  * "Database errors".
  */
@@ -93,7 +97,10 @@ export function transactionOptionsFor(pool: PgPoolConfig): { readonly maxWait: n
 export function createPrismaClient(options: PrismaClientFactoryOptions = {}): PrismaClient {
   const pool = poolConfigFor(options);
   return new PrismaClient({
-    adapter: new PrismaPg(pool),
+    adapter: new PrismaPg(pool, {
+      ...(options.onPoolError === undefined ? {} : { onPoolError: options.onPoolError }),
+      ...(options.onConnectionError === undefined ? {} : { onConnectionError: options.onConnectionError }),
+    }),
     transactionOptions: transactionOptionsFor(pool),
     ...(options.errorFormat === undefined ? {} : { errorFormat: options.errorFormat }),
     ...(options.log === undefined ? {} : { log: options.log }),

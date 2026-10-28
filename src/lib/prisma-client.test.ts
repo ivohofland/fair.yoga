@@ -184,6 +184,31 @@ describe('transactionOptionsFor', () => {
     const pool = poolConfigFor({ connectionTimeoutMs });
     expect(transactionOptionsFor(pool)).toEqual({ maxWait: pool.connectionTimeoutMillis + MAX_WAIT_MARGIN_MS });
   });
+  it.each([undefined, 200, 4_000])('keeps maxWait strictly past the pool bound (connectionTimeoutMs %s)', (connectionTimeoutMs) => {
+    const pool = poolConfigFor({ connectionTimeoutMs });
+    expect(transactionOptionsFor(pool).maxWait).toBeGreaterThan(pool.connectionTimeoutMillis);
+  });
+});
+
+describe('createPrismaClient pool error hooks', () => {
+  it('onPoolError hears an idle pooled connection the server terminated', async () => {
+    const heard: Error[] = [];
+    const client = createPrismaClient({ poolMax: 1, onPoolError: (err) => { heard.push(err); } });
+    const killer = createPrismaClient({ poolMax: 1 });
+    try {
+      const [{ pid } = { pid: 0 }] = await client.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      await killer.$queryRaw`SELECT pg_terminate_backend(${pid})`;
+      const deadline = Date.now() + 3_000;
+      while (heard.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(heard).toHaveLength(1);
+      expect(heard[0]).toBeInstanceOf(Error);
+      // The pool dropped the dead client, so the next query connects afresh.
+      const [{ pid: next } = { pid: 0 }] = await client.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      expect(next).not.toBe(pid);
+    } finally {
+      await Promise.all([client.$disconnect(), killer.$disconnect()]);
+    }
+  });
 });
 
 describe('poolConfigFor', () => {

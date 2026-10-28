@@ -422,8 +422,8 @@ real. The per-site tests live in `src/services/sweep-page-ceiling.test.ts`.
 history is left unpaged — including the GDPR export, `/schedule/past`,
 reporting, and the unfiltered `GET /api/classes` / `GET /api/studio-classes`,
 among other per-tenant reads. At 6
-classes a week, one teacher reaches 16,000 calendar entries only after about
-51 years (16,000 ÷ 6 ÷ 52 ≈ 51), and a student's bookings or GDPR export is
+classes a week, one teacher takes decades to reach the refusal point
+above, and a student's bookings or GDPR export is
 smaller again. Not a defect anyone will hit.
 
 **Re-deriving the census.** Composite relations:
@@ -1546,9 +1546,11 @@ adapter, which owns a `pg.Pool`. `createPrismaClient` builds
 `new PrismaClient({ adapter: new PrismaPg(pool), transactionOptions: transactionOptionsFor(pool), errorFormat, log })`
 with `pool = poolConfigFor(options)`; `transactionOptionsFor` sets the
 client's default `maxWait` a margin past the pool bound ("Database errors").
-It never passes `datasources` or `datasourceUrl`: Prisma refuses either beside
-an adapter at construction, with `PrismaClientInitializationError: Custom
-datasource configuration is not compatible with Prisma Driver Adapters`. The
+It never passes `datasources` or `datasourceUrl`: Prisma 7 has neither option,
+and the connection string reaches the pool through `poolConfigFor`. The
+factory forwards `onPoolError` and `onConnectionError` to `PrismaPg`, which
+otherwise drops an error on an idle or transaction-held connection with only a
+`debug` line; `src/lib/db.ts` logs both at `error`. The
 connection string goes to the adapter, so a different database or a startup
 parameter (`lowStackClient`'s `options=-c max_stack_depth=…`) travels in the
 `url` option.
@@ -1562,6 +1564,8 @@ parameter (`lowStackClient`'s `options=-c max_stack_depth=…`) travels in the
 | `connectionTimeoutMs` | `connectionTimeoutMillis` | `DEFAULT_CONNECTION_TIMEOUT_MS`, 10 000 |
 | `errorFormat` | (Prisma's) | Prisma's default |
 | `log` | (Prisma's) | none |
+| `onPoolError` | `PrismaPg`'s `onPoolError` | the adapter drops the error |
+| `onConnectionError` | `PrismaPg`'s `onConnectionError` | the adapter drops the error |
 
 `poolConfigFor` is the pure half: it returns the pool config without opening
 anything, so the defaults are unit-tested on their own
@@ -1620,7 +1624,7 @@ anything, so the defaults are unit-tested on their own
   read an empty `connectionString` as "libpq defaults" (localhost as the OS
   user) rather than refuse. A `poolMax` or `connectionTimeoutMs` that is not
   a positive integer throws `RangeError`: pg reads a `connectionTimeoutMillis`
-  of 0 as "wait forever", which the `maxWait` copied from it cannot mirror.
+  of 0 as "wait forever", which the `maxWait` derived from it cannot mirror.
 
 Nothing in the client loads `.env`. Next, vitest (`vitest.config.ts`),
 Playwright (`playwright.config.ts`) and the Prisma CLI (`prisma.config.ts`)
@@ -1697,11 +1701,10 @@ each row against the real database.
 | What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
 |---|---|---|---|---|
 | Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`, `54001`, `57014`…) | `PrismaClientKnownRequestError` `P2039`, `meta {modelName, driverAdapterError}` | `err.meta.driverAdapterError.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
-| `40P01` on a typed call | Known `P2034` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
 | Same SQLSTATE on a raw call | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
 | `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint` (`{index}` for a named unique index), `table`; **no `message`** |
 | `23503` (typed `P2003`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `ForeignKeyConstraintViolation` | `originalCode`, `originalMessage`, `constraint.index`; no `message` |
-| `40001` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode: '40001'`, `originalMessage`; **no `code`** |
+| `40001` or `40P01` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode` (`'40001'` or `'40P01'`), `originalMessage`; **no `code`** |
 | `P2025` | Known | none | — | `meta {modelName, operation}` |
 | `P2028` budget expired | Known | none | — | `meta {modelName, operation, timeout, timeTaken}` |
 | `P2028` `maxWait` exceeded | Known | none | — | `meta {}` |
@@ -1794,10 +1797,11 @@ An expired transaction budget (`timeout`) is a different
 **`adapterKindOf(err)`** reads `cause.kind` from the same two paths, for the
 log facet only, and answers a member of `ADAPTER_KINDS` or `undefined`. That
 set is the runtime's `MappedError` kinds minus the other databases' (`mysql`,
-`sqlite`, `mssql`). `MappedError` is not exported, so the compiler cannot
-tether it; `src/lib/pg-error.test.ts` does, by reading the same block.
-Re-derive it with
-`sed -n '/^declare type MappedError = {/,/^};/p' node_modules/@prisma/client/runtime/client.d.ts | grep -oE "kind: '[A-Za-z]+'"`
+`sqlite`, `mssql`). `MappedError` lives in `@prisma/driver-adapter-utils`,
+which the repo does not depend on directly, so `src/lib/pg-error.test.ts`
+tethers the set by reading that package's `index.d.ts`, resolved through
+`@prisma/adapter-pg`. Re-derive it with
+`sed -n '/^export declare type MappedError = {/,/^};/p' "$(dirname "$(node -p "require.resolve('@prisma/driver-adapter-utils', { paths: [require.resolve('@prisma/adapter-pg')] })")")/index.d.ts" | grep -oE "kind: '[A-Za-z]+'"`
 and drop `mysql`, `sqlite` and `mssql`. A kind outside the set is not logged.
 
 **What the log keeps of a database error.** `serializeErr`
@@ -1838,11 +1842,11 @@ and would otherwise be passed through unserialized). Its `type` is
 `constraintUnparsed`, `adapterKind`) are lifted from the object itself through
 `pgErrorOfCause` / `adapterKindOfCause`; the matchers never read a bare cause.
 
-A produced `DriverAdapterError` is an instance of the adapter's own class
-(`constructor.name` and `name` both `DriverAdapterError`) with no own `code`.
-Its stack begins `DriverAdapterError: <primary message>` followed by frames,
-and the serializer keeps only those frames. `tests/integration/log-redaction.test.ts`
-pins this against the real database.
+A typed call's error is a `PrismaClientKnownRequestError` (`constructor.name`
+and `name` both `PrismaClientKnownRequestError`) with a `code` such as `P2039`.
+Its stack begins `PrismaClientKnownRequestError: Invalid \`prisma.<model>.<op>()\`
+invocation` followed by frames, and the serializer keeps only those frames.
+`tests/integration/log-redaction.test.ts` pins this against the real database.
 
 ### PostgreSQL Configuration
 

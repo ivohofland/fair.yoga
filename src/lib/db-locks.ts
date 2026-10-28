@@ -212,12 +212,12 @@ export async function setLockTimeout(tx: TransactionClientOnly): Promise<void> {
  * 'PrismaClient<...>' is not assignable to parameter of type
  * 'TransactionClient & { $connect?: undefined; }'`. The brand names
  * `$connect` because it is a member `ITXClientDenyList` is guaranteed to
- * drop; `$transaction` is not one, so a brand on it makes the type `never`.
- * That was originally verified with a throwaway call site that was then
- * deleted, which threw the verification away with it; `db-locks.test.ts`
- * now keeps it permanently, as a `// @ts-expect-error` on a never-called
- * function — `tsconfig.json` includes every `.ts` file in the repo, test
- * files among them, so weakening the brand is a failing `tsc --noEmit`
+ * drop; `$transaction` is not one, so a brand on it rejects every
+ * transaction client. `db-locks.test.ts` holds both halves as never-called
+ * functions — a `// @ts-expect-error` per branded function for the bare
+ * client, and a plain call with a real `tx` as the positive control.
+ * `tsconfig.json` includes every `.ts` file in the repo, test files among
+ * them, so weakening or breaking the brand is a failing `tsc --noEmit`
  * rather than a silently-passing suite.
  *
  * `SET LOCAL` scopes the timeout to the calling transaction: it governs

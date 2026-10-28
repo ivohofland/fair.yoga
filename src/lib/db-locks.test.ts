@@ -40,6 +40,21 @@ afterAll(async () => {
 });
 
 /**
+ * The positive control for the directives below. A brand that collapses to
+ * `never` rejects every argument, the bare client included, so each
+ * `@ts-expect-error` stays satisfied while no real transaction client can
+ * pass either. These two lines are what fail instead: the first when the
+ * premise (`Prisma.TransactionClient` has no `$connect`) stops holding, the
+ * second when the brand rejects a client from `$transaction`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _transactionClientHasNoConnect: '$connect' extends keyof Prisma.TransactionClient ? never : true = true;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _aRealTransactionClientSatisfiesTheBrand(client: PrismaClient): Promise<void> {
+  await client.$transaction((tx) => lockClassRow(tx, 'never-called'));
+}
+
+/**
  * The compile-time half of this file, and the reason it exists at all.
  *
  * `lockClassRow`'s `{ $connect?: never }` brand is what stops a caller
