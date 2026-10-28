@@ -38,11 +38,12 @@ describe('register', () => {
     expect(startScheduler).not.toHaveBeenCalled();
   });
 
-  // With no locale installed every message is the bare "Invalid input".
-  // Clearing the locale reproduces a bundle that lost zod's own default. zod
-  // installs that default when a schema is constructed with no locale set, so
-  // the schema is built before the clear, and the mocks above keep register()
-  // from constructing one; either would put English back.
+  // Clearing the locale stands in for a runtime where zod's default English is
+  // missing, so every message is the bare "Invalid input". zod re-installs that
+  // default on any schema construction while no locale is set (see
+  // `src/lib/zod-locale.ts`), so the schema is built before the clear and the
+  // mocks above keep register() from constructing one: otherwise the test
+  // would pass with installZodLocale() deleted.
   it.each(['nodejs', 'edge'])('gives zod its English messages on the %s runtime', async (runtime) => {
     process.env.NEXT_RUNTIME = runtime;
     const schema = z.string();
