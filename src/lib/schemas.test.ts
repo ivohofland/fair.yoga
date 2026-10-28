@@ -1745,7 +1745,7 @@ const UNBOUNDED_NUMBER_ALLOWED: Record<string, string> = {
   'updateClassTemplateSchema.vatPercent': 'refine-bounded: vatPercentViolation accepts only a bounded percentage',
 };
 
-/** Zod 4's `.int()` seeds the bag with the safe-integer range, which is not a bound the product chose. */
+/** Zod 4's `.int()` seeds `.minValue`/`.maxValue` with the safe-integer range, which is not a bound the product chose. */
 const SAFE_INT_LIMIT = Number.MAX_SAFE_INTEGER;
 
 interface Walk {
@@ -1763,23 +1763,23 @@ function emptyWalk(): Walk {
 /** One control and one format character, each mid-text so no trim removes it. */
 const HIDDEN_PROBES = ['a\u0000b', 'a\u202Eb'] as const;
 
-/** Which bounds a number schema carries, `.gt`/`.lt` included. */
+/**
+ * Which bounds a number schema carries. `.minValue`/`.maxValue` fold `.gt`/`.lt`
+ * in, so an exclusive bound reads like an inclusive one.
+ */
 function numberBounds(schema: z.ZodType): { upper: boolean; lower: boolean } {
-  const bag = schema._zod.bag as {
-    minimum?: number;
-    maximum?: number;
-    exclusiveMinimum?: number;
-    exclusiveMaximum?: number;
-  };
-  const upper =
-    bag.exclusiveMaximum !== undefined || (bag.maximum !== undefined && bag.maximum < SAFE_INT_LIMIT);
-  const lower =
-    bag.exclusiveMinimum !== undefined || (bag.minimum !== undefined && bag.minimum > -SAFE_INT_LIMIT);
+  const { minValue, maxValue } = schema as unknown as Pick<z.ZodNumber, 'minValue' | 'maxValue'>;
+  const upper = maxValue !== null && maxValue < SAFE_INT_LIMIT;
+  const lower = minValue !== null && minValue > -SAFE_INT_LIMIT;
   return { upper, lower };
 }
 
+/** The defs of a schema's checks, where zod keeps the bounds it has no public accessor for. */
+function checkDefs(schema: z.ZodType): Array<{ check: string; pattern?: RegExp }> {
+  return (schema._zod.def.checks ?? []).map((c) => c._zod.def as { check: string; pattern?: RegExp });
+}
+
 function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
-  const bag = schema._zod.bag as { maximum?: number; format?: string; patterns?: Set<RegExp> };
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable || schema instanceof z.ZodDefault) {
     walkLeaves(path, schema._zod.def.innerType as z.ZodType, out);
   } else if (schema instanceof z.ZodDiscriminatedUnion) {
@@ -1800,15 +1800,18 @@ function walkLeaves(path: string, schema: z.ZodType, out: Walk): void {
   } else if (schema instanceof z.ZodUnion) {
     schema.options.forEach((o, i) => walkLeaves(`${path}|${i}`, o as z.ZodType, out));
   } else if (schema instanceof z.ZodArray) {
-    if (bag.maximum === undefined) out.offenders.push(`${path}: array with no max`);
+    const capped = checkDefs(schema).some((d) => d.check === 'max_length' || d.check === 'length_equals');
+    if (!capped) out.offenders.push(`${path}: array with no max`);
     walkLeaves(`${path}[*]`, schema.element as z.ZodType, out);
   } else if (schema._zod.def.type === 'string') {
     // By def type, not `instanceof z.ZodString`: a top-level `z.uuid()` is a
     // string format whose class does not extend `ZodString`.
+    const { maxLength, format } = schema as unknown as Pick<z.ZodString, 'maxLength' | 'format'>;
+    const patterns = checkDefs(schema).flatMap((d) => (d.check === 'string_format' && d.pattern ? [d.pattern] : []));
     const bounded =
-      bag.maximum !== undefined ||
-      (bag.format !== undefined && BOUNDED_FORMATS.has(bag.format)) ||
-      (bag.format === 'regex' && bag.patterns !== undefined && [...bag.patterns].every(isFixedShape));
+      maxLength !== null ||
+      (format !== null && BOUNDED_FORMATS.has(format)) ||
+      (format === 'regex' && patterns.every(isFixedShape));
     if (!bounded) {
       out.unboundedStrings.push(path);
       if (!(path in UNBOUNDED_STRING_ALLOWED)) out.offenders.push(`${path}: string with no max`);
@@ -1929,9 +1932,24 @@ describe('every string, array and number leaf is bounded, and every text leaf re
     const out = emptyWalk();
     walkLeaves('probe', z.object({
       a: z.array(z.uuid()),
+      fixed: z.array(z.uuid()).length(2),
       r: z.record(z.string(), z.string()),
     }), out);
     expect(out.offenders).toEqual(['probe.a: array with no max', 'probe.r: unknown def type record']);
+  });
+
+  it("reads a string's bound from its max, its length, a bounded format or every regex being fixed-shape", () => {
+    const out = emptyWalk();
+    walkLeaves('probe', z.object({
+      max: singleLineText(5),
+      len: singleLineCharacters(z.string(), 5).length(5),
+      uuid: z.uuid(),
+      fixed: singleLineCharacters(z.string(), 10).regex(/^\d{4}$/u).regex(/^[0-9]{4}$/u),
+      open: singleLineCharacters(z.string(), 10).regex(/^\d{4}$/u).regex(/^\d+$/u),
+      email: z.email(),
+    }), out);
+    expect([...out.unboundedStrings].sort()).toEqual(['probe.email', 'probe.open']);
+    expect(out.acceptsHidden).toEqual([]);
   });
 
   it('treats an anchored fixed-length pattern as bounded and an open one as not', () => {
