@@ -158,6 +158,10 @@ on `globalThis`". The census test enforces this.
   hook, the digest, the 15-minute health window) and link to each other
   rather than repeating it. "Degradation events" names this as its one
   operational code.
+- `DEPLOYMENT.md` §7 (Monitoring): the `/api/health` bullet says `status` is
+  also `degraded` for 15 minutes after a pool exhaustion, and that a monitor
+  must match on the body's `status` (a keyword or JSON check), because that
+  degraded answer is a 200.
 - `docs/degradation-sites.md`: "The rule" gains the amendment, an
   operational fault the operator must hear about even though the user saw an
   error, with this code as its member. The `DEGRADATION_CODES` docblock
