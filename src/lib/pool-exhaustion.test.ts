@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
-import { createPrismaClient, type PoolCounters, type PrismaClientFactoryOptions } from '@/lib/prisma-client';
+import { createPrismaClient, type PrismaClientFactoryOptions } from '@/lib/prisma-client';
 
 /**
  * Pool exhaustion recorded through the real `writeDegradationEvent` into a
@@ -132,17 +132,28 @@ describe('recordPoolExhaustion, end to end', () => {
     expect(row.occurrences).toBe(2);
   }, 15_000);
 
+  // Production-shaped: the shared client is the starved one and carries the
+  // hook, so the record's own write meets the same dry pool. The row is
+  // reached by a direct record once the pool is free, on a clock moved past
+  // the window, because the trailing timer the failed write left is real.
   it('does not throw when the event write itself cannot get a connection', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     process.on('unhandledRejection', onUnhandled);
+    let shared: Starved | undefined;
+    vi.doMock('@/lib/db', () => ({
+      get prisma(): Starved | undefined { return shared; },
+    }));
     try {
-      await withStarvedClient({}, 2, async (starved) => {
-        vi.doMock('@/lib/db', () => ({ prisma: starved }));
-        const { mod, error } = await loadFresh();
-        const counters: PoolCounters = { waiting: 1, total: 1, idle: 0, max: 1 };
-
-        expect(mod.recordPoolExhaustion(counters)).toBeUndefined();
+      const { mod, apiUtils, degradation, error } = await loadFresh();
+      await withStarvedClient({ onPoolExhausted: mod.recordPoolExhaustion }, 1.5, async (starved) => {
+        shared = starved;
+        const handler = apiUtils.withErrorHandler(async () => {
+          await starved.$queryRaw`SELECT 1`;
+          return NextResponse.json({});
+        });
+        expect((await handler(new NextRequest('http://localhost:3000/api/x'))).status).toBe(503);
+        expect(error).toHaveBeenCalledWith(expect.anything(), 'transient database failure surfaced to a client');
 
         await vi.waitFor(
           () => {
@@ -153,10 +164,23 @@ describe('recordPoolExhaustion, end to end', () => {
           },
           { timeout: 3_000, interval: 25 },
         );
-        expect(error.mock.calls[0]).toEqual([
-          expect.objectContaining({ code: CODE, waiting: 1, total: 1, idle: 0, max: 1 }),
-          'a database query timed out waiting for a pooled connection',
-        ]);
+
+        // Wait out the holder: the pool answers again once the sleep ends.
+        await vi.waitFor(async () => { await starved.$queryRaw`SELECT 1`; }, { timeout: 5_000, interval: 100 });
+
+        // `record` reads the clock synchronously and its write starts after an
+        // await, so the real clock is back before the write touches the pool.
+        vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + degradation.COALESCE_WINDOW_MS });
+        mod.recordPoolExhaustion({ waiting: 0, total: 1, idle: 0, max: 1 });
+        vi.useRealTimers();
+
+        await vi.waitFor(
+          async () => {
+            const found = await prisma.degradationEvent.findUnique({ where: { code: CODE } });
+            expect(found?.occurrences).toBeGreaterThanOrEqual(1);
+          },
+          { timeout: 5_000, interval: 50 },
+        );
       });
       // Give a stray rejection a turn to surface before the listener goes.
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -164,7 +188,7 @@ describe('recordPoolExhaustion, end to end', () => {
       process.off('unhandledRejection', onUnhandled);
     }
     expect(unhandled).toEqual([]);
-  }, 15_000);
+  }, 20_000);
 });
 
 describe('poolExhaustedWithin', () => {

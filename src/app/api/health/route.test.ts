@@ -215,8 +215,9 @@ describe('GET /api/health pool exhaustion', () => {
   it('the detailed body carries pool when the degradation count fails', async () => {
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     onTestFinished(() => error.mockRestore());
+    const at = stampedAgo(60_000);
     count.mockRejectedValueOnce(new Error('boom'));
-    expect((await read()).body.pool).toEqual({ lastExhaustedAt: null });
+    expect((await read()).body.pool).toEqual({ lastExhaustedAt: at.toISOString() });
   });
 
   it('the pool signal never queries the database', async () => {

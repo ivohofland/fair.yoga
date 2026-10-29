@@ -15,11 +15,11 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
  * Public: liveness and DB reachability, `{ status, db }`, where `status`
  * already rolls up every job's health and a pool exhaustion within the last
  * `POOL_EXHAUSTION_HEALTH_WINDOW_MS`, read from process memory because the
- * pool is what is dry (`docs/technical-architecture.md`, Database errors). With the cron secret (`hasCronSecret`,
- * never `requireCronAuth`, whose 401/500 would fail the monitor): per-job
- * scheduler state (timestamps + `isJobHealthy`'s verdict — error text stays in
- * the server log) and how many degradation events fired in the last day, as a
- * bare number. Which ones, and what they carried, appear only in the
+ * pool is what is dry (`docs/technical-architecture.md`, Database errors).
+ * With the cron secret (`hasCronSecret`, never `requireCronAuth`, whose
+ * 401/500 would fail the monitor): per-job scheduler state (timestamps +
+ * `isJobHealthy`'s verdict — error text stays in the server log) and how many
+ * degradation events fired in the last day, as a bare number. Which ones, and what they carried, appear only in the
  * operator's digest email and the server log (`docs/technical-architecture.md`,
  * Cron Jobs → Degradation events). When that number cannot be read, the
  * `degradations` key is omitted and the database still reports up. The public
