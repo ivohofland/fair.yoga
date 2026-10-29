@@ -1,6 +1,6 @@
 import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
-import { adapterKindOf, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf, type AdapterKind, type PgError } from './pg-error';
+import { adapterKindOf, isPgConnectionTerminated, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf, type AdapterKind, type PgError } from './pg-error';
 import type { CodeWithStatus } from './api-error-codes';
 
 /**
@@ -299,7 +299,8 @@ function transientKindShallow(error: unknown): TransientKind | null {
     if (kind) return kind;
   }
   if (isPgPoolTimeout(error)) return 'pool_exhausted';
-  return isPgConnectTimeout(error) ? 'connection' : null;
+  if (isPgConnectTimeout(error)) return 'connection';
+  return isPgConnectionTerminated(error) ? 'connection' : null;
 }
 
 /**
@@ -309,12 +310,14 @@ function transientKindShallow(error: unknown): TransientKind | null {
  * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
  * adapter's shapes carries it; the shapes are in
  * `docs/technical-architecture.md`, "Database errors". Nothing here reads an
- * error's text beyond `PG_POOL_TIMEOUT_MESSAGE` and `PG_CONNECT_TIMEOUT_MESSAGE`, so a message that merely
+ * error's text beyond `PG_POOL_TIMEOUT_MESSAGE`, `PG_CONNECT_TIMEOUT_MESSAGE` and
+ * `PG_CONNECTION_TERMINATED_MESSAGE`, so a message that merely
  * quotes a SQLSTATE as a digit string (a postcode, an amount, an id
  * fragment) is never relabelled "the database is busy, try again", which
  * would be exactly the wrong advice. `terminalViolationOf` above reads its
  * `23514` the same way. A SQLSTATE is checked before a Prisma code, then the
- * adapter's `kind`, then pg-pool's wait timeout, then its connect timeout.
+ * adapter's `kind`, then pg-pool's wait timeout, then its connect timeout,
+ * then pg's termination error.
  *
  * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
  * `SpotFreedError` that carries the real failure as `cause` does not silently

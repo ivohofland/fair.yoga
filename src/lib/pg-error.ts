@@ -34,6 +34,9 @@ export const PG_POOL_TIMEOUT_MESSAGE = 'timeout exceeded when trying to connect'
 /** pg-pool's own text for a connect that outlived `connectionTimeoutMillis` while a new client's `connect` was still running, before any client was handed out (driver text, matched only here). */
 export const PG_CONNECT_TIMEOUT_MESSAGE = 'Connection terminated due to connection timeout';
 
+/** pg's own text for a socket that ended while the client was not ending it: the server or the line went away without an `ErrorResponse` (driver text, matched only here). */
+export const PG_CONNECTION_TERMINATED_MESSAGE = 'Connection terminated unexpectedly';
+
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 
 type ConstraintReader = (cause: object, message: string) => string | undefined;
@@ -139,6 +142,19 @@ export function isPgConnectTimeout(err: unknown): boolean {
   return (
     err instanceof Error &&
     err.message === PG_CONNECT_TIMEOUT_MESSAGE &&
+    !Object.prototype.hasOwnProperty.call(err, 'code') &&
+    pgErrorOf(err) === null
+  );
+}
+
+/**
+ * True for pg's plain termination `Error`: the same rules as
+ * `isPgPoolTimeout`, for `PG_CONNECTION_TERMINATED_MESSAGE`.
+ */
+export function isPgConnectionTerminated(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message === PG_CONNECTION_TERMINATED_MESSAGE &&
     !Object.prototype.hasOwnProperty.call(err, 'code') &&
     pgErrorOf(err) === null
   );

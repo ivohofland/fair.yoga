@@ -1,5 +1,5 @@
 import { Prisma } from '@/lib/prisma-client';
-import { PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
+import { PG_CONNECTION_TERMINATED_MESSAGE, PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
 
 /** The plain object the pg driver adapter puts in its DriverAdapterError's `cause`. */
 export interface AdapterCause {
@@ -103,7 +103,12 @@ export function pgPoolTimeout(): Error {
  * as its non-enumerable `cause`.
  */
 export function pgConnectTimeout(): Error {
-  return Object.assign(new Error(PG_CONNECT_TIMEOUT_MESSAGE, { cause: new Error('Connection terminated unexpectedly') }), { clientVersion: CLIENT_VERSION });
+  return Object.assign(new Error(PG_CONNECT_TIMEOUT_MESSAGE, { cause: new Error(PG_CONNECTION_TERMINATED_MESSAGE) }), { clientVersion: CLIENT_VERSION });
+}
+
+/** pg's error for a socket the server ended, as Prisma rethrows it from a statement: a plain Error, own key `clientVersion` only. */
+export function pgConnectionTerminated(): Error {
+  return Object.assign(new Error(PG_CONNECTION_TERMINATED_MESSAGE), { clientVersion: CLIENT_VERSION });
 }
 
 /**
