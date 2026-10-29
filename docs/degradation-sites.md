@@ -23,7 +23,7 @@ Calibration, fixed by the spec:
   degradation: it substitutes nothing. Recorded as "failure, surfaced as an
   error".
 
-Two further readings this audit applied, stated so they can be argued with:
+Three further readings, stated so they can be argued with:
 
 - **A failure the user does not see is still not a degradation** unless its
   cause is impossible *data*. A dropped notification because a query timed out
@@ -36,6 +36,13 @@ Two further readings this audit applied, stated so they can be argued with:
   Recorded as "echo of `CODE`". The echo lines are still useful — several carry
   the row ids the root cannot — and the code's section below says to search the
   log for them.
+- **An operational fault the operator must hear about may be recorded.** A
+  fault that users meet as an error, and that nothing else reports in time,
+  may be given a code so the digest carries it. This is admitted per code, by
+  name here, never by analogy: `DATABASE_POOL_EXHAUSTED` is admitted because a
+  request that times out waiting for a pooled connection has no other channel
+  to the operator (#939). Recorded under *Degradations* as "an operational
+  fault, admitted under the rule's third reading".
 
 When a verdict was not obvious, it is recorded as routine and the doubt is
 written under "Close calls".
@@ -67,23 +74,22 @@ Measured when the tables below were last brought up to date:
 
 | command | count |
 |---|---|
-| `log.warn(` lines | 110 |
-| `log.error(` lines | 93 |
-| surface (`log.warn(` or `log.error(`) | **110 + 93 = 203** |
+| `log.warn(` lines | 109 |
+| `log.error(` lines | 96 |
+| surface (`log.warn(` or `log.error(`) | **109 + 96 = 205** |
 | split `.warn(` / `.error(` continuation lines | 0 |
-| `log[…](` lines | 17 |
-| `logDegraded(` call lines | 40 |
+| `log[…](` lines | 18 |
+| `logDegraded(` call lines | 42 |
 
-One of the 203 is not a call: `src/lib/log.ts` carries a usage example inside
-its docblock. One of the 17 is not a site: `src/lib/degradation.ts`
-(`logDegraded`) is the line `logDegraded` itself emits. That leaves 202 static
-calls and 16 computed-level calls. Every one of the 40 `logDegraded` calls has
+One of the 205 is not a call: `src/lib/log.ts` carries a usage example inside
+its docblock. One of the 18 is not a site: `src/lib/degradation.ts`
+(`logDegraded`) is the line `logDegraded` itself emits. That leaves 204 static
+calls and 17 computed-level calls. Every one of the 42 `logDegraded` calls has
 a row under *Degradations* below, and so does every computed-level call. The
-surface table has 178 rows: the docblock line and 177 calls. The other
-202 − 177 = 25 static calls have no row yet, which is what the next audit
-owes; every one of them is also on `main` at the merge base of the Mollie
-work (#896), whose own calls all have rows. Per file, the calls without a row
-are the first command's lines a file has beyond its rows here.
+surface table has 176 rows: the docblock line and 175 calls. The other
+204 − 175 = 29 static calls have no row yet, which is what the next audit
+owes. Per file, the calls without a row are the first command's lines a file
+has beyond its rows here.
 
 Each row names its file and the function its call sits in, not a line number,
 so an edit elsewhere in the file does not move it; a function with several
@@ -201,6 +207,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/pay-page.server.ts` (`markedPaidLine`) | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
 | `src/lib/pay-page.server.ts` (`reportMissingPayment`) | warn | degradation | `CHARGED_REGISTRATION_WITHOUT_PAYMENT` |
 | `src/lib/payment-breakdown.server.ts` (`resolveReportedPaymentBreakdown`) | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
+| `src/lib/pool-exhaustion.ts` (`recordPoolExhaustion`) | error | degradation | `DATABASE_POOL_EXHAUSTED` (an operational fault, admitted under the rule's third reading) |
 | `src/lib/rule-slot-holder.ts` (`ruleSlotHolder`) | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts` (`readIncomeTier`) | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
 | `src/lib/timezone.ts` (`startOfLocalDay`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
@@ -241,7 +248,6 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | site (file, function) | level | verdict | code or reason |
 |---|---|---|---|
 | `src/app/(public)/[slug]/page.tsx` (`TeacherBookingPage`) | warn | routine | documented race (hard delete vs session); the page falls back to its signed-out view |
-| `src/app/(student)/bookings/[classId]/pay/page.tsx` (`MethodPanel`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
 | `src/app/(student)/bookings/[classId]/pay/page.tsx` (`attemptBanner`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
 | `src/app/(student)/bookings/[classId]/pay/page.tsx` (`PayBody`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
 | `src/app/(student)/bookings/page.tsx` (`StudentBookingsPage`) | warn | routine | documented race (hard delete vs session); redirects |
@@ -297,6 +303,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/app/api/teacher-rooms/route.ts` (`POST`) | error | routine | failure, surfaced as an error (throws, 500) |
 | `src/app/api/teachers/[id]/photo/route.ts` (`POST`) | warn | routine | bad upload (400); input, not stored data |
 | `src/components/settings/mollie-connection-panel.tsx` (`MollieConnectionPanel`) | error | routine | failure (an exception or outage), not impossible data; the section shows Mollie as unavailable (`readConnectionView` answers a Mollie failure itself, as `MOLLIE_UNAVAILABLE`) |
+| `src/components/student/method-panel.tsx` (`ManualPanel`) | error | routine | failure (an exception or outage), not impossible data (unreachable `never` branch; a code defect, not data) |
 | `src/lib/api-utils.ts` (`parseBody`) | warn | routine | refusal (4xx); nothing substituted (415, body not sent as JSON) |
 | `src/lib/api-utils.ts` (`withErrorHandler`) | warn | routine | refusal (4xx); nothing substituted (403 `CROSS_ORIGIN`); a misconfigured proxy shows here, a configuration fault like `rate-limit.ts`'s unresolved IP |
 | `src/lib/auth/handoff.ts` (`claimWithCode`) | warn | routine | documented race; the loser is refused or retried (concurrent handoff) |
@@ -368,8 +375,6 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/services/invitations.ts` (`deliverInvitation`) | error | routine | failure (an exception or outage), not impossible data |
 | `src/services/mollie-deps.ts` (`mollieDeps`) | warn | routine | configuration (Mollie unset), logged once per process |
 | `src/services/mollie-deps.ts` (`mollieDeps`) | error | routine | configuration (Mollie misconfigured), logged once per process |
-| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | lock contention (`isLockTimeout`) |
-| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | error | routine | operational state, reported through job health |
 | `src/services/notification-retention.ts` (`reapExpiredNotifications`) | warn | routine | operational state, reported through job health (per-run cap) |
 | `src/services/notifications.ts` (`emitToBus`) | error | routine | failure (an exception or outage), not impossible data (event bus) |
@@ -436,6 +441,7 @@ Each picks its level at run time, mostly through `transientDbFailure` (`src/lib/
 | `src/services/class-template-lifecycle.ts` (`createClassTemplate`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts` (`deleteStudentAccount`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/gdpr.ts` (`deleteTeacherAccount`) | dynamic | routine | failure (an exception or outage), not impossible data (completion refused during erasure) |
+| `src/services/notification-retention.ts` (`reapExpiredNotifications`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/rule-lifecycle.ts` (`archiveOrUnarchiveRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/rule-lifecycle.ts` (`pauseOrResumeRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
 | `src/services/rule-lifecycle.ts` (`updateRule`) | dynamic | routine | transient-failure classifier; level chosen by `transientDbFailure` |
@@ -988,3 +994,52 @@ UPDATE "ProcessorConnection"
        "revokeAfter" = NULL, "revokedAt" = now()
  WHERE id = '<connectionId>';
 ```
+
+### `DATABASE_POOL_EXHAUSTED`
+
+**What happened.** A database query waited the pool's full
+`connectionTimeoutMs` for a connection and failed. A request answered the busy
+503 (`withErrorHandler`) or a page rendered its error page; a sweep may have
+failed the same way, and then its own error is in job health. The pool's own hook
+(`onPoolExhausted`, wired in `src/lib/db.ts`) reports it, so every caller is
+covered, page renders included. Since the record is written through the same
+pool, it can itself time out: then the log line is all there is, and that
+write's timeout counts once more in the next window.
+
+**The sample.** The pool's counters as the timeout was delivered:
+
+- `waiting` — callers still queued for a connection. It does not count the
+  waiter that timed out, so `0` means that waiter was the only one.
+- `total` — connections open, idle or busy.
+- `idle` — connections open and free.
+- `max` — the pool's bound (`poolMax`).
+
+**Health.** `/api/health` reads `status: "degraded"` for 15 minutes after this
+process last saw an exhaustion (`POOL_EXHAUSTION_HEALTH_WINDOW_MS`,
+`src/lib/pool-exhaustion.ts`), so an exhaustion between two monitor checks
+still alerts. A restart clears that; this row does not.
+
+**Confirm.** The log has every occurrence with its counters
+(`grep '"code":"DATABASE_POOL_EXHAUSTED"'`), next to the request or sweep that
+failed. While it is happening, look at what holds the connections:
+
+```sql
+SELECT pid, application_name, state, now() - xact_start AS in_xact,
+       now() - query_start AS in_query, left(query, 120) AS query
+  FROM pg_stat_activity
+ WHERE datname = current_database() AND pid <> pg_backend_pid()
+ ORDER BY xact_start NULLS LAST;
+```
+
+Look for sessions `idle in transaction` (a transaction left open while the code
+awaited something else), long-running queries, and a sweep's burst: several
+sessions from one tick, at the time a sweep ran (`/api/health`'s detailed
+body, with the cron secret, has each job's last run).
+
+**Correct.** Fix the holder, not the timeout: shorten the long transaction,
+move the awaited work out of it, or make the sweep claim in smaller batches.
+If the pool is simply too small for the load, `poolMax` and its default are in
+`docs/technical-architecture.md` ("Where Prisma comes from"). If this code
+keeps arriving and the samples point at sweeps, that is the trigger for the
+scheduler-only pool #937 set aside
+(`docs/superpowers/specs/2026-10-29-process-singletons-design.md`, Decision 4).
