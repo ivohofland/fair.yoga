@@ -4,6 +4,7 @@ import path from 'node:path';
 import { uniqueSuffix } from '../../tests/helpers';
 import { grantAdmin, revokeAdmin, listAdmins } from './admin-grants';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { pgCause, typedCallError } from '../../tests/adapter-errors';
 
 const db = createPrismaClient();
 const suffix = uniqueSuffix();
@@ -94,6 +95,20 @@ describe('grantAdmin', () => {
       kind: 'refused',
       reason: 'no_account',
     });
+  });
+
+  it('rethrows a unique violation that left no active grant', async () => {
+    await studentAccount('otherkey', { passkey: true });
+    const other = typedCallError(
+      pgCause('23505', 'duplicate key value violates unique constraint "AdminGrant_other_key"', { constraint: { index: 'AdminGrant_other_key' } }),
+      'AdminGrant',
+    );
+    const create = vi.spyOn(db.adminGrant, 'create').mockRejectedValueOnce(other);
+    try {
+      await expect(grantAdmin(db, { email: emailOf('otherkey'), by: 'tester' })).rejects.toBe(other);
+    } finally {
+      create.mockRestore();
+    }
   });
 
   it('refuses an account without a passkey', async () => {

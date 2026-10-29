@@ -1,5 +1,5 @@
-import { Prisma } from '@/lib/prisma-client';
 import type { PrismaClient } from '@/lib/prisma-client';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { requireNormalised } from '@/lib/schemas';
 import { liveProfile } from '@/lib/live-profile';
 
@@ -68,7 +68,7 @@ export async function resolveOrClaimAccount(
     // Two verifies racing the same claim: the loser's account create hits
     // the unique email. The account exists now — resolve it and sign the
     // person in instead of failing a legitimate sign-in.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    if (isUniqueConflictOn(err, ['Account_email_key'])) {
       return resolveOrClaimAccount(db, email);
     }
     throw err;

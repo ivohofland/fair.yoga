@@ -11,6 +11,7 @@ import { MollieUnavailable, type MollieClient, type MolliePaymentView, type Refu
 import { MOLLIE_SCOPES } from '@/lib/processor-liveness';
 import { sealToken } from '@/lib/processor-token-cipher';
 import { uniqueSuffix } from '../../tests/helpers';
+import { pgCause, typedCallError } from '../../tests/adapter-errors';
 import { createClassFixture } from '../../tests/class-fixtures';
 import type { MollieDeps } from './mollie-deps';
 import { markPaymentNotCharged } from './payments';
@@ -95,6 +96,26 @@ async function attemptOn(
 
 /** A payment Mollie settled through one attempt. */
 const settledAttempt = () => attemptOn('paid', { settledPayment: true });
+
+function uniqueViolationOn(index: string): Prisma.PrismaClientKnownRequestError {
+  return typedCallError(
+    pgCause('23505', `duplicate key value violates unique constraint "${index}"`, { constraint: { index } }),
+    'ProcessorRefund',
+  );
+}
+
+type TxBody = (tx: Prisma.TransactionClient) => Promise<unknown>;
+
+/** Makes the next transaction's `processorRefund.create` reject with `err`: the create runs on the transaction's client, which a spy on `prisma` does not reach. */
+function rejectRefundCreateOnce(err: Error) {
+  const original = prisma.$transaction.bind(prisma) as (fn: TxBody, opts?: unknown) => Promise<unknown>;
+  return vi.spyOn(prisma, '$transaction').mockImplementationOnce(((fn: TxBody, opts?: unknown) =>
+    original((tx) => fn(new Proxy(tx, {
+      get: (target, key, receiver) => key === 'processorRefund'
+        ? new Proxy(target.processorRefund, { get: (d, k, r) => (k === 'create' ? () => Promise.reject(err) : Reflect.get(d, k, r)) })
+        : Reflect.get(target, key, receiver),
+    })), opts)) as never);
+}
 /** A payment paid by hand that a Mollie attempt paid a second time. */
 const duplicateAttempt = () => attemptOn('paid', { settledPayment: false });
 
@@ -319,6 +340,29 @@ describe('refundAttempt', () => {
     it('an attempt whose connection is gone with PROCESSOR_NOT_CONNECTED', async () => {
       const c = await attemptOn('paid', { settledPayment: true, connectionId: null });
       expect(refusalCode(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' }))).toBe('PROCESSOR_NOT_CONNECTED');
+      expect(fake.createRefund).not.toHaveBeenCalled();
+    });
+
+    it('a unique violation on the one-live-refund key with REFUND_ALREADY_REQUESTED', async () => {
+      const c = await settledAttempt();
+      const spy = rejectRefundCreateOnce(uniqueViolationOn('ProcessorRefund_one_live_per_attempt'));
+      try {
+        expect(refusalCode(await refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' }))).toBe('REFUND_ALREADY_REQUESTED');
+      } finally {
+        spy.mockRestore();
+      }
+      expect(fake.createRefund).not.toHaveBeenCalled();
+    });
+
+    it('rethrows a unique violation on an index other than the one-live-refund key', async () => {
+      const c = await settledAttempt();
+      const other = uniqueViolationOn('ProcessorRefund_other_key');
+      const spy = rejectRefundCreateOnce(other);
+      try {
+        await expect(refundAttempt(prisma, deps, { paymentId: c.paymentId, attemptId: c.attempt.id, choice: 'waive' })).rejects.toBe(other);
+      } finally {
+        spy.mockRestore();
+      }
       expect(fake.createRefund).not.toHaveBeenCalled();
     });
 

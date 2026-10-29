@@ -1,9 +1,17 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { resolveOrClaimAccount } from './account';
 import { uniqueSuffix } from '../../../tests/helpers';
 import { createPrismaClient } from '@/lib/prisma-client';
+import { pgCause, typedCallError } from '../../../tests/adapter-errors';
 
 const db = createPrismaClient();
+
+function uniqueViolationOn(index: string) {
+  return typedCallError(
+    pgCause('23505', `duplicate key value violates unique constraint "${index}"`, { constraint: { index } }),
+    'Account',
+  );
+}
 const suffix = uniqueSuffix();
 
 let teacherAccountId: string;
@@ -99,6 +107,39 @@ describe('resolveOrClaimAccount', () => {
     // Second resolution goes through the account path, same identity.
     const again = await resolveOrClaimAccount(db, unclaimedEmail);
     expect(again!.accountId).toBe(resolved!.accountId);
+  });
+
+  it('signs in through the account a racing claim created, on a violation of Account_email_key', async () => {
+    const email = `account-race-${suffix}@test.local`;
+    const student = await db.student.create({ data: { firstName: 'Resolve', lastName: 'Race', email } });
+    // The racer's account lands first, then this call's create loses on the key.
+    const create = vi.spyOn(db.account, 'create').mockImplementationOnce((async () => {
+      const racer = await db.account.create({ data: { email } });
+      await db.student.update({ where: { id: student.id }, data: { claimedAt: new Date(), accountId: racer.id } });
+      throw uniqueViolationOn('Account_email_key');
+    }) as never);
+    try {
+      const resolved = await resolveOrClaimAccount(db, email);
+      expect(resolved?.studentId).toBe(student.id);
+    } finally {
+      create.mockRestore();
+      await db.student.delete({ where: { id: student.id } });
+      await db.account.deleteMany({ where: { email } });
+    }
+  });
+
+  it('rethrows a unique violation on an index other than Account_email_key', async () => {
+    const email = `account-otherkey-${suffix}@test.local`;
+    const student = await db.student.create({ data: { firstName: 'Resolve', lastName: 'OtherKey', email } });
+    const other = uniqueViolationOn('Account_other_key');
+    const create = vi.spyOn(db.account, 'create').mockRejectedValueOnce(other);
+    try {
+      await expect(resolveOrClaimAccount(db, email)).rejects.toBe(other);
+    } finally {
+      create.mockRestore();
+      await db.student.delete({ where: { id: student.id } });
+      await db.account.deleteMany({ where: { email } });
+    }
   });
 
   it('does not resolve soft-deleted profiles', async () => {

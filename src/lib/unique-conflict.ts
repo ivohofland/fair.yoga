@@ -5,6 +5,7 @@ export const UNIQUE_CONSTRAINTS = [
   'Account_email_key',
   'CalendarEntry_scheduleRuleId_date_key',
   'Invitation_teacherId_email_key',
+  'ProcessorRefund_one_live_per_attempt',
   'Registration_classId_studentId_key',
   'Room_private_identity_unique',
   'Room_public_identity_unique',
