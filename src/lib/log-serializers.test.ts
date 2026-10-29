@@ -19,8 +19,9 @@ function expectNoPii(value: unknown): void {
 
 // A message in the shape Prisma 7.10.1 renders under NODE_ENV=production
 // (measured 2026-10-29, via `student.create` with an unknown argument). The
-// list of available options it appends is left out: it names only fields, no
-// row values.
+// list of available options it appends, after the `~~~~~` line, is left out
+// of the middle of this fixture; it holds field names and types, no row
+// values.
 const VALIDATION_MSG =
   '\nInvalid `prisma.student.create()` invocation:\n\n{\n  data: {\n    firstName: "Alicepii",\n    lastName: "Surnamepii",\n    email: "pii.test@example.com",\n    bogus: 1,\n    ~~~~~\n  }\n}\n\nUnknown argument `bogus`. Available options are marked with ?.';
 const known = (message: string, code: string, meta: Record<string, unknown>) =>

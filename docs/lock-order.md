@@ -2801,11 +2801,13 @@ target row already exists. It compiles to three plain, non-locking `SELECT`s
 instead — measured 2026-10-29 on a `TeacherBlock` row in the test database by
 query logging (`DEBUG=prisma:query` prints nothing on this Prisma version; a
 client built by `createPrismaClient` with
-`log: [{ emit: 'event', level: 'query' }]` was used, and its `query` events
-are the re-derive).
-Give the same call a single real column — `update: { isArchived: false }`, for
-instance — and Prisma switches to the atomic path, which **does** take the row
-lock.
+`log: [{ emit: 'event', level: 'query' }]` was used). Re-derive: run
+`upsert({ where, update: {}, create })` on an existing row with that client and
+read the `query` events it emits.
+Give the same call a single real column (measured with `createdAt` on
+`TeacherBlock`) and Prisma switches to the atomic `INSERT ... ON CONFLICT DO
+UPDATE`. That statement takes the row lock by Postgres's documented behaviour;
+the lock itself was not measured here.
 
 This still matters for the real `TeacherBlock` upserts in `invitations.ts` —
 `unlinkTeacher`'s and `declineInvitation`'s, every one of them `update: {}`
