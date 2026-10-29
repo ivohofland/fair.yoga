@@ -18,7 +18,7 @@ function expectNoPii(value: unknown): void {
 }
 
 // A message in the shape Prisma 7.10.1 renders under NODE_ENV=production
-// (re-measured 2026-10-29, via `student.create` with an unknown argument). The
+// (measured 2026-10-29, via `student.create` with an unknown argument). The
 // list of available options it appends is left out: it names only fields, no
 // row values.
 const VALIDATION_MSG =

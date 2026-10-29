@@ -855,30 +855,43 @@ image fails (`EAI_AGAIN` on `binaries.prisma.sh`, exit 1, no P1001).
 Re-derive: build a scratch Dockerfile whose `migrate` stage `RUN rm`s the
 engine (the schema engine under
 `/app/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-*`
-plus `rm -rf /root/.cache/prisma`; the `rm` must print the file it removed),
+plus `rm -rf /root/.cache/prisma`; use `rm -v`, which must print the file it removed),
 then run the CI migrate step with and
 without `--network none`. In the runner, `--network none` is also what makes
 pg's connect fail at once with `ENETUNREACH`, the code the probe asserts.
 
 **What the runner carries** (#885, client engine plus `@prisma/adapter-pg`).
-No Prisma `*.node`: the only native file in the image is sharp's, Next's
-image optimiser. The client exists only inside the Next bundle; what it loads
-from outside is `@prisma/client`'s client runtime and the query compiler's
+No Prisma `*.node`: the only native file in the image is sharp's
+(`sharp-linuxmusl-arm64-<version>.node`), Next's image optimiser. The client
+exists only inside the Next bundle; what it loads from outside is
+`@prisma/client`'s client runtime and the query compiler's
 `query_compiler_fast_bg.postgresql.js` and `query_compiler_fast_bg.postgresql.wasm-base64.js`,
-and `pg` with `pg-pool`, `pg-protocol`, `pg-types` and `pg-connection-string`,
-all under `/app/node_modules/.pnpm`. The adapter is bundled. The bundle
-reaches `pg` as a hashed external, `pg-<hash>`, through the link
+and `pg` with the packages it depends on, all under `/app/node_modules/.pnpm`.
+The adapter is bundled. The bundle reaches `pg` as a hashed external,
+`pg-<hash>`, through the link
 `/app/.next-build/node_modules/pg-<hash>` →
 `../../node_modules/.pnpm/pg@<version>/node_modules/pg`, not through
-`/app/node_modules/pg`: removing that top-level link leaves the app working.
-Re-derive after `pnpm run build`:
+`/app/node_modules/pg`: removing that top-level link leaves the client loading.
+Measured in the runner image built from a scratch `git archive` tree
+(`docker build -t fy925-runner <tree>`), 2026-10-29, `node:24-alpine` arm64,
+Next 16.4.1, Prisma 7.10.1. Re-derive:
 
 ```bash
-find .next-build/standalone -name '*.node'
-find .next-build/standalone/node_modules -maxdepth 4 -type d -path '*pg*'
-find .next-build/standalone -name 'query_compiler*'
+docker run --rm --entrypoint sh fy925-runner -c "find / -name '*.node' -not -path '/proc/*' 2>/dev/null"
+docker run --rm --entrypoint sh fy925-runner -c "find /app/node_modules -maxdepth 4 -type d -path '*pg*'; ls -l /app/.next-build/node_modules"
+docker run --rm --entrypoint sh fy925-runner -c "find /app -name 'query_compiler*'"
+```
+
+The first prints sharp's one file; the second prints the `pg*` directories
+under `.pnpm` and the `pg-<hash>` link; the third prints the two query
+compiler files. The top-level-link claim: a scratch image `FROM fy925-runner`
+with `USER root` and `RUN rm -v /app/node_modules/pg`, then the CI runner
+probe under `--network none`, still prints its success line. The remaining
+lines come from a host build, not the image. Re-derive them after
+`pnpm run build`:
+
+```bash
 grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u
-ls -l .next-build/standalone/.next-build/node_modules
 grep -nE '"(pg|@prisma/client)"' node_modules/next/dist/lib/server-external-packages.jsonc
 ```
 
@@ -887,8 +900,8 @@ The externals line prints `@prisma/client/runtime/client`,
 `@prisma/client/runtime/query_compiler_fast_bg.postgresql.wasm-base64.js`. The
 jsonc prints its `"@prisma/client"` and `"pg"` lines: Next externalises both
 by default, so the config sets no `serverExternalPackages`. The build log
-carries no `pg-native` or `query_compiler` warning. Measured 2026-10-29,
-Next 16.4.1, Prisma 7.10.1.
+carries no `pg-native` or `query_compiler` warning. Those two were measured
+2026-10-29 on a host build, Next 16.4.1, Prisma 7.10.1.
 
 **The runner probe.** Nothing outside the bundle can construct the client, so
 `scripts/prisma-client-probe.cjs` boots the real `/app/server.js` with
