@@ -1,8 +1,8 @@
 /**
  * Produces the shapes a connection dropped mid-query throws, against the real
  * database: a `net` relay sits between a throwaway client and Postgres and is
- * cut while a statement or a `COMMIT` is in flight, either ending the sockets
- * or resetting them. Postgres sees one client go away; nothing else on the
+ * cut while a statement is in flight, just before a `COMMIT` is written, or
+ * during one, either ending the sockets or resetting them. Postgres sees one client go away; nothing else on the
  * shared database is disturbed. The shapes are listed in
  * `docs/technical-architecture.md`, "Database errors".
  */
@@ -24,6 +24,12 @@ interface Relay {
 
 /** Cut this far into a statement that runs for seconds. */
 const CUT_AFTER_MS = 300;
+
+/** How long the deferred trigger makes a `COMMIT` run. */
+const COMMIT_SLEEP_MS = 3_000;
+
+/** Cut this far into the callback's return, so the `COMMIT` is in flight under load too. */
+const COMMIT_CUT_MS = 1_000;
 
 function databaseUrl(): URL {
   const raw = process.env.DATABASE_URL;
@@ -74,7 +80,12 @@ async function rejectionOf(work: () => Promise<unknown>): Promise<unknown> {
 
 function expectConnection(err: unknown): void {
   expect(transientDbFailure(err)).toEqual({ kind: 'connection', level: 'error' });
-  expect(classifyApiError(err)).toMatchObject({ status: 503, level: 'error', detail: { transientKind: 'connection' } });
+  expect(classifyApiError(err)).toMatchObject({
+    status: 503,
+    level: 'error',
+    detail: { transientKind: 'connection' },
+    code: 'DATABASE_CONNECTION_FAILED',
+  });
 }
 
 /**
@@ -92,12 +103,22 @@ function expectBareTermination(err: unknown, enumerableKeys: readonly string[]):
   expectConnection(err);
 }
 
+/** The adapter's cause object, from the bare error or the Known error's `meta`. */
+function adapterCauseKeysOf(err: unknown): object {
+  const meta = err instanceof Prisma.PrismaClientKnownRequestError ? (err.meta as { driverAdapterError?: { cause?: unknown } } | undefined) : undefined;
+  const cause: unknown = meta === undefined ? (err as Error).cause : meta.driverAdapterError?.cause;
+  expect(cause).toBeTypeOf('object');
+  return cause as object;
+}
+
 /** The adapter's `ConnectionClosed` thrown bare, as the transaction's `COMMIT` throws it. */
 function expectBareConnectionClosed(err: unknown): void {
   expect(err).toBeInstanceOf(Error);
+  expect(Object.prototype.hasOwnProperty.call(err, 'name')).toBe(true);
   expect((err as Error).name).toBe('DriverAdapterError');
   expect(err).not.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   expect(adapterKindOf(err)).toBe('ConnectionClosed');
+  expect(Object.keys(adapterCauseKeysOf(err))).toEqual(['kind']);
   expect(pgErrorOf(err)).toBeNull();
   expectConnection(err);
 }
@@ -107,6 +128,7 @@ function expectKnownConnectionClosed(err: unknown, code: string): void {
   expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   expect((err as Prisma.PrismaClientKnownRequestError).code).toBe(code);
   expect(adapterKindOf(err)).toBe('ConnectionClosed');
+  expect(Object.keys(adapterCauseKeysOf(err))).toEqual(['kind']);
   expect(pgErrorOf(err)).toBeNull();
   expectConnection(err);
 }
@@ -167,7 +189,8 @@ describe('a connection dropped mid-query, through a relay', () => {
       { timeout: 10_000 },
     );
     try {
-      await isLocked;
+      // A holder that fails before locking would otherwise leave this waiting out the test's timeout.
+      await Promise.race([isLocked, holder.then(() => { throw new Error('the holder ended before it locked'); })]);
       return await cutDuring(how, (db) => db.account.update({ where: { id: row.id }, data: { email: newEmail() } }));
     } finally {
       release();
@@ -178,7 +201,7 @@ describe('a connection dropped mid-query, through a relay', () => {
   /**
    * Writes a row in an interactive transaction and cuts as the callback
    * returns, before `COMMIT` is written. The shapes this produces depend on
-   * the `COMMIT` reaching the half-closed socket before pg handles the end or
+   * the `COMMIT` reaching the cut socket before pg handles the end or
    * the reset, so a different shape here means that ordering moved.
    */
   function cutBeforeCommit(how: Cut, email: string): Promise<unknown> {
@@ -195,7 +218,8 @@ describe('a connection dropped mid-query, through a relay', () => {
 
   /**
    * Writes a row in an interactive transaction whose `COMMIT` runs a deferred
-   * trigger sleeping 2 s on a temporary table, and cuts 400 ms into it.
+   * trigger sleeping `COMMIT_SLEEP_MS` on a temporary table, and cuts
+   * `COMMIT_CUT_MS` after the callback returns.
    */
   function cutDuringCommit(how: Cut, email: string): Promise<unknown> {
     return throughRelay((db, relay) =>
@@ -203,14 +227,14 @@ describe('a connection dropped mid-query, through a relay', () => {
         async (tx) => {
           await tx.$executeRawUnsafe('CREATE TEMP TABLE connection_drop (x int) ON COMMIT DROP');
           await tx.$executeRawUnsafe(
-            'CREATE FUNCTION pg_temp.connection_drop_slow() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NULL; END $$',
+            `CREATE FUNCTION pg_temp.connection_drop_slow() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(${COMMIT_SLEEP_MS / 1000}); RETURN NULL; END $$`,
           );
           await tx.$executeRawUnsafe(
             'CREATE CONSTRAINT TRIGGER connection_drop_slow AFTER INSERT ON connection_drop DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION pg_temp.connection_drop_slow()',
           );
           await tx.$executeRawUnsafe('INSERT INTO connection_drop VALUES (1)');
           await tx.account.create({ data: { email } });
-          setTimeout(() => relay.cut(how), 400);
+          setTimeout(() => relay.cut(how), COMMIT_CUT_MS);
         },
         { timeout: 10_000 },
       ),
@@ -218,7 +242,7 @@ describe('a connection dropped mid-query, through a relay', () => {
   }
 
   /** Past the trigger's sleep, so a `COMMIT` that was going to land has. */
-  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 2_500));
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, COMMIT_SLEEP_MS + 500));
 
   describe('the server ends the socket', () => {
     it('$queryRaw: pg\'s bare termination error, as connection', async () => {

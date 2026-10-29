@@ -238,7 +238,10 @@ beside `code`. Clients branch on the code through `readError`
 status — two refusals can share a status and mean different things. The
 exceptions are the statuses `ApiErrorStatus` excludes, today 401 and 429: no
 code can ever carry one, so a client that must recognise a dropped session or
-a rate limit has only the status to read, and several do. Tests assert
+a rate limit has only the status to read, and several do. A 503 is read by
+status too: an app-written 503 means a retryable failure, and among them
+`DATABASE_CONNECTION_FAILED` alone leaves the outcome unknown (see "Database
+errors"). Tests assert
 it with `expectRefusal` (`tests/api-assertions.ts`), never the message, so
 copy can change without touching a test.
 
@@ -1676,8 +1679,9 @@ finds the adapter's cause object on exactly one of two paths:
 
 1. `err` is an `Error` whose `name` is `'DriverAdapterError'` (identified by
    name, never by import) and whose `cause` is an object → `err.cause`. An
-   interactive transaction's `COMMIT` throws one bare when the connection
-   closes under it (`kind: 'ConnectionClosed'`, produced in
+   interactive transaction's `COMMIT` throws one bare when it is written to a
+   socket already ended, or when a reset cuts it in flight
+   (`kind: 'ConnectionClosed'`, produced in
    `src/lib/db-connection-drop.test.ts`); no statement measured under 7.10.1
    does.
 2. `err` is a `Prisma.PrismaClientKnownRequestError` whose
@@ -1794,6 +1798,11 @@ a test.
 (`'Connection terminated due to connection timeout'`); re-derive it with
 `grep -n "Connection terminated due to connection timeout" node_modules/.pnpm/pg-pool@*/node_modules/pg-pool/index.js`,
 and `pg-error.test.ts` pins it the same way.
+`isPgConnectionTerminated` applies them to `PG_CONNECTION_TERMINATED_MESSAGE`
+(`'Connection terminated unexpectedly'`, pg's text for a socket that ended
+while the client was not ending it); re-derive it with
+`grep -n "Connection terminated unexpectedly" node_modules/.pnpm/pg@*/node_modules/pg/lib/client.js`,
+and `pg-error.test.ts` pins it the same way.
 
 **Transient kinds.** `transientDbFailure` (`src/lib/api-errors.ts`) decides
 the `TransientKind` link by link along `Error.cause`, from structured fields
@@ -1827,10 +1836,17 @@ reaches a service's `busy` arm, whose copy says nothing was changed: a
 connection lost mid-`COMMIT` was measured to have applied the write on both
 cuts, so the service rethrows it to `classifyApiError`, which answers the
 `connection` 503 and its copy, which says the request may not have gone
-through. That 503 alone carries a code, `DATABASE_CONNECTION_FAILED`, because
-every other transient kind rolled back, so a client that reads an app-written
-503 as "nothing happened" (the payout-pause, passkey-revoke and resume-payments
-forms) must route this code to its outcome-unknown state instead.
+through. Of `classifyApiError`'s transient 503s, only `connection`'s carries a
+code, `DATABASE_CONNECTION_FAILED`, because every other kind rolled back. A
+client that reads an app-written 503 as "nothing happened" must route this
+code to its outcome-unknown state instead; re-derive the clients that do with
+`grep -rln DATABASE_CONNECTION_FAILED src/app src/components --exclude='*.test.*'`.
+A route that maps a transient failure itself keeps its own code for this case:
+`erasureFailure` (`src/app/api/account/route.ts`) answers it as `ERASURE_BUSY`
+/ `PARTIAL_ERASURE_BUSY` with copy saying the account may not have been
+removed. Any `connection` 503 routes there, including one refused before a
+statement ran (a connect timeout, `ECONNREFUSED`, `53300`), which errs toward
+"couldn't confirm" over "nothing happened".
 
 What `pool_exhausted` covers, measured there on 2026-10-27 (`poolMax: 1`, the
 one connection held by an interactive transaction): any call whose wait for a
