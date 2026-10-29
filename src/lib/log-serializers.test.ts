@@ -635,6 +635,7 @@ describe('serializeErr: anchors and guards', () => {
 describe('serializeErr: the pg driver adapter\'s errors', () => {
   it('withholds a DriverAdapterError by name and does not walk its plain-object cause', () => {
     const err = driverAdapterError(pgCause('23514', 'Class 7e2b7875-c697-4dd0-bfdd-35a48d6fd186 is completed, which is terminal'));
+    expect(err.message).toContain('7e2b7875');
     const out = serializeErr(err);
     expect(out).toMatchObject({ type: 'Error', name: 'DriverAdapterError', message: 'Driver adapter error (detail withheld from the log)' });
     expect(out).not.toHaveProperty('cause');
