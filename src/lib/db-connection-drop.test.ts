@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure } from './api-errors';
 import { adapterKindOf, pgErrorOf } from './pg-error';
+import { driverAdapterError, socketCause } from '../../tests/adapter-errors';
 
 type Db = ReturnType<typeof createPrismaClient>;
 type Cut = 'end' | 'reset';
@@ -137,6 +138,10 @@ function expectBareConnectionClosed(err: unknown): void {
   expect(Object.keys(adapterCauseKeysOf(err))).toEqual(['kind']);
   expect(pgErrorOf(err)).toBeNull();
   expectConnection(err);
+  const fixture = driverAdapterError(socketCause('ConnectionClosed'));
+  expect(Object.keys(err as object)).toEqual(Object.keys(fixture));
+  expect((err as Error).message).toBe(fixture.message);
+  expect((err as Error).cause).toEqual(fixture.cause);
 }
 
 /** The adapter's `ConnectionClosed`, on a Known error carrying `code`. */

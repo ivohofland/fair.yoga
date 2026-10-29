@@ -59,17 +59,17 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
 
 /**
  * The adapter's own error, not wrapped by the client runtime: a
- * DriverAdapterError whose `cause` is the adapter's object. A typed model
- * call does not throw this; `typedCallError` is that shape. `pgErrorOf`
- * still reads this one, which `src/lib/pg-error.test.ts` ("reads a bare
- * DriverAdapterError from its own cause") holds.
+ * DriverAdapterError whose `cause` is the adapter's object, and whose only
+ * enumerable own keys are `name` and `cause`. An interactive transaction's
+ * `COMMIT` cut by a reset throws it, and `src/lib/db-connection-drop.test.ts`
+ * holds this fixture to that produced error. A typed model call does not
+ * throw this; `typedCallError` is that shape.
  */
 export function driverAdapterError(cause: AdapterCause): Error {
   const message = typeof cause.message === 'string' ? cause.message : cause.kind;
   const err = new Error(message);
   Object.defineProperty(err, 'name', { value: 'DriverAdapterError', enumerable: true, writable: true, configurable: true });
   Object.defineProperty(err, 'cause', { value: cause, enumerable: true, writable: true, configurable: true });
-  Object.defineProperty(err, 'clientVersion', { value: CLIENT_VERSION, enumerable: true, writable: true, configurable: true });
   return err;
 }
 
