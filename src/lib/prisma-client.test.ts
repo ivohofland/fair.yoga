@@ -165,6 +165,23 @@ describe('prisma funnel imports', () => {
     expect(specifiers.every((s) => ALLOWED.has(s))).toBe(true);
   });
 
+  // The migration image runs scripts that import this module from a stage that
+  // copies files one by one, so a relative import it lacks fails to load there.
+  it('the Dockerfile migrate stage carries every file prisma-client.ts imports relatively', () => {
+    const dockerfile = readFileSync(path.join(__dirname, '..', '..', 'Dockerfile'), 'utf8');
+    const stage = /^FROM\s+\S+\s+AS\s+migrate\s*$([\s\S]*?)(?=^FROM\s)/m.exec(dockerfile)?.[1] ?? '';
+    expect(stage).toContain('COPY src/lib/prisma-client.ts ./src/lib/prisma-client.ts');
+    const relative = specifiersOf('prisma-client.ts').filter((s) => s.startsWith('.'));
+    expect(relative.length).toBeGreaterThan(0);
+    const missing = relative.filter((s) => {
+      // The generated client is not copied: the stage generates it.
+      if (s.startsWith('../generated/prisma/')) return !/^RUN pnpm exec prisma generate\s*$/m.test(stage);
+      const file = `src/lib/${path.posix.normalize(s)}.ts`;
+      return !stage.split('\n').some((line) => line.trim() === `COPY ${file} ./${file}`);
+    });
+    expect(missing).toEqual([]);
+  });
+
   it('prisma-enums.ts imports only the generated enums, which import nothing', () => {
     const specifiers = specifiersOf('prisma-enums.ts');
     expect(specifiers.length).toBeGreaterThan(0);
@@ -276,6 +293,8 @@ describe('createPrismaClient onPoolExhausted', () => {
     run: (client: ReturnType<typeof createPrismaClient>) => Promise<void>,
   ): Promise<void> {
     const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 300, onPoolExhausted });
+    // Warm the pool first, so the holder never meets the 300 ms cold-connect bound.
+    await client.$queryRaw`SELECT 1`;
     // A PrismaPromise runs only once `.then` is called, so this starts the sleep.
     const sleep = client.$queryRaw`SELECT pg_sleep(1.5)::text`.then(() => undefined);
     try {
@@ -283,7 +302,7 @@ describe('createPrismaClient onPoolExhausted', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       await run(client);
     } finally {
-      await sleep;
+      await sleep.catch(() => undefined);
       await client.$disconnect();
     }
   }

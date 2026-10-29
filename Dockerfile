@@ -63,10 +63,12 @@ COPY src/services/admin-grants.ts ./src/services/admin-grants.ts
 COPY scripts/check-reserved-slugs.ts ./scripts/check-reserved-slugs.ts
 COPY src/services/reserved-slug-holders.ts ./src/services/reserved-slug-holders.ts
 COPY src/lib/reserved-slugs.ts ./src/lib/reserved-slugs.ts
-# The module the scripts and services above import. Its imports are pinned by
-# prisma-client.test.ts ("prisma funnel imports"); every non-relative one must
-# already be in deps, which this stage is built FROM.
+# The module the scripts and services above import, and the files it imports
+# relatively. Its imports are pinned by prisma-client.test.ts ("prisma funnel
+# imports"), which also requires a COPY line here for each relative one; every
+# non-relative one must already be in deps, which this stage is built FROM.
 COPY src/lib/prisma-client.ts ./src/lib/prisma-client.ts
+COPY src/lib/pg-messages.ts ./src/lib/pg-messages.ts
 CMD ["sh", "-c", "pnpm exec prisma migrate deploy && pnpm exec tsx scripts/check-reserved-slugs.ts"]
 
 # ---------------------------------------------------------------------------
