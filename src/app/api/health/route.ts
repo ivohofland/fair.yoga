@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { getJobHealth, isJobHealthy } from '@/lib/scheduler';
 import { log } from '@/lib/log';
 import { hasCronSecret } from '@/lib/cron-auth';
+import { lastPoolExhaustionAt, poolExhaustedWithin } from '@/lib/pool-exhaustion';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,9 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
  * Health check for the reverse proxy / uptime monitor.
  * Public: liveness and DB reachability, `{ status, db }`, where `status`
- * already rolls up every job's health. With the cron secret (`hasCronSecret`,
+ * already rolls up every job's health and a pool exhaustion within the last
+ * `POOL_EXHAUSTION_HEALTH_WINDOW_MS`, read from process memory because the
+ * pool is what is dry (`docs/technical-architecture.md`, Database errors). With the cron secret (`hasCronSecret`,
  * never `requireCronAuth`, whose 401/500 would fail the monitor): per-job
  * scheduler state (timestamps + `isJobHealthy`'s verdict — error text stays in
  * the server log) and how many degradation events fired in the last day, as a
@@ -45,6 +48,7 @@ export async function GET(request: NextRequest) {
     ]),
   );
   const jobsUnhealthy = Object.values(jobs).some((j) => !j.healthy);
+  const poolExhausted = poolExhaustedWithin(new Date());
   try {
     await prisma.$queryRaw`SELECT 1`;
   } catch (err) {
@@ -59,18 +63,19 @@ export async function GET(request: NextRequest) {
       { status: 503 },
     );
   }
-  const status = jobsUnhealthy ? 'degraded' : 'ok';
+  const status = jobsUnhealthy || poolExhausted ? 'degraded' : 'ok';
   if (!detailed) return Response.json({ status, db: 'up' });
+  const pool = { lastExhaustedAt: lastPoolExhaustionAt()?.toISOString() ?? null };
   try {
     const open = await prisma.degradationEvent.count({
       where: { lastSeenAt: { gte: new Date(Date.now() - OPEN_WINDOW_MS) } },
     });
-    return Response.json({ status, db: 'up', jobs, degradations: { open } });
+    return Response.json({ status, db: 'up', jobs, pool, degradations: { open } });
   } catch (err) {
     // The database answered the probe, so this is not an outage: a missing
     // table, a permission or a timeout on the count alone. Report what is
     // known and leave the count out rather than invent one.
     log.error({ err }, 'health check: degradation count failed');
-    return Response.json({ status, db: 'up', jobs });
+    return Response.json({ status, db: 'up', jobs, pool });
   }
 }

@@ -18,6 +18,7 @@ interface HealthBody {
   db: string;
   jobs: Record<string, Record<string, unknown>>;
   degradations?: { open: number };
+  pool?: { lastExhaustedAt: string | null };
 }
 
 function entry(overrides: Partial<JobHealth>): JobHealth {
@@ -51,6 +52,7 @@ afterEach(() => {
   if (originalSecret === undefined) delete process.env.CRON_SECRET;
   else process.env.CRON_SECRET = originalSecret;
   globalThis.__fairYogaJobHealth = undefined;
+  globalThis.__fairYogaPoolExhaustion = undefined;
   vi.useRealTimers();
 });
 
@@ -171,6 +173,59 @@ describe('GET /api/health', () => {
       lastSuccessAt: '2026-09-29T10:00:00.000Z',
       healthy: true,
     });
+  });
+});
+
+describe('GET /api/health pool exhaustion', () => {
+  const NOW = new Date('2026-10-29T12:00:00.000Z');
+  function stampedAgo(ms: number): Date {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const at = new Date(NOW.getTime() - ms);
+    globalThis.__fairYogaPoolExhaustion = { lastAt: at };
+    return at;
+  }
+
+  it('reads degraded, at 200, for a pool exhaustion 1 minute old', async () => {
+    stampedAgo(60_000);
+    const { status, body } = await read(null);
+    expect(status).toBe(200);
+    expect(body).toEqual({ status: 'degraded', db: 'up' });
+  });
+
+  it('reads ok once the exhaustion is 15 minutes old', async () => {
+    stampedAgo(15 * 60_000);
+    const { body } = await read(null);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+  });
+
+  it('reads ok in a process that never exhausted its pool', async () => {
+    globalThis.__fairYogaPoolExhaustion = undefined;
+    const { body } = await read(null);
+    expect(body).toEqual({ status: 'ok', db: 'up' });
+  });
+
+  it('the detailed body carries pool.lastExhaustedAt', async () => {
+    const at = stampedAgo(60_000);
+    expect((await read()).body.pool).toEqual({ lastExhaustedAt: at.toISOString() });
+    globalThis.__fairYogaPoolExhaustion = undefined;
+    expect((await read()).body.pool).toEqual({ lastExhaustedAt: null });
+  });
+
+  it('the detailed body carries pool when the degradation count fails', async () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    onTestFinished(() => error.mockRestore());
+    count.mockRejectedValueOnce(new Error('boom'));
+    expect((await read()).body.pool).toEqual({ lastExhaustedAt: null });
+  });
+
+  it('the pool signal never queries the database', async () => {
+    stampedAgo(60_000);
+    queryRaw.mockClear();
+    count.mockClear();
+    await read(null);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(count).not.toHaveBeenCalled();
   });
 });
 

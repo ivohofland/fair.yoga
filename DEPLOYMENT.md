@@ -464,7 +464,11 @@ it descends from the one you rolled back to.
 
 - `GET /api/health` — liveness and DB reachability (503 when the DB is down)
   as `{ status, db }`, where `status` is `degraded` once any job is unhealthy
-  or the DB is down.
+  or the DB is down, and also for 15 minutes after a pool exhaustion, at HTTP
+  200. So an uptime monitor must match the body's `status` (a keyword check for
+  `"status":"ok"`, as production's Better Stack monitor does), not only the
+  HTTP status. What to do about it is the runbook in `docs/degradation-sites.md`
+  (`DATABASE_POOL_EXHAUSTED`).
   A monitor needs only that public summary; the per-job scheduler state below
   needs the cron secret (`Authorization: Bearer $CRON_SECRET`).
   `jobs.<name>.healthy` flips false when a job errors, and also when its run
