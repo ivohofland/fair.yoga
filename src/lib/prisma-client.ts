@@ -37,8 +37,9 @@ export interface PrismaClientFactoryOptions {
   /**
    * Heard when a caller's wait for a pooled connection times out, with the
    * pool's counters as the timeout is delivered; the caller still gets the
-   * error. A throw from it is dropped. It does not survive `$disconnect` and a
-   * later reconnect: the adapter then rebuilds a plain pool from the config.
+   * error. A throw from it becomes a process warning, never the caller's error.
+   * It does not survive `$disconnect` and a later reconnect: the adapter then
+   * rebuilds a plain pool from the config.
    */
   onPoolExhausted?: (counters: PoolCounters) => void;
 }
@@ -117,12 +118,15 @@ class ExhaustionReportingPool extends pg.Pool {
   }
 
   #report(err: unknown): void {
-    // pg-pool's own error, never wrapped yet, so the message and `code` suffice; the full rules: `isPgPoolTimeout` (pg-error.ts).
+    // A deliberate subset of `isPgPoolTimeout` (pg-error.ts): the message and no own
+    // `code` suffice, because this is pg-pool's own error, before anything wraps it.
     if (!(err instanceof Error) || err.message !== PG_POOL_TIMEOUT_MESSAGE || Object.prototype.hasOwnProperty.call(err, 'code')) return;
     try {
       this.#onPoolExhausted?.({ waiting: this.waitingCount, total: this.totalCount, idle: this.idleCount, max: this.#max });
-    } catch {
-      // The caller's error is what matters here; the hook's own failure is dropped.
+    } catch (hookErr: unknown) {
+      // The caller's error stays untouched; the hook's own failure is only made visible.
+      const detail = hookErr instanceof Error ? hookErr.message : String(hookErr);
+      process.emitWarning(`onPoolExhausted threw: ${detail}`);
     }
   }
 }
