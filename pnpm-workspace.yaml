@@ -49,7 +49,6 @@ strictDepBuilds: true
 # design — so the list is kept minimal rather than generous.
 # Re-derive the set with the command in docs/supply-chain.md.
 allowBuilds:
-  '@prisma/client': true
   '@prisma/engines': true
   esbuild: true
   prisma: true
