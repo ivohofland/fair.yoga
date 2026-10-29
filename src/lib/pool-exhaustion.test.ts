@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach, afterAll } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { createPrismaClient, type PrismaClientFactoryOptions } from '@/lib/prisma-client';
+import { withStarvedClient, type StarvedClient } from '../../tests/starved-client';
 
 /**
  * Pool exhaustion recorded through the real `writeDegradationEvent` into a
@@ -10,33 +11,6 @@ import { createPrismaClient, type PrismaClientFactoryOptions } from '@/lib/prism
  */
 const CODE = 'DATABASE_POOL_EXHAUSTED';
 const prisma = createPrismaClient();
-
-type Starved = ReturnType<typeof createPrismaClient>;
-
-/**
- * A client whose one connection is held by a sleep for the length of `run`.
- * The 2 s pool bound leaves a cold connect on a loaded machine room; the sleep
- * has to outlast the warm-up and every pool wait `run` makes.
- */
-async function withStarvedClient(
-  options: Pick<PrismaClientFactoryOptions, 'onPoolExhausted'>,
-  sleepSeconds: number,
-  run: (client: Starved) => Promise<void>,
-): Promise<void> {
-  const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 2_000, ...options });
-  // Warm the pool first, so the holder's own connect is not raced against the bound.
-  await client.$queryRaw`SELECT 1`;
-  // A PrismaPromise runs only once `.then` is called, so this starts the sleep.
-  const sleep = client.$queryRaw`SELECT pg_sleep(${sleepSeconds})::text`.then(() => undefined);
-  try {
-    // Let the sleep take the pool's only connection before `run` asks for one.
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    await run(client);
-  } finally {
-    await sleep.catch(() => undefined);
-    await client.$disconnect();
-  }
-}
 
 async function loadFresh(): Promise<{
   error: ReturnType<typeof vi.spyOn>;
@@ -95,7 +69,7 @@ describe('recordPoolExhaustion, end to end', () => {
     const { mod, apiUtils } = await loadFresh();
     expect(mod.lastPoolExhaustionAt()).toBeNull();
 
-    await withStarvedClient({ onPoolExhausted: mod.recordPoolExhaustion }, 5, async (starved) => {
+    await withStarvedClient(mod.recordPoolExhaustion, 5, async (starved) => {
       const handler = apiUtils.withErrorHandler(async () => {
         await starved.$queryRaw`SELECT 1`;
         return NextResponse.json({});
@@ -118,7 +92,7 @@ describe('recordPoolExhaustion, end to end', () => {
   it('a second exhaustion inside the window reaches the row after the window', async () => {
     const { mod, apiUtils, degradation } = await loadFresh();
 
-    await withStarvedClient({ onPoolExhausted: mod.recordPoolExhaustion }, 5, async (starved) => {
+    await withStarvedClient(mod.recordPoolExhaustion, 5, async (starved) => {
       const handler = apiUtils.withErrorHandler(async () => {
         await starved.$queryRaw`SELECT 1`;
         return NextResponse.json({});
@@ -144,13 +118,13 @@ describe('recordPoolExhaustion, end to end', () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
     process.on('unhandledRejection', onUnhandled);
-    let shared: Starved | undefined;
+    let shared: StarvedClient | undefined;
     vi.doMock('@/lib/db', () => ({
-      get prisma(): Starved | undefined { return shared; },
+      get prisma(): StarvedClient | undefined { return shared; },
     }));
     try {
       const { mod, apiUtils, degradation, error } = await loadFresh();
-      await withStarvedClient({ onPoolExhausted: mod.recordPoolExhaustion }, 7, async (starved) => {
+      await withStarvedClient(mod.recordPoolExhaustion, 10, async (starved) => {
         shared = starved;
         const handler = apiUtils.withErrorHandler(async () => {
           await starved.$queryRaw`SELECT 1`;
@@ -170,7 +144,7 @@ describe('recordPoolExhaustion, end to end', () => {
         );
 
         // Wait out the holder: the pool answers again once the sleep ends.
-        await vi.waitFor(async () => { await starved.$queryRaw`SELECT 1`; }, { timeout: 12_000, interval: 100 });
+        await vi.waitFor(async () => { await starved.$queryRaw`SELECT 1`; }, { timeout: 15_000, interval: 100 });
 
         // `record` reads the clock synchronously and its write starts after an
         // await, so the real clock is back before the write touches the pool.
@@ -192,7 +166,7 @@ describe('recordPoolExhaustion, end to end', () => {
       process.off('unhandledRejection', onUnhandled);
     }
     expect(unhandled).toEqual([]);
-  }, 40_000);
+  }, 50_000);
 });
 
 describe('poolExhaustedWithin', () => {

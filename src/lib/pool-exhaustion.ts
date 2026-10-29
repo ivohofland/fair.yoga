@@ -1,4 +1,5 @@
 import { logDegraded } from '@/lib/degradation';
+import type { FireAndForget } from '@/lib/fire-and-forget';
 import type { PoolCounters } from '@/lib/prisma-client';
 
 /** The window `poolExhaustedWithin` answers for, after the last pool exhaustion. */
@@ -8,20 +9,18 @@ declare global {
   var __fairYogaPoolExhaustion: { lastAt: Date | null } | undefined;
 }
 
-// Process-wide: the writer is the shared client's hook, in whichever bundle
-// layer built it, and the reader is another layer's module instance, so both
-// go through the one holder on globalThis (CLAUDE.md, "State the whole
-// process must share lives on globalThis"). Read per call, so a holder
-// replaced or cleared is the one the next call sees.
+// Process-wide, so every module instance in the process reads the same stamp
+// (CLAUDE.md, "State the whole process must share lives on globalThis"). Read
+// per call, so a holder replaced or cleared is the one the next call sees.
 function holder(): { lastAt: Date | null } {
   return (globalThis.__fairYogaPoolExhaustion ??= { lastAt: null });
 }
 
 /**
  * The shared client's `onPoolExhausted`: stamps the time, then records
- * `DATABASE_POOL_EXHAUSTED`. Never throws and returns nothing to await.
+ * `DATABASE_POOL_EXHAUSTED`. Never throws.
  */
-export function recordPoolExhaustion(counters: PoolCounters): void {
+export function recordPoolExhaustion(counters: PoolCounters): FireAndForget {
   holder().lastAt = new Date();
   logDegraded('DATABASE_POOL_EXHAUSTED', counters, 'a database query timed out waiting for a pooled connection');
 }

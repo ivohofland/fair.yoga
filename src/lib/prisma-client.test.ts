@@ -11,6 +11,7 @@ import { transientDbFailure } from '@/lib/api-errors';
 import { withErrorHandler } from '@/lib/api-utils';
 import { PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
 import { pgConnectTimeout } from '../../tests/adapter-errors';
+import { withStarvedClient } from '../../tests/starved-client';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
 
@@ -292,28 +293,9 @@ describe('createPrismaClient onPoolExhausted', () => {
    * starved pool. The 2 s pool bound leaves a cold connect on a loaded machine
    * room, and the sleep outlasts the warm-up and one full pool wait.
    */
-  async function withStarvedClient(
-    onPoolExhausted: (counters: PoolCounters) => void,
-    run: (client: ReturnType<typeof createPrismaClient>) => Promise<void>,
-  ): Promise<void> {
-    const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 2_000, onPoolExhausted });
-    // Warm the pool first, so the holder's own connect is not raced against the bound.
-    await client.$queryRaw`SELECT 1`;
-    // A PrismaPromise runs only once `.then` is called, so this starts the sleep.
-    const sleep = client.$queryRaw`SELECT pg_sleep(5)::text`.then(() => undefined);
-    try {
-      // Let the sleep take the pool's only connection before `run` asks for one.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await run(client);
-    } finally {
-      await sleep.catch(() => undefined);
-      await client.$disconnect();
-    }
-  }
-
   it('hears a plain query that times out waiting for the pool, with the pool counters', async () => {
     const heard: PoolCounters[] = [];
-    await withStarvedClient((counters) => { heard.push(counters); }, async (client) => {
+    await withStarvedClient((counters) => { heard.push(counters); }, 5, async (client) => {
       const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
       expect(err).not.toBeNull();
       expect(carriesPoolTimeout(err) || transientDbFailure(err)?.kind === 'pool_exhausted').toBe(true);
@@ -323,19 +305,22 @@ describe('createPrismaClient onPoolExhausted', () => {
 
   it('hears an interactive transaction whose start times out', async () => {
     const heard: PoolCounters[] = [];
-    await withStarvedClient((counters) => { heard.push(counters); }, async (client) => {
+    await withStarvedClient((counters) => { heard.push(counters); }, 5, async (client) => {
       const err: unknown = await client.$transaction(async (tx) => tx.$queryRaw`SELECT 1`).then(() => null, (e: unknown) => e);
       expect(err).not.toBeNull();
     });
     expect(heard).toHaveLength(1);
   }, 20_000);
 
-  it('a throwing hook does not replace the error the caller sees', async () => {
+  it('a throwing hook does not replace the error the caller sees, and is emitted as a warning', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    const warnings: string[] = [];
+    const onWarning = (warning: Error): void => { warnings.push(warning.message); };
     process.on('unhandledRejection', onUnhandled);
+    process.on('warning', onWarning);
     try {
-      await withStarvedClient(() => { throw new Error('hook boom'); }, async (client) => {
+      await withStarvedClient(() => { throw new Error('hook boom'); }, 5, async (client) => {
         const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
         expect(err).not.toBeNull();
         expect(carriesPoolTimeout(err)).toBe(true);
@@ -346,8 +331,10 @@ describe('createPrismaClient onPoolExhausted', () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     } finally {
       process.off('unhandledRejection', onUnhandled);
+      process.off('warning', onWarning);
     }
     expect(unhandled).toEqual([]);
+    expect(warnings).toContain('onPoolExhausted threw: hook boom');
   }, 20_000);
 
   it('connect errors that are not the wait timeout do not fire the hook', async () => {
@@ -393,7 +380,7 @@ describe('createPrismaClient onPoolExhausted', () => {
   });
 
   it('answers a withErrorHandler route 503 with the busy copy and no code', async () => {
-    await withStarvedClient(() => {}, async (starved) => {
+    await withStarvedClient(() => {}, 5, async (starved) => {
       const handler = withErrorHandler(async () => {
         await starved.$queryRaw`SELECT 1`;
         return NextResponse.json({});
