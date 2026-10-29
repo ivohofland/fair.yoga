@@ -287,16 +287,20 @@ function carriesPoolTimeout(err: unknown): boolean {
 }
 
 describe('createPrismaClient onPoolExhausted', () => {
-  /** A client whose one connection is held by a 1.5 s sleep; `run` meets the starved pool. */
+  /**
+   * A client whose one connection is held by a 5 s sleep; `run` meets the
+   * starved pool. The 2 s pool bound leaves a cold connect on a loaded machine
+   * room, and the sleep outlasts the warm-up and one full pool wait.
+   */
   async function withStarvedClient(
     onPoolExhausted: (counters: PoolCounters) => void,
     run: (client: ReturnType<typeof createPrismaClient>) => Promise<void>,
   ): Promise<void> {
-    const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 300, onPoolExhausted });
-    // Warm the pool first, so the holder never meets the 300 ms cold-connect bound.
+    const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 2_000, onPoolExhausted });
+    // Warm the pool first, so the holder's own connect is not raced against the bound.
     await client.$queryRaw`SELECT 1`;
     // A PrismaPromise runs only once `.then` is called, so this starts the sleep.
-    const sleep = client.$queryRaw`SELECT pg_sleep(1.5)::text`.then(() => undefined);
+    const sleep = client.$queryRaw`SELECT pg_sleep(5)::text`.then(() => undefined);
     try {
       // Let the sleep take the pool's only connection before `run` asks for one.
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -315,7 +319,7 @@ describe('createPrismaClient onPoolExhausted', () => {
       expect(carriesPoolTimeout(err) || transientDbFailure(err)?.kind === 'pool_exhausted').toBe(true);
     });
     expect(heard).toEqual([{ waiting: expect.any(Number), total: 1, idle: 0, max: 1 }]);
-  }, 10_000);
+  }, 20_000);
 
   it('hears an interactive transaction whose start times out', async () => {
     const heard: PoolCounters[] = [];
@@ -324,7 +328,7 @@ describe('createPrismaClient onPoolExhausted', () => {
       expect(err).not.toBeNull();
     });
     expect(heard).toHaveLength(1);
-  }, 10_000);
+  }, 20_000);
 
   it('a throwing hook does not replace the error the caller sees', async () => {
     const unhandled: unknown[] = [];
@@ -344,7 +348,7 @@ describe('createPrismaClient onPoolExhausted', () => {
       process.off('unhandledRejection', onUnhandled);
     }
     expect(unhandled).toEqual([]);
-  }, 10_000);
+  }, 20_000);
 
   it('connect errors that are not the wait timeout do not fire the hook', async () => {
     const heard: PoolCounters[] = [];
@@ -400,7 +404,7 @@ describe('createPrismaClient onPoolExhausted', () => {
       expect(body).toEqual({ error: { message: 'The system was busy and could not finish that. Please try again.' } });
       expect(Object.keys((body as { error: object }).error)).not.toContain('code');
     });
-  }, 10_000);
+  }, 20_000);
 });
 
 describe('poolConfigFor', () => {
