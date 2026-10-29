@@ -401,8 +401,10 @@ contributor's own machine.
 **`strictDepBuilds: true` + `allowBuilds`** is what stops that. Any
 dependency that reaches this repo with a build/install script and no entry in
 `allowBuilds` **errors the install** — on a laptop, not only in CI.
-`allowBuilds` grants five packages, and every one of them is live:
-`@prisma/client`, `@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`.
+`allowBuilds` grants four packages, and every one of them is live:
+`@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`. `@prisma/client` is
+not among them: 7.10.1 declares no `preinstall`, `install` or `postinstall`
+script, so pnpm never gates it (measured 2026-10-29, Prisma 7.10.1).
 
 **`strictDepBuilds` is written out rather than left to the default**, for the
 reason the census guard's docblock gives about `--frozen-lockfile`: a default
@@ -435,11 +437,13 @@ built, so `node_modules` must go first):
 rm -rf node_modules && pnpm install --frozen-lockfile
 ```
 
-Measured 2026-09-10 against today's lockfile, this blocks **five** packages,
-reported both in the error (`Ignored build scripts: @prisma/client@6.19.3,
-@prisma/engines@6.19.3, esbuild@0.28.1, prisma@6.19.3, unrs-resolver@1.11.1`)
+Measured 2026-10-29 against today's lockfile (Prisma 7.10.1), this blocks
+**four** packages, reported both in the error (`Ignored build scripts:
+@prisma/engines@7.10.1, esbuild@0.28.1, prisma@7.10.1, unrs-resolver@1.11.1`)
 and afterward in `node_modules/.modules.yaml`'s `ignoredBuilds` array —
-exactly the five `allowBuilds` grants, and `fsevents` among neither. Both
+exactly the four `allowBuilds` grants, with `@prisma/client` and `fsevents`
+among neither. `@prisma/client@7.10.1` declares no
+`preinstall`/`install`/`postinstall` script, so it is not gated. Both
 `fsevents` versions this lockfile resolves (`2.3.2`, `2.3.3`) declare no
 `install`/`preinstall`/`postinstall` script and ship a prebuilt native binary,
 so pnpm's own build-script detector never gates it on this platform.
