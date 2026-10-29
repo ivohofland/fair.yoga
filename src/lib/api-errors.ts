@@ -233,7 +233,7 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
  * what a request meets while `db` is being recreated. Typed against
  * `TransientKind` so an unknown kind cannot appear here.
  */
-const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map([
+export const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map([
   ['DatabaseNotReachable', 'connection'],
   ['ConnectionClosed', 'connection'],
   ['SocketTimeout', 'connection'],

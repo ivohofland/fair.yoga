@@ -356,7 +356,9 @@ describe('transient kinds produced against the real database', () => {
     });
 
     it('53300: a role whose connection limit is zero', async () => {
-      const url = new URL(process.env.DATABASE_URL ?? '');
+      const databaseUrl = process.env.DATABASE_URL;
+      if (databaseUrl === undefined) throw new Error('DATABASE_URL is unset; the 53300 case connects as its own role on that server');
+      const url = new URL(databaseUrl);
       url.username = role;
       url.password = password;
       const limited = createPrismaClient({ url: url.toString() });

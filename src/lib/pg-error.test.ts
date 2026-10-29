@@ -103,10 +103,24 @@ describe('isPgConnectTimeout', () => {
     ['an own code', Object.assign(pgConnectTimeout(), { code: 'ETIMEDOUT' })],
     ['a non-Error', { message: PG_CONNECT_TIMEOUT_MESSAGE }],
     ['the pool wait timeout, the sibling message', pgPoolTimeout()],
+    ['the right message carrying a Postgres error', connectTimeoutCarryingPgError()],
   ])('rejects %s', (_label, err) => {
     expect(isPgConnectTimeout(err)).toBe(false);
   });
 });
+
+/**
+ * pg-pool's connect-timeout message on a Known error whose adapter cause holds
+ * a SQLSTATE. Its own `code` is removed so that only the Postgres-error rule
+ * can reject it; a Known error keeps `code` as an own key, which the own-code
+ * rule would reject first.
+ */
+function connectTimeoutCarryingPgError(): Prisma.PrismaClientKnownRequestError {
+  const err = knownWithAdapterCause('P2010', pgCause('57P01', 'terminating connection due to administrator command'));
+  err.message = PG_CONNECT_TIMEOUT_MESSAGE;
+  Reflect.deleteProperty(err, 'code');
+  return err;
+}
 
 describe('adapterKindOf', () => {
   it('reads cause.kind from either path, inside the closed set', () => {

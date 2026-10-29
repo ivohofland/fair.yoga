@@ -7,6 +7,7 @@ import {
   isTransientDbError,
   transientDbFailure,
   TERMINAL_TRIGGER_TAILS,
+  TRANSIENT_ADAPTER_KIND,
   type ApiFailure,
   type TransientKind,
 } from './api-errors';
@@ -15,6 +16,7 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
+import { ADAPTER_KINDS } from './pg-error';
 import { knownWithAdapterCause, pgCause, pgConnectTimeout, pgPoolTimeout, socketCause, typedCallError } from '../../tests/adapter-errors';
 
 /**
@@ -976,6 +978,10 @@ describe('transientDbFailure', () => {
     ['P2034 with no adapter cause', prismaError('P2034'), 'deadlock', 'error'],
     ['53300 typed (Known P2037)', typedCallError(pgCause('53300', 'sorry, too many clients already')), 'connection', 'error'],
     ['53300 raw (P2010)', rawPg('53300', 'sorry, too many clients already'), 'connection', 'error'],
+    // The two rows below isolate the two routes a `53300` can take: its SQLSTATE
+    // under a kind no map holds, and its adapter kind with no SQLSTATE.
+    ['53300 SQLSTATE only', knownWithAdapterCause('P2010', pgCause('53300', 'sorry, too many clients already', { kind: 'postgres' })), 'connection', 'error'],
+    ['TooManyConnections kind only', knownWithAdapterCause('P2037', { kind: 'TooManyConnections', cause: 'x' }), 'connection', 'error'],
     ['57P01 typed (Known P2039)', typedPg('57P01', 'terminating connection due to administrator command'), 'connection', 'error'],
     ['57P01 raw (P2010)', rawPg('57P01', 'terminating connection due to administrator command'), 'connection', 'error'],
     ['57P02 raw (P2010)', rawPg('57P02', 'terminating connection because of crash of another server process'), 'connection', 'error'],
@@ -1013,8 +1019,40 @@ describe('transientDbFailure', () => {
     });
   });
 
-  it('keeps the busy copy for every other kind', () => {
-    expect(classifyApiError(typedPg('55P03', LOCK_TIMEOUT_MESSAGE)).message).toBe('The system was busy and could not finish that. Please try again.');
+  /** One fixture per kind but `connection`; a new `TransientKind` member is a compile error here until it has one. */
+  const NON_CONNECTION_FIXTURES = {
+    lock_timeout: typedPg('55P03', LOCK_TIMEOUT_MESSAGE),
+    deadlock: typedPg('40P01', 'deadlock detected'),
+    serialization: rawPg('40001', 'could not serialize access due to concurrent update'),
+    pool_exhausted: pgPoolTimeout(),
+    tx_budget: prismaError('P2028'),
+  } satisfies Record<Exclude<TransientKind, 'connection'>, unknown>;
+
+  it.each(Object.entries(NON_CONNECTION_FIXTURES))('keeps the busy copy for %s', (kind, error) => {
+    expect(transientDbFailure(error)?.kind).toBe(kind);
+    expect(classifyApiError(error).message).toBe('The system was busy and could not finish that. Please try again.');
+  });
+
+  /**
+   * Every adapter kind outside `TRANSIENT_ADAPTER_KIND`, carrying no SQLSTATE,
+   * is not transient: no adapter kind reaches `connection` except through that
+   * map. `TransactionWriteConflict` is left out because its transient reading
+   * comes from the SQLSTATE it always carries in practice, not its kind.
+   */
+  it.each(ADAPTER_KINDS.filter((kind) => !TRANSIENT_ADAPTER_KIND.has(kind) && kind !== 'TransactionWriteConflict'))(
+    'does not classify the adapter kind %s with no SQLSTATE as transient',
+    (kind) => {
+      const error = knownWithAdapterCause('P2010', { kind });
+      expect(transientDbFailure(error)).toBeNull();
+      expect(classifyApiError(error).status).toBe(500);
+    },
+  );
+
+  // Not classified yet: pg's bare termination error carries nothing structured (see #931).
+  it('answers a bare Connection terminated unexpectedly with a non-transient 500', () => {
+    const error = new Error('Connection terminated unexpectedly');
+    expect(transientDbFailure(error)).toBeNull();
+    expect(classifyApiError(error).status).toBe(500);
   });
 
   it('does not treat an adapter kind outside the connection set as transient', () => {
