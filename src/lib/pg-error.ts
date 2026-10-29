@@ -2,8 +2,8 @@ import { Prisma } from '@/lib/prisma-client';
 
 /**
  * A Postgres error as the pg driver adapter reports it: only fields Postgres
- * wrote. Where each field comes from, and why the 23505/23514/23P01 names
- * are read from the primary message: `docs/technical-architecture.md`,
+ * wrote. Where each field comes from, and which constraint names are read
+ * from the primary message: `docs/technical-architecture.md`,
  * "Database errors".
  */
 export interface PgError {
@@ -41,15 +41,6 @@ const SQLSTATE = /^[0-9A-Z]{5}$/;
 
 type ConstraintReader = (cause: object, message: string) => string | undefined;
 
-/** The readers `fromMessage` built: the SQLSTATEs whose name depends on Postgres's message wording. */
-const MESSAGE_READERS = new WeakSet<ConstraintReader>();
-
-function fromMessage(clause: RegExp): ConstraintReader {
-  const reader: ConstraintReader = (_cause, message) => clause.exec(message)?.[1];
-  MESSAGE_READERS.add(reader);
-  return reader;
-}
-
 function field(source: object, key: string): unknown {
   return (source as Record<string, unknown>)[key];
 }
@@ -58,14 +49,27 @@ function isObject(value: unknown): value is object {
   return typeof value === 'object' && value !== null;
 }
 
+/** The adapter's `cause.constraint.index`, when it is a string. */
+const fromIndex: ConstraintReader = (cause) => {
+  const constraint = field(cause, 'constraint');
+  const index = isObject(constraint) ? field(constraint, 'index') : undefined;
+  return typeof index === 'string' ? index : undefined;
+};
+
+/** The readers `fromMessage` built: the SQLSTATEs whose name can depend on Postgres's message wording. */
+const MESSAGE_READERS = new WeakSet<ConstraintReader>();
+
+/** `structured` first when given, then the anchored `clause` on the primary message. */
+function fromMessage(clause: RegExp, structured?: ConstraintReader): ConstraintReader {
+  const reader: ConstraintReader = (cause, message) => structured?.(cause, message) ?? clause.exec(message)?.[1];
+  MESSAGE_READERS.add(reader);
+  return reader;
+}
+
 /** Where each constraint SQLSTATE's name comes from; a SQLSTATE added here must say. */
 const CONSTRAINT_SOURCE = {
-  '23503': (cause) => {
-    const constraint = field(cause, 'constraint');
-    const index = isObject(constraint) ? field(constraint, 'index') : undefined;
-    return typeof index === 'string' ? index : undefined;
-  },
-  '23505': fromMessage(/^duplicate key value violates unique constraint "([^"]+)"$/),
+  '23503': fromIndex,
+  '23505': fromMessage(/^duplicate key value violates unique constraint "([^"]+)"$/, fromIndex),
   '23514': fromMessage(/ violates check constraint "([^"]+)"$/),
   '23P01': fromMessage(/^conflicting key value violates exclusion constraint "([^"]+)"$/),
 } as const satisfies Record<'23503' | '23505' | '23514' | '23P01', ConstraintReader>;
@@ -75,9 +79,10 @@ function hasConstraintSource(sqlState: string): sqlState is keyof typeof CONSTRA
 }
 
 /**
- * True when `sqlState`'s constraint name is read from Postgres's primary
- * message rather than a structured field, so a missing name can mean a
- * localised or reworded message: `docs/technical-architecture.md`, "Database errors".
+ * True when `sqlState`'s constraint name can be read from Postgres's primary
+ * message, alone or as the fallback for an absent structured field, so a
+ * missing name can mean a localised or reworded message:
+ * `docs/technical-architecture.md`, "Database errors".
  */
 export function namesConstraintInMessage(sqlState: string): boolean {
   return hasConstraintSource(sqlState) && MESSAGE_READERS.has(CONSTRAINT_SOURCE[sqlState]);
