@@ -2795,12 +2795,14 @@ cost.
 
 ## The empty-`update` upsert quirk — read this before "tidying" one
 
-Prisma 6.19.3 does **not** compile `tx.someTable.upsert({ where, update: {},
+Prisma 7.10.1 does **not** compile `tx.someTable.upsert({ where, update: {},
 create: {...} })` to the atomic `INSERT ... ON CONFLICT DO UPDATE` when the
 target row already exists. It compiles to three plain, non-locking `SELECT`s
-instead — confirmed by direct query logging (`DEBUG=prisma:query` emits
-nothing on this Prisma version; a standalone
-`new PrismaClient({ log: [{ emit: 'event', level: 'query' }] })` was used).
+instead — measured 2026-10-29 on a `TeacherBlock` row in the test database by
+query logging (`DEBUG=prisma:query` prints nothing on this Prisma version; a
+client built by `createPrismaClient` with
+`log: [{ emit: 'event', level: 'query' }]` was used, and its `query` events
+are the re-derive).
 Give the same call a single real column — `update: { isArchived: false }`, for
 instance — and Prisma switches to the atomic path, which **does** take the row
 lock.
