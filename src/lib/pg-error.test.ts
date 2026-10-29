@@ -495,7 +495,7 @@ describe('produced against the real database: conflict codes', () => {
     const pg = pgErrorOf(real);
     if (pg === null) throw new Error('no Postgres error on the produced value');
     const realCause = metaOf(real).driverAdapterError.cause as { kind: unknown };
-    const fake = knownWithAdapterCause('P2002', pgCause('23505', pg.message), { modelName: 'Teacher' });
+    const fake = knownWithAdapterCause('P2002', pgCause('23505', pg.message, { constraint: { index: 'Teacher_pageSlug_key' } }), { modelName: 'Teacher' });
     expect(pgErrorOf(fake)).toEqual(pg);
     expect((fake as Prisma.PrismaClientKnownRequestError).code).toBe((real as Prisma.PrismaClientKnownRequestError).code);
     expect((metaOf(fake).driverAdapterError.cause as { kind: unknown }).kind).toBe(realCause.kind);

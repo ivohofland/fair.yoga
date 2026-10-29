@@ -1729,7 +1729,7 @@ the same `DatabaseNotReachable` as `ECONNREFUSED`.
 |---|---|---|---|---|
 | Unmapped SQLSTATE on a typed call (`23514`, `23P01`, `55P03`…) | `PrismaClientKnownRequestError` `P2039`, `meta {modelName, driverAdapterError}` | `err.meta.driverAdapterError.cause` | `postgres` | `originalCode`, `originalMessage`, `code`, `severity`, `message`, `detail?`, `column?`, `hint?` |
 | Same SQLSTATE on a raw call, and `54001`, `57014`, which only raw calls here raise | `PrismaClientKnownRequestError` `P2010` | `err.meta.driverAdapterError.cause` | `postgres` | as above |
-| `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint` (`{index}` for a named unique index), `table`; **no `message`** |
+| `23505` (typed `P2002`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `UniqueConstraintViolation` | `originalCode`, `originalMessage`, `constraint` (`{index}` when pg names the constraint, else `{fields}`), `table`; **no `message`** |
 | `23503` (typed `P2003`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `ForeignKeyConstraintViolation` | `originalCode`, `originalMessage`, `constraint.index`; no `message` |
 | `40001` or `40P01` (typed `P2034`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TransactionWriteConflict` | `originalCode` (`'40001'` or `'40P01'`), `originalMessage`; **no `code`** |
 | `P2025` | Known | none | — | `meta {modelName, operation}` |
@@ -1772,11 +1772,12 @@ cause carries no `constraint` (`mapDriverError`). `23505` has one. The
 adapter writes `{index}` whenever pg's `DatabaseError` names the constraint,
 and Postgres names the index on every btree unique violation, expression and
 partial indexes included. When pg names none, the adapter writes
-`{fields}` parsed from `detail` instead. So the unique violations behind most
-of the app's 409s are named from a field no locale touches, and the message
+`{fields}` parsed from `detail` instead. So the unique violations behind the app's
+unique-conflict 409s are named from a field no locale touches, and the message
 is read only when `index` is absent. No migration here raises a `23505` by
 hand (`grep -rn "23505\|unique_violation" prisma/migrations` finds none), so
-the fallback is met only if the adapter stops writing `index`.
+the fallback is met if the adapter stops writing `index`, or by a `23505`
+that names no constraint, which nothing here raises today.
 `src/lib/pg-error.test.ts` pins every produced `23505` to carrying
 `{index: name}` and to keeping its name under a localised message, so that
 regression reddens a test rather than reopening the exposure below. The
