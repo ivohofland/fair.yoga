@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server';
 import type { Prisma } from '@/lib/prisma-client';
 import { log } from '@/lib/log';
 import { expectRefusal } from '../../../../tests/api-assertions';
-import { knownWithAdapterCause, pgCause } from '../../../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, socketCause } from '../../../../tests/adapter-errors';
 
 /**
  * `POST /api/class-templates`: the room ownership pre-check, and what the
@@ -169,6 +169,39 @@ describe('POST /api/class-templates — the insert lost a race on the room', () 
       expect(logged?.['err']).toBe(fkError);
     } finally {
       warn.mockRestore();
+      errorLog.mockRestore();
+    }
+  });
+});
+
+describe('POST /api/class-templates — a connection failure from the service', () => {
+  beforeEach(resetMocks);
+
+  /**
+   * The service rethrows a `connection` failure instead of answering `busy`,
+   * because one lost mid-`COMMIT` may have created the template and
+   * `TEMPLATE_BUSY` says "Nothing was created". The route's error wrapper
+   * answers it with the `connection` copy, which makes no such claim, and logs
+   * it once at `error`.
+   */
+  it("answers 503 with the connection copy rather than TEMPLATE_BUSY's", async () => {
+    findUniqueTeacherRoom.mockResolvedValueOnce(OWNED_OPEN_ROOM);
+    const lost = knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable'));
+    createClassTemplate.mockRejectedValueOnce(lost);
+    const errorLog = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      const res = await create();
+      const body = (await res.json()) as { error?: { message?: unknown; code?: unknown } };
+
+      expect({ status: res.status, code: body.error?.code, message: body.error?.message }).toEqual({
+        status: 503,
+        code: undefined,
+        message:
+          'Something on our side was briefly unavailable, so that may not have gone through. Please try again in a moment.',
+      });
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(errorLog.mock.calls[0]?.[0]).toMatchObject({ err: lost, transientKind: 'connection' });
+    } finally {
       errorLog.mockRestore();
     }
   });

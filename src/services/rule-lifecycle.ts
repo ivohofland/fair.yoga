@@ -367,10 +367,10 @@ export type ArchiveRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * A transient database failure; the identical request can win the next
-   * attempt. Nothing was applied for every transient kind except a `connection`
-   * failure lost mid-`COMMIT`, where a retry meets a 409 slot conflict (create)
-   * or a no-op (edit).
+   * A transient database failure rolled this transaction back whole, so
+   * nothing was applied and the identical request can win the next attempt.
+   * A `connection` failure never reaches this arm: it may have landed
+   * mid-`COMMIT`, so the catch rethrows it to `classifyApiError`.
    *
    * Not only a `lock_timeout` expiry, though that is the case the copy is
    * written for. The arm is produced by `transientDbFailure`
@@ -886,6 +886,10 @@ export async function archiveOrUnarchiveRule<TChild>(
     // method and the same path, and the query parameter that separates them is
     // deliberately excluded from request logs.
     const transient = transientDbFailure(err);
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
+    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
+    // `classifyApiError` answers the `connection` 503.
+    if (transient?.kind === 'connection') throw err;
     if (transient) {
       // `target` because this function serves both directions and the message
       // cannot name which: the wrapper's own line could not tell an archive
@@ -1015,8 +1019,9 @@ export type PauseRuleResult<TChild> =
   | { ok: false; reason: 'forbidden' }
   | { ok: false; reason: 'archived' }
   /**
-   * See `ArchiveRuleResult`'s `busy` arm above — same guarantee, same causes,
-   * and the same reason the copy names no writer on the other side.
+   * See `ArchiveRuleResult`'s `busy` arm above — same guarantee (nothing was
+   * applied, and a `connection` failure rethrows rather than arriving here),
+   * same causes, and the same reason the copy names no writer on the other side.
    *
    * What this arm adds is where the bound bites, and it is the same for every
    * family: `setLockTimeout` governs every statement left in
@@ -1480,6 +1485,10 @@ export async function pauseOrResumeRule<TChild>(
     // same path, and the query parameter that separates them is deliberately
     // excluded from request logs.
     const transient = transientDbFailure(err);
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
+    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
+    // `classifyApiError` answers the `connection` 503.
+    if (transient?.kind === 'connection') throw err;
     if (transient) {
       // `target` because the message names the verb and stops there: it reads
       // "pause/resume", so this field is the only thing telling a pause from a
@@ -1670,10 +1679,10 @@ export type UpdateRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * A transient database failure; the identical request can win the next
-   * attempt. Nothing was applied for every transient kind except a `connection`
-   * failure lost mid-`COMMIT`, where a retry meets a 409 slot conflict (create)
-   * or a no-op (edit).
+   * A transient database failure rolled this transaction back whole, so
+   * nothing was applied and the identical request can win the next attempt.
+   * A `connection` failure never reaches this arm: it may have landed
+   * mid-`COMMIT`, so the catch rethrows it to `classifyApiError`.
    */
   | { ok: false; reason: 'busy' };
 
@@ -1800,6 +1809,10 @@ export async function updateRule<TChild>(
     updatedRule = written.newRule;
   } catch (err) {
     const transient = transientDbFailure(err);
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
+    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
+    // `classifyApiError` answers the `connection` 503.
+    if (transient?.kind === 'connection') throw err;
     if (transient) {
       log[transient.level](
         { err, templateId, teacherId, transientKind: transient.kind },

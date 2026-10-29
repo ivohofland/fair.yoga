@@ -104,7 +104,8 @@ export const GET = withErrorHandler(async (
  * the room-state race that resolves the other way (the room was un-archived
  * after the mirror was read). One function for the same reason
  * `roomArchivedResponse` is one — they were measured drifting apart in wording
- * once already.
+ * once already. Both arms wrote nothing, so "Nothing was changed" is exact: a
+ * `connection` failure reaches neither, because the service rethrows it.
  *
  * PUT-scoped deliberately. The PATCH pause/resume branch answers a different
  * sentence ("could not update this recurring class"): this is the edit, that

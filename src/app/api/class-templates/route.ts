@@ -57,7 +57,7 @@ function roomArchivedResponse() {
   );
 }
 
-/** The 503 for a create that failed transiently; a connection lost mid-`COMMIT` may have committed it. */
+/** The 503 for a create that failed transiently and wrote nothing; a `connection` failure never reaches it. */
 function templateCreateBusyResponse() {
   return respondError(
     'The system was busy and could not create this recurring class. Nothing was created. Wait a moment, then try again.',

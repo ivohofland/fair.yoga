@@ -67,7 +67,7 @@ async function _templateForbiddenFieldsAreRejected(
   await updateClassTemplate(db, 'never-called', 'never-called', archivedRule);
 }
 import { createClassFixture, createStudioClassFixture, slotTime } from '../../tests/class-fixtures';
-import { pgPoolTimeout } from '../../tests/adapter-errors';
+import { knownWithAdapterCause, pgPoolTimeout, socketCause } from '../../tests/adapter-errors';
 import { pgErrorOf } from '@/lib/pg-error';
 import { createPrismaClient } from '@/lib/prisma-client';
 
@@ -2979,6 +2979,35 @@ describe('archiveOrUnarchiveTemplate (DB)', () => {
       error.mockRestore();
     }
   });
+
+  /**
+   * A `connection` failure may have landed mid-`COMMIT`, so `busy`'s "Nothing
+   * was changed" could be false: the service rethrows it for `classifyApiError`
+   * to answer, and leaves the log line to `withErrorHandler`.
+   */
+  it('rethrows a connection failure during archive rather than answering busy, and does not log it', async () => {
+    const template = await makeTemplate('Transient Archive connection');
+    const lost = knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable'));
+    const failing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          updateMany() {
+            throw lost;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      await expect(archiveOrUnarchiveTemplate(failing, template.id, teacherId, 'archived')).rejects.toBe(lost);
+      const message = 'recurring class archive hit a transient database failure';
+      expect([...warn.mock.calls, ...error.mock.calls].find((c) => c[1] === message)).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
 });
 
 describe('pauseOrResumeTemplate (DB)', () => {
@@ -3621,6 +3650,46 @@ describe('createClassTemplate (DB)', () => {
       error.mockRestore();
     }
   });
+
+  /**
+   * A `connection` failure may have landed mid-`COMMIT`, so `busy`'s "Nothing
+   * was created" could be false: the service rethrows it for `classifyApiError`
+   * to answer, and leaves the log line to `withErrorHandler`.
+   */
+  it('rethrows a connection failure during create rather than answering busy, and does not log it', async () => {
+    const input: CreateClassTemplateInput = {
+      teacherRoomId,
+      classType: 'Transient Create connection',
+      dayOfWeek: 4,
+      startTime: '09:00',
+      durationMinutes: 60,
+      roomCost: 15,
+      minRate: 10,
+      targetRate: 20,
+      minStudents: 2,
+      maxStudents: 8,
+    };
+    const lost = knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable'));
+    const failing = prisma.$extends({
+      query: {
+        scheduleRule: {
+          createManyAndReturn() {
+            throw lost;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      await expect(createClassTemplate(failing, teacherId, input)).rejects.toBe(lost);
+      const message = 'recurring class create hit a transient database failure — nothing committed';
+      expect([...warn.mock.calls, ...error.mock.calls].find((c) => c[1] === message)).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
 });
 
 describe('updateClassTemplate (DB) — transient failures', () => {
@@ -3722,6 +3791,35 @@ describe('updateClassTemplate (DB) — transient failures', () => {
       expect(hit?.[0]).toMatchObject({ templateId: template.id, teacherId, transientKind: kind });
       const miss = (level === 'warn' ? error : warn).mock.calls.find((c) => c[1] === message);
       expect(miss).toBeUndefined();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  /**
+   * A `connection` failure may have landed mid-`COMMIT`, so `busy`'s "Nothing
+   * was changed" could be false: the service rethrows it for `classifyApiError`
+   * to answer, and leaves the log line to `withErrorHandler`.
+   */
+  it('rethrows a connection failure during edit rather than answering busy, and does not log it', async () => {
+    const template = await makeTemplate('Transient Edit connection');
+    const lost = knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable'));
+    const failing = prisma.$extends({
+      query: {
+        classTemplate: {
+          update() {
+            throw lost;
+          },
+        },
+      },
+    }) as unknown as PrismaClient;
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => log);
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      await expect(updateClassTemplate(failing, template.id, teacherId, { classType: 'Edited Transient' })).rejects.toBe(lost);
+      const message = 'recurring class edit hit a transient database failure — nothing committed';
+      expect([...warn.mock.calls, ...error.mock.calls].find((c) => c[1] === message)).toBeUndefined();
     } finally {
       warn.mockRestore();
       error.mockRestore();

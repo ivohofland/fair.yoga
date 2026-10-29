@@ -688,6 +688,11 @@ export function pauseOrResumeStudioTemplate(
 export type CreateStudioTemplateResult =
   | { ok: true; template: StudioClassTemplateWithSlot; generation: GenerationResult }
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
+  /**
+   * A transient database failure rolled the create back, so nothing was
+   * created. A `connection` failure never reaches this arm: one lost
+   * mid-`COMMIT` may have created the template, so the catch rethrows it.
+   */
   | { ok: false; reason: 'busy' }
   | { ok: false; reason: 'teacher_gone' };
 
@@ -764,6 +769,10 @@ export async function createStudioClassTemplate(
     // logs this the same way when it escapes uncaught, so catching it here
     // must not be what removes that line).
     const transient = transientDbFailure(err);
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
+    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
+    // `classifyApiError` answers the `connection` 503.
+    if (transient?.kind === 'connection') throw err;
     if (transient) {
       log[transient.level](
         {
