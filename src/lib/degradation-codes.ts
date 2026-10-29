@@ -4,8 +4,9 @@
  * without pulling in the database.
  *
  * A code names one intentional fallback: a place that substitutes or withholds
- * a value because data that should have been impossible turned up. Which sites
- * qualify, and why the rest do not, is `docs/degradation-sites.md`.
+ * a value because data that should have been impossible turned up. Or it names
+ * one of the operational faults that `docs/degradation-sites.md` ("The rule")
+ * admits per code. Which sites qualify, and why the rest do not, is that file.
  *
  * `contextKeys` is the allowlist `logDegraded` enforces at runtime as well as
  * in the types. Every key holds an id, an enum, a number or an IANA zone
@@ -113,6 +114,12 @@ export const DEGRADATION_CODES = {
     description:
       'A stored Mollie token could not be opened with the configured key. The pay page showed the teacher’s other payment rows without Mollie’s.',
     contextKeys: ['connectionId'],
+  },
+  DATABASE_POOL_EXHAUSTED: {
+    level: 'error',
+    description:
+      'A database query waited the pool’s full timeout for a connection and failed. The user saw the busy 503 or an error page, and a sweep may have failed the same way. The waiting count does not include the waiter that timed out.',
+    contextKeys: ['waiting', 'total', 'idle', 'max'],
   },
 } as const satisfies Record<
   string,
