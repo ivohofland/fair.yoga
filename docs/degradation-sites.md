@@ -1019,6 +1019,12 @@ process last saw an exhaustion (`POOL_EXHAUSTION_HEALTH_WINDOW_MS`,
 `src/lib/pool-exhaustion.ts`), so an exhaustion between two monitor checks
 still alerts. A restart clears that; this row does not.
 
+**Right after a deploy.** Every scheduler job runs its first pass together at
+boot, and that burst was measured at 9 connections against a `poolMax` of 9 in
+production on 2026-10-29. It can trip one exhaustion straight after a deploy,
+which then reads degraded for 15 minutes. Before acting on one seen then, check
+whether it recurs.
+
 **Confirm.** The log has every occurrence with its counters
 (`grep '"code":"DATABASE_POOL_EXHAUSTED"'`), next to the request or sweep that
 failed. While it is happening, look at what holds the connections:
