@@ -53,18 +53,35 @@ export const CHALLENGE_CAPACITIES = {
   authentication: 10_000,
 } as const satisfies Record<ChallengePurpose, number>;
 
-const challengeStores: Record<ChallengePurpose, Map<string, StoredChallenge>> = {
-  registration: new Map(),
-  authentication: new Map(),
-};
-
 /** Eviction warnings are flushed at most this often, per partition. */
 const EVICTION_LOG_THROTTLE_MS = 60_000;
 
-const evictionLogState: Record<ChallengePurpose, { lastLogTime: number; suppressed: number }> = {
-  registration: { lastLogTime: 0, suppressed: 0 },
-  authentication: { lastLogTime: 0, suppressed: 0 },
-};
+interface PasskeyChallengeState {
+  stores: Record<ChallengePurpose, Map<string, StoredChallenge>>;
+  evictionLog: Record<ChallengePurpose, { lastLogTime: number; suppressed: number }>;
+  /** Rebound by every evaluation, so the backstop timer runs the newest code. */
+  flushAll: (now: number) => void;
+  backstopStarted: boolean;
+}
+
+declare global {
+  // Route handlers that each bundle their own copy of this module (and a dev
+  // hot reload) must still read and write one set of challenges and one timer.
+  var __fairYogaPasskeyChallenges: PasskeyChallengeState | undefined;
+}
+
+const state = (globalThis.__fairYogaPasskeyChallenges ??= {
+  stores: {
+    registration: new Map(),
+    authentication: new Map(),
+  },
+  evictionLog: {
+    registration: { lastLogTime: 0, suppressed: 0 },
+    authentication: { lastLogTime: 0, suppressed: 0 },
+  },
+  flushAll: () => {},
+  backstopStarted: false,
+});
 
 /**
  * Emits a partition's pending eviction count, throttled. Called at the top
@@ -75,15 +92,15 @@ const evictionLogState: Record<ChallengePurpose, { lastLogTime: number; suppress
  * never passes silently.
  */
 function flushPendingEvictionLog(purpose: ChallengePurpose, now: number): void {
-  const state = evictionLogState[purpose];
-  if (state.suppressed === 0) return;
-  if (now - state.lastLogTime < EVICTION_LOG_THROTTLE_MS) return;
+  const pending = state.evictionLog[purpose];
+  if (pending.suppressed === 0) return;
+  if (now - pending.lastLogTime < EVICTION_LOG_THROTTLE_MS) return;
   log.warn(
-    { purpose, capacity: CHALLENGE_CAPACITIES[purpose], evictedCount: state.suppressed },
+    { purpose, capacity: CHALLENGE_CAPACITIES[purpose], evictedCount: pending.suppressed },
     'Passkey challenge evicted under capacity pressure',
   );
-  state.lastLogTime = now;
-  state.suppressed = 0;
+  pending.lastLogTime = now;
+  pending.suppressed = 0;
 }
 
 /**
@@ -106,7 +123,7 @@ function cleanupExpired(store: Map<string, StoredChallenge>, now: number): void 
  * Cleans up expired entries, and evicts the oldest if the partition is full.
  */
 export function storeChallenge(purpose: ChallengePurpose, key: string, challenge: string): void {
-  const store = challengeStores[purpose];
+  const store = state.stores[purpose];
   const now = Date.now();
   flushPendingEvictionLog(purpose, now);
 
@@ -123,7 +140,7 @@ export function storeChallenge(purpose: ChallengePurpose, key: string, challenge
     const oldest = store.keys().next().value;
     if (oldest === undefined) break;
     store.delete(oldest);
-    evictionLogState[purpose].suppressed++;
+    state.evictionLog[purpose].suppressed++;
   }
   flushPendingEvictionLog(purpose, now);
 
@@ -135,7 +152,7 @@ export function storeChallenge(purpose: ChallengePurpose, key: string, challenge
  * Returns null if not found or expired.
  */
 export function getAndDeleteChallenge(purpose: ChallengePurpose, key: string): string | null {
-  const store = challengeStores[purpose];
+  const store = state.stores[purpose];
   const entry = store.get(key);
   if (!entry) {
     return null;
@@ -149,31 +166,36 @@ export function getAndDeleteChallenge(purpose: ChallengePurpose, key: string): s
 
 /** Exposed for testing only. */
 export function _getChallengeStore(purpose: ChallengePurpose): Map<string, StoredChallenge> {
-  return challengeStores[purpose];
+  return state.stores[purpose];
 }
 
 /** Test helper: empty every partition and forget eviction bookkeeping. */
 export function _resetChallengeStores(): void {
-  for (const purpose of Object.keys(challengeStores) as ChallengePurpose[]) {
-    challengeStores[purpose].clear();
-    evictionLogState[purpose] = { lastLogTime: 0, suppressed: 0 };
+  for (const purpose of Object.keys(state.stores) as ChallengePurpose[]) {
+    state.stores[purpose].clear();
+    state.evictionLog[purpose] = { lastLogTime: 0, suppressed: 0 };
   }
 }
+
+state.flushAll = (now) => {
+  for (const purpose of Object.keys(state.stores) as ChallengePurpose[]) {
+    flushPendingEvictionLog(purpose, now);
+  }
+};
 
 /**
  * Backstop for the throttled eviction log: flushes any partition whose
  * suppressed count would otherwise sit unflushed forever once that
  * partition goes quiet. `storeChallenge` only flushes on its own next call
  * into the same partition — a burst that stops cold has no such call.
- * Safe for this deployment: a single always-on Node process (see
+ * Started once per process; the tick calls the newest evaluation's
+ * `flushAll`. Safe for this deployment: a single always-on Node process (see
  * docs/technical-architecture.md), not serverless/edge.
  */
-setInterval(() => {
-  const now = Date.now();
-  for (const purpose of Object.keys(challengeStores) as ChallengePurpose[]) {
-    flushPendingEvictionLog(purpose, now);
-  }
-}, EVICTION_LOG_THROTTLE_MS).unref();
+if (!state.backstopStarted) {
+  state.backstopStarted = true;
+  setInterval(() => state.flushAll(Date.now()), EVICTION_LOG_THROTTLE_MS).unref();
+}
 
 // ---------------------------------------------------------------------------
 // Environment helpers

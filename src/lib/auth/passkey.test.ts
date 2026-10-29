@@ -111,6 +111,10 @@ describe('passkey challenge store', () => {
     const EVICTION_LOG_THROTTLE_MS = 60_000;
 
     vi.useFakeTimers();
+    // Process-wide state would carry the first evaluation's real timer over;
+    // clearing it makes the import below start its own, under the fake clock.
+    const staticImportState = globalThis.__fairYogaPasskeyChallenges;
+    globalThis.__fairYogaPasskeyChallenges = undefined;
     vi.resetModules();
 
     // A module instance separate from the one this file statically imports
@@ -169,6 +173,7 @@ describe('passkey challenge store', () => {
       expect(warnSpy.mock.calls[0]?.[0]).toMatchObject({ evictedCount: 5 });
     } finally {
       vi.useRealTimers();
+      globalThis.__fairYogaPasskeyChallenges = staticImportState;
     }
   });
 
@@ -692,5 +697,71 @@ describe('verifyPasskeyAuthentication, signed assertion', () => {
     expect(refusalWarnings).toHaveLength(1);
     expect(refusalWarnings[0]?.[0]).toMatchObject({ credentialId });
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+// A call, not a read in place: narrowing from the reset above would type it `never`.
+function publishedState(): typeof globalThis.__fairYogaPasskeyChallenges {
+  return globalThis.__fairYogaPasskeyChallenges;
+}
+
+describe('passkey challenge state is process-wide', () => {
+  const staticImportState = globalThis.__fairYogaPasskeyChallenges;
+
+  afterEach(() => {
+    globalThis.__fairYogaPasskeyChallenges = staticImportState;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('a challenge stored by one module copy is read by a fresh copy', async () => {
+    storeChallenge('registration', 'acct-hmr', 'c1');
+
+    vi.resetModules();
+    const fresh = await import('./passkey');
+
+    expect(fresh.getAndDeleteChallenge('registration', 'acct-hmr')).toBe('c1');
+  });
+
+  it('the backstop interval starts once across evaluations', async () => {
+    globalThis.__fairYogaPasskeyChallenges = undefined;
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+
+    vi.resetModules();
+    await import('./passkey');
+    vi.resetModules();
+    await import('./passkey');
+
+    const backstopCalls = intervalSpy.mock.calls.filter((call) => call[1] === 60_000);
+    expect(backstopCalls).toHaveLength(1);
+  });
+
+  it("the backstop tick runs the latest evaluation's flush", async () => {
+    vi.useFakeTimers();
+    globalThis.__fairYogaPasskeyChallenges = undefined;
+
+    vi.resetModules();
+    await import('./passkey');
+    vi.resetModules();
+    await import('./passkey');
+
+    const state = publishedState();
+    if (state === undefined) throw new Error('passkey module did not publish its state');
+    const flushSpy = vi.fn();
+    state.flushAll = flushSpy;
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it('_resetChallengeStores on a fresh copy empties what the first copy stored', async () => {
+    storeChallenge('authentication', 'k-reset', 'c-reset');
+
+    vi.resetModules();
+    const fresh = await import('./passkey');
+    fresh._resetChallengeStores();
+
+    expect(getAndDeleteChallenge('authentication', 'k-reset')).toBeNull();
   });
 });
