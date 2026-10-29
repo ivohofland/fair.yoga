@@ -4,9 +4,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
-import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, MAX_WAIT_MARGIN_MS, Prisma, ClassStatus, Currency } from './prisma-client';
+import { NextRequest, NextResponse } from 'next/server';
+import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, MAX_WAIT_MARGIN_MS, Prisma, ClassStatus, Currency, type PoolCounters } from './prisma-client';
 import * as enums from './prisma-enums';
-import { transientDbFailure } from './api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
+import { withErrorHandler } from '@/lib/api-utils';
+import { PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
 import { pgConnectTimeout } from '../../tests/adapter-errors';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
@@ -155,10 +158,10 @@ function specifiersOf(file: string): string[] {
 }
 
 describe('prisma funnel imports', () => {
-  it('prisma-client.ts imports only the generated client, `@prisma/adapter-pg` and `node:os`', () => {
+  it('prisma-client.ts imports only the generated client, @prisma/adapter-pg, pg, ./pg-messages and node:os', () => {
     const specifiers = specifiersOf('prisma-client.ts');
     expect(specifiers.length).toBeGreaterThan(0);
-    const ALLOWED = new Set(['../generated/prisma/client', '@prisma/adapter-pg', 'node:os']);
+    const ALLOWED = new Set(['../generated/prisma/client', '@prisma/adapter-pg', 'pg', './pg-messages', 'node:os']);
     expect(specifiers.every((s) => ALLOWED.has(s))).toBe(true);
   });
 
@@ -256,6 +259,129 @@ describe('createPrismaClient pool error hooks', () => {
       await Promise.all([client.$disconnect(), killer.$disconnect()]);
     }
   });
+});
+
+/** True when `err` or an `Error` on its `cause` chain carries pg-pool's wait-timeout text. */
+function carriesPoolTimeout(err: unknown): boolean {
+  for (let at: unknown = err, depth = 0; at instanceof Error && depth < 10; at = at.cause, depth += 1) {
+    if (at.message === PG_POOL_TIMEOUT_MESSAGE) return true;
+  }
+  return false;
+}
+
+describe('createPrismaClient onPoolExhausted', () => {
+  /** A client whose one connection is held by a 1.5 s sleep; `run` meets the starved pool. */
+  async function withStarvedClient(
+    onPoolExhausted: (counters: PoolCounters) => void,
+    run: (client: ReturnType<typeof createPrismaClient>) => Promise<void>,
+  ): Promise<void> {
+    const client = createPrismaClient({ poolMax: 1, connectionTimeoutMs: 300, onPoolExhausted });
+    // A PrismaPromise runs only once `.then` is called, so this starts the sleep.
+    const sleep = client.$queryRaw`SELECT pg_sleep(1.5)::text`.then(() => undefined);
+    try {
+      // Let the sleep take the pool's only connection before `run` asks for one.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await run(client);
+    } finally {
+      await sleep;
+      await client.$disconnect();
+    }
+  }
+
+  it('hears a plain query that times out waiting for the pool, with the pool counters', async () => {
+    const heard: PoolCounters[] = [];
+    await withStarvedClient((counters) => { heard.push(counters); }, async (client) => {
+      const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
+      expect(err).not.toBeNull();
+      expect(carriesPoolTimeout(err) || transientDbFailure(err)?.kind === 'pool_exhausted').toBe(true);
+    });
+    expect(heard).toEqual([{ waiting: expect.any(Number), total: 1, idle: 0, max: 1 }]);
+  }, 10_000);
+
+  it('hears an interactive transaction whose start times out', async () => {
+    const heard: PoolCounters[] = [];
+    await withStarvedClient((counters) => { heard.push(counters); }, async (client) => {
+      const err: unknown = await client.$transaction(async (tx) => tx.$queryRaw`SELECT 1`).then(() => null, (e: unknown) => e);
+      expect(err).not.toBeNull();
+    });
+    expect(heard).toHaveLength(1);
+  }, 10_000);
+
+  it('a throwing hook does not replace the error the caller sees', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await withStarvedClient(() => { throw new Error('hook boom'); }, async (client) => {
+        const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
+        expect(err).not.toBeNull();
+        expect(carriesPoolTimeout(err)).toBe(true);
+        expect(transientDbFailure(err)?.kind).toBe('pool_exhausted');
+        expect(err instanceof Error ? err.message : String(err)).not.toContain('hook boom');
+      });
+      // Give a stray rejection a turn to surface before the listener goes.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+  }, 10_000);
+
+  it('connect errors that are not the wait timeout do not fire the hook', async () => {
+    const heard: PoolCounters[] = [];
+    const client = createPrismaClient({
+      url: 'postgresql://u:p@203.0.113.1:5432/none',
+      connectionTimeoutMs: 300,
+      onPoolExhausted: (counters) => { heard.push(counters); },
+    });
+    try {
+      const err: unknown = await client.$queryRaw`SELECT 1`.then(() => null, (e: unknown) => e);
+      expect(err).not.toBeNull();
+      expect(heard).toEqual([]);
+    } finally {
+      await client.$disconnect();
+    }
+  });
+
+  it('disconnect ends the pool it was handed', async () => {
+    const name = `fy_dispose_${process.pid}_${Date.now()}`;
+    const url = new URL(process.env.DATABASE_URL ?? '');
+    url.searchParams.set('application_name', name);
+    const client = createPrismaClient({ url: url.toString(), onPoolExhausted: () => {} });
+    const observer = createPrismaClient({ poolMax: 1 });
+    try {
+      await client.$queryRaw`SELECT 1`;
+      const countOf = async (): Promise<number> => {
+        const [row] = await observer.$queryRaw<{ n: bigint }[]>`SELECT count(*) AS n FROM pg_stat_activity WHERE application_name = ${name}`;
+        return Number(row?.n ?? -1);
+      };
+      expect(await countOf()).toBe(1);
+      await client.$disconnect();
+      const deadline = Date.now() + 2_000;
+      let open = await countOf();
+      while (open !== 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        open = await countOf();
+      }
+      expect(open).toBe(0);
+    } finally {
+      await Promise.all([client.$disconnect(), observer.$disconnect()]);
+    }
+  });
+
+  it('answers a withErrorHandler route 503 with the busy copy and no code', async () => {
+    await withStarvedClient(() => {}, async (starved) => {
+      const handler = withErrorHandler(async () => {
+        await starved.$queryRaw`SELECT 1`;
+        return NextResponse.json({});
+      });
+      const response = await handler(new NextRequest('http://localhost:3000/api/x'));
+      expect(response.status).toBe(503);
+      const body: unknown = await response.json();
+      expect(body).toEqual({ error: { message: 'The system was busy and could not finish that. Please try again.' } });
+      expect(Object.keys((body as { error: object }).error)).not.toContain('code');
+    });
+  }, 10_000);
 });
 
 describe('poolConfigFor', () => {
