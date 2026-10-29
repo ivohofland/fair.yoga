@@ -57,7 +57,7 @@ export interface SerializedErr {
   readonly meta?: SerializedPrismaMeta;
   readonly sqlState?: string;
   readonly constraint?: string;
-  /** `sqlState` names its constraint in Postgres's message, and no name was parsed from it. */
+  /** `sqlState`'s name can come from Postgres's message (`namesConstraintInMessage`), and none was found. */
   readonly constraintUnparsed?: true;
   readonly adapterKind?: AdapterKind;
   readonly txError?: TxErrorKind;
