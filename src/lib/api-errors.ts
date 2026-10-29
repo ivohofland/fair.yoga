@@ -125,11 +125,10 @@ function terminalViolationOf(error: unknown): PgError | null {
 
 /**
  * Transient failures a retry can eventually win, not a bad request —
- * `isTransientDbError` answers `true` for every kind. `kind` decides only the
- * log level, the log field `classifyApiError` attaches
- * (`detail.transientKind`) and the 503 message (`TRANSIENT_KIND_MESSAGE`); it never touches
- * `transient` itself, which keeps driving every 503, every `busy` arm and
- * every sweep escalation exactly as it does for any member.
+ * `isTransientDbError` answers `true` for every kind. In this file `kind`
+ * picks the log level (`TRANSIENT_KIND_LEVEL`), the `detail.transientKind`
+ * field and the 503 message (`TRANSIENT_KIND_MESSAGE`); it never changes
+ * whether an error is transient.
  *
  * - `lock_timeout` (`55P03`) — a `SET LOCAL lock_timeout` expired. This
  *   project sets one at every `lockClassRow` call and at the two template
@@ -192,7 +191,7 @@ export interface TransientDbFailure {
  *   drained pool. No retry wins it until the pool recovers, and the next
  *   request meets the same pool.
  * - `connection` is **`error`** — an operational fault. A retry wins only
- *   once the server is reachable again, and the next request meets the same
+ *   once the server accepts connections again, and the next request meets the same
  *   server.
  * - `tx_budget` is `warn` — the budget can expire under contention or on a
  *   slow transaction, and neither is a fault on its own.
@@ -208,9 +207,10 @@ const TRANSIENT_KIND_LEVEL = {
 
 /**
  * Postgres SQLSTATEs for a transient failure a retry can eventually win, not
- * a request that was wrong. A retry can eventually win each; the contention
- * SQLSTATEs abort the whole transaction, while a `connection` one can land
- * mid-`COMMIT` (see `TRANSIENT_KIND_MESSAGE`). Typed
+ * a request that was wrong. The contention SQLSTATEs abort the whole
+ * transaction. A `connection` one ending an established backend (`57P01`,
+ * `57P02`) can land mid-`COMMIT` (see `TRANSIENT_KIND_MESSAGE`), while
+ * `53300` and `57P03` refuse the connection before any statement runs. Typed
  * against `TransientKind` so an unknown kind cannot appear here.
  */
 const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
@@ -226,7 +226,11 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
 /**
  * The adapter `kind`s that mean the connection itself failed, whichever Prisma
  * code carries them: a raw call gives `P2010` where a typed one gives a
- * connection code, so the kind is the key that reaches both. Typed against
+ * connection code, so the kind is the key that reaches both. A `53300`
+ * matches `TRANSIENT_SQLSTATE_KIND` first, so `TooManyConnections` is reached
+ * here only for a cause with no SQLSTATE. `DatabaseNotReachable` includes a
+ * host that does not resolve (`ENOTFOUND`); in the Compose network, that is
+ * what a request meets while `db` is being recreated. Typed against
  * `TransientKind` so an unknown kind cannot appear here.
  */
 const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map([
@@ -237,10 +241,11 @@ const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map(
 ]);
 
 /**
- * The 503 `message` for each kind. `connection` has its own copy because a
- * connection lost during `COMMIT` has an unknown outcome, so it must not say
- * nothing was saved; every other kind applied nothing. Tethered
- * to the compiler by `satisfies Record<TransientKind, string>`.
+ * The 503 `message` for each kind. The shared copy's "could not finish that"
+ * asserts the request did not happen, which is true of every kind but
+ * `connection`: a connection lost during `COMMIT` has an unknown outcome, so
+ * that kind has its own copy. Tethered to the compiler by
+ * `satisfies Record<TransientKind, string>`.
  */
 const TRANSIENT_KIND_MESSAGE = {
   lock_timeout: 'The system was busy and could not finish that. Please try again.',

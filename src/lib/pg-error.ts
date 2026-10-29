@@ -133,7 +133,7 @@ export function isPgPoolTimeout(err: unknown): boolean {
 
 /**
  * True for pg-pool's plain connect-timeout `Error`: the same rules as
- * `isPgPoolTimeout`, for the other pg-pool message.
+ * `isPgPoolTimeout`, for `PG_CONNECT_TIMEOUT_MESSAGE`.
  */
 export function isPgConnectTimeout(err: unknown): boolean {
   return (
