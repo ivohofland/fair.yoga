@@ -1034,6 +1034,7 @@ describe('transientDbFailure', () => {
   it.each(Object.entries(NON_CONNECTION_FIXTURES))('keeps the busy copy for %s', (kind, error) => {
     expect(transientDbFailure(error)?.kind).toBe(kind);
     expect(classifyApiError(error).message).toBe('The system was busy and could not finish that. Please try again.');
+    expect(classifyApiError(error).code).toBeUndefined();
   });
 
   /**

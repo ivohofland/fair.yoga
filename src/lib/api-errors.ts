@@ -311,8 +311,8 @@ function transientKindShallow(error: unknown): TransientKind | null {
  * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
  * adapter's shapes carries it; the shapes are in
  * `docs/technical-architecture.md`, "Database errors". Nothing here reads an
- * error's text beyond `PG_POOL_TIMEOUT_MESSAGE`, `PG_CONNECT_TIMEOUT_MESSAGE` and
- * `PG_CONNECTION_TERMINATED_MESSAGE`, so a message that merely
+ * error's text except through the exact driver messages `pg-error.ts` exports
+ * (its `PG_*_MESSAGE` constants), so a message that merely
  * quotes a SQLSTATE as a digit string (a postcode, an amount, an id
  * fragment) is never relabelled "the database is busy, try again", which
  * would be exactly the wrong advice. `terminalViolationOf` above reads its
