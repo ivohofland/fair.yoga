@@ -31,6 +31,9 @@ const ADAPTER_KIND_SET: ReadonlySet<string> = new Set(ADAPTER_KINDS);
 /** pg-pool's own text for a pool wait that outlived `connectionTimeoutMillis` (driver text, matched only here). */
 export const PG_POOL_TIMEOUT_MESSAGE = 'timeout exceeded when trying to connect';
 
+/** pg-pool's own text for a connect that outlived `connectionTimeoutMillis` once a client was checked out (driver text, matched only here). */
+export const PG_CONNECT_TIMEOUT_MESSAGE = 'Connection terminated due to connection timeout';
+
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 
 type ConstraintReader = (cause: object, message: string) => string | undefined;
@@ -123,6 +126,19 @@ export function isPgPoolTimeout(err: unknown): boolean {
   return (
     err instanceof Error &&
     err.message === PG_POOL_TIMEOUT_MESSAGE &&
+    !Object.prototype.hasOwnProperty.call(err, 'code') &&
+    pgErrorOf(err) === null
+  );
+}
+
+/**
+ * True for pg-pool's plain connect-timeout `Error`: the same rules as
+ * `isPgPoolTimeout`, for the other pg-pool message.
+ */
+export function isPgConnectTimeout(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message === PG_CONNECT_TIMEOUT_MESSAGE &&
     !Object.prototype.hasOwnProperty.call(err, 'code') &&
     pgErrorOf(err) === null
   );

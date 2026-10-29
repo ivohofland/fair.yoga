@@ -15,7 +15,7 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
-import { knownWithAdapterCause, pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
+import { knownWithAdapterCause, pgCause, pgConnectTimeout, pgPoolTimeout, socketCause, typedCallError } from '../../tests/adapter-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -974,6 +974,17 @@ describe('transientDbFailure', () => {
     ['40001 typed (Known P2034)', typedPg('40001', 'could not serialize access due to concurrent update'), 'serialization', 'warn'],
     // P2034 is a write conflict or a deadlock; with no SQLSTATE to tell them apart, the louder kind.
     ['P2034 with no adapter cause', prismaError('P2034'), 'deadlock', 'error'],
+    ['53300 typed (Known P2037)', typedCallError(pgCause('53300', 'sorry, too many clients already')), 'connection', 'error'],
+    ['53300 raw (P2010)', rawPg('53300', 'sorry, too many clients already'), 'connection', 'error'],
+    ['57P01 typed (Known P2039)', typedPg('57P01', 'terminating connection due to administrator command'), 'connection', 'error'],
+    ['57P01 raw (P2010)', rawPg('57P01', 'terminating connection due to administrator command'), 'connection', 'error'],
+    ['57P02 raw (P2010)', rawPg('57P02', 'terminating connection because of crash of another server process'), 'connection', 'error'],
+    ['57P03 raw (P2010)', rawPg('57P03', 'the database system is starting up'), 'connection', 'error'],
+    ['ECONNREFUSED typed (Known P1001)', knownWithAdapterCause('P1001', socketCause('DatabaseNotReachable'), { modelName: 'Class' }), 'connection', 'error'],
+    ['ECONNREFUSED raw (P2010)', knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable')), 'connection', 'error'],
+    ['ECONNRESET (Known P1017)', knownWithAdapterCause('P1017', socketCause('ConnectionClosed')), 'connection', 'error'],
+    ['ETIMEDOUT (Known P1008)', knownWithAdapterCause('P1008', socketCause('SocketTimeout')), 'connection', 'error'],
+    ['pg-pool connect timeout', pgConnectTimeout(), 'connection', 'error'],
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
@@ -986,6 +997,29 @@ describe('transientDbFailure', () => {
 
   it('finds a pool timeout one cause deep', () => {
     expect(transientDbFailure(new Error('wrapped', { cause: pgPoolTimeout() }))?.kind).toBe('pool_exhausted');
+  });
+
+  it('finds a connection failure one cause deep', () => {
+    expect(transientDbFailure(new Error('wrapped', { cause: pgConnectTimeout() }))?.kind).toBe('connection');
+  });
+
+  it('answers a connection failure with the connection 503 copy at error', () => {
+    expect(classifyApiError(knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable')))).toEqual({
+      status: 503,
+      message: 'Something on our side was briefly unavailable, so that may not have gone through. Please try again in a moment.',
+      logMessage: 'transient database failure surfaced to a client',
+      level: 'error',
+      detail: { transientKind: 'connection' },
+    });
+  });
+
+  it('keeps the busy copy for every other kind', () => {
+    expect(classifyApiError(typedPg('55P03', LOCK_TIMEOUT_MESSAGE)).message).toBe('The system was busy and could not finish that. Please try again.');
+  });
+
+  it('does not treat an adapter kind outside the connection set as transient', () => {
+    // An access-denied database is a configuration fault, which a retry cannot win.
+    expect(classifyApiError(knownWithAdapterCause('P1010', { kind: 'DatabaseAccessDenied', db: 'x' })).status).toBe(500);
   });
 
   it('finds the kind through a cause chain', () => {

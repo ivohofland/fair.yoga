@@ -9,9 +9,9 @@ import { classifyApiError, isRestrictViolationOn } from './api-errors';
 import { isCheckViolationOn } from './check-violation';
 import { isExclusionConflictOn } from './exclusion-conflict';
 import { serializeErr, type SerializedErr } from './log-serializers';
-import { ADAPTER_KINDS, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgPoolTimeout, pgErrorOf } from './pg-error';
+import { ADAPTER_KINDS, PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf } from './pg-error';
 import { UNIQUE_CONSTRAINTS, isUniqueConflictOn, type UniqueConstraintName } from './unique-conflict';
-import { driverAdapterError, knownWithAdapterCause, pgCause, pgPoolTimeout } from '../../tests/adapter-errors';
+import { driverAdapterError, knownWithAdapterCause, pgCause, pgConnectTimeout, pgPoolTimeout } from '../../tests/adapter-errors';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import type { ClassWithEntry } from '../../tests/class-fixtures';
 
@@ -88,6 +88,23 @@ describe('isPgPoolTimeout', () => {
     ['a non-Error', { message: 'timeout exceeded when trying to connect' }],
   ])('rejects %s', (_label, err) => {
     expect(isPgPoolTimeout(err)).toBe(false);
+  });
+});
+
+describe('isPgConnectTimeout', () => {
+  it('matches pg-pool\'s plain connect-timeout error', () => {
+    const req = createRequire(path.join(process.cwd(), 'package.json'));
+    const poolSource = readFileSync(req.resolve('pg-pool', { paths: [path.dirname(req.resolve('pg'))] }), 'utf8');
+    expect(poolSource).toContain(`new Error('${PG_CONNECT_TIMEOUT_MESSAGE}', { cause: err })`);
+    expect(isPgConnectTimeout(pgConnectTimeout())).toBe(true);
+  });
+  it.each([
+    ['a different message', Object.assign(new Error('Connection terminated due to connection timeout.'), { clientVersion: 'test' })],
+    ['an own code', Object.assign(pgConnectTimeout(), { code: 'ETIMEDOUT' })],
+    ['a non-Error', { message: PG_CONNECT_TIMEOUT_MESSAGE }],
+    ['the pool wait timeout, the sibling message', pgPoolTimeout()],
+  ])('rejects %s', (_label, err) => {
+    expect(isPgConnectTimeout(err)).toBe(false);
   });
 });
 
