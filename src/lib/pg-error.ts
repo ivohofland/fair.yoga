@@ -146,7 +146,7 @@ export function isPgConnectTimeout(err: unknown): boolean {
 
 /**
  * The adapter's `cause.kind`, read from the same places as `pgErrorOf`, when it
- * is in `ADAPTER_KINDS`; `undefined` otherwise. For the log facet only: `docs/technical-architecture.md`, "Database errors".
+ * is in `ADAPTER_KINDS`; `undefined` otherwise. Shallow: it never follows `Error.cause`. Where it looks: `docs/technical-architecture.md`, "Database errors".
  */
 export function adapterKindOf(err: unknown): AdapterKind | undefined {
   const cause = adapterCauseOf(err);
