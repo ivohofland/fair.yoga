@@ -11,7 +11,9 @@ const MIN_SECRET_BYTES = 32;
 const DEV_KEY = 'fair.yoga development unsubscribe key, never used in production';
 const MAC_DOMAIN = 'unsubscribe:';
 
+// per-instance: a warn-once flag; a split copy warns once more, and nothing else changes
 let warnedNoSecret = false;
+// per-instance: a warn-once flag; a split copy warns once more, and nothing else changes
 let warnedRefusedNoSecret = false;
 
 /** The signing key; null in production without a usable secret, which disables unsubscribe links. */

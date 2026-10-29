@@ -30,6 +30,7 @@ function allowlisted(
   return kept;
 }
 
+// per-instance: a split writes more rows with partial counts and loses nothing
 const coalescer = createCoalescer({
   windowMs: COALESCE_WINDOW_MS,
   now: () => new Date(),

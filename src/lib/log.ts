@@ -97,4 +97,5 @@ export function createLogger(destination?: DestinationStream): Logger {
   });
 }
 
+// per-instance: a split copy is a second logger on the same output, and loses no line
 export const log = createLogger();

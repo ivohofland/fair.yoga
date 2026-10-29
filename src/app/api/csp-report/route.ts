@@ -12,6 +12,7 @@ const WINDOW_MS = 60 * 1000;
 
 type RefusalReason = 'content-type' | 'content-length' | 'not-json' | 'not-a-report';
 
+// per-instance: a log throttle; a split copy logs one more refusal line per window, and refuses nothing it would not
 const lastRefusalLog = new Map<RefusalReason, number>();
 
 /**

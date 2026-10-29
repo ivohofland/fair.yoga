@@ -11,12 +11,18 @@ const PING_TIMEOUT_MS = 5_000;
 const RETRY_MS = 15_000;
 const SERVER_SNAPSHOT: ConnectionStatus = { offline: false, serverNow: null };
 
+// per-instance: browser state; every importer is a client component
 let pingFailed = false;
+// per-instance: browser state; every importer is a client component
 let serverNow: number | null = null;
+// per-instance: browser state; every importer is a client component
 let snapshot: ConnectionStatus = SERVER_SNAPSHOT;
 /** Numbers each ping; an answer is kept only from the latest one sent. */
+// per-instance: browser state; every importer is a client component
 let latestPing = 0;
+// per-instance: browser state; every importer is a client component
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+// per-instance: browser state; every importer is a client component
 const listeners = new Set<() => void>();
 
 function browserOffline(): boolean {

@@ -138,8 +138,10 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
  * unchanged. Every value is frozen before it is added, so what a second pass
  * returns is what the first one built.
  */
+// per-instance: an identity map; a copy that missed an output would serialize it again rather than pass it through
 const produced = new WeakMap<object, SerializedErr>();
 /** How many entries each output spans, itself and everything nested in it. */
+// per-instance: an identity map; a copy that missed an output would count it as one entry, as for any value it did not build
 const entryCounts = new WeakMap<SerializedErr, number>();
 
 function markProduced<T extends SerializedErr>(out: T, entries: number): T {

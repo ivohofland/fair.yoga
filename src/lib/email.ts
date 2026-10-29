@@ -64,6 +64,7 @@ export function emailDryRun(): boolean {
   return process.env.EMAIL_DRY_RUN === '1' || env('LETTERMINT_API_TOKEN') === undefined;
 }
 
+// per-instance: a warn-once flag; a split copy warns once more, and nothing else changes
 let warnedClassRouteUnset = false;
 
 /**

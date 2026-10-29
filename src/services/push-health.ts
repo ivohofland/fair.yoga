@@ -117,4 +117,5 @@ export function createPushDispatchTick(
   };
 }
 
+// per-instance: only the once-started sweep ticks this, so a later copy is never read; a split would only restart the failed-tick count
 export const runPushDispatchTick = createPushDispatchTick((db) => dispatchPushes(db));

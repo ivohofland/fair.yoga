@@ -15,6 +15,7 @@ export const MAX_INPUT_PIXELS = 50_000_000;
 // Bounds how much memory concurrent decodes can take on the single 2 GB VPS
 // this app runs on (CLAUDE.md, "VPS budget").
 export const DECODE_SLOTS = 2;
+// per-instance: a split copy holds its own slots, so the decode cap doubles for as long as two copies run
 const decodeSlot = createConcurrencyLimit(DECODE_SLOTS);
 
 const ACCEPTED_FORMATS: ReadonlySet<string> = new Set(Object.keys(ACCEPTED_PHOTO_FORMATS));

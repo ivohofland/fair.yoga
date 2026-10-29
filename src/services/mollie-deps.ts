@@ -4,10 +4,12 @@ import { log } from '@/lib/log';
 
 export type MollieDeps = { client: MollieClient; config: MollieConfig };
 
+// per-instance: a log-once flag; a split copy logs the configuration problem once more, and nothing else changes
 let reported = false;
+// per-instance: memoises a client built from constant env; a split copy builds an identical one
 let cached: MollieDeps | null | undefined;
 
-/** Mollie's client and config, or null when Mollie is not configured. Logs the reason once per process. */
+/** Mollie's client and config, or null when Mollie is not configured. Logs the reason once per module instance. */
 export function mollieDeps(): MollieDeps | null {
   if (cached !== undefined) return cached;
   const d = diagnoseMollieConfig();
