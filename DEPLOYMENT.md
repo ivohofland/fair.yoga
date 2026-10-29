@@ -253,6 +253,14 @@ roll back. Running the recorded commit, or an older one, instead refuses,
 naming both commits, rather than answering that it is already there. The app
 is unreachable for the few seconds the container swap takes.
 
+The health gate also reads `degraded` while a pool exhaustion is inside its
+15-minute window (§7). The new container is a new process with an empty
+window, and the gate usually passes before the scheduler's first boot pass. A
+deploy that fails on `degraded` with `db: up` and every job healthy means the
+new process exhausted its pool before it first answered ok: before rolling
+back, check `pool.lastExhaustedAt` in the detailed body (cron secret, §7) and
+the `DATABASE_POOL_EXHAUSTED` runbook in `docs/degradation-sites.md`.
+
 The previous commit keeps serving, and running its scheduler, while the
 migrations run and until the swap. A migration has to work with that commit
 running against it: a new column is nullable or has a default (the old code's
@@ -466,9 +474,9 @@ it descends from the one you rolled back to.
   as `{ status, db }`, where `status` is `degraded` once any job is unhealthy
   or the DB is down, and also for 15 minutes after a pool exhaustion in the
   running process (a restart clears it), at HTTP 200. So an uptime monitor
-  must match the body's `status` (a keyword check for `"status":"ok"`, as
-  production's Better Stack monitor does), not only the HTTP status. What to do about it is the runbook in `docs/degradation-sites.md`
-  (`DATABASE_POOL_EXHAUSTED`).
+  must match the body's `status` with a keyword check for `"status":"ok"`,
+  not only the HTTP status. What to do about a pool exhaustion is the runbook
+  in `docs/degradation-sites.md` (`DATABASE_POOL_EXHAUSTED`).
   A monitor needs only that public summary; the per-job scheduler state below
   needs the cron secret (`Authorization: Bearer $CRON_SECRET`).
   `jobs.<name>.healthy` flips false when a job errors, and also when its run

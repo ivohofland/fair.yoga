@@ -19,12 +19,13 @@ const OPEN_WINDOW_MS = 24 * 60 * 60 * 1000;
  * With the cron secret (`hasCronSecret`, never `requireCronAuth`, whose
  * 401/500 would fail the monitor): per-job scheduler state (timestamps +
  * `isJobHealthy`'s verdict — error text stays in the server log) and how many
- * degradation events fired in the last day, as a bare number. Which ones, and what they carried, appear only in the
- * operator's digest email and the server log (`docs/technical-architecture.md`,
- * Cron Jobs → Degradation events). When that number cannot be read, the
- * `degradations` key is omitted and the database still reports up. The public
- * answer never queries the degradation table, so a failure to read it is
- * logged only when a request carrying the secret asks.
+ * degradation events fired in the last day, as a bare number. Which ones, and
+ * what they carried, appear only in the operator's digest email and the server
+ * log (`docs/technical-architecture.md`, Cron Jobs → Degradation events). When
+ * that number cannot be read, the `degradations` key is omitted and the
+ * database still reports up. The public answer never queries the degradation
+ * table, so a failure to read it is logged only when a request carrying the
+ * secret asks.
  *
  * An `Authorization` header that is not the secret still gets the public
  * answer, and is logged at `warn` with why — never with its value.
