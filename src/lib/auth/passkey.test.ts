@@ -118,10 +118,9 @@ describe('passkey challenge store', () => {
     vi.resetModules();
 
     // A module instance separate from the one this file statically imports
-    // at its top: its own `challengeStores`/`evictionLogState` closures, and
-    // its own module-level `setInterval` call — captured by the fake clock
-    // because it runs during this dynamic import, which happens after
-    // `vi.useFakeTimers()`.
+    // at its top: its own evaluation of the module, whose first-evaluation
+    // backstop `setInterval` is captured by the fake clock because it runs
+    // during this dynamic import, which happens after `vi.useFakeTimers()`.
     const passkeyModule = await import('./passkey');
     // Resolves to the very instance passkeyModule's internal `log.warn`
     // calls use: passkeyModule's own `import { log } from '@/lib/log'`
@@ -164,8 +163,8 @@ describe('passkey challenge store', () => {
       expect(warnSpy).not.toHaveBeenCalled();
 
       // Advance the fake clock past the throttle window with no further
-      // storeChallenge call in between. The module-level setInterval
-      // registered at import time fires and flushes burst 2's suppressed
+      // storeChallenge call in between. The backstop setInterval
+      // registered at first evaluation fires and flushes burst 2's suppressed
       // count on its own.
       await vi.advanceTimersByTimeAsync(EVICTION_LOG_THROTTLE_MS);
 
@@ -742,11 +741,13 @@ describe('passkey challenge state is process-wide', () => {
 
     vi.resetModules();
     await import('./passkey');
+    const firstFlushAll = publishedState()?.flushAll;
     vi.resetModules();
     await import('./passkey');
 
     const state = publishedState();
     if (state === undefined) throw new Error('passkey module did not publish its state');
+    expect(state.flushAll).not.toBe(firstFlushAll);
     const flushSpy = vi.fn();
     state.flushAll = flushSpy;
 

@@ -53,10 +53,11 @@ export function recordDispatchFailure(): { looksSystemic: boolean } {
 }
 
 /**
- * Test-only. The failure window is process-wide and Vitest isolates `globalThis` per test file, not per test, so a
- * file with more than one test that calls `recordDispatchFailure` needs this
- * in `beforeEach` — without it, an earlier test's failures count toward a
- * later test's threshold.
+ * Test-only. The failure window is process-wide and Vitest isolates
+ * `globalThis` per test file, not per test, so a file with more than one
+ * test that calls `recordDispatchFailure` needs this in `beforeEach` —
+ * without it, an earlier test's failures count toward a later test's
+ * threshold.
  */
 export function __resetDispatchFailureTrackingForTests(): void {
   state.recentFailures = [];

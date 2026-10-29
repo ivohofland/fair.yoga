@@ -204,14 +204,17 @@ top-level `let` cannot use `??=`, so its value becomes a field of a global
 state object (`state.recentFailures = …`, `notify-health.ts`). A timer
 started at import starts once per process, behind a flag in its global state.
 Each evaluation rebinds the function the tick calls through that state, so the
-tick runs the newest code (`passkey.ts`).
+tick runs the newest code (`src/lib/auth/passkey.ts`).
 
 **Data, not class instances.** A value on `globalThis` outlives a dev edit
 with its old prototype, so an instance of a class defined in this repo would
 keep its pre-edit methods until restart. A process-wide holder is a `Map`,
 `Set`, array, plain object or bare `EventEmitter`, and behaviour stays in the
 module's exported functions over it. In `event-bus.ts` the emitter is shared
-and the functions around it are re-evaluated.
+and the functions around it are re-evaluated. The one exception is the Prisma
+client in `__fairYogaPrisma`: a library client built by the repo's factory,
+not an instance of a repo class, and the census does not see into factory
+calls.
 
 **Per-instance** holders stay as module-level bindings, with a leading
 comment that says why a split costs nothing that matters (`src/lib/email.ts`):
@@ -1654,14 +1657,14 @@ anything, so the defaults are unit-tested on their own
   evaluations measured on 2026-10-29. `db.ts` holds the client on
   `globalThis.__fairYogaPrisma`, so the first evaluation builds it and every
   later one reuses it, and the scheduler, routes and pages share one pool of
-  `DEFAULT_POOL_MAX`. Before #933 the client was held there only outside
-  production, so production built one pool per evaluation, up to three times
-  the connections the formula above sizes for. A sweep burst therefore waits
+  `DEFAULT_POOL_MAX`. A sweep burst therefore waits
   on the same pool as requests; `connectionTimeoutMs` (below) bounds that
   wait and `pool_exhausted` reports it. Measured on a local production build
   with the pool pinned to 9: 20 concurrent cron sweeps beside 10 sequential
-  `GET /api/health` held the database at 9 connections, slowed the slowest
-  health check to 50–68 ms (37–71 ms idle) and logged no `pool_exhausted`.
+  `GET /api/health` held the database at 9 connections and logged no
+  `pool_exhausted`; the slowest health check took 47–68 ms under that load
+  against 37–71 ms idle, so no slowdown was distinguishable, on a small
+  dataset.
   Re-derive: put a temporary
   `console.log('db.ts eval', globalThis.__fairYogaPrisma !== undefined)` at
   the top of `db.ts`, `pnpm run build`, `next start`, load a page and call an

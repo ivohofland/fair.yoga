@@ -108,8 +108,8 @@ Every such holder is one of:
    outlives an edit keeps its old prototype. A `NotificationBus` subclass
    instance on `globalThis` would keep its pre-edit methods until restart. So:
    - `notificationBus` becomes a plain `EventEmitter` on `globalThis`, and
-     `emitNotification`/`onNotification`/`offNotification` become exported
-     functions over it. The listener cap (`setMaxListeners(100)`) is applied
+     `notificationBus` stays a plain object literal whose methods delegate to
+     that global emitter, so `vi.spyOn(notificationBus, …)` still works. The listener cap (`setMaxListeners(100)`) is applied
      inside the `??=` initialiser, once.
    - A process-wide holder is a `Map`, `Set`, array, plain object or bare
      `EventEmitter`, never an instance of a class defined in this repo. The

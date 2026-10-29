@@ -7,7 +7,7 @@ export type CachedOffer = { kind: 'methods'; offered: AllowedMollieMethod[]; exc
 export const METHODS_CACHE_MS = 60_000;
 
 declare global {
-  // A disconnect on one module copy must drop what another copy cached.
+  // An invalidation in one bundle entry must reach the others.
   var __fairYogaOfferCache: Map<string, { at: number; value: CachedOffer }> | undefined;
 }
 
