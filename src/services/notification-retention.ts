@@ -1,5 +1,5 @@
 import type { NotificationType, PrismaClient } from '@/lib/prisma-client';
-import { isTransientDbError } from '@/lib/api-errors';
+import { transientDbFailure } from '@/lib/api-errors';
 import { log } from '@/lib/log';
 import { NOTIFICATION_RETENTION_DAYS } from '@/lib/notification-retention';
 
@@ -100,12 +100,13 @@ export async function reapExpiredNotifications(
       }
     } catch (err) {
       failed = true;
-      const context = { err, days };
-      if (isTransientDbError(err)) {
-        log.warn(context, 'notification retention period failed on contention; the next run retries it');
-      } else {
-        log.error(context, 'notification retention period failed');
-      }
+      const failure = transientDbFailure(err);
+      log[failure?.level ?? 'error'](
+        { err, days, transientKind: failure?.kind ?? null },
+        failure
+          ? 'notification retention period hit a transient database failure; the next run retries it'
+          : 'notification retention period failed',
+      );
     }
 
     periods.push({ days, cutoff: cutoff.toISOString(), deleted, cappedOut, failed });
