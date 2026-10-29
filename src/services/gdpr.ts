@@ -1108,9 +1108,7 @@ export async function deleteStudentAccount(
     // bind, the erasure aborts with P2028 — safe and retryable, because this
     // function is one transaction end to end (its only work outside it is the
     // post-commit `handleSpotFreed` loop, which swallows its own errors), so a
-    // throw means nothing landed. `api/account/route.ts`'s `erasureFailure`
-    // relies on exactly that to tell the caller "Nothing was changed", and says
-    // why the teacher erasure cannot claim the same.
+    // throw means nothing landed, except a connection lost mid-`COMMIT`.
     timeout: 20_000,
   }));
   if (freedClassIds === null) return { erased: false, reason: 'already-erased' };
