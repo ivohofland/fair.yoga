@@ -65,6 +65,11 @@
  * - what a timer guard tests: its condition is matched by identifier name
  *   alone, so a condition that mentions a process-wide binding accepts its
  *   then-branch whether or not it admits the branch once;
+ * - a top-level holder that is not a variable declaration: an
+ *   `export default` of `new X(…)`, an object literal or an array literal
+ *   (it has no name in its own file; it is mutated through an import), and a bare
+ *   expression statement assigning one to a property
+ *   (`globalThis.cache = new Map()`);
  * - a browser-state module reached transitively, through a `'use client'`
  *   file, or by a dynamic `import()`.
  */
@@ -826,6 +831,26 @@ describe('findUnmarkedHolders, on fixtures', () => {
         '',
       ].join('\n');
       expect(findUnmarkedHolders('f.ts', text)).toEqual([]);
+    });
+
+    it('a file-local export default Map', () => {
+      expect(findUnmarkedHolders('f.ts', 'export default new Map();\n')).toEqual([]);
+    });
+
+    it.each([
+      ['a Map', 'export default new Map();\n'],
+      ['an object literal', 'export default { n: 0 };\n'],
+      ['an array literal', 'export default [] as number[];\n'],
+    ])('an export default %s mutated through a later import', (_label, holder) => {
+      const files = [
+        { file: 'src/a.ts', text: holder },
+        { file: 'src/b.ts', text: "import m from './a';\nexport function f() { Object.assign(m, { n: 1 }); }\n" },
+      ];
+      expect(files.flatMap(({ file, text }) => findUnmarkedHolders(file, text))).toEqual([]);
+    });
+
+    it('a bare top-level assignment of a holder to a property', () => {
+      expect(findUnmarkedHolders('f.ts', 'globalThis.cache = new Map();\nglobalThis.cache.set(1, 2);\n')).toEqual([]);
     });
   });
 });
