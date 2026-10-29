@@ -1585,6 +1585,24 @@ anything, so the defaults are unit-tested on their own
   Re-derive on the server:
   `docker compose -f docker-compose.prod.yml exec app node -e "console.log(require('os').availableParallelism())"`
   must print `4`.
+- **One pool for the whole process, production included (#933).** A
+  production build evaluates `src/lib/db.ts` once per bundle entry:
+  instrumentation (the scheduler), the route layer and the page layer, three
+  evaluations measured on 2026-10-29. `db.ts` holds the client on
+  `globalThis.__fairYogaPrisma`, so the first evaluation builds it and every
+  later one reuses it, and the scheduler, routes and pages share one pool of
+  `DEFAULT_POOL_MAX`. Before #933 the client was held there only outside
+  production, so production built one pool per evaluation, up to three times
+  the connections the formula above sizes for. A sweep burst therefore waits
+  on the same pool as requests; `connectionTimeoutMs` (below) bounds that
+  wait and `pool_exhausted` reports it. Measured on a local production build
+  with the pool pinned to 9: 20 concurrent cron sweeps beside 10 sequential
+  `GET /api/health` held the database at 9 connections, slowed the slowest
+  health check to 50–68 ms (37–71 ms idle) and logged no `pool_exhausted`.
+  Re-derive: put a temporary
+  `console.log('db.ts eval', globalThis.__fairYogaPrisma !== undefined)` at
+  the top of `db.ts`, `pnpm run build`, `next start`, load a page and call an
+  API route; every line after the first must print `true`.
 - **`connectionTimeoutMs` bounds two waits with one knob**: waiting for a
   pooled connection, and establishing a new one (pg-pool hands its options to
   each `Client`). The 10 s default is Prisma's former `pool_timeout`. An
