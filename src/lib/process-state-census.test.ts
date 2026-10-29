@@ -25,15 +25,21 @@
  *   condition reads a process-wide binding or `globalThis.__fairYoga…`.
  *
  * A `const` is process-wide when its initializer, through parentheses, is
- * `globalThis.__fairYoga… ??= …` or a read of `globalThis.__fairYoga…`.
+ * `globalThis.__fairYoga… ??= …` or a read of `globalThis.__fairYoga…`. A
+ * process-wide value outlives an edit with its old prototype, so it holds
+ * data, never an instance of a class this repo defines: a `??=` whose
+ * right-hand side, through parentheses, is `new X(…)` with `X` rooted in a
+ * class declared in the file or in a binding imported from a `@/…` or
+ * relative specifier is flagged too.
  *
  * WHAT IT DOES NOT SEE, pinned by the blind-spot fixtures below so they stay
  * documented rather than accidental: a `const` initialised with any other call
  * (a factory returning a stateful closure); mutation through an alias
  * (`const a = m; a.set(…)`); mutation from another file; shadowing, which
- * reports a local that shares a holder's name (the loud direction); and
- * whether a process-wide initializer is an instance of a class this repo
- * defines.
+ * reports a local that shares a holder's name (the loud direction); and a
+ * process-wide initializer that reaches a repo class other than by a bare
+ * `new` on its right-hand side, such as a factory call or an IIFE returning
+ * one.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -46,7 +52,7 @@ const root = process.cwd();
 export interface Finding {
   line: number;
   binding: string;
-  shape: 'let' | 'mutated-const' | 'top-level-timer';
+  shape: 'let' | 'mutated-const' | 'top-level-timer' | 'repo-class-global';
 }
 
 /** Method calls that change their receiver. */
@@ -114,6 +120,33 @@ function isProcessWide(initializer: ts.Expression): boolean {
     e.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken &&
     isGlobalRead(e.left)
   );
+}
+
+/** Names that reach a class this repo defines: same-file classes and bindings imported from repo specifiers. */
+function repoClassNames(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const statement of source.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name) names.add(statement.name.text);
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (!specifier.startsWith('@/') && !specifier.startsWith('.')) continue;
+    const clause = statement.importClause;
+    if (clause?.name) names.add(clause.name.text);
+    const bindings = clause?.namedBindings;
+    if (bindings && ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
+    if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements) names.add(element.name.text);
+  }
+  return names;
+}
+
+/** Whether a process-wide initializer's `??=` right-hand side is `new` of a repo class. */
+function storesRepoInstance(initializer: ts.Expression, repoClasses: ReadonlySet<string>): boolean {
+  const e = unwrapParens(initializer);
+  if (!ts.isBinaryExpression(e) || e.operatorToken.kind !== ts.SyntaxKind.QuestionQuestionEqualsToken) return false;
+  const right = unwrapParens(e.right);
+  if (!ts.isNewExpression(right)) return false;
+  const name = rootIdentifier(right.expression);
+  return name !== undefined && repoClasses.has(name);
 }
 
 function isHolderInitializer(initializer: ts.Expression): boolean {
@@ -234,6 +267,7 @@ export function findUnmarkedHolders(fileName: string, text: string): Finding[] {
   const source = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   if (isUseClient(source)) return [];
   const mutated = mutatedRoots(source);
+  const repoClasses = repoClassNames(source);
   const lineOf = (node: ts.Node): number => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
 
   const processWide = new Set<string>();
@@ -257,6 +291,13 @@ export function findUnmarkedHolders(fileName: string, text: string): Finding[] {
           for (const binding of bindingNames(declaration.name)) {
             findings.push({ line: lineOf(declaration), binding, shape: 'let' });
           }
+        } else if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.initializer !== undefined &&
+          isProcessWide(declaration.initializer) &&
+          storesRepoInstance(declaration.initializer, repoClasses)
+        ) {
+          findings.push({ line: lineOf(declaration), binding: declaration.name.text, shape: 'repo-class-global' });
         } else if (
           ts.isIdentifier(declaration.name) &&
           declaration.initializer !== undefined &&
@@ -376,6 +417,25 @@ describe('findUnmarkedHolders, on fixtures', () => {
       ]);
     });
 
+    it('a process-wide holder that is an instance of a class declared in the file', () => {
+      const text = 'class Bus {}\nconst b = (globalThis.__fairYogaX ??= new Bus());\n';
+      expect(findUnmarkedHolders('f.ts', text)).toEqual([{ line: 2, binding: 'b', shape: 'repo-class-global' }]);
+    });
+
+    it('a process-wide holder that is an instance of a class imported from the repo', () => {
+      const text = [
+        "import { Bus } from '@/lib/bus';",
+        "import * as tools from './tools';",
+        'const b = (globalThis.__fairYogaX ??= new Bus());',
+        'const t = globalThis.__fairYogaY ??= (new tools.Store());',
+        '',
+      ].join('\n');
+      expect(findUnmarkedHolders('f.ts', text)).toEqual([
+        { line: 3, binding: 'b', shape: 'repo-class-global' },
+        { line: 4, binding: 't', shape: 'repo-class-global' },
+      ]);
+    });
+
     it('a per-instance marker with an empty reason', () => {
       expect(findUnmarkedHolders('f.ts', '// per-instance:\nlet n = 0;\n')).toEqual([
         { line: 2, binding: 'n', shape: 'let' },
@@ -396,6 +456,14 @@ describe('findUnmarkedHolders, on fixtures', () => {
 
     it('a holder initialised through globalThis, mutated', () => {
       const text = 'const s = (globalThis.__fairYogaX ??= new Map());\nexport function f() { s.set(1, 2); }\n';
+      expect(findUnmarkedHolders('f.ts', text)).toEqual([]);
+    });
+
+    it.each([
+      ['a Map', "const m = (globalThis.__fairYogaX ??= new Map());\n"],
+      ['an EventEmitter from events', "import { EventEmitter } from 'events';\nconst e = (globalThis.__fairYogaX ??= new EventEmitter());\n"],
+      ['an EventEmitter from node:events', "import { EventEmitter } from 'node:events';\nconst e = (globalThis.__fairYogaX ??= new EventEmitter());\n"],
+    ])('a process-wide holder that is %s', (_label, text) => {
       expect(findUnmarkedHolders('f.ts', text)).toEqual([]);
     });
 
@@ -424,6 +492,11 @@ describe('findUnmarkedHolders, on fixtures', () => {
   describe('blind spots, passing as documented', () => {
     it('a const initialised with a call, called later', () => {
       const text = 'const c = createThing();\nexport function f() { c(); c.set(1); }\n';
+      expect(findUnmarkedHolders('f.ts', text)).toEqual([]);
+    });
+
+    it('a process-wide repo-class instance built by a factory', () => {
+      const text = "import { createBus } from '@/lib/bus';\nconst b = (globalThis.__fairYogaX ??= createBus());\n";
       expect(findUnmarkedHolders('f.ts', text)).toEqual([]);
     });
 
