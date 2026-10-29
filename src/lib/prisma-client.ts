@@ -1,6 +1,8 @@
 import { availableParallelism } from 'node:os';
 import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import { PrismaClient, type Prisma } from '../generated/prisma/client';
+import { PG_POOL_TIMEOUT_MESSAGE } from './pg-messages';
 
 /**
  * Re-exports the generated client, except that `PrismaClient` is a type only here,
@@ -32,6 +34,21 @@ export interface PrismaClientFactoryOptions {
   onPoolError?: (err: Error) => void;
   /** Heard when a connection held by a transaction errors. Omitted, the adapter drops it. */
   onConnectionError?: (err: Error) => void;
+  /**
+   * Heard when a caller's wait for a pooled connection times out, with the
+   * pool's counters as the timeout is delivered; the caller still gets the
+   * error. A throw from it is dropped. It does not survive `$disconnect` and a
+   * later reconnect: the adapter then rebuilds a plain pool from the config.
+   */
+  onPoolExhausted?: (counters: PoolCounters) => void;
+}
+
+/** The pool as a wait timed out: pg-pool's `waitingCount`, `totalCount` and `idleCount`, and the pool's `max`. */
+export interface PoolCounters {
+  readonly waiting: number;
+  readonly total: number;
+  readonly idle: number;
+  readonly max: number;
 }
 
 /** The `pg.Pool` config `PrismaPg` is built from. */
@@ -70,6 +87,46 @@ export function poolConfigFor(options: PrismaClientFactoryOptions = {}): PgPoolC
   };
 }
 
+type ConnectCallback = (err: Error | undefined, client: pg.PoolClient | undefined, done: (release?: unknown) => void) => void;
+
+/** A `pg.Pool` that tells `onPoolExhausted` when a caller's wait for a connection times out, in both `connect` forms. */
+class ExhaustionReportingPool extends pg.Pool {
+  readonly #max: number;
+  readonly #onPoolExhausted: ((counters: PoolCounters) => void) | undefined;
+
+  constructor(config: PgPoolConfig, onPoolExhausted: ((counters: PoolCounters) => void) | undefined) {
+    super(config);
+    this.#max = config.max;
+    this.#onPoolExhausted = onPoolExhausted;
+  }
+
+  override connect(): Promise<pg.PoolClient>;
+  override connect(callback: ConnectCallback): void;
+  override connect(callback?: ConnectCallback): Promise<pg.PoolClient> | undefined {
+    if (callback === undefined) {
+      return super.connect().catch((err: unknown) => {
+        this.#report(err);
+        throw err;
+      });
+    }
+    super.connect((err, client, done) => {
+      this.#report(err);
+      callback(err, client, done);
+    });
+    return undefined;
+  }
+
+  #report(err: unknown): void {
+    // pg-pool's own error, never wrapped yet, so the message and `code` suffice; the full rules: `isPgPoolTimeout` (pg-error.ts).
+    if (!(err instanceof Error) || err.message !== PG_POOL_TIMEOUT_MESSAGE || Object.prototype.hasOwnProperty.call(err, 'code')) return;
+    try {
+      this.#onPoolExhausted?.({ waiting: this.waitingCount, total: this.totalCount, idle: this.idleCount, max: this.#max });
+    } catch {
+      // The caller's error is what matters here; the hook's own failure is dropped.
+    }
+  }
+}
+
 /** How far past the pool bound `maxWait` sits, so pg-pool's timeout fires first. */
 export const MAX_WAIT_MARGIN_MS = 1_000;
 
@@ -97,9 +154,10 @@ export function transactionOptionsFor(pool: PgPoolConfig): { readonly maxWait: n
 export function createPrismaClient(options: PrismaClientFactoryOptions = {}): PrismaClient {
   const pool = poolConfigFor(options);
   return new PrismaClient({
-    adapter: new PrismaPg(pool, {
+    adapter: new PrismaPg(new ExhaustionReportingPool(pool, options.onPoolExhausted), {
       ...(options.onPoolError === undefined ? {} : { onPoolError: options.onPoolError }),
       ...(options.onConnectionError === undefined ? {} : { onConnectionError: options.onConnectionError }),
+      disposeExternalPool: true,
     }),
     transactionOptions: transactionOptionsFor(pool),
     ...(options.errorFormat === undefined ? {} : { errorFormat: options.errorFormat }),
