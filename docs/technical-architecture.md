@@ -1764,6 +1764,7 @@ Measured on Prisma 7.10.1, `@prisma/adapter-pg` 7.10.1 and pg 8.23.1, with a
 |---|---|
 | `Promise.all` of three `tx.<model>.count()` calls | no: Prisma issues the app's statements on a `tx` one at a time |
 | one `findFirst` whose `include` names two list relations | no |
+| one `findFirst` whose `include` names three list relations | yes |
 | one `findFirst` whose `include` names six list relations | **yes**: Prisma's plan fetches the relations concurrently on the transaction's client |
 | the array form, `$transaction([…])` of four counts | no |
 | control: three `query()` calls at once on a bare `pg.Client` | yes |
