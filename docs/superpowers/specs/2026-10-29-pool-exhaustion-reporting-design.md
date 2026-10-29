@@ -128,11 +128,14 @@ times out:
 - the write's own timeout trips the hook once more, adding one to the next
   window's count. That is accepted: that write really did meet a dry pool.
 
-**b. The health signal.** It sets `globalThis.__fairYogaPoolExhaustedAt` to
-now. It has to live on `globalThis` because the writer is whichever layer
-built the shared client (often instrumentation) and the reader is the health
-route (the route layer); CLAUDE.md, "State the whole process must share lives
-on `globalThis`". The census test enforces this.
+**b. The health signal.** It sets `lastAt` to now on the holder
+`globalThis.__fairYogaPoolExhaustion` (`{ lastAt: Date | null }`), which every
+reader and writer reaches per call through `holder()`. It has to live on
+`globalThis` because the writer is whichever layer built the shared client
+(often instrumentation) and the reader is the health route (the route layer);
+CLAUDE.md, "State the whole process must share lives on `globalThis`". The
+census test does not see this holder, which is reached inside a function; it
+would flag a module-level `let` or mutated object put in its place.
 
 ### 3. `/api/health`
 
