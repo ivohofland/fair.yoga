@@ -298,7 +298,7 @@ export class ReconciliationFailedError extends Error {
     super(
       reason === 'non_transient'
         ? `waitlist reconciliation invoked ${failedClassIds.length} class(es) and every one failed`
-        : `waitlist reconciliation lost every class to contention for ${MAX_CONSECUTIVE_CONTENDED_TICKS} consecutive ticks`,
+        : `waitlist reconciliation lost every class to transient database failures for ${MAX_CONSECUTIVE_CONTENDED_TICKS} consecutive ticks`,
     );
     this.name = 'ReconciliationFailedError';
   }

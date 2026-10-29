@@ -1585,9 +1585,10 @@ anything, so the defaults are unit-tested on their own
 - **`connectionTimeoutMs` bounds two waits with one knob**: waiting for a
   pooled connection, and establishing a new one (pg-pool hands its options to
   each `Client`). The 10 s default is Prisma's former `pool_timeout`. An
-  unreachable host therefore takes up to 10 s to fail. A call that waits past
-  it fails with pg-pool's timeout, which `transientDbFailure` classifies
-  `pool_exhausted` (`src/lib/api-errors.ts`). An interactive transaction can
+  unreachable host therefore takes up to 10 s to fail. A wait for a pooled
+  connection past the bound fails with pg-pool's wait timeout, which
+  `transientDbFailure` classifies `pool_exhausted` (`src/lib/api-errors.ts`);
+  a new connect past it fails with pg-pool's connect timeout, `connection`. An interactive transaction can
   instead end as `P2028` (`tx_budget`); which wait ends as which kind is
   under "Database errors" (Transient kinds).
 - **`idleTimeoutMillis` is 300 s, fixed.** It matches the idle lifetime of
@@ -1698,19 +1699,21 @@ Where each row is produced against the real database:
 `src/lib/db-transient-shapes.test.ts` and `src/lib/pg-error.test.ts` for the
 SQLSTATE rows, the `P2028` rows, and the pool wait behind an
 interactive-transaction holder, with `db-transient-shapes.test.ts` also
-producing `57P01` (`pg_terminate_backend` on a client's own backend,
-mid-statement) and `53300` (a role created with `CONNECTION LIMIT 0`);
+producing `57P01` (`pg_terminate_backend` on the backend of a throwaway
+single-connection client, mid-statement) and `53300` (a role created with `CONNECTION LIMIT 0`);
 `src/services/sweep-page-ceiling.test.ts` for `P2029` and for `54001`;
 `src/lib/prisma-client.test.ts` for the connect timeout and `ECONNREFUSED` on
-all three paths (raw, model, interactive transaction). The connection rows were
-measured on 2026-10-29. No test produces the `P2025` row, the pool wait behind
+all three paths (raw, model, interactive transaction). The produced connection
+rows were measured on 2026-10-29. No test produces the `P2025` row, the pool wait behind
 a raw holder, or the `ENETUNREACH` / `EHOSTUNREACH` rows; those were measured
-once, on 2026-10-27, and are not re-checked. Four rows are read from source
-only and never produced: `57P02` and `57P03`, because a crash restart and a
-starting-up server would disturb the shared database container (they take the
-same `postgres`-kind path `57P01` proves), and `ECONNRESET` / `ETIMEDOUT`,
-read from the adapter's `mapSocketError` and the client runtime's kind→code
-switch.
+once, on 2026-10-27, and are not re-checked. `57P02` / `57P03` and
+`ECONNRESET` / `ETIMEDOUT` are read from source only on every path, and `57P01`
+on its typed path. `57P02` and `57P03` are never produced because a crash
+restart and a starting-up server would disturb the shared database container
+(they take the same `postgres`-kind path `57P01` proves); `ECONNRESET` /
+`ETIMEDOUT` are read from the adapter's `mapSocketError` and the client
+runtime's kind→code switch, as is `ENOTFOUND`, which `mapSocketError` maps to
+the same `DatabaseNotReachable` as `ECONNREFUSED`.
 
 | What failed | Thrown | Where the adapter's error sits | `kind` | Fields present |
 |---|---|---|---|---|
@@ -1727,7 +1730,7 @@ switch.
 | Connect exceeded `connectionTimeoutMillis` | plain `Error('Connection terminated due to connection timeout')`, enumerable own key `clientVersion` only, non-enumerable own `cause` pg's `Error('Connection terminated unexpectedly')` | none | — | — |
 | `ENETUNREACH` / `EHOSTUNREACH` (raw, model) | Known, `code: 'ENETUNREACH'` | none | — | — |
 | Same, inside an interactive transaction | the raw pg `Error`, `code: 'ENETUNREACH'` | — | — | — |
-| `ECONNREFUSED` | raw: `P2010`; model: `P1001` with `meta {modelName, driverAdapterError}`; inside an interactive transaction: `P1001` with `meta {driverAdapterError}` | `meta.driverAdapterError.cause` | `DatabaseNotReachable` | `host`, `port`; no `originalCode` |
+| `ECONNREFUSED`, and `ENOTFOUND` (read from source) | raw: `P2010`; model: `P1001` with `meta {modelName, driverAdapterError}`; inside an interactive transaction: `P1001` with `meta {driverAdapterError}` | `meta.driverAdapterError.cause` | `DatabaseNotReachable` | `host`, `port`; no `originalCode` |
 | `53300` (typed `P2037`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TooManyConnections` | `originalCode`, `originalMessage`, `cause` (the primary message again); no `code` |
 | `57P01` (typed `P2039`, raw `P2010`; raw produced, typed read from source) | Known | `meta.driverAdapterError.cause` | `postgres` | as the unmapped-SQLSTATE row, `severity: 'FATAL'` |
 | `57P02`, `57P03` (read from source) | as `57P01` | `meta.driverAdapterError.cause` | `postgres` | as `57P01` |
@@ -1776,6 +1779,10 @@ pg-pool's, matched here only; re-derive it with
 `grep -n "timeout exceeded when trying to connect" node_modules/.pnpm/pg-pool@*/node_modules/pg-pool/index.js`.
 `src/lib/pg-error.test.ts` reads the same file, so a pg-pool rewording reddens
 a test.
+`isPgConnectTimeout` applies the same rules to `PG_CONNECT_TIMEOUT_MESSAGE`
+(`'Connection terminated due to connection timeout'`); re-derive it with
+`grep -n "Connection terminated due to connection timeout" node_modules/.pnpm/pg-pool@*/node_modules/pg-pool/index.js`,
+and `pg-error.test.ts` pins it the same way.
 
 **Transient kinds.** `transientDbFailure` (`src/lib/api-errors.ts`) decides
 the `TransientKind` link by link along `Error.cause`, from structured fields
@@ -1796,11 +1803,15 @@ the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
 Every kind is produced against the real database, typed and raw where both
 are reachable, in `src/lib/db-transient-shapes.test.ts` and, for
 `ECONNREFUSED` and the connect timeout, `src/lib/prisma-client.test.ts`; within
-`connection`, the typed half of `57P01`, `57P02`, `57P03`, `ECONNRESET` and
-`ETIMEDOUT` are matched from source only (see the shape table). pg's
+`connection`, `57P02` / `57P03`, `ECONNRESET` / `ETIMEDOUT` and `ENOTFOUND` are
+matched from source only on every path, and `57P01` on its typed path (see the
+shape table). pg's
 `Connection terminated unexpectedly`,
 thrown bare rather than as the connect timeout's `cause`, is not classified
-yet: see #931.
+yet: see #931. A `connection` failure never reaches a service's `busy` arm,
+whose copy says nothing was changed: one lost mid-`COMMIT` may have applied the
+write, so the service rethrows it to `classifyApiError`, which answers the
+`connection` 503.
 
 What `pool_exhausted` covers, measured there on 2026-10-27 (`poolMax: 1`, the
 one connection held by an interactive transaction): any call whose wait for a
