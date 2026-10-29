@@ -137,14 +137,26 @@ describe('getAccessToken', () => {
     const copyB = await import('./processor-token');
     expect(copyB).not.toBe(copyA);
 
-    const first = copyA.getAccessToken(prisma, deps, c.id, now);
-    await vi.waitFor(() => expect(fake.refresh).toHaveBeenCalledTimes(1));
-    const second = copyB.getAccessToken(prisma, deps, c.id, now);
-    // Let the second copy read its row and reach the dedupe before the stub answers.
-    await new Promise((r) => setTimeout(r, 200));
-    release();
-    expect(await Promise.all([first, second])).toEqual([{ kind: 'token', accessToken: 'a3' }, { kind: 'token', accessToken: 'a3' }]);
-    expect(fake.refresh).toHaveBeenCalledTimes(1);
+    // Copy B has reached the dedupe once a lookup of this connection finds a
+    // flight; a copy that finds none goes on to call the stub itself.
+    let joined = false;
+    const originalGet = Map.prototype.get;
+    const getSpy = vi.spyOn(Map.prototype, 'get').mockImplementation(function (this: Map<unknown, unknown>, k: unknown) {
+      const found: unknown = originalGet.call(this, k);
+      if (k === c.id && found !== undefined) joined = true;
+      return found;
+    });
+    try {
+      const first = copyA.getAccessToken(prisma, deps, c.id, now);
+      await vi.waitFor(() => expect(fake.refresh).toHaveBeenCalledTimes(1));
+      const second = copyB.getAccessToken(prisma, deps, c.id, now);
+      await vi.waitFor(() => expect(joined || fake.refresh.mock.calls.length > 1).toBe(true));
+      release();
+      expect(await Promise.all([first, second])).toEqual([{ kind: 'token', accessToken: 'a3' }, { kind: 'token', accessToken: 'a3' }]);
+      expect(fake.refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      getSpy.mockRestore();
+    }
   });
   it('disconnects, nulls the tokens, tells the teacher and logs on invalid_grant', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
