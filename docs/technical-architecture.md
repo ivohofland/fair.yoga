@@ -1747,6 +1747,35 @@ seeding (measured: `cd src && pnpm exec prisma db seed --schema
 ../prisma/schema.prisma` exits 0 and seeds nothing). pnpm scripts and CI run
 from the root.
 
+### Overlapping statements on one transaction, and pg 9 (#927)
+
+pg 8 warns *Calling client.query() when the client is already executing a
+query is deprecated and will be removed in pg@9.0* when a query is issued while
+another is already **waiting** in that client's queue. The running one has
+left the queue, so it takes three statements in flight on one client, not two.
+Outside a transaction this cannot happen: the adapter takes a pool client per
+statement. Inside an interactive transaction every statement goes to that
+transaction's one client.
+
+Measured on Prisma 7.10.1, `@prisma/adapter-pg` 7.10.1 and pg 8.23.1, with a
+`process.on('warning')` listener:
+
+| Inside `$transaction(async (tx) => …)` | Warns |
+|---|---|
+| `Promise.all` of three `tx.<model>.count()` calls | no: Prisma issues the app's statements on a `tx` one at a time |
+| one `findFirst` whose `include` names two list relations | no |
+| one `findFirst` whose `include` names six list relations | **yes**: Prisma's plan fetches the relations concurrently on the transaction's client |
+| the array form, `$transaction([…])` of four counts | no |
+| control: three `query()` calls at once on a bare `pg.Client` | yes |
+
+So the source is Prisma's own query plan, not this repo's `Promise.all`. Under
+pg 9 a read that loads three or more relations inside an interactive
+transaction stops working until the adapter serializes its plan's fetches. pg 9
+cannot arrive unannounced: `package.json` and `@prisma/adapter-pg` both declare
+`pg` as `^8`. Before raising either to 9, re-run the probe above (a
+throwaway script under `pnpm exec tsx`, loading `dotenv/config` first) against
+the adapter version that ships with it.
+
 ### Database errors
 
 `src/lib/pg-error.ts` is the one module that knows where the pg driver adapter

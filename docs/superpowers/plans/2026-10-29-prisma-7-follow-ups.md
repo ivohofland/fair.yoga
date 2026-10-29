@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the three live follow-ups from #927: match unique violations by name, stop the one concurrent query on a transaction client, and make `db:reset` seed again.
+**Goal:** Close the live follow-ups from #927: match unique violations by name, record where the pg 9 deprecation actually comes from, and make `db:reset` seed again.
 
-**Architecture:** Three independent edits. (1) Four `P2002` catches that test only the code switch to `isUniqueConflictOn` with the index each one means, and rethrow anything else. (2) `liveWorkOf` awaits its two counts one after the other. (3) `db:reset` chains `prisma db seed`.
+**Architecture:** Three independent edits. (1) Four `P2002` catches that test only the code switch to `isUniqueConflictOn` with the index each one means (`admin-grants.ts` re-reads the grant instead), and rethrow anything else. (2) A docs subsection records the measured source of the pg deprecation. (3) `db:reset` chains `prisma db seed`.
 
 **Tech Stack:** TypeScript strict, Prisma 7.10.1 + `@prisma/adapter-pg`, pg 8.23.1, Vitest.
 
@@ -15,7 +15,7 @@
 - **Item 1 (23503 `{fields}`) is already pinned, so there is nothing to build.** `src/lib/pg-error.test.ts:42` asserts a fields-only cause names no constraint. The real-DB cases at `:380` (restrict delete) and `:394` (dangling insert) fail if the adapter ever emits `{fields}` for them. `docs/technical-architecture.md:1852` states that Postgres never sets `column` on an FK violation. No migration raises `23503` itself (`grep -rln "foreign_key_violation\|'23503'" prisma/migrations` finds nothing).
 - **Item 2 holds.** `prisma migrate reset --help` on 7.10.1 lists only `--config`, `--schema` and `--force`; there is no seed option. `README.md:74` and `:113` promise a re-seed.
 - **Item 3 holds, with 4 sites, not 3.** `src/lib/auth/account.ts:71`, `src/app/api/invitations/[id]/route.ts:261`, `src/services/admin-grants.ts:48`, and `src/services/processor-refunds.ts:199`, which neither the issue nor its comment names. Re-derive: `git grep -n "err.code === 'P2002'" -- src ':!*.test.ts'`, then drop the hits that already follow an `isUniqueConflictOn` (student-profile, teacher-profile, teacher-rooms, invitations.ts:414 and api-errors.ts's fallback).
-- **Item 4 has exactly 1 trigger.** `liveWorkOf` (`src/services/processor-connection.ts:42`) runs two counts with `Promise.all`, and `disconnect` calls it with its `tx` (`:416`). Census of non-test `Promise.all` hits: 27 = 0 direct on a `tx` + 1 through a parameter given a `tx` + 9 through a parameter given only the plain client + 17 plain client, no DB, or a comment.
+- **Item 4's mechanism is wrong.** A static census found one `Promise.all` on a transaction client: `liveWorkOf` (`src/services/processor-connection.ts:42`), called by `disconnect` with its `tx` (`:416`). Non-test hits: 27 = 0 direct on a `tx` + 1 through a parameter given a `tx` + 9 through a parameter given only the plain client + 17 plain client, no DB, or a comment. Probing during Task 2 showed that call never warns: Prisma issues an app's statements on a `tx` one at a time, and pg warns only with three statements in flight. What does warn is one read with three or more relation `include`s inside an interactive transaction. The measurements are in `docs/technical-architecture.md` (Overlapping statements on one transaction, and pg 9).
 - **Item 5 is let go.** The issue comment names the cost: an exactly pinned devDependency that has to move in lockstep with `@prisma/adapter-pg`.
 
 ## Global Constraints
@@ -28,17 +28,17 @@
 
 - A `P2002` on an index the catch did not name must now propagate, not be answered as "already done", a re-resolve, or `CONTACT_EMAIL_TAKEN`. Each task-1 site gets a test of that where the call can be intercepted.
 - The lost race each catch exists for must still answer exactly as before. The existing race tests cover this (`admin-grants.test.ts:80`, `processor-refunds.test.ts:325`, `tests/integration/invitations-api.test.ts:612`); they must stay green.
-- `UNIQUE_CONSTRAINTS` gains two partial indexes. `pg-error.test.ts:196` holds every member to `pg_indexes`, so a misspelt name fails there.
+- `UNIQUE_CONSTRAINTS` gains one partial index. `pg-error.test.ts:196` holds every member to `pg_indexes`, so a misspelt name fails there.
 
 ---
 
 ### Task 1: Match the four code-only P2002 catches by index name
 
 **Files:**
-- Modify: `src/lib/unique-conflict.ts` (add `'AdminGrant_account_active_unique'` and `'ProcessorRefund_one_live_per_attempt'` to `UNIQUE_CONSTRAINTS`, keeping alphabetical order)
+- Modify: `src/lib/unique-conflict.ts` (add `'ProcessorRefund_one_live_per_attempt'` to `UNIQUE_CONSTRAINTS`, keeping alphabetical order)
 - Modify: `src/lib/auth/account.ts:71` → `isUniqueConflictOn(err, ['Account_email_key'])`
 - Modify: `src/app/api/invitations/[id]/route.ts:261` → `isUniqueConflictOn(err, ['Invitation_teacherId_email_key'])`
-- Modify: `src/services/admin-grants.ts:48` → `isUniqueConflictOn(err, ['AdminGrant_account_active_unique'])`
+- Modify: `src/services/admin-grants.ts:48` → on a P2002, re-read the active grant and answer `unchanged` only if one exists (the migrate image carries only `prisma-client.ts`, so this module cannot import `unique-conflict.ts`; `admin-grants.test.ts` pins that)
 - Modify: `src/services/processor-refunds.ts:199` → `isUniqueConflictOn(err, ['ProcessorRefund_one_live_per_attempt'])`
 - Test: `src/services/admin-grants.test.ts`, `src/lib/auth/account.test.ts`, `src/app/api/invitations/[id]/cas-scope.test.ts` (or a sibling test in that directory using its `vi.mock('@/lib/db')` setup), `src/services/processor-refunds.test.ts`
 
@@ -63,22 +63,17 @@ A non-matching error falls to the catch's existing `throw err`. Drop each file's
   git commit -m "fix: the four code-only P2002 catches match their index by name (#927)"
   ```
 
-### Task 2: `liveWorkOf` issues its counts one after the other
+### Task 2: Record where the pg deprecation actually comes from
+
+The task originally planned was to make `liveWorkOf` sequential. Its first step falsified that: Prisma already serializes the app's statements on a `tx`. See the ledger ruling.
 
 **Files:**
-- Modify: `src/services/processor-connection.ts:42-48`
+- Modify: `docs/technical-architecture.md`: a new subsection before *Database errors*, holding the measured trigger table and the condition for a pg 9 bump.
 
-**Interfaces:** none crossing tasks.
-
-No new test: the result is unchanged, and pg's warning fires once per process, so an assertion on it would depend on test order. The proof is a before/after run of just this file under `--trace-deprecation`.
-
-- [ ] **Step 1: Record the warning before the change.** `NODE_OPTIONS=--trace-deprecation pnpm exec vitest run --project integration src/services/processor-connection.test.ts 2>&1 | grep -A8 "already executing a query"`. Expected: the warning, with a stack through `liveWorkOf`/`disconnect` if V8's async frames reach it. If this file does not exercise `disconnect` on a live connection, find the test file that does (`git grep -ln "disconnect(" -- 'src/**/*.test.ts' tests`) and use that one. Record the output.
-- [ ] **Step 2: Implement.** Replace the `Promise.all` with two sequential `await`s, keeping the same `LiveWork` result. Add a one-line comment that the function can run on a transaction client, where statements must not overlap.
-- [ ] **Step 3: Re-run step 1's command.** Expected: no "already executing a query" line, and the file's tests PASS. Record the output.
-- [ ] **Step 4: Commit**
+- [ ] **Step 1: Commit**
   ```bash
-  git add src/services/processor-connection.ts
-  git commit -m "fix: liveWorkOf runs its two counts in turn, since disconnect hands it a transaction client (#927)"
+  git add docs/technical-architecture.md docs/superpowers/plans/2026-10-29-prisma-7-follow-ups.md
+  git commit -m "docs: the pg 9 deprecation comes from Prisma's relation fetches in a transaction, not the repo's Promise.all (#927)"
   ```
 
 ### Task 3: `db:reset` seeds again
