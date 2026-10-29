@@ -428,3 +428,36 @@ describe('clientIp', () => {
     expect(clientIp(request)).toBe('unknown');
   });
 });
+
+describe('process-wide state', () => {
+  beforeEach(() => resetRateLimits());
+
+  it('the students budget is shared across module copies', async () => {
+    const { checkStudentWriteLimit } = await import('./rate-limit');
+    const savedGlobal = globalThis.__fairYogaRateLimits;
+    try {
+      for (let i = 0; i < 50; i++) {
+        expect(checkStudentWriteLimit('teacher-shared').allowed).toBe(true);
+      }
+      vi.resetModules();
+      const copyB = await import('./rate-limit');
+      expect(copyB.checkStudentWriteLimit('teacher-shared').allowed).toBe(false);
+    } finally {
+      globalThis.__fairYogaRateLimits = savedGlobal;
+    }
+  });
+
+  it('resetRateLimits on a fresh copy clears buckets the first copy filled', async () => {
+    const savedGlobal = globalThis.__fairYogaRateLimits;
+    try {
+      for (let i = 0; i < 3; i++) checkRateLimit('k-reset', 3, 60_000);
+      expect(checkRateLimit('k-reset', 3, 60_000).allowed).toBe(false);
+      vi.resetModules();
+      const copyB = await import('./rate-limit');
+      copyB.resetRateLimits();
+      expect(checkRateLimit('k-reset', 3, 60_000).allowed).toBe(true);
+    } finally {
+      globalThis.__fairYogaRateLimits = savedGlobal;
+    }
+  });
+});

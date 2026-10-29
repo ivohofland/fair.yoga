@@ -7,6 +7,7 @@ import { respondError } from './api-utils';
  *
  * Suitable for the single-process VPS deployment this project targets —
  * state does not survive restarts and is not shared across instances,
+ * but is one set per process however many copies of this module load,
  * which is acceptable for abuse throttling (not billing). Buckets are
  * partitioned by key prefix, each with its own bounded, LRU-evicted
  * capacity (`PREFIX_CAPACITIES`), so a flood on one prefix can never evict
@@ -30,7 +31,21 @@ interface PrefixState {
   suppressedEvictions: number;
 }
 
-const prefixStates = new Map<string, PrefixState>();
+interface RateLimitState {
+  prefixes: Map<string, PrefixState>;
+  lastUnresolvedIpLogTime: number;
+}
+
+declare global {
+  // Route handlers that each bundle their own copy of this module (and a dev
+  // hot reload) must still spend and read one set of buckets.
+  var __fairYogaRateLimits: RateLimitState | undefined;
+}
+
+const rateLimits = (globalThis.__fairYogaRateLimits ??= {
+  prefixes: new Map<string, PrefixState>(),
+  lastUnresolvedIpLogTime: 0,
+});
 
 export const DEFAULT_PREFIX_CAPACITY = 2_000;
 
@@ -109,14 +124,14 @@ const MAX_SCAN = 50;
 const WARNING_LOG_THROTTLE_MS = 60_000;
 
 function getPrefixState(prefix: string): PrefixState {
-  let state = prefixStates.get(prefix);
+  let state = rateLimits.prefixes.get(prefix);
   if (!state) {
     state = {
       buckets: new Map<string, Bucket>(),
       lastEvictionLogTime: 0,
       suppressedEvictions: 0,
     };
-    prefixStates.set(prefix, state);
+    rateLimits.prefixes.set(prefix, state);
   }
   return state;
 }
@@ -253,7 +268,6 @@ export function respondRateLimited(limit: RateLimitResult, action: string): Next
 /** Fallback key segment for callers whose IP could not be resolved — never a valid IP literal, so it can't collide with a real address. */
 export const UNRESOLVED_IP_ID = 'unresolved';
 
-let lastUnresolvedIpLogTime = 0;
 
 /**
  * Throttled (max once per 60s, across all routes) warning that `clientIp()`
@@ -263,8 +277,8 @@ let lastUnresolvedIpLogTime = 0;
  * limiting" section.
  */
 function warnUnresolvedClientIp(route: string, now: number): void {
-  if (now - lastUnresolvedIpLogTime < WARNING_LOG_THROTTLE_MS) return;
-  lastUnresolvedIpLogTime = now;
+  if (now - rateLimits.lastUnresolvedIpLogTime < WARNING_LOG_THROTTLE_MS) return;
+  rateLimits.lastUnresolvedIpLogTime = now;
   log.warn({ route }, 'Rate limit IP check degraded to a shared bucket: client IP could not be resolved');
 }
 
@@ -293,8 +307,8 @@ export function checkIpRateLimit(
 
 /** Test helper: forget all recorded hits. */
 export function resetRateLimits(): void {
-  prefixStates.clear();
-  lastUnresolvedIpLogTime = 0;
+  rateLimits.prefixes.clear();
+  rateLimits.lastUnresolvedIpLogTime = 0;
 }
 
 /**
