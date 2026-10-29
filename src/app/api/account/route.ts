@@ -25,7 +25,7 @@ import {
  * The retry advice is the whole point, and it has to be conditional.
  * `transient` below is what separates "safe to retry" from "worth
  * retrying": a lock timeout, a deadlock, an expired transaction budget
- * (`isTransientDbError`) are all lost races the next attempt can win, and
+ * (`isTransientDbError`) are all failures the next attempt can win, and
  * this branch was added for exactly one of them (`P2028` from
  * `deleteStudentAccount`'s flat 20s `timeout`). `ErasureLockSetError` is the
  * one exception that is not a DB error at all — see the disjunct below for

@@ -367,8 +367,10 @@ export type ArchiveRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * A transient database failure rolled this transaction back whole, so
-   * nothing was applied and the identical request can win the next attempt.
+   * A transient database failure; the identical request can win the next
+   * attempt. Nothing was applied for every transient kind except a `connection`
+   * failure lost mid-`COMMIT`, where a retry meets a 409 slot conflict (create)
+   * or a no-op (edit).
    *
    * Not only a `lock_timeout` expiry, though that is the case the copy is
    * written for. The arm is produced by `transientDbFailure`
@@ -1668,8 +1670,10 @@ export type UpdateRuleResult<TChild> =
    */
   | { ok: false; reason: 'slot_conflict'; heldBy: RuleSlotHolder }
   /**
-   * A transient database failure rolled this transaction back whole, so
-   * nothing was applied and the identical request can win the next attempt.
+   * A transient database failure; the identical request can win the next
+   * attempt. Nothing was applied for every transient kind except a `connection`
+   * failure lost mid-`COMMIT`, where a retry meets a 409 slot conflict (create)
+   * or a no-op (edit).
    */
   | { ok: false; reason: 'busy' };
 

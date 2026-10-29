@@ -330,11 +330,11 @@ export const PUT = withErrorHandler(async (
     const [message, code] = SLOT_TAKEN[result.heldBy];
     return respondError(message, 409, code);
   }
-  // A transient database failure (#100/#209) rolled this transaction back
-  // whole. Not always row contention: it can be a `lock_timeout` from a
-  // generation claim, archive, or pause/resume holding the `ClassTemplate`
-  // row, or a pool or transaction-budget failure with no other holder to
-  // name — `transientDbFailure` (`src/lib/api-errors.ts`) decided which.
+  // A transient database failure (#100/#209). Not always row contention: it
+  // can be a `lock_timeout` from a generation claim, archive, or pause/resume
+  // holding the `ClassTemplate` row, or a pool, transaction-budget or
+  // lost-connection failure with no other holder to name —
+  // `transientDbFailure` (`src/lib/api-errors.ts`) decided which.
   // Distinct copy from the PATCH pause/resume branch below ("could not
   // update this recurring class"): this is the edit, that is the toggle.
   if (result.reason === 'busy') {

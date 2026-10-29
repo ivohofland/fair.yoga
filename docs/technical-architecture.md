@@ -1796,8 +1796,9 @@ the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
 Every kind is produced against the real database, typed and raw where both
 are reachable, in `src/lib/db-transient-shapes.test.ts` and, for
 `ECONNREFUSED` and the connect timeout, `src/lib/prisma-client.test.ts`; within
-`connection`, `57P02`, `57P03`, `ECONNRESET` and `ETIMEDOUT` are matched from
-source only (see the shape table). pg's `Connection terminated unexpectedly`,
+`connection`, the typed half of `57P01`, `57P02`, `57P03`, `ECONNRESET` and
+`ETIMEDOUT` are matched from source only (see the shape table). pg's
+`Connection terminated unexpectedly`,
 thrown bare rather than as the connect timeout's `cause`, is not classified
 yet: see #931.
 

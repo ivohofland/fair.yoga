@@ -126,8 +126,8 @@ function terminalViolationOf(error: unknown): PgError | null {
 /**
  * Transient failures a retry can eventually win, not a bad request —
  * `isTransientDbError` answers `true` for every kind. `kind` decides only the
- * log level and the log field
- * `classifyApiError` attaches (`detail.transientKind`); it never touches
+ * log level, the log field `classifyApiError` attaches
+ * (`detail.transientKind`) and the 503 message (`TRANSIENT_KIND_MESSAGE`); it never touches
  * `transient` itself, which keeps driving every 503, every `busy` arm and
  * every sweep escalation exactly as it does for any member.
  *
@@ -193,7 +193,7 @@ export interface TransientDbFailure {
  *   request meets the same pool.
  * - `connection` is **`error`** — an operational fault. A retry wins only
  *   once the server is reachable again, and the next request meets the same
- *   connection.
+ *   server.
  * - `tx_budget` is `warn` — the budget can expire under contention or on a
  *   slow transaction, and neither is a fault on its own.
  */
@@ -208,8 +208,9 @@ const TRANSIENT_KIND_LEVEL = {
 
 /**
  * Postgres SQLSTATEs for a transient failure a retry can eventually win, not
- * a request that was wrong. Each aborts the whole transaction, so nothing is
- * half-applied, and the identical request can win the next attempt. Typed
+ * a request that was wrong. A retry can eventually win each; the contention
+ * SQLSTATEs abort the whole transaction, while a `connection` one can land
+ * mid-`COMMIT` (see `TRANSIENT_KIND_MESSAGE`). Typed
  * against `TransientKind` so an unknown kind cannot appear here.
  */
 const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
@@ -238,7 +239,7 @@ const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map(
 /**
  * The 503 `message` for each kind. `connection` has its own copy because a
  * connection lost during `COMMIT` has an unknown outcome, so it must not say
- * nothing was saved; every other kind aborted its transaction whole. Tethered
+ * nothing was saved; every other kind applied nothing. Tethered
  * to the compiler by `satisfies Record<TransientKind, string>`.
  */
 const TRANSIENT_KIND_MESSAGE = {
@@ -303,7 +304,7 @@ function transientKindShallow(error: unknown): TransientKind | null {
  * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
  * adapter's shapes carries it; the shapes are in
  * `docs/technical-architecture.md`, "Database errors". Nothing here reads an
- * error's text beyond pg-pool's two exact messages, so a message that merely
+ * error's text beyond `PG_POOL_TIMEOUT_MESSAGE` and `PG_CONNECT_TIMEOUT_MESSAGE`, so a message that merely
  * quotes a SQLSTATE as a digit string (a postcode, an amount, an id
  * fragment) is never relabelled "the database is busy, try again", which
  * would be exactly the wrong advice. `terminalViolationOf` above reads its
