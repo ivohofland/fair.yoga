@@ -351,6 +351,7 @@ describe('refundAttempt', () => {
       } finally {
         spy.mockRestore();
       }
+      expect(await prisma.processorRefund.count({ where: { attemptId: c.attempt.id } })).toBe(0);
       expect(fake.createRefund).not.toHaveBeenCalled();
     });
 
