@@ -6,6 +6,8 @@ import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import { createPrismaClient, poolConfigFor, transactionOptionsFor, DEFAULT_POOL_MAX, MAX_WAIT_MARGIN_MS, Prisma, ClassStatus, Currency } from './prisma-client';
 import * as enums from './prisma-enums';
+import { transientDbFailure } from './api-errors';
+import { pgConnectTimeout } from '../../tests/adapter-errors';
 
 const UNREACHABLE = 'postgresql://nobody@127.0.0.1:1/none';
 
@@ -27,6 +29,24 @@ describe('createPrismaClient', () => {
       expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
       const meta = (err as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError?: { cause?: { kind?: unknown } } };
       expect(meta.driverAdapterError?.cause?.kind).toBe('DatabaseNotReachable');
+      expect(transientDbFailure(err)).toEqual({ kind: 'connection', level: 'error' });
+    } finally {
+      await client.$disconnect();
+    }
+  });
+
+  it('a refused port on a model call and inside an interactive transaction is P1001, kind connection', async () => {
+    const client = createPrismaClient({ url: UNREACHABLE });
+    try {
+      const typed: unknown = await client.teacher.findFirst().then(() => null, (e: unknown) => e);
+      const inTx: unknown = await client.$transaction(async (tx) => tx.teacher.findFirst()).then(() => null, (e: unknown) => e);
+      for (const err of [typed, inTx]) {
+        expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P1001');
+        const meta = (err as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError?: { cause?: { kind?: unknown } } };
+        expect(meta.driverAdapterError?.cause?.kind).toBe('DatabaseNotReachable');
+        expect(transientDbFailure(err)).toEqual({ kind: 'connection', level: 'error' });
+      }
     } finally {
       await client.$disconnect();
     }
@@ -55,6 +75,10 @@ describe('createPrismaClient', () => {
       expect(Date.now() - t0).toBeLessThan(2000);
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain('Connection terminated due to connection timeout');
+      expect(Object.keys(err as object).sort()).toEqual(Object.keys(pgConnectTimeout()).sort());
+      expect(Object.getOwnPropertyNames(err as object).sort()).toEqual(Object.getOwnPropertyNames(pgConnectTimeout()).sort());
+      expect(String((err as Error).cause)).toBe(String(pgConnectTimeout().cause));
+      expect(transientDbFailure(err)).toEqual({ kind: 'connection', level: 'error' });
     } finally {
       await client.$disconnect();
     }

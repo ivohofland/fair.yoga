@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure, type TransientKind } from './api-errors';
 import { serializeErr } from './log-serializers';
-import { isPgPoolTimeout, pgErrorOf } from './pg-error';
+import { adapterKindOf, isPgPoolTimeout, pgErrorOf } from './pg-error';
 import { pgCause, pgPoolTimeout, typedCallError } from '../../tests/adapter-errors';
 
 type Db = ReturnType<typeof createPrismaClient>;
@@ -306,6 +306,82 @@ describe('transient kinds produced against the real database', () => {
     );
     expect(isPgPoolTimeout(err)).toBe(true);
     expectKind(err, 'pool_exhausted', 'error');
+  });
+
+  describe('connection', () => {
+    const role = `conn_limit_${tag}`;
+    const password = randomUUID();
+    const causeOf = (e: unknown): object => ((e as Prisma.PrismaClientKnownRequestError).meta as { driverAdapterError: { cause: object } }).driverAdapterError.cause;
+
+    beforeAll(async () => {
+      // A role name and password are identifiers and literals, not bind parameters; both are generated here.
+      await db.$executeRawUnsafe(`CREATE ROLE "${role}" LOGIN PASSWORD '${password}' CONNECTION LIMIT 0`);
+    });
+
+    afterAll(async () => {
+      await db.$executeRawUnsafe(`DROP ROLE IF EXISTS "${role}"`);
+    });
+
+    it('57P01: a backend ended by pg_terminate_backend mid-statement', async () => {
+      const victim = createPrismaClient({ poolMax: 1 });
+      try {
+        const pid = (await victim.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`)[0]?.pid;
+        if (pid === undefined) throw new Error('no backend pid');
+        const sleeping = rejectionOf(() => victim.$queryRaw`SELECT pg_sleep(5)`);
+        // Terminate only once the victim's backend is inside the sleep.
+        let asleep = false;
+        for (let i = 0; i < 100 && !asleep; i++) {
+          const rows = await db.$queryRaw<{ active: boolean }[]>`
+            SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ${pid} AND state = 'active' AND query LIKE '%pg_sleep%') AS active`;
+          asleep = rows[0]?.active === true;
+          if (!asleep) await new Promise((r) => setTimeout(r, 20));
+        }
+        if (!asleep) throw new Error('the victim never reached pg_sleep');
+        const terminated = await db.$queryRaw<{ ok: boolean }[]>`SELECT pg_terminate_backend(${pid}) AS ok`;
+        expect(terminated[0]?.ok).toBe(true);
+        const err = await sleeping;
+        expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        expect((err as Prisma.PrismaClientKnownRequestError).code).toBe('P2010');
+        expect(adapterKindOf(err)).toBe('postgres');
+        expect(pgErrorOf(err)?.sqlState).toBe('57P01');
+        expectKind(err, 'connection', 'error');
+        // The helper's `postgres` default carries the produced cause's keys; Postgres raises this one at FATAL.
+        const pg = pgErrorOf(err);
+        if (pg === null) throw new Error('no Postgres error on the produced value');
+        expect(ownKeys(causeOf(err))).toEqual(ownKeys(pgCause('57P01', pg.message)));
+        expect(causeOf(err)).toEqual(pgCause('57P01', pg.message, { severity: 'FATAL' }));
+      } finally {
+        await victim.$disconnect();
+      }
+    });
+
+    it('53300: a role whose connection limit is zero', async () => {
+      const url = new URL(process.env.DATABASE_URL ?? '');
+      url.username = role;
+      url.password = password;
+      const limited = createPrismaClient({ url: url.toString() });
+      try {
+        const raw = await rejectionOf(() => limited.$queryRaw`SELECT 1`);
+        const typed = await rejectionOf(() => limited.account.count());
+        expect((raw as Prisma.PrismaClientKnownRequestError).code).toBe('P2010');
+        expect((typed as Prisma.PrismaClientKnownRequestError).code).toBe('P2037');
+        for (const err of [raw, typed]) {
+          expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+          expect(pgErrorOf(err)?.sqlState).toBe('53300');
+          expect(adapterKindOf(err)).toBe('TooManyConnections');
+          expectKind(err, 'connection', 'error');
+        }
+        // The helper's fabrication carries the produced cause's fields.
+        const pg = pgErrorOf(typed);
+        if (pg === null) throw new Error('no Postgres error on the produced value');
+        const fake = typedCallError(pgCause('53300', pg.message), 'Account');
+        expect(fake.code).toBe('P2037');
+        expect(ownKeys(causeOf(fake))).toEqual(ownKeys(causeOf(typed)));
+        expect(causeOf(fake)).toEqual(causeOf(typed));
+      } finally {
+        await limited.$disconnect();
+      }
+    });
   });
 
   it('not transient: a statement_timeout (57014) is a 500', async () => {
