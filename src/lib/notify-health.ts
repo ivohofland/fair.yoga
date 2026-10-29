@@ -1,7 +1,12 @@
 const WINDOW_MS = 5 * 60 * 1000;
 const SYSTEMIC_THRESHOLD = 3;
 
-let recentFailures: number[] = [];
+declare global {
+  // The detector counts a burst across every route handler and hot reload, so it cannot be one module copy's.
+  var __fairYogaNotifyHealth: { recentFailures: number[] } | undefined;
+}
+
+const state = (globalThis.__fairYogaNotifyHealth ??= { recentFailures: [] });
 
 /**
  * Whether the fire-and-forget dispatch failures piling up right now look
@@ -42,17 +47,17 @@ let recentFailures: number[] = [];
  */
 export function recordDispatchFailure(): { looksSystemic: boolean } {
   const now = Date.now();
-  recentFailures = recentFailures.filter((t) => now - t < WINDOW_MS);
-  recentFailures.push(now);
-  return { looksSystemic: recentFailures.length >= SYSTEMIC_THRESHOLD };
+  state.recentFailures = state.recentFailures.filter((t) => now - t < WINDOW_MS);
+  state.recentFailures.push(now);
+  return { looksSystemic: state.recentFailures.length >= SYSTEMIC_THRESHOLD };
 }
 
 /**
- * Test-only. Vitest isolates module state per test file, not per test, so a
+ * Test-only. The failure window is process-wide and Vitest isolates `globalThis` per test file, not per test, so a
  * file with more than one test that calls `recordDispatchFailure` needs this
  * in `beforeEach` — without it, an earlier test's failures count toward a
  * later test's threshold.
  */
 export function __resetDispatchFailureTrackingForTests(): void {
-  recentFailures = [];
+  state.recentFailures = [];
 }

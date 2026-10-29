@@ -6,7 +6,12 @@ export type ExcludedMethod = { id: string; description: string | null };
 export type CachedOffer = { kind: 'methods'; offered: AllowedMollieMethod[]; excluded: ExcludedMethod[] };
 export const METHODS_CACHE_MS = 60_000;
 
-export const offerCache = new Map<string, { at: number; value: CachedOffer }>();
+declare global {
+  // A disconnect on one module copy must drop what another copy cached.
+  var __fairYogaOfferCache: Map<string, { at: number; value: CachedOffer }> | undefined;
+}
+
+export const offerCache = (globalThis.__fairYogaOfferCache ??= new Map<string, { at: number; value: CachedOffer }>());
 
 /** Drops every cached offer for a connection. */
 export function forgetOfferedMethods(connectionId: string): void {
