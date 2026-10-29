@@ -81,3 +81,39 @@ describe('NotificationBus', () => {
     notificationBus.offNotification(handler2);
   });
 });
+
+describe('NotificationBus across module copies', () => {
+  it('a listener on one module copy hears an emit from a fresh copy', async () => {
+    const first = await import('./event-bus');
+    const handler = vi.fn();
+    first.notificationBus.onNotification(handler);
+    try {
+      vi.resetModules();
+      const second = await import('./event-bus');
+      expect(second.notificationBus).not.toBe(first.notificationBus);
+
+      const event = makeEvent();
+      second.notificationBus.emitNotification(event);
+
+      expect(handler).toHaveBeenCalledWith(event);
+    } finally {
+      first.notificationBus.offNotification(handler);
+    }
+  });
+
+  it('the listener cap is applied once and survives re-evaluation', async () => {
+    const first = await import('./event-bus');
+    const handler = vi.fn();
+    first.notificationBus.onNotification(handler);
+    try {
+      const before = first.notificationBus.listenerCount();
+      vi.resetModules();
+      const second = await import('./event-bus');
+
+      expect(globalThis.__fairYogaNotificationBus?.getMaxListeners()).toBe(100);
+      expect(second.notificationBus.listenerCount()).toBe(before);
+    } finally {
+      first.notificationBus.offNotification(handler);
+    }
+  });
+});
