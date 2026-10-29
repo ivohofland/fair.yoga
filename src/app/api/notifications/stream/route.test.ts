@@ -128,10 +128,10 @@ describe('GET /api/notifications/stream keepalive tick', () => {
 describe('GET /api/notifications/stream shutdown', () => {
   it('ends every open stream and releases its listener and count when shutdown begins', async () => {
     validateSession.mockResolvedValue(SESSION);
-    const listenersBefore = notificationBus.listenerCount('notification');
+    const listenersBefore = notificationBus.listenerCount();
     const a = await open();
     const b = await open();
-    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore + 2);
+    expect(notificationBus.listenerCount()).toBe(listenersBefore + 2);
 
     beginShutdown();
     await vi.waitFor(() => {
@@ -139,19 +139,19 @@ describe('GET /api/notifications/stream shutdown', () => {
       expect(b.isDone()).toBe(true);
     });
 
-    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(notificationBus.listenerCount()).toBe(listenersBefore);
     expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
   });
 
   it('refuses a request that arrives after shutdown began, subscribing and counting nothing', async () => {
     validateSession.mockResolvedValue(SESSION);
-    const listenersBefore = notificationBus.listenerCount('notification');
+    const listenersBefore = notificationBus.listenerCount();
     beginShutdown();
 
     const res = await GET(connectRequest());
 
     expect(res.status).toBe(503);
-    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(notificationBus.listenerCount()).toBe(listenersBefore);
     expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
   });
 
@@ -162,7 +162,7 @@ describe('GET /api/notifications/stream shutdown', () => {
         resolveSession = resolve;
       }),
     );
-    const listenersBefore = notificationBus.listenerCount('notification');
+    const listenersBefore = notificationBus.listenerCount();
 
     const pending = GET(connectRequest());
     beginShutdown();
@@ -170,7 +170,7 @@ describe('GET /api/notifications/stream shutdown', () => {
     const res = await pending;
 
     expect(res.status).toBe(503);
-    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(notificationBus.listenerCount()).toBe(listenersBefore);
     expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
   });
 
@@ -225,7 +225,7 @@ describe('GET /api/notifications/stream client gone during the session check', (
         resolveSession = resolve;
       }),
     );
-    const listenersBefore = notificationBus.listenerCount('notification');
+    const listenersBefore = notificationBus.listenerCount();
     const abort = new AbortController();
 
     const pending = GET(
@@ -241,7 +241,7 @@ describe('GET /api/notifications/stream client gone during the session check', (
     while (!(await reader.read()).done);
 
     expect(globalThis.__fairYogaSseCounts?.has(SESSION.accountId)).toBe(false);
-    expect(notificationBus.listenerCount('notification')).toBe(listenersBefore);
+    expect(notificationBus.listenerCount()).toBe(listenersBefore);
     expect(globalThis.__fairYogaShutdown?.subscribers.size ?? 0).toBe(0);
   });
 });
