@@ -161,6 +161,7 @@ const CENSUS = 'censusOfTree';
 const KNOWN_CENSUS_FILES: readonly string[] = [
   'src/lib/db-locks-verdict-census.test.ts',
   'src/lib/probe-placement-census.test.ts',
+  'src/lib/process-state-census.test.ts',
 ];
 
 /** Wrappers that leave a callee's identity unchanged: `(f)(…)` and `f!(…)`. */

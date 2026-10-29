@@ -319,6 +319,7 @@ export async function generateClassInstances(
  * because `scheduler.ts` imports services dynamically and has nowhere else to
  * keep it.
  */
+// per-instance: only the once-started sweep ticks this, so a later copy is never read; a split would only restart a streak
 const productionStreaks = createContentionStreaks();
 
 export function runClassGenerationTick(db: PrismaClient): Promise<number> {

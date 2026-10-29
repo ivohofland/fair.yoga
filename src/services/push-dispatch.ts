@@ -39,6 +39,7 @@ export interface PushDispatchResult {
   misconfigured: MisconfiguredVapid | null;
 }
 
+// per-instance: a log-once flag; a split copy logs the missing configuration once more, and nothing else changes
 let reportedUnconfigured = false;
 
 interface ResolvedSender {

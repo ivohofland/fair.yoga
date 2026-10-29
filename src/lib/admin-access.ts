@@ -23,6 +23,7 @@ export type AdminProof = {
   readonly [adminProofBrand]: true;
 };
 
+// per-instance: an identity set; a proof never leaves the request that minted it, and a copy that missed one would refuse it
 const minted = new WeakSet<object>();
 
 export type AdminAccess = { kind: 'not_found' } | { kind: 'sign_in' } | { kind: 'granted'; proof: AdminProof };

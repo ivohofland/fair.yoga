@@ -79,8 +79,10 @@ interface Override {
  * read that threw held the write back: what a reload would lose. Null while
  * storage holds all of it.
  */
+// per-instance: browser state; every importer is a client component
 let overlay: ReadonlyMap<string, Override> | null = null;
 /** Storage refused even a removal, so its copy may contradict this tab's: none of it is read until a write succeeds. */
+// per-instance: browser state; every importer is a client component
 let detached = false;
 /**
  * The clears every tab has made, as tokens a clear replaces: `all` for one of
@@ -94,22 +96,32 @@ interface Clears {
 }
 const NO_CLEARS: Clears = Object.freeze({ all: '', owners: Object.freeze({}) });
 /** The clears as this tab last read or wrote them; null before the first read. */
+// per-instance: browser state; every importer is a client component
 let seenClears: Clears | null = null;
 /** What storage holds, as of `cachedRaw`, without the entries a read prunes. */
+// per-instance: browser state; every importer is a client component
 let stored: OutboxState = EMPTY_OUTBOX;
 /** Every well-formed entry storage holds, as of `cachedRaw`, including those a read prunes. */
+// per-instance: browser state; every importer is a client component
 let storedAll: OutboxState = EMPTY_OUTBOX;
 /** When this tab took `storedAll`: the time of the read that found it or the write that put it there. A read that throws takes nothing. */
+// per-instance: browser state; every importer is a client component
 let storedAt = 0;
 /** The stored text `stored` was parsed from or written as. */
+// per-instance: browser state; every importer is a client component
 let cachedRaw: string | null = null;
 /** This tab's outbox, as `view` builds it. */
+// per-instance: browser state; every importer is a client component
 let cached: OutboxState | null = null;
+// per-instance: browser state; every importer is a client component
 let readFailureLogged = false;
 /** Whether the last read of storage threw. */
+// per-instance: browser state; every importer is a client component
 let lastReadFailed = false;
 /** The last stored text whose discarded entries were reported, so one document warns once. */
+// per-instance: browser state; every importer is a client component
 let warnedRaw: string | null = null;
+// per-instance: browser state; every importer is a client component
 const listeners = new Set<() => void>();
 
 export function isRecord(v: unknown): v is Record<string, unknown> {

@@ -128,6 +128,7 @@ export type ClassLock = { readonly classId: string; readonly [classLockBrand]: t
  * describes. `assertClassLockHeldBy` below is the only reader; `lockClassRow`
  * is the only writer.
  */
+// per-instance: an identity map; a lock never leaves the transaction that minted it, and a copy that missed one would refuse it
 const lockHolders = new WeakMap<ClassLock, TransactionClientOnly>();
 
 /**
@@ -386,6 +387,7 @@ export type AccountSignOutLock = { readonly accountId: string; readonly [account
  * Maps each live `AccountSignOutLock` to the transaction client that minted
  * it, as `lockHolders` does for `ClassLock`.
  */
+// per-instance: an identity map; a lock never leaves the transaction that minted it, and a copy that missed one would refuse it
 const accountSignOutHolders = new WeakMap<AccountSignOutLock, TransactionClientOnly>();
 
 /**

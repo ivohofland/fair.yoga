@@ -26,18 +26,26 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const BACKOFF_MS = [5_000, 15_000, 60_000] as const;
 const SERVER_SYNC_STATE: SyncState = { needsSignIn: false, retrying: false };
 
+// per-instance: browser state; every importer is a client component
 let syncState: SyncState = SERVER_SYNC_STATE;
+// per-instance: browser state; every importer is a client component
 const syncListeners = new Set<() => void>();
 
 /** The flush running in this tab, if any. */
+// per-instance: browser state; every importer is a client component
 let running: Promise<void> | null = null;
 /** The owner the last trigger during a running flush asked for; `undefined` when none did. */
+// per-instance: browser state; every importer is a client component
 let rerunOwner: string | undefined;
+// per-instance: browser state; every importer is a client component
 let backoffStep = 0;
+// per-instance: browser state; every importer is a client component
 let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 /** Started syncs not yet stopped; the backoff arms only while one is running, so a stop holds against a flush still in flight. */
+// per-instance: browser state; every importer is a client component
 let activeSyncs = 0;
 /** Bumped by `resetSyncForTests`, so a flush still in flight from before it changes nothing after it. */
+// per-instance: browser state; every importer is a client component
 let generation = 0;
 
 function setSyncState(patch: Partial<SyncState>): void {

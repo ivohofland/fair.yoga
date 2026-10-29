@@ -256,6 +256,7 @@ export interface ReconcileOptions {
  * imports in `startScheduler` are what keep `instrumentation.ts` loadable in
  * the edge runtime.
  */
+// per-instance: only the once-started sweep ticks this, so a later copy is never read; a split would only restart a streak
 const productionStreaks = createReconciliationStreaks();
 
 export function runWaitlistReconciliationTick(db: PrismaClient): Promise<ReconcileSummary> {
