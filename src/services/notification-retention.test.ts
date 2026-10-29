@@ -175,7 +175,7 @@ describe('reapExpiredNotifications', () => {
       );
       expect(s.rowsRead('Notification')).toBeGreaterThan(0);
 
-      expect(error).toHaveBeenCalledWith({ err: failure, days: 365 }, expect.any(String));
+      expect(error).toHaveBeenCalledWith({ err: failure, days: 365, transientKind: null }, expect.any(String));
       expect(error).toHaveBeenCalledWith(
         {
           deleted: 1,
@@ -198,23 +198,50 @@ describe('reapExpiredNotifications', () => {
     await prisma.notification.delete({ where: { id: yearly } });
   });
 
-  it('logs a transient period failure at warn, and the summary still at error', async () => {
+  it('logs a lock timeout period failure at warn, carrying its kind', async () => {
     const yearly = await seed('class_cancelled', daysAgo(400));
-    const deadlock = typedCallError(pgCause('40P01', 'deadlock detected'));
+    const failure = typedCallError(pgCause('55P03', 'canceling statement due to lock timeout'));
     const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const summary = expect.objectContaining({
+      periods: expect.arrayContaining([expect.objectContaining({ days: 365, failed: true })]),
+    });
     try {
       await expect(
-        reapExpiredNotifications(scoped(failingOn(yearly, deadlock)).db, { now: NOW }),
+        reapExpiredNotifications(scoped(failingOn(yearly, failure)).db, { now: NOW }),
       ).rejects.toThrow(/365/);
-      expect(warn).toHaveBeenCalledWith({ err: deadlock, days: 365 }, expect.any(String));
-      expect(error).toHaveBeenCalledTimes(1);
-      expect(error).toHaveBeenCalledWith(
-        expect.objectContaining({
-          periods: expect.arrayContaining([expect.objectContaining({ days: 365, failed: true })]),
-        }),
-        expect.any(String),
+      expect(warn).toHaveBeenCalledWith(
+        { err: failure, days: 365, transientKind: 'lock_timeout' },
+        expect.stringMatching(/transient database failure/),
       );
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(summary, expect.any(String));
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+    await prisma.notification.delete({ where: { id: yearly } });
+  });
+
+  it("logs a deadlock period failure at error, as its kind's level says", async () => {
+    const yearly = await seed('class_cancelled', daysAgo(400));
+    const failure = typedCallError(pgCause('40P01', 'deadlock detected'));
+    const error = vi.spyOn(log, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const summary = expect.objectContaining({
+      periods: expect.arrayContaining([expect.objectContaining({ days: 365, failed: true })]),
+    });
+    try {
+      await expect(
+        reapExpiredNotifications(scoped(failingOn(yearly, failure)).db, { now: NOW }),
+      ).rejects.toThrow(/365/);
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledTimes(2);
+      expect(error).toHaveBeenCalledWith(
+        { err: failure, days: 365, transientKind: 'deadlock' },
+        expect.stringMatching(/transient database failure/),
+      );
+      expect(error).toHaveBeenCalledWith(summary, expect.any(String));
     } finally {
       error.mockRestore();
       warn.mockRestore();
