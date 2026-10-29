@@ -1675,9 +1675,11 @@ follows `Error.cause`; a caller that walks a chain calls it once per link. It
 finds the adapter's cause object on exactly one of two paths:
 
 1. `err` is an `Error` whose `name` is `'DriverAdapterError'` (identified by
-   name, never by import) and whose `cause` is an object → `err.cause`. No
-   typed call measured under 7.10.1 throws one bare; the path stays for a
-   runtime that does.
+   name, never by import) and whose `cause` is an object → `err.cause`. An
+   interactive transaction's `COMMIT` throws one bare when the connection
+   closes under it (`kind: 'ConnectionClosed'`, produced in
+   `src/lib/db-connection-drop.test.ts`); no statement measured under 7.10.1
+   does.
 2. `err` is a `Prisma.PrismaClientKnownRequestError` whose
    `meta.driverAdapterError` is an object named `'DriverAdapterError'` with an
    object `cause` → that `cause`.
@@ -1703,15 +1705,19 @@ producing `57P01` (`pg_terminate_backend` on the backend of a throwaway
 single-connection client, mid-statement) and `53300` (a role created with `CONNECTION LIMIT 0`);
 `src/services/sweep-page-ceiling.test.ts` for `P2029` and for `54001`;
 `src/lib/prisma-client.test.ts` for the connect timeout and `ECONNREFUSED` on
-all three paths (raw, model, interactive transaction). The produced connection
-rows were measured on 2026-10-29. No test produces the `P2025` row, the pool wait behind
+all three paths (raw, model, interactive transaction);
+`src/lib/db-connection-drop.test.ts` for the dropped-connection rows, through a
+`net` relay between a throwaway client and the database that is cut, by ending
+its sockets or resetting them, mid-statement on all three paths and around an
+interactive transaction's `COMMIT`. The produced connection rows were measured
+on 2026-10-29. No test produces the `P2025` row, the pool wait behind
 a raw holder, or the `ENETUNREACH` / `EHOSTUNREACH` rows; those were measured
 once, on 2026-10-27, and are not re-checked. `57P02` / `57P03` and
-`ECONNRESET` / `ETIMEDOUT` are read from source only on every path, and `57P01`
+`ETIMEDOUT` are read from source only on every path, and `57P01`
 on its typed path. `57P02` and `57P03` are never produced because a crash
 restart and a starting-up server would disturb the shared database container
-(they take the same `postgres`-kind path `57P01` proves); `ECONNRESET` /
-`ETIMEDOUT` are read from the adapter's `mapSocketError` and the client
+(they take the same `postgres`-kind path `57P01` proves); `ETIMEDOUT` is read
+from the adapter's `mapSocketError` and the client
 runtime's kind→code switch, as is `ENOTFOUND`, which `mapSocketError` maps to
 the same `DatabaseNotReachable` as `ECONNREFUSED`.
 
@@ -1734,7 +1740,12 @@ the same `DatabaseNotReachable` as `ECONNREFUSED`.
 | `53300` (typed `P2037`, raw `P2010`) | Known | `meta.driverAdapterError.cause` | `TooManyConnections` | `originalCode`, `originalMessage`, `cause` (the primary message again); no `code` |
 | `57P01` (typed `P2039`, raw `P2010`; raw produced, typed read from source) | Known | `meta.driverAdapterError.cause` | `postgres` | as the unmapped-SQLSTATE row, `severity: 'FATAL'` |
 | `57P02`, `57P03` (read from source) | as `57P01` | `meta.driverAdapterError.cause` | `postgres` | as `57P01` |
-| `ECONNRESET` / `ETIMEDOUT` (read from source) | Known: model `P1017` / `P1008`, raw `P2010` | `meta.driverAdapterError.cause` | `ConnectionClosed` / `SocketTimeout` | `kind` only; no `originalCode` |
+| The server ends the socket mid-statement (raw, model, interactive transaction) | plain `Error('Connection terminated unexpectedly')` (pg's `client.js`), enumerable own key `clientVersion` only; no `code`, no `cause` | none | — | — |
+| The socket resets mid-statement (`ECONNRESET`) | Known: model `P1017`, raw and inside an interactive transaction `P2010` | `meta.driverAdapterError.cause` | `ConnectionClosed` | `kind` only; no `originalCode` |
+| An interactive transaction's `COMMIT`, written to a socket already ended, or cut by a reset while in flight | bare `DriverAdapterError`, own `name`, `cause` | `err.cause` | `ConnectionClosed` | `kind` only. Written to an ended socket nothing lands; **cut in flight, the write landed** |
+| `COMMIT` in flight when the server ends the socket | plain `Error('Connection terminated unexpectedly')`, **no** enumerable own key; no `code`, no `cause` | none | — | — (**the write landed**) |
+| `COMMIT` written to a socket already reset | plain `Error('write EPIPE')`, own `code: 'EPIPE'`, `errno`, `syscall: 'write'` | none | — | — (nothing lands). **Not classified: a 500 by design**, since a bare `EPIPE` can come from any socket, not only the database's |
+| `ETIMEDOUT` (read from source) | Known: model `P1008`, raw `P2010` | `meta.driverAdapterError.cause` | `SocketTimeout` | `kind` only; no `originalCode` |
 
 So a `40001` or a `40P01` is recognised by `originalCode` on both its typed and
 its raw shape (`code` is absent on both), and the primary message is `originalMessage`,
@@ -1795,23 +1806,28 @@ logs at `error`), then the adapter's `kind` that `adapterKindOf` reads
 (`DatabaseNotReachable`, `ConnectionClosed`, `SocketTimeout` and
 `TooManyConnections` → `connection`; keyed on the kind rather than the Prisma
 code because a raw call carries all four as `P2010`), then `isPgPoolTimeout` →
-`pool_exhausted`, then `isPgConnectTimeout` → `connection`. The only error text
-read is pg-pool's two exact messages (`PG_POOL_TIMEOUT_MESSAGE`,
-`PG_CONNECT_TIMEOUT_MESSAGE`), so a message quoting a SQLSTATE is never
-relabelled transient. `P2024` is in no map: on the client engine with
+`pool_exhausted`, then `isPgConnectTimeout` → `connection`, then
+`isPgConnectionTerminated` → `connection`. The only error text read is
+pg-pool's and pg's exact messages (`PG_POOL_TIMEOUT_MESSAGE`,
+`PG_CONNECT_TIMEOUT_MESSAGE`, `PG_CONNECTION_TERMINATED_MESSAGE`), each pinned
+to the driver's source by `src/lib/pg-error.test.ts`, so a message quoting a
+SQLSTATE is never relabelled transient. `P2024` is in no map: on the client engine with
 the adapter a pool wait arrives as pg-pool's plain `Error`, never as `P2024`.
 Every kind is produced against the real database, typed and raw where both
 are reachable, in `src/lib/db-transient-shapes.test.ts` and, for
-`ECONNREFUSED` and the connect timeout, `src/lib/prisma-client.test.ts`; within
-`connection`, `57P02` / `57P03`, `ECONNRESET` / `ETIMEDOUT` and `ENOTFOUND` are
+`ECONNREFUSED` and the connect timeout, `src/lib/prisma-client.test.ts`, and,
+for a connection dropped mid-query, `src/lib/db-connection-drop.test.ts`; within
+`connection`, `57P02` / `57P03`, `ETIMEDOUT` and `ENOTFOUND` are
 matched from source only on every path, and `57P01` on its typed path (see the
-shape table). pg's
-`Connection terminated unexpectedly`,
-thrown bare rather than as the connect timeout's `cause`, is not classified
-yet: see #931. A `connection` failure never reaches a service's `busy` arm,
-whose copy says nothing was changed: one lost mid-`COMMIT` may have applied the
-write, so the service rethrows it to `classifyApiError`, which answers the
-`connection` 503.
+shape table). The connect timeout carries pg's termination error as its
+`cause`, so both depths match; the walk stops at depth 0, and the answer is
+the same `connection` either way. The one dropped-connection shape left a 500
+is `write EPIPE`, which the shape table says why. A `connection` failure never
+reaches a service's `busy` arm, whose copy says nothing was changed: a
+connection lost mid-`COMMIT` was measured to have applied the write on both
+cuts, so the service rethrows it to `classifyApiError`, which answers the
+`connection` 503 and its copy, which says the request may not have gone
+through.
 
 What `pool_exhausted` covers, measured there on 2026-10-27 (`poolMax: 1`, the
 one connection held by an interactive transaction): any call whose wait for a
