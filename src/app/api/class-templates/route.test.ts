@@ -195,7 +195,7 @@ describe('POST /api/class-templates — a connection failure from the service', 
 
       expect({ status: res.status, code: body.error?.code, message: body.error?.message }).toEqual({
         status: 503,
-        code: undefined,
+        code: 'DATABASE_CONNECTION_FAILED',
         message:
           'Something on our side was briefly unavailable, so that may not have gone through. Please try again in a moment.',
       });
