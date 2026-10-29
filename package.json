@@ -27,7 +27,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset",
+    "db:reset": "prisma migrate reset && prisma db seed",
     "vapid:keys": "tsx scripts/vapid-keys.ts",
     "admin:grant": "tsx scripts/admin-grant.ts grant",
     "admin:revoke": "tsx scripts/admin-grant.ts revoke",
