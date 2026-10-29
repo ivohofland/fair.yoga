@@ -1,6 +1,6 @@
 import { Prisma } from '@/lib/prisma-client';
 import { isExclusionConflictOn } from './exclusion-conflict';
-import { isPgPoolTimeout, pgErrorOf, type PgError } from './pg-error';
+import { adapterKindOf, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf, type AdapterKind, type PgError } from './pg-error';
 import type { CodeWithStatus } from './api-error-codes';
 
 /**
@@ -147,6 +147,9 @@ function terminalViolationOf(error: unknown): PgError | null {
  *   out nothing in time. The pool timeout's shape, and which waits end as
  *   this kind rather than `tx_budget`: `docs/technical-architecture.md`,
  *   "Database errors".
+ * - `connection` (the connection itself failing) — the server refusing,
+ *   dropping or not answering a connection, or pg-pool's connect timeout. What
+ *   matches, per shape: `docs/technical-architecture.md`, "Database errors".
  * - `tx_budget` (`P2028`) — the interactive-transaction budget expiring,
  *   which `deleteStudentAccount`'s flat 20s `timeout` can hit under load.
  */
@@ -155,6 +158,7 @@ export type TransientKind =
   | 'deadlock'
   | 'serialization'
   | 'pool_exhausted'
+  | 'connection'
   | 'tx_budget';
 
 /**
@@ -187,6 +191,9 @@ export interface TransientDbFailure {
  * - `pool_exhausted` is **`error`** — an operational fault, a leak or a
  *   drained pool. No retry wins it until the pool recovers, and the next
  *   request meets the same pool.
+ * - `connection` is **`error`** — an operational fault. A retry wins only
+ *   once the server is reachable again, and the next request meets the same
+ *   connection.
  * - `tx_budget` is `warn` — the budget can expire under contention or on a
  *   slow transaction, and neither is a fault on its own.
  */
@@ -195,6 +202,7 @@ const TRANSIENT_KIND_LEVEL = {
   deadlock: 'error',
   serialization: 'warn',
   pool_exhausted: 'error',
+  connection: 'error',
   tx_budget: 'warn',
 } as const satisfies Record<TransientKind, 'warn' | 'error'>;
 
@@ -208,7 +216,39 @@ const TRANSIENT_SQLSTATE_KIND: ReadonlyMap<string, TransientKind> = new Map([
   ['55P03', 'lock_timeout'],
   ['40P01', 'deadlock'],
   ['40001', 'serialization'],
+  ['53300', 'connection'],
+  ['57P01', 'connection'],
+  ['57P02', 'connection'],
+  ['57P03', 'connection'],
 ]);
+
+/**
+ * The adapter `kind`s that mean the connection itself failed, whichever Prisma
+ * code carries them: a raw call gives `P2010` where a typed one gives a
+ * connection code, so the kind is the key that reaches both. Typed against
+ * `TransientKind` so an unknown kind cannot appear here.
+ */
+const TRANSIENT_ADAPTER_KIND: ReadonlyMap<AdapterKind, TransientKind> = new Map([
+  ['DatabaseNotReachable', 'connection'],
+  ['ConnectionClosed', 'connection'],
+  ['SocketTimeout', 'connection'],
+  ['TooManyConnections', 'connection'],
+]);
+
+/**
+ * The 503 `message` for each kind. `connection` has its own copy because a
+ * connection lost during `COMMIT` has an unknown outcome, so it must not say
+ * nothing was saved; every other kind aborted its transaction whole. Tethered
+ * to the compiler by `satisfies Record<TransientKind, string>`.
+ */
+const TRANSIENT_KIND_MESSAGE = {
+  lock_timeout: 'The system was busy and could not finish that. Please try again.',
+  deadlock: 'The system was busy and could not finish that. Please try again.',
+  serialization: 'The system was busy and could not finish that. Please try again.',
+  pool_exhausted: 'The system was busy and could not finish that. Please try again.',
+  connection: 'Something on our side was briefly unavailable, so that may not have gone through. Please try again in a moment.',
+  tx_budget: 'The system was busy and could not finish that. Please try again.',
+} as const satisfies Record<TransientKind, string>;
 
 /**
  * Prisma's own codes for the same class of failure — a retry can eventually
@@ -247,7 +287,13 @@ function transientKindShallow(error: unknown): TransientKind | null {
     const kind = TRANSIENT_PRISMA_CODE_KIND.get(error.code);
     if (kind) return kind;
   }
-  return isPgPoolTimeout(error) ? 'pool_exhausted' : null;
+  const adapterKind = adapterKindOf(error);
+  if (adapterKind !== undefined) {
+    const kind = TRANSIENT_ADAPTER_KIND.get(adapterKind);
+    if (kind) return kind;
+  }
+  if (isPgPoolTimeout(error)) return 'pool_exhausted';
+  return isPgConnectTimeout(error) ? 'connection' : null;
 }
 
 /**
@@ -256,12 +302,13 @@ function transientKindShallow(error: unknown): TransientKind | null {
  *
  * The SQLSTATE is the structured one `pgErrorOf` reads, on whichever of the
  * adapter's shapes carries it; the shapes are in
- * `docs/technical-architecture.md`, "Database errors". Nothing here reads an error's text, so a message that
- * merely quotes a SQLSTATE as a digit string (a postcode, an amount, an id
+ * `docs/technical-architecture.md`, "Database errors". Nothing here reads an
+ * error's text beyond pg-pool's two exact messages, so a message that merely
+ * quotes a SQLSTATE as a digit string (a postcode, an amount, an id
  * fragment) is never relabelled "the database is busy, try again", which
  * would be exactly the wrong advice. `terminalViolationOf` above reads its
- * `23514` the same way. A SQLSTATE is checked before a Prisma code, then
- * pg-pool's wait timeout.
+ * `23514` the same way. A SQLSTATE is checked before a Prisma code, then the
+ * adapter's `kind`, then pg-pool's wait timeout, then its connect timeout.
  *
  * Walks the `Error.cause` chain up to a fixed depth, so a wrapper like
  * `SpotFreedError` that carries the real failure as `cause` does not silently
@@ -512,7 +559,7 @@ export function classifyApiError(error: unknown): ApiFailure {
   if (transient) {
     return {
       status: 503,
-      message: 'The system was busy and could not finish that. Please try again.',
+      message: TRANSIENT_KIND_MESSAGE[transient.kind],
       logMessage: 'transient database failure surfaced to a client',
       level: transient.level,
       detail: { transientKind: transient.kind },

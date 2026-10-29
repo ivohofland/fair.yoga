@@ -1,5 +1,5 @@
 import { Prisma } from '@/lib/prisma-client';
-import { PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
+import { PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE } from '@/lib/pg-error';
 
 /** The plain object the pg driver adapter puts in its DriverAdapterError's `cause`. */
 export interface AdapterCause {
@@ -21,6 +21,7 @@ const TYPED_CODE = {
   ForeignKeyConstraintViolation: 'P2003',
   InvalidInputValue: 'P2007',
   TransactionWriteConflict: 'P2034',
+  TooManyConnections: 'P2037',
   postgres: 'P2039',
 } as const;
 
@@ -49,6 +50,8 @@ export function pgCause(sqlState: string, message: string, extra: Partial<Adapte
     case '40001':
     case '40P01':
       return { ...original, kind: 'TransactionWriteConflict' satisfies PgCauseKind, ...extra };
+    case '53300':
+      return { ...original, kind: 'TooManyConnections' satisfies PgCauseKind, cause: message, ...extra };
     default:
       return { ...original, kind: 'postgres' satisfies PgCauseKind, code: sqlState, severity: 'ERROR', message, detail: undefined, column: undefined, hint: undefined, ...extra };
   }
@@ -92,4 +95,18 @@ export function knownWithAdapterCause(
 /** pg-pool's wait-timeout error as Prisma rethrows it: a plain Error, own key `clientVersion` only. */
 export function pgPoolTimeout(): Error {
   return Object.assign(new Error(PG_POOL_TIMEOUT_MESSAGE), { clientVersion: CLIENT_VERSION });
+}
+
+/** pg-pool's connect-timeout error as Prisma rethrows it: a plain Error, own key `clientVersion` only. */
+export function pgConnectTimeout(): Error {
+  return Object.assign(new Error(PG_CONNECT_TIMEOUT_MESSAGE), { clientVersion: CLIENT_VERSION });
+}
+
+/**
+ * The cause the adapter's `mapSocketError` builds for a socket failure: no
+ * `originalCode`, so `pgErrorOf` reads nothing from it and only its `kind` says
+ * what happened.
+ */
+export function socketCause(kind: 'DatabaseNotReachable' | 'ConnectionClosed' | 'SocketTimeout'): AdapterCause {
+  return kind === 'DatabaseNotReachable' ? { kind, host: '127.0.0.1', port: 1 } : { kind };
 }
