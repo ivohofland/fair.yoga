@@ -1679,8 +1679,8 @@ finds the adapter's cause object on exactly one of two paths:
 
 1. `err` is an `Error` whose `name` is `'DriverAdapterError'` (identified by
    name, never by import) and whose `cause` is an object → `err.cause`. An
-   interactive transaction's `COMMIT` throws one bare when it is written to a
-   socket already ended, or when a reset cuts it in flight
+   interactive transaction's `COMMIT` throws one bare when a reset cuts it in
+   flight
    (`kind: 'ConnectionClosed'`, produced in
    `src/lib/db-connection-drop.test.ts`); no statement measured under 7.10.1
    does.
@@ -1746,9 +1746,10 @@ the same `DatabaseNotReachable` as `ECONNREFUSED`.
 | `57P02`, `57P03` (read from source) | as `57P01` | `meta.driverAdapterError.cause` | `postgres` | as `57P01` |
 | The server ends the socket mid-statement (raw, model, interactive transaction) | plain `Error('Connection terminated unexpectedly')` (pg's `client.js`), enumerable own key `clientVersion` only; no `code`, no `cause` | none | — | — |
 | The socket resets mid-statement (`ECONNRESET`) | Known: model `P1017`, raw and inside an interactive transaction `P2010` | `meta.driverAdapterError.cause` | `ConnectionClosed` | `kind` only; no `originalCode` |
-| An interactive transaction's `COMMIT`, written to a socket already ended, or cut by a reset while in flight | bare `DriverAdapterError`, own `name`, `cause` | `err.cause` | `ConnectionClosed` | `kind` only. Written to an ended socket nothing lands; **cut in flight, the write landed** |
+| An interactive transaction's `COMMIT`, cut by a reset while in flight | bare `DriverAdapterError`, own `name`, `cause` | `err.cause` | `ConnectionClosed` | `kind` only (**the write landed**) |
 | `COMMIT` in flight when the server ends the socket | plain `Error('Connection terminated unexpectedly')`, **no** enumerable own key; no `code`, no `cause` | none | — | — (**the write landed**) |
-| `COMMIT` written to a socket already reset | plain `Error('write EPIPE')`, own `code: 'EPIPE'`, `errno`, `syscall: 'write'` | none | — | — (nothing lands). **Not classified: a 500 by design**, since a bare `EPIPE` can come from any socket, not only the database's |
+| `COMMIT` after pg has handled the end or reset (either cut) | plain `Error('Client has encountered a connection error and is not queryable')` (pg's `client.js`), no enumerable own key; no `code`, no `cause` | none | — | — (nothing lands). **Not classified: a 500** |
+| `COMMIT` racing pg's handling of the cut (observed, not pinned: the winner differs by platform) | macOS: a bare `DriverAdapterError` `ConnectionClosed` on an end, plain `Error('write EPIPE')` (`code`, `errno`, `syscall: 'write'`) on a reset; Linux CI, 2026-10-29: a plain `Error` on an end, the bare `ConnectionClosed` on a reset | — | — | nothing lands. `EPIPE` stays a 500 by design, since a bare `EPIPE` can come from any socket, not only the database's |
 | `ETIMEDOUT` (read from source) | Known: model `P1008`, raw `P2010` | `meta.driverAdapterError.cause` | `SocketTimeout` | `kind` only; no `originalCode` |
 
 So a `40001` or a `40P01` is recognised by `originalCode` on both its typed and
@@ -1830,8 +1831,9 @@ for a connection dropped mid-query, `src/lib/db-connection-drop.test.ts`; within
 matched from source only on every path, and `57P01` on its typed path (see the
 shape table). The connect timeout carries pg's termination error as its
 `cause`, so both depths match; the walk stops at depth 0, and the answer is
-the same `connection` either way. The one dropped-connection shape left a 500
-is `write EPIPE`; the shape table says why. A `connection` failure never
+the same `connection` either way. The dropped-connection shapes left a 500 are
+pg's not-queryable error and `write EPIPE`, both on a `COMMIT` that never
+reached the server; the shape table says why. A `connection` failure never
 reaches a service's `busy` arm, whose copy says nothing was changed: a
 connection lost mid-`COMMIT` was measured to have applied the write on both
 cuts, so the service rethrows it to `classifyApiError`, which answers the

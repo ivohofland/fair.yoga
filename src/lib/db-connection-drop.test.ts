@@ -25,6 +25,9 @@ interface Relay {
 /** Cut this far into a statement that runs for seconds. */
 const CUT_AFTER_MS = 300;
 
+/** Long enough for pg to handle a cut before the test's next write. */
+const PG_SEES_CUT_MS = 200;
+
 /** How long the deferred trigger makes a `COMMIT` run. */
 const COMMIT_SLEEP_MS = 3_000;
 
@@ -101,6 +104,19 @@ function expectBareTermination(err: unknown, enumerableKeys: readonly string[]):
   expect(Object.prototype.hasOwnProperty.call(err, 'code')).toBe(false);
   expect((err as Error).cause).toBeUndefined();
   expectConnection(err);
+}
+
+/**
+ * pg refusing a query on a client whose connection already failed: a plain
+ * `Error` with nothing but its text, which nothing classifies, so a 500.
+ */
+function expectNotQueryable(err: unknown): void {
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toBe('Client has encountered a connection error and is not queryable');
+  expect(Object.keys(err as object)).toEqual([]);
+  expect((err as Error).cause).toBeUndefined();
+  expect(transientDbFailure(err)).toBeNull();
+  expect(classifyApiError(err).status).toBe(500);
 }
 
 /** The adapter's cause object, from the bare error or the Known error's `meta`. */
@@ -199,10 +215,10 @@ describe('a connection dropped mid-query, through a relay', () => {
   }
 
   /**
-   * Writes a row in an interactive transaction and cuts as the callback
-   * returns, before `COMMIT` is written. The shapes this produces depend on
-   * the `COMMIT` reaching the cut socket before pg handles the end or
-   * the reset, so a different shape here means that ordering moved.
+   * Writes a row in an interactive transaction, cuts, and waits for pg to
+   * handle the cut before the callback returns, so the `COMMIT` meets a
+   * client pg already knows is dead. Without the wait the `COMMIT` races pg's
+   * handling of the end or reset, and the shape depends on the platform.
    */
   function cutBeforeCommit(how: Cut, email: string): Promise<unknown> {
     return throughRelay((db, relay) =>
@@ -210,6 +226,7 @@ describe('a connection dropped mid-query, through a relay', () => {
         async (tx) => {
           await tx.account.create({ data: { email } });
           relay.cut(how);
+          await new Promise((resolve) => setTimeout(resolve, PG_SEES_CUT_MS));
         },
         { timeout: 10_000 },
       ),
@@ -260,10 +277,9 @@ describe('a connection dropped mid-query, through a relay', () => {
       expectBareTermination(err, ['clientVersion']);
     }, 20_000);
 
-    it('COMMIT on a socket already ended: a bare DriverAdapterError, ConnectionClosed, and nothing written', async () => {
+    it('COMMIT after pg saw the end: pg\'s not-queryable error, a 500, and nothing written', async () => {
       const email = newEmail();
-      const err = await cutBeforeCommit('end', email);
-      expectBareConnectionClosed(err);
+      expectNotQueryable(await cutBeforeCommit('end', email));
       await settle();
       expect(await landed(email)).toBe(false);
     }, 20_000);
@@ -292,15 +308,9 @@ describe('a connection dropped mid-query, through a relay', () => {
       expectKnownConnectionClosed(err, 'P2010');
     }, 20_000);
 
-    // A bare EPIPE can come from any socket, not only the database's, so it stays a 500.
-    it('COMMIT on a socket already reset: a plain write EPIPE, a 500, and nothing written', async () => {
+    it('COMMIT after pg saw the reset: the same not-queryable error, a 500, and nothing written', async () => {
       const email = newEmail();
-      const err = await cutBeforeCommit('reset', email);
-      expect(err).toBeInstanceOf(Error);
-      expect(err).toMatchObject({ message: 'write EPIPE', code: 'EPIPE', syscall: 'write' });
-      expect(typeof (err as { errno?: unknown }).errno).toBe('number');
-      expect(transientDbFailure(err)).toBeNull();
-      expect(classifyApiError(err).status).toBe(500);
+      expectNotQueryable(await cutBeforeCommit('reset', email));
       await settle();
       expect(await landed(email)).toBe(false);
     }, 20_000);
