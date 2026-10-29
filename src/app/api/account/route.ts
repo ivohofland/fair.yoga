@@ -24,9 +24,8 @@ import {
  *
  * The retry advice is the whole point, and it has to be conditional.
  * `transient` below is what separates "safe to retry" from "worth
- * retrying": a lock timeout, a deadlock, an expired transaction budget
- * (`isTransientDbError`) are all failures the next attempt can win, and
- * this branch was added for exactly one of them (`P2028` from
+ * retrying": every `TransientKind` (`isTransientDbError`) is a failure the
+ * next attempt can win, and this branch was added for exactly one of them (`P2028` from
  * `deleteStudentAccount`'s flat 20s `timeout`). `ErasureLockSetError` is the
  * one exception that is not a DB error at all — see the disjunct below for
  * why it is still retryable. Everything else that can escape those services
@@ -39,14 +38,15 @@ import {
  * outage worse, which is why the retryable message asks for a moment first.
  *
  * `half` decides what the message may claim about state, and the two halves
- * are NOT symmetric — an earlier version of this docblock said "both erasures
- * are single transactions, so a throw out of either means nothing was
- * applied", which is false for the teacher half:
+ * are NOT symmetric:
  *
  * - `deleteStudentAccount` IS one transaction. Its only work outside it is
  *   the post-commit `handleSpotFreed` loop, which logs and swallows its own
  *   errors, so nothing that escapes the function ran after the commit. "The
- *   rest of your data is unchanged" is exact here.
+ *   rest of your data is unchanged" is exact here, except after a
+ *   `connection` failure, which can land mid-`COMMIT` and leave the erasure
+ *   applied. That kind gets its own copy, on either half and on `partial`:
+ *   the account, or the rest of the teaching data, may not have been removed.
  * - `deleteTeacherAccount` is NOT. Before its `db.$transaction` opens it runs
  *   `completeClass(db, cls.id, { finishedEarly: true })` for every in-progress class, and each of
  *   those is its own committed transaction that prices the class, writes
@@ -74,7 +74,17 @@ function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolea
   // failure of that half carries it, `partial` included.
   const billed =
     'Any class that was still in progress may already have been closed and billed, and the video links on your completed and cancelled classes may already have been removed.';
+  // A lost connection may have committed the erasure, so its copy claims
+  // nothing about what was or was not removed.
+  const connection = transientDbFailure(err)?.kind === 'connection';
   if (opts.partial) {
+    if (connection) {
+      return respondError(
+        `Your student data was removed. ${billed} Something on our side was briefly unavailable, so the rest of your teaching data may not have been removed. Wait a moment, then press Delete again to finish.`,
+        503,
+        'PARTIAL_ERASURE_BUSY',
+      );
+    }
     return transient
       ? respondError(
           `Your student data was removed. ${billed} The system was busy and could not remove the rest of your teaching data. Wait a moment, then press Delete again to finish.`,
@@ -86,6 +96,15 @@ function erasureFailure(err: unknown, opts: { half: ErasureHalf; partial: boolea
           500,
           'PARTIAL_ERASURE',
         );
+  }
+  if (connection) {
+    return respondError(
+      opts.half === 'student'
+        ? 'Something on our side was briefly unavailable, so your account may not have been removed. Wait a moment, then press Delete again.'
+        : `Something on our side was briefly unavailable, so your account may not have been removed. ${billed} Wait a moment, then press Delete again.`,
+      503,
+      'ERASURE_BUSY',
+    );
   }
   // What the message may say about what survived. See the docblock: only the
   // student erasure is a single transaction.

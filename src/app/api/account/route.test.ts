@@ -5,7 +5,7 @@ import type { SessionUser } from '@/lib/types';
 import { log } from '@/lib/log';
 import { ErasureLockSetError } from '@/services/gdpr';
 import { expectUnchanged } from '../../../../tests/api-assertions';
-import { pgPoolTimeout } from '../../../../tests/adapter-errors';
+import { knownWithAdapterCause, pgPoolTimeout, socketCause } from '../../../../tests/adapter-errors';
 
 /**
  * #213 was this same race answering a 500 at `error` — a real defect, not
@@ -226,6 +226,83 @@ describe('DELETE /api/account — a transient failure logs at its kind\'s level'
         expect.objectContaining({ err: failure, accountId: STUDENT_SESSION.accountId, strays }),
         'account erasure: waitlist entry written past the erasure gate',
       );
+    } finally {
+      error.mockRestore();
+    }
+  });
+});
+
+const DUAL_SESSION: SessionUser = {
+  sessionId: 'sess-3',
+  accountId: 'acct-3',
+  teacherId: 'teacher-2',
+  defaultTimezone: 'Europe/Amsterdam',
+  studentId: 'student-2',
+};
+
+const BILLED =
+  'Any class that was still in progress may already have been closed and billed, and the video links on your completed and cancelled classes may already have been removed.';
+
+/**
+ * A `connection` failure can land mid-`COMMIT`, so the erasure may have been
+ * applied: its copy keeps the busy code and status but claims nothing about
+ * what survived.
+ */
+describe('DELETE /api/account — a connection failure does not claim nothing was removed', () => {
+  beforeEach(() => {
+    deleteStudentAccount.mockReset();
+    deleteTeacherAccount.mockReset();
+  });
+
+  const lost = () => knownWithAdapterCause('P2010', socketCause('DatabaseNotReachable'));
+
+  async function refusal(res: Response): Promise<{ status: number; code: unknown; message: unknown }> {
+    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown } };
+    return { status: res.status, code: body.error?.code, message: body.error?.message };
+  }
+
+  it('answers ERASURE_BUSY with the connection copy on the student half', async () => {
+    session = STUDENT_SESSION;
+    deleteStudentAccount.mockRejectedValueOnce(lost());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      expect(await refusal(await del())).toEqual({
+        status: 503,
+        code: 'ERASURE_BUSY',
+        message:
+          'Something on our side was briefly unavailable, so your account may not have been removed. Wait a moment, then press Delete again.',
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('answers ERASURE_BUSY with the connection copy on the teacher half', async () => {
+    session = TEACHER_SESSION;
+    deleteTeacherAccount.mockRejectedValueOnce(lost());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      expect(await refusal(await del())).toEqual({
+        status: 503,
+        code: 'ERASURE_BUSY',
+        message: `Something on our side was briefly unavailable, so your account may not have been removed. ${BILLED} Wait a moment, then press Delete again.`,
+      });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('answers PARTIAL_ERASURE_BUSY with the connection copy when the teacher half fails after the student half', async () => {
+    session = DUAL_SESSION;
+    deleteStudentAccount.mockResolvedValueOnce({ erased: true });
+    deleteTeacherAccount.mockRejectedValueOnce(lost());
+    const error = vi.spyOn(log, 'error').mockImplementation(() => log);
+    try {
+      expect(await refusal(await del())).toEqual({
+        status: 503,
+        code: 'PARTIAL_ERASURE_BUSY',
+        message: `Your student data was removed. ${BILLED} Something on our side was briefly unavailable, so the rest of your teaching data may not have been removed. Wait a moment, then press Delete again to finish.`,
+      });
     } finally {
       error.mockRestore();
     }
