@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { Prisma } from '@/lib/prisma-client';
+import type { Prisma } from '@/lib/prisma-client';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { prisma } from '@/lib/db';
 import {
   respondOk,
@@ -258,7 +259,7 @@ export const PUT = withErrorHandler(async (
       },
     });
   } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    if (isUniqueConflictOn(err, ['Invitation_teacherId_email_key'])) {
       return respondError(
         'Another of your contacts already uses this email address.',
         409,

@@ -1,4 +1,5 @@
 import { Prisma, type ProcessorRefundStatus, type PrismaClient, type RefundOutcome } from '@/lib/prisma-client';
+import { isUniqueConflictOn } from '@/lib/unique-conflict';
 import { codedRefusal, type CodedRefusal } from '@/lib/api-error-codes';
 import { setLockTimeout } from '@/lib/db-locks';
 import { logDegraded } from '@/lib/degradation';
@@ -196,7 +197,7 @@ async function recordIntent(
       });
       return { kind: 'recorded', refundId: refund.id, outcome, ...held };
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (isUniqueConflictOn(err, ['ProcessorRefund_one_live_per_attempt'])) {
         return { kind: 'refused', refusal: ALREADY_REQUESTED };
       }
       throw err;

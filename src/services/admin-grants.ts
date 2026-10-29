@@ -45,7 +45,12 @@ export async function grantAdmin(db: PrismaClient, input: { email: string; by: s
     return { kind: 'granted' };
   } catch (err) {
     // A concurrent grant won `AdminGrant_account_active_unique` between the read above and this insert.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return { kind: 'unchanged' };
+    // Confirmed by re-reading the grant, not by the index name (`unique-conflict.ts` is not in the
+    // migrate image this module runs from), so a violation with no active grant behind it is rethrown.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const winner = await db.adminGrant.findFirst({ where: { accountId: account.id, revokedAt: null }, select: { id: true } });
+      if (winner) return { kind: 'unchanged' };
+    }
     throw err;
   }
 }
