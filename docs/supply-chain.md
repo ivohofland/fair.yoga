@@ -846,18 +846,17 @@ and check the exit code.
 `docker-build` in `.github/workflows/ci.yml` starts both images far enough to
 prove the Prisma client loads in the runner and the schema engine in the
 migrate image, and runs every container with `--network none`.
-Reason for the migrate image, measured 2026-09-30 on `node:24-alpine`, arm64,
-Prisma 6.19.3: given network access, when the image's engine is missing,
-corrupt or unloadable, Prisma downloads a replacement from
-`binaries.prisma.sh` and then reports P1001 anyway, so a P1001 check passes
+Reason for the migrate image, measured 2026-10-29 on `node:24-alpine`, arm64,
+Prisma 7.10.1: given network access, when the image's engine is missing,
+Prisma downloads a replacement from `binaries.prisma.sh` into
+`/root/.cache/prisma` and then reports P1001 anyway, so a P1001 check passes
 without the image's engine ever having loaded. With `--network none` the same
-images fail (`EAI_AGAIN` on `binaries.prisma.sh`, exit 1). With libssl removed
-Prisma falls back to the `openssl-1.1.x` target and tries to download it,
-which also fails offline.
+image fails (`EAI_AGAIN` on `binaries.prisma.sh`, exit 1, no P1001).
 Re-derive: build a scratch Dockerfile whose `migrate` stage `RUN rm`s the
 engine (the schema engine under
 `/app/node_modules/.pnpm/@prisma+engines@*/node_modules/@prisma/engines/schema-engine-*`
-plus `rm -rf /root/.cache/prisma`), then run the CI migrate step with and
+plus `rm -rf /root/.cache/prisma`; the `rm` must print the file it removed),
+then run the CI migrate step with and
 without `--network none`. In the runner, `--network none` is also what makes
 pg's connect fail at once with `ENETUNREACH`, the code the probe asserts.
 
@@ -899,16 +898,16 @@ It passes only when that line's `err.type` is `PrismaClientKnownRequestError`
 and its `err.code` is `ENETUNREACH`: the bundle constructed a client, the
 client handed the query to the adapter, and pg tried the network. It reads
 `type` and `code` because the log withholds a Prisma error's message. Measured
-on the arm64 runner image, 2026-10-18. CI's `docker-build` job, which builds
-amd64, ran the same probe under `--network none` on PR #904's first CI run
-(2026-10-18, run 39095238055), and it passed with `ENETUNREACH`.
+on the arm64 runner image, 2026-10-29, Prisma 7.10.1. CI's `docker-build` job,
+which builds amd64, ran the same probe under `--network none` on PR #904's
+first CI run (2026-10-18, run 39095238055), and it passed with `ENETUNREACH`.
 
 A module missing from the bundle is recognised differently, because the error
 it raises carries no code. The bundler wraps the failed load in its own
 `Failed to load external module <name>: …` error, which is not a Prisma error
 and is printed in full, so the probe looks for that text in the server's
 output. The probe's two failures, measured on scratch images `FROM` the
-runner, 2026-10-18, arm64:
+runner, 2026-10-29, `node:24-alpine`, arm64, Prisma 7.10.1:
 
 - **No `pg`**: `RUN` removing `/app/node_modules/.pnpm/pg@<version>` (the
   target of `/app/.next-build/node_modules/pg-*`). The server fails while
@@ -916,9 +915,9 @@ runner, 2026-10-18, arm64:
   pg-<hash>: Error [ERR_MODULE_NOT_FOUND]: Cannot find package …`), never
   answers, and the probe exits 1 with
   `prisma-client-probe: a module failed to load at import, before the health route ran`.
-- **No query compiler**: `RUN find /app -name 'query_compiler_bg.postgresql.wasm-base64.js' -delete`.
-  The server starts; the health route's query logs a plain `Error` with no
-  `code` (`Failed to load external module @prisma/client-<hash>/runtime/query_compiler_bg.postgresql.wasm-base64.js: Error: Cannot find module …`),
+- **No query compiler**: `RUN find /app -name 'query_compiler_fast_bg.postgresql.wasm-base64.js' -print -delete`
+  (it must print one path). The server starts; the health route's query logs
+  a plain `Error` with no `code` (`Failed to load external module @prisma/client-<hash>/runtime/query_compiler_fast_bg.postgresql.wasm-base64.js: Error: Cannot find module …`),
   and the probe exits 1 with
   `prisma-client-probe: the Prisma client could not load a module it imports lazily (the query compiler): the bundle is missing it`.
   So a `$queryRaw`, the health route's query, does load the compiler.
