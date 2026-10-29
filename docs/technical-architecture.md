@@ -1550,8 +1550,12 @@ hits besides those two are the tests and the vitest seam described below):
   `scripts/prisma-client-probe.cjs`, constructs no client; it boots the built
   server (`docs/supply-chain.md`, "Prisma's engine in the images"). `@/lib/db` is the app singleton built from the
   factory; tests, scripts and the seed call it for clients of their own, and
-  each call is a new pool. The specifier is relative because the migrate image
-  copies this file without a `tsconfig.json` to resolve `@/`.
+  each call is a new pool. The factory builds that pool itself, passed to the
+  adapter with `disposeExternalPool`, so it can hear the wait timeout; a
+  `$disconnect` followed by a reconnect rebuilds a plain pool without the hook
+  (Database errors, "How a pool exhaustion reaches the operator"). The specifier
+  is relative because the migrate image copies this file without a
+  `tsconfig.json` to resolve `@/`.
 - `src/lib/prisma-enums.ts` re-exports `../generated/prisma/enums` and nothing
   else. It exists for client-reachable code: `src/lib/schemas.ts` is imported
   by client components and value-imports enums. The generated client has no
@@ -1944,6 +1948,20 @@ while the client was not ending it); re-derive it with
 `grep -n "Connection terminated unexpectedly" node_modules/.pnpm/pg@*/node_modules/pg/lib/client.js`,
 and `pg-error.test.ts` pins it the same way.
 
+**How a pool exhaustion reaches the operator.** The wait timeout is pg-pool's
+own, so the factory builds the pool itself: `ExhaustionReportingPool`
+(`src/lib/prisma-client.ts`) wraps `connect()` and calls `onPoolExhausted` with
+the pool's counters when the wait fails with `PG_POOL_TIMEOUT_MESSAGE`, which
+covers every caller, page renders included. `src/lib/db.ts` passes
+`recordPoolExhaustion` (`src/lib/pool-exhaustion.ts`), which stamps the time on a
+`globalThis` holder and records the `DATABASE_POOL_EXHAUSTED` degradation, whose
+runbook is in `docs/degradation-sites.md`. `/api/health` reads that holder, not
+the database, because the pool is what is dry: `status` is `degraded` while the
+stamp is under `POOL_EXHAUSTION_HEALTH_WINDOW_MS` old, at HTTP 200, and the
+detailed body carries `pool.lastExhaustedAt`. A process restart clears the stamp.
+A client that is `$disconnect`ed and used again gets a plain pool from the
+adapter, without the hook.
+
 **Transient kinds.** `transientDbFailure` (`src/lib/api-errors.ts`) decides
 the `TransientKind` link by link along `Error.cause`, from structured fields
 only: first the SQLSTATE `pgErrorOf` reads (`55P03` → `lock_timeout`, `40P01`
@@ -2319,6 +2337,12 @@ the rest do not, and one runbook section per code.
   Which codes fired, and what they carried, appear only in the digest email and
   the server log, never on `/api/health`. When the count cannot be read, `degradations` is
   omitted and `db` still reports up.
+- **Health, the exception.** `DATABASE_POOL_EXHAUSTED` also flips the public
+  `status` to `degraded` for `POOL_EXHAUSTION_HEALTH_WINDOW_MS`, which no other
+  code does: a monitor polling every minute can miss a burst that ended between
+  two checks, and the digest email is written through the pool that was dry.
+  The signal is process memory, so it adds no query to the public answer
+  (Database errors, "How a pool exhaustion reaches the operator").
 
 ---
 
