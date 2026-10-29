@@ -42,7 +42,7 @@ Three further readings, stated so they can be argued with:
   name here, never by analogy: `DATABASE_POOL_EXHAUSTED` is admitted because a
   request that times out waiting for a pooled connection has no other channel
   to the operator (#939). Recorded under *Degradations* as "an operational
-  fault, admitted under the rule's third reading".
+  fault, admitted by name under the rule".
 
 When a verdict was not obvious, it is recorded as routine and the doubt is
 written under "Close calls".
@@ -207,7 +207,7 @@ Every `logDegraded` call. The level is the code's, from the registry.
 | `src/lib/pay-page.server.ts` (`markedPaidLine`) | warn | degradation | `PAYMENT_PAID_WITHOUT_TIMESTAMP` |
 | `src/lib/pay-page.server.ts` (`reportMissingPayment`) | warn | degradation | `CHARGED_REGISTRATION_WITHOUT_PAYMENT` |
 | `src/lib/payment-breakdown.server.ts` (`resolveReportedPaymentBreakdown`) | warn | degradation | `PAYMENT_SNAPSHOT_MISSING` |
-| `src/lib/pool-exhaustion.ts` (`recordPoolExhaustion`) | error | degradation | `DATABASE_POOL_EXHAUSTED` (an operational fault, admitted under the rule's third reading) |
+| `src/lib/pool-exhaustion.ts` (`recordPoolExhaustion`) | error | degradation | `DATABASE_POOL_EXHAUSTED` (an operational fault, admitted by name under the rule) |
 | `src/lib/rule-slot-holder.ts` (`ruleSlotHolder`) | error | degradation | `RULE_SLOT_KIND_UNKNOWN` |
 | `src/lib/tiers.server.ts` (`readIncomeTier`) | warn | degradation | `INCOME_TIER_OUT_OF_RANGE` |
 | `src/lib/timezone.ts` (`startOfLocalDay`) | error | degradation | `TIMEZONE_INVALID_FALLBACK_UTC` |
@@ -1019,11 +1019,13 @@ process last saw an exhaustion (`POOL_EXHAUSTION_HEALTH_WINDOW_MS`,
 `src/lib/pool-exhaustion.ts`), so an exhaustion between two monitor checks
 still alerts. A restart clears that; this row does not.
 
-**Right after a deploy.** Every scheduler job runs its first pass together at
-boot, and that burst was measured at 9 connections against a `poolMax` of 9 in
-production on 2026-10-29. It can trip one exhaustion straight after a deploy,
-which then reads degraded for 15 minutes. Before acting on one seen then, check
-whether it recurs.
+**Right after a deploy.** Every scheduler job whose interval exceeds
+`BOOT_RUN_DELAY_MS` (`src/lib/scheduler.ts`) runs a one-off first pass that long
+after boot, so those passes land together. The #939 issue body records that
+burst at 9 connections against a `poolMax` of 9, observed in production on
+2026-10-29; it is a dated observation, not something a command re-derives. It
+can trip one exhaustion straight after a deploy, which then reads degraded for
+15 minutes. Before acting on one seen then, check whether it recurs.
 
 **Confirm.** The log has every occurrence with its counters
 (`grep '"code":"DATABASE_POOL_EXHAUSTED"'`), next to the request or sweep that
