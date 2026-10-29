@@ -865,7 +865,7 @@ pg's connect fail at once with `ENETUNREACH`, the code the probe asserts.
 No Prisma `*.node`: the only native file in the image is sharp's, Next's
 image optimiser. The client exists only inside the Next bundle; what it loads
 from outside is `@prisma/client`'s client runtime and the query compiler's
-`query_compiler_bg.postgresql.js` and `query_compiler_bg.postgresql.wasm-base64.js`,
+`query_compiler_fast_bg.postgresql.js` and `query_compiler_fast_bg.postgresql.wasm-base64.js`,
 and `pg` with `pg-pool`, `pg-protocol`, `pg-types` and `pg-connection-string`,
 all under `/app/node_modules/.pnpm`. The adapter is bundled. The bundle
 reaches `pg` as a hashed external, `pg-<hash>`, through the link
@@ -877,19 +877,19 @@ Re-derive after `pnpm run build`:
 ```bash
 find .next-build/standalone -name '*.node'
 find .next-build/standalone/node_modules -maxdepth 4 -type d -path '*pg*'
-find .next-build/standalone -name 'query_compiler_bg.postgresql*'
+find .next-build/standalone -name 'query_compiler*'
 grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u
 ls -l .next-build/standalone/.next-build/node_modules
 grep -nE '"(pg|@prisma/client)"' node_modules/next/dist/lib/server-external-packages.jsonc
 ```
 
 The externals line prints `@prisma/client/runtime/client`,
-`@prisma/client/runtime/query_compiler_bg.postgresql.js` and
-`@prisma/client/runtime/query_compiler_bg.postgresql.wasm-base64.js`. The
+`@prisma/client/runtime/query_compiler_fast_bg.postgresql.js` and
+`@prisma/client/runtime/query_compiler_fast_bg.postgresql.wasm-base64.js`. The
 jsonc prints its `"@prisma/client"` and `"pg"` lines: Next externalises both
 by default, so the config sets no `serverExternalPackages`. The build log
-carries no `pg-native` or `query_compiler` warning. Measured 2026-10-18 on
-`node:24-alpine`, arm64, Prisma 6.19.3, Next 16.4.0.
+carries no `pg-native` or `query_compiler` warning. Measured 2026-10-29,
+Next 16.4.1, Prisma 7.10.1.
 
 **The runner probe.** Nothing outside the bundle can construct the client, so
 `scripts/prisma-client-probe.cjs` boots the real `/app/server.js` with

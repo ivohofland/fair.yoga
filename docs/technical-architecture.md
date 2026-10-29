@@ -1592,8 +1592,8 @@ the package is listed by `git grep -n "@prisma/client" -- ':!docs'`.
 
 `next build` bundles the generated client and `@prisma/adapter-pg`. The
 externals it leaves are `@prisma/client/runtime/client`, the query compiler's
-`@prisma/client/runtime/query_compiler_bg.postgresql.js` and
-`…/query_compiler_bg.postgresql.wasm-base64.js` (re-derive:
+`@prisma/client/runtime/query_compiler_fast_bg.postgresql.js` and
+`…/query_compiler_fast_bg.postgresql.wasm-base64.js` (re-derive:
 `grep -rhoE '@prisma/client[^"]*' .next-build/server --include='*.js' | sed -E 's/-[0-9a-f]{16}//' | sort -u`),
 and `pg`, as a hashed external linked from `.next-build/node_modules/`. Next
 externalises `pg` and `@prisma/client` by default, so the config sets no
