@@ -1704,8 +1704,8 @@ anything, so the defaults are unit-tested on their own
   while the session runs UTC, which production's and CI's `postgres:16-alpine`
   do by default. Where nothing fixes its type (`SELECT ${date} IS NULL`) it
   fails `42P18` (`could not determine data type of parameter`); a bare
-  `SELECT ${date}` is read as `text`. Measured 2026-10-29 on 7.10.1 with
-  `SELECT ${date}::text`, `'2026-08-15'::date > ${date}` and
+  `SELECT ${date}` resolves to `text` (`SELECT pg_typeof(x) FROM (SELECT
+  ${date} AS x) s`). Measured 2026-10-29 on 7.10.1 with `SELECT ${date}::text`, `'2026-08-15'::date > ${date}` and
   `SELECT ${date}::timestamptz::text` under `SET LOCAL TimeZone` = UTC,
   `America/New_York` and `Asia/Tokyo` (`$queryRaw` inside a transaction, on the
   test database).

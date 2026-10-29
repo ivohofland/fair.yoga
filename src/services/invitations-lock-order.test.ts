@@ -206,11 +206,12 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * transactions committed. Confirmed by direct query logging (`DEBUG=
    * prisma:query` prints nothing at all on Prisma 7.10.1 — a client from
    * `createPrismaClient` with `log: [{ emit: 'event', level: 'query' }]` was
-   * used instead, 2026-10-29) that `tx.teacherStudent.upsert({ where, update: {},
-   * create })` compiles to three plain, non-locking `SELECT`s when the row
-   * already exists, not an atomic `INSERT ... ON CONFLICT DO UPDATE` — so
-   * transaction A's upsert never asks Postgres for the row lock the cycle
-   * needs, and there is nothing left to deadlock over. That is an accident
+   * used instead, 2026-10-29) that `tx.teacherStudent.upsert({ where,
+   * update: {}, create })` compiles to three plain, non-locking `SELECT`s
+   * when the row already exists, not an atomic
+   * `INSERT ... ON CONFLICT DO UPDATE` — so transaction A's upsert never asks
+   * Postgres for the row lock the cycle needs, and there is nothing left to
+   * deadlock over. That is an accident
    * of how Prisma compiles an empty `update` object, not a property of the
    * write order — see the next two tests for what the order alone actually
    * guarantees.
