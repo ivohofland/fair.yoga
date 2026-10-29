@@ -994,6 +994,8 @@ describe('transientDbFailure', () => {
   ])('classifies %s', (_label, error, kind, level) => {
     expect(transientDbFailure(error)).toEqual({ kind, level });
     expect(isTransientDbError(error)).toBe(true);
+    // Only a lost connection leaves the outcome unknown, so only it is coded for a client to tell apart.
+    expect(classifyApiError(error).code).toBe(kind === 'connection' ? 'DATABASE_CONNECTION_FAILED' : undefined);
   });
 
   it('classifies pg-pool\'s wait timeout as pool_exhausted at error', () => {
@@ -1016,6 +1018,7 @@ describe('transientDbFailure', () => {
       logMessage: 'transient database failure surfaced to a client',
       level: 'error',
       detail: { transientKind: 'connection' },
+      code: 'DATABASE_CONNECTION_FAILED',
     });
   });
 

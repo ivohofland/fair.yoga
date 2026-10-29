@@ -11,7 +11,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { Prisma, createPrismaClient } from '@/lib/prisma-client';
 import { classifyApiError, transientDbFailure } from './api-errors';
-import { adapterKindOf } from './pg-error';
+import { adapterKindOf, pgErrorOf } from './pg-error';
 
 type Db = ReturnType<typeof createPrismaClient>;
 type Cut = 'end' | 'reset';
@@ -98,6 +98,7 @@ function expectBareConnectionClosed(err: unknown): void {
   expect((err as Error).name).toBe('DriverAdapterError');
   expect(err).not.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   expect(adapterKindOf(err)).toBe('ConnectionClosed');
+  expect(pgErrorOf(err)).toBeNull();
   expectConnection(err);
 }
 
@@ -106,6 +107,7 @@ function expectKnownConnectionClosed(err: unknown, code: string): void {
   expect(err).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
   expect((err as Prisma.PrismaClientKnownRequestError).code).toBe(code);
   expect(adapterKindOf(err)).toBe('ConnectionClosed');
+  expect(pgErrorOf(err)).toBeNull();
   expectConnection(err);
 }
 
@@ -173,7 +175,12 @@ describe('a connection dropped mid-query, through a relay', () => {
     }
   }
 
-  /** Writes a row in an interactive transaction and cuts as the callback returns, before `COMMIT` is written. */
+  /**
+   * Writes a row in an interactive transaction and cuts as the callback
+   * returns, before `COMMIT` is written. The shapes this produces depend on
+   * the `COMMIT` reaching the half-closed socket before pg handles the end or
+   * the reset, so a different shape here means that ordering moved.
+   */
   function cutBeforeCommit(how: Cut, email: string): Promise<unknown> {
     return throughRelay((db, relay) =>
       db.$transaction(
@@ -266,7 +273,7 @@ describe('a connection dropped mid-query, through a relay', () => {
       const email = newEmail();
       const err = await cutBeforeCommit('reset', email);
       expect(err).toBeInstanceOf(Error);
-      expect(err).toMatchObject({ code: 'EPIPE', syscall: 'write' });
+      expect(err).toMatchObject({ message: 'write EPIPE', code: 'EPIPE', syscall: 'write' });
       expect(typeof (err as { errno?: unknown }).errno).toBe('number');
       expect(transientDbFailure(err)).toBeNull();
       expect(classifyApiError(err).status).toBe(500);

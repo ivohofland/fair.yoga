@@ -136,6 +136,7 @@ describe('ResumePaymentsForm', () => {
     ['a 502', () => new Response('<html>Bad Gateway</html>', { status: 502 })],
     ['a 504', () => new Response('<html>Gateway Timeout</html>', { status: 504 })],
     ['a 503 that is not the app\'s', () => new Response('<html>Service Unavailable</html>', { status: 503 })],
+    ['a 503 whose database connection failed', () => respond(503, { error: { code: 'DATABASE_CONNECTION_FAILED', message: 'Something on our side was briefly unavailable, so that may not have gone through. Please try again in a moment.' } })],
     ['a 500', () => respond(500, { error: { message: 'Internal server error' } })],
     ['an uncoded 403', () => respond(403, { error: { message: 'Access denied' } })],
     ['an uncoded 404', () => respond(404, { error: { message: 'Teacher not found' } })],
