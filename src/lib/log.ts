@@ -97,5 +97,5 @@ export function createLogger(destination?: DestinationStream): Logger {
   });
 }
 
-// per-instance: a split copy is a second logger on the same output, and loses no line
+// per-instance: a split copy is a second logger on the same output and loses no line; in development each evaluation also starts its own pino-pretty worker thread, never closed
 export const log = createLogger();

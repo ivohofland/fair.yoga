@@ -107,10 +107,11 @@ Every such holder is one of:
 2. **Process-wide holders store data, not behaviour.** A value that
    outlives an edit keeps its old prototype. A `NotificationBus` subclass
    instance on `globalThis` would keep its pre-edit methods until restart. So:
-   - `notificationBus` becomes a plain `EventEmitter` on `globalThis`, and
-     `notificationBus` stays a plain object literal whose methods delegate to
-     that global emitter, so `vi.spyOn(notificationBus, …)` still works. The listener cap (`setMaxListeners(100)`) is applied
-     inside the `??=` initialiser, once.
+   - The emitter is a plain `EventEmitter` stored at
+     `globalThis.__fairYogaNotificationBus`. `notificationBus` is a plain
+     object literal whose methods delegate to that emitter, so
+     `vi.spyOn(notificationBus, …)` still works. The listener cap
+     (`setMaxListeners(100)`) is applied inside the `??=` initialiser, once.
    - A process-wide holder is a `Map`, `Set`, array, plain object or bare
      `EventEmitter`, never an instance of a class defined in this repo. The
      guard enforces this for `new` initialisers it can see.
@@ -169,10 +170,13 @@ Every such holder is one of:
        target's root identifier is the binding, through any property or
        element chain (`challengeStores[purpose].clear()`,
        `evictionLogState[purpose].suppressed++`);
-     - a call of `push`/`pop`/`shift`/`unshift`/`splice`/`sort`/`reverse`/
-       `set`/`add`/`delete`/`clear`/`on`/`off`/`once`/`emit`/
-       `setMaxListeners` on a receiver whose root identifier is the binding;
+     - a call of one of the census's `MUTATORS` (the array, `Map`/`Set` and
+       `EventEmitter` methods that change their receiver) on a receiver
+       whose root identifier is the binding;
      - `Object.assign(binding…)` or `delete binding.x`.
+   - **A `static` class property initialised with `new X(…)`, an object
+     literal or an array literal**, mutated or not: it is a module-level
+     holder reached through its class.
    - **Not flagged:**
      - a `const` initialised with any other call (`withErrorHandler(…)`,
        `z.object(…)`, `createCoalescer(…)`);
@@ -198,10 +202,15 @@ Every such holder is one of:
    evaluation`.
 7. **Client-only modules are out of scope by file directive only.**
    `attendance-sync.ts`, `offline-status.ts` and `attendance-outbox.ts` have
-   no `'use client'` directive, but every importer is a client component. The
-   guard cannot see "only imported by clients". These three carry a
-   `per-instance:` reason ("browser state; every importer is a client
-   component") rather than an exclusion list the guard would have to keep.
+   no `'use client'` directive, and are imported only by `'use client'`
+   files and by each other. Their holders carry the reason
+   `// per-instance: browser state`, a claim about what the holder holds,
+   and the guard holds the claim: every file that imports a module carrying
+   that reason must open with `'use client'` or carry it itself (direct
+   value imports; a transitive import through a client file is not seen).
+   `import 'client-only'` would do the same at build time, but the package
+   is only vendored inside `next/dist/compiled`, and adding it as a direct
+   dependency goes through `docs/supply-chain.md`.
 
 ## The holders and their verdicts
 
