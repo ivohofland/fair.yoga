@@ -40,6 +40,10 @@
  * process-wide initializer that reaches a repo class other than by a bare
  * `new` on its right-hand side, such as a factory call or an IIFE returning
  * one.
+ * A timer guard is accepted when any top-level `if` has a condition that
+ * mentions a globally-initialised binding, by identifier name alone. Timers
+ * called as members, `globalThis.setInterval(…)` or `global.setTimeout(…)`,
+ * are not seen.
  */
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';

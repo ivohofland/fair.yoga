@@ -65,8 +65,7 @@ interface PasskeyChallengeState {
 }
 
 declare global {
-  // Route handlers that each bundle their own copy of this module (and a dev
-  // hot reload) must still read and write one set of challenges and one timer.
+  // The dev hot reload re-evaluates this module per route; all copies must share one set of challenges and one timer.
   var __fairYogaPasskeyChallenges: PasskeyChallengeState | undefined;
 }
 

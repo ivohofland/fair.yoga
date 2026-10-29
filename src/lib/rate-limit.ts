@@ -37,8 +37,7 @@ interface RateLimitState {
 }
 
 declare global {
-  // Route handlers that each bundle their own copy of this module (and a dev
-  // hot reload) must still spend and read one set of buckets.
+  // The dev hot reload re-evaluates this module per route; all copies must share one set of buckets.
   var __fairYogaRateLimits: RateLimitState | undefined;
 }
 
@@ -267,7 +266,6 @@ export function respondRateLimited(limit: RateLimitResult, action: string): Next
 
 /** Fallback key segment for callers whose IP could not be resolved — never a valid IP literal, so it can't collide with a real address. */
 export const UNRESOLVED_IP_ID = 'unresolved';
-
 
 /**
  * Throttled (max once per 60s, across all routes) warning that `clientIp()`
