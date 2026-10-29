@@ -1763,25 +1763,35 @@ cannot be added without saying where its name comes from:
 | SQLSTATE | Source | Read |
 |---|---|---|
 | `23503` | structured | `cause.constraint.index` (a string). Absent → no `constraint`; the adapter writes `{fields: [column]}` instead only when pg sets `column`, which Postgres does not for a foreign-key violation |
-| `23505` | Postgres's primary message | `/^duplicate key value violates unique constraint "([^"]+)"$/` on `originalMessage` |
+| `23505` | structured, then Postgres's primary message | `cause.constraint.index` (a string); absent → `/^duplicate key value violates unique constraint "([^"]+)"$/` on `originalMessage` |
 | `23514` | Postgres's primary message | `/ violates check constraint "([^"]+)"$/` on `originalMessage`. A terminality trigger's own text never matches, so a trigger raise has no `constraint` |
 | `23P01` | Postgres's primary message | `/^conflicting key value violates exclusion constraint "([^"]+)"$/` on `originalMessage` |
 
 The `23514` and `23P01` names have no structured carrier: their `postgres`
-cause carries no `constraint` (`mapDriverError`). `23505` has one, since the
-adapter writes `{index}` when pg names the constraint, but its name is read
-from the message like the other two, so all three name matches share one
-source and one locale exposure. The primary message is Postgres's own text, and the
-clauses are anchored, so free text that merely quotes a clause (a template
-name, a trigger's message) names no constraint.
+cause carries no `constraint` (`mapDriverError`). `23505` has one. The
+adapter writes `{index}` whenever pg's `DatabaseError` names the constraint,
+and Postgres names the index on every btree unique violation, expression and
+partial indexes included. When pg names none, the adapter writes
+`{fields}` parsed from `detail` instead. So the unique violations behind most
+of the app's 409s are named from a field no locale touches, and the message
+is read only when `index` is absent. No migration here raises a `23505` by
+hand (`grep -rn "23505\|unique_violation" prisma/migrations` finds none), so
+the fallback is met only if the adapter stops writing `index`.
+`src/lib/pg-error.test.ts` pins every produced `23505` to carrying
+`{index: name}` and to keeping its name under a localised message, so that
+regression reddens a test rather than reopening the exposure below. The
+primary message is Postgres's own text, and the clauses are anchored, so free
+text that merely quotes a clause (a template name, a trigger's message) names
+no constraint.
 
-**Locale and Postgres major.** Those three clauses are Postgres's English
+**Locale and Postgres major.** The message clauses are Postgres's English
 primary messages. A server with a non-English `lc_messages` localises them,
-and every name match misses: the 409s they back become 500s. The production
+and every `23514` and `23P01` name match misses, as would a `23505` reaching
+the fallback: the 409s they back become 500s. The production
 image and CI's run the default (English) locale, and the real-DB tests run
 against that image, so a locale change in test infrastructure reddens them. A
 Postgres major-version bump has the same exposure: if the next major rewords
-one of the three messages, every name match on it misses in production. The
+one of those messages, every name match on it misses in production. The
 real-DB tests catch that only if CI runs the image production runs. The
 service-image check (`src/lib/service-image-check.ts`; `docs/supply-chain.md`,
 "The database image") enforces that pins of one tag agree on one digest, but it
@@ -1894,11 +1904,13 @@ readers above, never from text:
 - `sqlState` is `pgErrorOf(err).sqlState`; `constraint` is its `constraint`
   when the name is `[A-Za-z0-9_]+`;
 - `constraintUnparsed: true` when `sqlState` is one whose name
-  `CONSTRAINT_SOURCE` reads from the primary message
-  (`namesConstraintInMessage`) and none was parsed, and no `trigger` was
-  recognised either. It is the operator's signal for the exposure in "Locale
-  and Postgres major": a localised or reworded message, where every name
-  match on that SQLSTATE misses. A `23514` raised by a trigger outside
+  `CONSTRAINT_SOURCE` can read from the primary message, alone or as the
+  fallback (`namesConstraintInMessage`), and none was found, and no `trigger`
+  was recognised either. It is the operator's signal for the exposure in
+  "Locale and Postgres major": a localised or reworded message, where every
+  name match on that SQLSTATE misses. On a `23505` it also means the
+  structured `index` was absent, which the real-DB pin above says no produced
+  unique violation is. A `23514` raised by a trigger outside
   `TERMINAL_TRIGGER_TAILS` (the currency guards) carries it too, since its
   message names no constraint; on a `23514` it therefore means "neither a
   constraint nor a known trigger";
