@@ -97,9 +97,13 @@ export function pgPoolTimeout(): Error {
   return Object.assign(new Error(PG_POOL_TIMEOUT_MESSAGE), { clientVersion: CLIENT_VERSION });
 }
 
-/** pg-pool's connect-timeout error as Prisma rethrows it: a plain Error, own key `clientVersion` only. */
+/**
+ * pg-pool's connect-timeout error as Prisma rethrows it: a plain Error whose
+ * only enumerable own key is `clientVersion`, with pg's own termination error
+ * as its non-enumerable `cause`.
+ */
 export function pgConnectTimeout(): Error {
-  return Object.assign(new Error(PG_CONNECT_TIMEOUT_MESSAGE), { clientVersion: CLIENT_VERSION });
+  return Object.assign(new Error(PG_CONNECT_TIMEOUT_MESSAGE, { cause: new Error('Connection terminated unexpectedly') }), { clientVersion: CLIENT_VERSION });
 }
 
 /**
