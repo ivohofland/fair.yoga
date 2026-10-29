@@ -11,7 +11,7 @@ import { isExclusionConflictOn } from './exclusion-conflict';
 import { serializeErr, type SerializedErr } from './log-serializers';
 import { ADAPTER_KINDS, PG_CONNECTION_TERMINATED_MESSAGE, PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgConnectionTerminated, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf } from './pg-error';
 import { UNIQUE_CONSTRAINTS, isUniqueConflictOn, type UniqueConstraintName } from './unique-conflict';
-import { driverAdapterError, knownWithAdapterCause, pgCause, pgConnectionTerminated, pgConnectTimeout, pgPoolTimeout } from '../../tests/adapter-errors';
+import { driverAdapterError, knownWithAdapterCause, pgCause, type AdapterCause, pgConnectionTerminated, pgConnectTimeout, pgPoolTimeout } from '../../tests/adapter-errors';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import type { ClassWithEntry } from '../../tests/class-fixtures';
 
@@ -44,6 +44,20 @@ describe('pgErrorOf (fabricated branches)', () => {
     expect(pgErrorOf(withIndex)?.constraint).toBe('Class_teacherRoomId_roomArchived_fkey');
     const fieldsOnly = knownWithAdapterCause('P2003', pgCause('23503', 'insert or update on table "TeacherRoom" violates foreign key constraint "TeacherRoom_roomId_fkey"', { constraint: { fields: ['roomId'] } }));
     expect(pgErrorOf(fieldsOnly)?.constraint).toBeUndefined();
+  });
+
+  it('names a 23505 constraint from cause.constraint.index, whatever the message says', () => {
+    const localised = knownWithAdapterCause('P2002', pgCause('23505', 'doppelter Schlüsselwert verletzt Unique-Constraint »Teacher_pageSlug_key«', { constraint: { index: 'Teacher_pageSlug_key' } }));
+    expect(pgErrorOf(localised)?.constraint).toBe('Teacher_pageSlug_key');
+    const disagreeing = knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Other_key"', { constraint: { index: 'Teacher_pageSlug_key' } }));
+    expect(pgErrorOf(disagreeing)?.constraint).toBe('Teacher_pageSlug_key');
+  });
+
+  it('falls back to the message for a 23505 whose cause carries no index', () => {
+    const fieldsOnly = knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"', { constraint: { fields: ['pageSlug'] } }));
+    expect(pgErrorOf(fieldsOnly)?.constraint).toBe('Teacher_pageSlug_key');
+    const neither = knownWithAdapterCause('P2002', pgCause('23505', 'doppelter Schlüsselwert verletzt Unique-Constraint »Teacher_pageSlug_key«', { constraint: { fields: ['pageSlug'] } }));
+    expect(pgErrorOf(neither)?.constraint).toBeUndefined();
   });
 
   // Free text quoting a clause never names a constraint.
@@ -286,6 +300,12 @@ describe('produced against the real database: conflict codes', () => {
     expect(isUniqueConflictOn(err, [name])).toBe(true);
     expect(isUniqueConflictOn(err, UNIQUE_CONSTRAINTS.filter((n) => n !== name))).toBe(false);
     if (fallbackDetail) expect(classifyApiError(err)).toMatchObject({ detail: { constraint: name } });
+    // The adapter names the index, so the name survives a localised primary message.
+    const known = err as Prisma.PrismaClientKnownRequestError;
+    const cause = metaOf(known).driverAdapterError.cause as AdapterCause;
+    expect(cause.constraint).toEqual({ index: name });
+    const localised = knownWithAdapterCause(known.code, { ...cause, originalMessage: `doppelter Schlüsselwert verletzt Unique-Constraint »${name}«` });
+    expect(isUniqueConflictOn(localised, [name])).toBe(true);
   };
   const roomData = (identity: typeof privateRoom, isPublic: boolean) => ({
     venueName: 'pgerr dup', city: 'Amsterdam', postcode: '1011AB', maxCapacity: 20, isPublic, ...identity,
