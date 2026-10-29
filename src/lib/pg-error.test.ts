@@ -56,6 +56,8 @@ describe('pgErrorOf (fabricated branches)', () => {
   it('falls back to the message for a 23505 whose cause carries no index', () => {
     const fieldsOnly = knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"', { constraint: { fields: ['pageSlug'] } }));
     expect(pgErrorOf(fieldsOnly)?.constraint).toBe('Teacher_pageSlug_key');
+    const nonString = knownWithAdapterCause('P2002', pgCause('23505', 'duplicate key value violates unique constraint "Teacher_pageSlug_key"', { constraint: { index: 42 } }));
+    expect(pgErrorOf(nonString)?.constraint).toBe('Teacher_pageSlug_key');
     const neither = knownWithAdapterCause('P2002', pgCause('23505', 'doppelter Schlüsselwert verletzt Unique-Constraint »Teacher_pageSlug_key«', { constraint: { fields: ['pageSlug'] } }));
     expect(pgErrorOf(neither)?.constraint).toBeUndefined();
   });

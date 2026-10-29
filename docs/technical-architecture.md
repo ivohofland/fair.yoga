@@ -1772,13 +1772,14 @@ cause carries no `constraint` (`mapDriverError`). `23505` has one. The
 adapter writes `{index}` whenever pg's `DatabaseError` names the constraint,
 and Postgres names the index on every btree unique violation, expression and
 partial indexes included. When pg names none, the adapter writes
-`{fields}` parsed from `detail` instead. So the unique violations behind the app's
-unique-conflict 409s are named from a field no locale touches, and the message
-is read only when `index` is absent. No migration here raises a `23505` by
-hand (`grep -rn "23505\|unique_violation" prisma/migrations` finds none), so
-the fallback is met if the adapter stops writing `index`, or by a `23505`
-that names no constraint, which nothing here raises today.
-`src/lib/pg-error.test.ts` pins every produced `23505` to carrying
+`{fields}` parsed from `detail` instead. So a unique violation on any
+`UNIQUE_CONSTRAINTS` member (`src/lib/unique-conflict.ts`) is named from a field no locale touches, and the
+message is read only when `index` is absent. That happens if the adapter stops
+writing `index`, or for a `23505` that names no constraint, which only a hand
+raise produces, and no migration here has one
+(`grep -rn "23505\|unique_violation" prisma/migrations` finds none).
+`src/lib/pg-error.test.ts` pins every `23505` its real-DB cases produce
+(single-column, composite, and expression partial indexes) to carrying
 `{index: name}` and to keeping its name under a localised message, so that
 regression reddens a test rather than reopening the exposure below. The
 primary message is Postgres's own text, and the clauses are anchored, so free
@@ -1910,8 +1911,8 @@ readers above, never from text:
   was recognised either. It is the operator's signal for the exposure in
   "Locale and Postgres major": a localised or reworded message, where every
   name match on that SQLSTATE misses. On a `23505` it also means the
-  structured `index` was absent, which the real-DB pin above says no produced
-  unique violation is. A `23514` raised by a trigger outside
+  structured `index` was absent, which no `23505` the real-DB cases above
+  produce is. A `23514` raised by a trigger outside
   `TERMINAL_TRIGGER_TAILS` (the currency guards) carries it too, since its
   message names no constraint; on a `23514` it therefore means "neither a
   constraint nor a known trigger";

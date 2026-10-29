@@ -56,7 +56,7 @@ const fromIndex: ConstraintReader = (cause) => {
   return typeof index === 'string' ? index : undefined;
 };
 
-/** The readers `fromMessage` built: the SQLSTATEs whose name can depend on Postgres's message wording. */
+/** The readers `fromMessage` built, whose name can depend on Postgres's message wording; `namesConstraintInMessage` keys on it. */
 const MESSAGE_READERS = new WeakSet<ConstraintReader>();
 
 /** `structured` first when given, then the anchored `clause` on the primary message. */
