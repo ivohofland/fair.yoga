@@ -14,7 +14,12 @@ export type TokenLookup =
   | { kind: 'unavailable' };
 export const REFRESH_MARGIN_MS = 5 * 60_000;
 
-const inflight = new Map<string, Promise<TokenLookup>>();
+declare global {
+  // The page layer and the route handlers are separate module copies in production; one refresh must serve them all.
+  var __fairYogaProcessorTokenInflight: Map<string, Promise<TokenLookup>> | undefined;
+}
+
+const inflight = (globalThis.__fairYogaProcessorTokenInflight ??= new Map<string, Promise<TokenLookup>>());
 
 export function sealGrant(grant: TokenGrant, key: Buffer, now: Date) {
   return {

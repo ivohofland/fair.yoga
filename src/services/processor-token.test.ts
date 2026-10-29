@@ -123,6 +123,29 @@ describe('getAccessToken', () => {
     expect(fake.refresh).toHaveBeenCalledTimes(1);
     expect(results).toEqual([{ kind: 'token', accessToken: 'a2' }, { kind: 'token', accessToken: 'a2' }]);
   });
+  it('a refresh in flight on one copy is joined by a fresh copy', async () => {
+    const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    fake.refresh.mockImplementation(async () => {
+      await gate;
+      return { kind: 'granted', grant: { accessToken: 'a3', refreshToken: 'r3', expiresInSeconds: 3600, scopes: [] } };
+    });
+    vi.resetModules();
+    const copyA = await import('./processor-token');
+    vi.resetModules();
+    const copyB = await import('./processor-token');
+    expect(copyB).not.toBe(copyA);
+
+    const first = copyA.getAccessToken(prisma, deps, c.id, now);
+    await vi.waitFor(() => expect(fake.refresh).toHaveBeenCalledTimes(1));
+    const second = copyB.getAccessToken(prisma, deps, c.id, now);
+    // Let the second copy read its row and reach the dedupe before the stub answers.
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    expect(await Promise.all([first, second])).toEqual([{ kind: 'token', accessToken: 'a3' }, { kind: 'token', accessToken: 'a3' }]);
+    expect(fake.refresh).toHaveBeenCalledTimes(1);
+  });
   it('disconnects, nulls the tokens, tells the teacher and logs on invalid_grant', async () => {
     const c = await seedConnection({ expiresAt: new Date(now.getTime() - 1) });
     fake.refresh.mockResolvedValue({ kind: 'invalid_grant' });

@@ -45,4 +45,22 @@ describe('recordDispatchFailure — #392 review, Critical #1', () => {
     __resetDispatchFailureTrackingForTests();
     expect(recordDispatchFailure()).toEqual({ looksSystemic: false });
   });
+
+  it('dispatch failures recorded by two module copies count toward one threshold', async () => {
+    const saved = globalThis.__fairYogaNotifyHealth;
+    try {
+      delete globalThis.__fairYogaNotifyHealth;
+      vi.resetModules();
+      const copyA = await import('./notify-health');
+      vi.resetModules();
+      const copyB = await import('./notify-health');
+      expect(copyB).not.toBe(copyA);
+
+      copyA.recordDispatchFailure();
+      copyA.recordDispatchFailure();
+      expect(copyB.recordDispatchFailure()).toEqual({ looksSystemic: true });
+    } finally {
+      globalThis.__fairYogaNotifyHealth = saved;
+    }
+  });
 });
