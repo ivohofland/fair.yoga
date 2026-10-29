@@ -464,6 +464,7 @@ describe('serializeErr: what a withheld error still says', () => {
 
   it.each([
     ['a parsed 23505', () => typed('23505', 'duplicate key value violates unique constraint "X_key"')],
+    ['a localised 23505 that carries its index', () => knownWithAdapterCause('P2002', pgCause('23505', 'doppelter Schlüsselwert verletzt Unique-Constraint »X_key«', { constraint: { index: 'X_key' } }))],
     ['a terminal trigger 23514', () => typed('23514', `Class 1 is completed; ${TERMINAL_TRIGGER_TAILS.status} open`)],
     ['a 23503 with no structured index', () => knownWithAdapterCause('P2003', pgCause('23503', 'Fremdschlüssel verletzt'))],
     ['a 55P03, which names no constraint', () => typed('55P03', 'canceling statement due to lock timeout')],
