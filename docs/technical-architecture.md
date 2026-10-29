@@ -165,6 +165,69 @@ caller, escaping the `.catch` entirely.
 
 `grep -rn '): FireAndForget' src/` lists every function under this rule.
 
+### Process-wide state
+
+A server module is not evaluated once per process. A production build
+evaluates it once per bundle layer it is reached from (instrumentation, which
+runs the scheduler; the route handlers; the server-rendered pages), and
+`next dev` evaluates it again after an edit. A module-level `new Map()` is
+therefore several maps. #933 was the dev form: after one edit,
+`register/options` wrote a passkey challenge that `register/verify` could not
+see. #935 was the production form: the scheduler emitted notifications on an
+event bus that the SSE stream did not listen on.
+
+**The rule:** a top-level binding in a server module whose value changes after
+evaluation is either process-wide or per-instance with a written reason.
+
+**Process-wide** holders live on `globalThis`, keyed under `__fairYoga…`, with
+the key typed in `declare global`, so there is no cast and no central
+registry:
+
+```ts
+declare global {
+  // The scheduler (instrumentation entry) and the SSE route are separate
+  // bundle entries; one emitter is what lets a scheduler notification reach a stream.
+  var __fairYogaNotificationBus: EventEmitter | undefined;
+}
+
+const emitter = (globalThis.__fairYogaNotificationBus ??= (() => {
+  const created = new EventEmitter();
+  created.setMaxListeners(100);
+  return created;
+})());
+```
+
+That is `src/lib/event-bus.ts`.
+
+The first evaluation builds the value and every later one reuses it. A
+top-level `let` cannot use `??=`, so its value becomes a field of a global
+state object (`state.recentFailures = …`, `notify-health.ts`). A timer
+started at import starts once per process, behind a flag in its global state.
+Each evaluation rebinds the function the tick calls through that state, so the
+tick runs the newest code (`passkey.ts`).
+
+**Data, not class instances.** A value on `globalThis` outlives a dev edit
+with its old prototype, so an instance of a class defined in this repo would
+keep its pre-edit methods until restart. A process-wide holder is a `Map`,
+`Set`, array, plain object or bare `EventEmitter`, and behaviour stays in the
+module's exported functions over it. In `event-bus.ts` the emitter is shared
+and the functions around it are re-evaluated.
+
+**Per-instance** holders stay as module-level bindings, with a leading
+comment that says why a split costs nothing that matters (`src/lib/email.ts`):
+
+```ts
+// per-instance: a warn-once flag; a split copy warns once more, and nothing else changes
+let warnedClassRouteUnset = false;
+```
+
+`src/lib/process-state-census.test.ts` enforces the rule. It reads every
+server module's syntax tree under `src/` and fails, naming `file:line`, on a
+holder that is neither. Its docblock states exactly what it flags and what it
+does not see. The Prisma client follows the same rule (Database → Where
+Prisma comes from). The measurements and the reasoning are in
+`docs/superpowers/specs/2026-10-29-process-singletons-design.md`.
+
 ### Processor token cipher (`lib/processor-token-cipher.ts`)
 
 A teacher's Mollie access and refresh tokens are sealed with AES-256-GCM before
