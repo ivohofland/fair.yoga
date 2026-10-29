@@ -27,6 +27,15 @@ compile errors and the contract survives a caller who never read this file.
 to write a new one are in `docs/technical-architecture.md` (The Services
 Layer → Work that must not be awaited).
 
+**State the whole process must share lives on `globalThis`.** Next.js
+evaluates a server module once per bundle layer, and `next dev` again after
+an edit, so a module-level `Map` is several maps (#933, #935). A holder whose
+readers and writers must agree uses `globalThis.__fairYoga… ??=`, and every
+other one says why not in a `// per-instance:` line;
+`src/lib/process-state-census.test.ts` fails on a holder that does neither.
+The rule and the idiom are in `docs/technical-architecture.md` (The Services
+Layer → Process-wide state).
+
 **Refusals carry a registered code; "already done" answers 200.** Every 409
 from `respondError` names a code from `src/lib/api-error-codes.ts`, which fixes
 its status, and tests assert the code rather than the message. A request whose
