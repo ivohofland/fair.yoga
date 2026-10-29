@@ -1751,31 +1751,41 @@ from the root.
 
 pg 8 warns *Calling client.query() when the client is already executing a
 query is deprecated and will be removed in pg@9.0* when a query is issued while
-another is already **waiting** in that client's queue. The running one has
-left the queue, so it takes three statements in flight on one client, not two.
-Outside a transaction this cannot happen: the adapter takes a pool client per
-statement. Inside an interactive transaction every statement goes to that
+another is already **waiting** in that client's queue (`lib/client.js` in pg
+8.23.1: the check is `this._queryQueue.length > 0` at push, and the running
+query has already been shifted out). So it takes three statements in flight on
+one client, not two. Outside a transaction this cannot happen: the adapter
+sends each statement through its pool (read from `@prisma/adapter-pg` 7.10.1's
+source). Inside an interactive transaction every statement goes to that
 transaction's one client.
 
 Measured on Prisma 7.10.1, `@prisma/adapter-pg` 7.10.1 and pg 8.23.1, with a
 `process.on('warning')` listener:
 
-| Inside `$transaction(async (tx) => …)` | Warns |
+| Case | Warns |
 |---|---|
-| `Promise.all` of three `tx.<model>.count()` calls | no: Prisma issues the app's statements on a `tx` one at a time |
-| one `findFirst` whose `include` names two list relations | no |
-| one `findFirst` whose `include` names three list relations | yes |
-| one `findFirst` whose `include` names six list relations | **yes**: Prisma's plan fetches the relations concurrently on the transaction's client |
+| in a `tx`: `Promise.all` of two `tx.<model>.count()` calls | no |
+| in a `tx`: `Promise.all` of three `tx.<model>.count()` calls | no |
+| in a `tx`: one `findFirst` whose `include` names two list relations | no |
+| in a `tx`: one `findFirst` whose `include` names three list relations | yes |
+| in a `tx`: one `findFirst` whose `include` names six list relations | yes |
 | the array form, `$transaction([…])` of four counts | no |
+| control: two `query()` calls at once on a bare `pg.Client` | no |
 | control: three `query()` calls at once on a bare `pg.Client` | yes |
 
-So the source is Prisma's own query plan, not this repo's `Promise.all`. Under
-pg 9 a read that loads three or more relations inside an interactive
-transaction stops working until the adapter serializes its plan's fetches. pg 9
-cannot arrive unannounced: `package.json` and `@prisma/adapter-pg` both declare
-`pg` as `^8`. Before raising either to 9, re-run the probe above (a
-throwaway script under `pnpm exec tsx`, loading `dotenv/config` first) against
-the adapter version that ships with it.
+Three app statements on a `tx` stay quiet where three bare queries warn, so
+Prisma keeps fewer than three of them in flight on the transaction's client.
+A single read with three relation includes warns, from which we infer that
+Prisma's plan fetches those relations concurrently on that client. So the
+source is Prisma's own query plan, not this repo's `Promise.all`.
+
+pg 9 was not run. Given the warning's wording, a read that includes three or
+more list relations inside an interactive transaction is expected to fail under
+pg 9 unless the adapter serializes its plan's fetches. pg 9 cannot arrive
+unannounced: `package.json` and `@prisma/adapter-pg` both declare `pg` as `^8`.
+Before raising either to 9, re-run the probe above (a throwaway script under
+`pnpm exec tsx`, loading `dotenv/config` first) against the adapter version
+that ships with it.
 
 ### Database errors
 

@@ -113,14 +113,18 @@ describe('resolveOrClaimAccount', () => {
     const email = `account-race-${suffix}@test.local`;
     const student = await db.student.create({ data: { firstName: 'Resolve', lastName: 'Race', email } });
     // The racer's account lands first, then this call's create loses on the key.
+    let racerId: string | undefined;
     const create = vi.spyOn(db.account, 'create').mockImplementationOnce((async () => {
       const racer = await db.account.create({ data: { email } });
+      racerId = racer.id;
       await db.student.update({ where: { id: student.id }, data: { claimedAt: new Date(), accountId: racer.id } });
       throw uniqueViolationOn('Account_email_key');
     }) as never);
     try {
       const resolved = await resolveOrClaimAccount(db, email);
       expect(resolved?.studentId).toBe(student.id);
+      expect(resolved?.accountId).toBe(racerId);
+      expect(await db.account.count({ where: { email } })).toBe(1);
     } finally {
       create.mockRestore();
       await db.student.delete({ where: { id: student.id } });

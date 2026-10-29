@@ -5,9 +5,9 @@ import { pgCause, typedCallError } from '../../../../../tests/adapter-errors';
 
 /**
  * Which unique violation the edit's catch answers as `CONTACT_EMAIL_TAKEN`:
- * only `Invitation_teacherId_email_key`. The race itself is proven at the
- * integration tier (`tests/integration/invitations-api.test.ts`); this file
- * pins the name match, with the database mocked as in `cas-scope.test.ts`.
+ * only `Invitation_teacherId_email_key`. For the race itself see
+ * `tests/integration/invitations-api.test.ts`; this file pins the name match,
+ * with the database mocked as in `cas-scope.test.ts`.
  */
 
 const findFirst = vi.fn();
