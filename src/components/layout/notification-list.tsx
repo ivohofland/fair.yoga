@@ -208,18 +208,18 @@ export function NotificationList({ notifications, hrefById, paging, highlightId 
               <span className="type-caption">
                 {timeAgo(notification.createdAt)}
               </span>
-              {/* Rendered invisible (not removed) when read so its 44px tap
-                  target keeps holding the row height and the timestamp
-                  doesn't shift when the state changes. */}
+              {/* The unread dot is the mark-read control. Rendered invisible
+                  (not removed) when read so its 44px tap target keeps holding
+                  the row height and the timestamp doesn't shift when the
+                  state changes. */}
               <button
                 type="button"
                 onClick={() => markRead(notification)}
                 aria-label={`Mark "${notification.title}" read`}
-                className={`type-caption text-teal min-h-[44px] px-1 ${isRead ? 'invisible' : ''}`}
+                className={`flex items-center justify-center min-w-[44px] min-h-[44px] -mr-3 ${isRead ? 'invisible' : ''}`}
               >
-                Mark read
+                <span className="inline-block w-2 h-2 rounded-full bg-gold" />
               </button>
-              <span className={`inline-block w-2 h-2 shrink-0 rounded-full ${isRead ? '' : 'bg-gold'}`} />
             </div>
           </div>
         );
