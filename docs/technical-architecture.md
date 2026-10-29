@@ -226,8 +226,8 @@ let warnedClassRouteUnset = false;
 
 `src/lib/process-state-census.test.ts` enforces the rule. It reads every
 server module's syntax tree under `src/` and fails, naming `file:line`, on a
-holder that is neither. Its docblock states exactly what it flags and what it
-does not see. The Prisma client follows the same rule (Database → Where
+holder that is neither. Its docblock states what it flags and lists the shapes it is
+known to miss, each pinned by a fixture. The Prisma client follows the same rule (Database → Where
 Prisma comes from). The measurements and the reasoning are in
 `docs/superpowers/specs/2026-10-29-process-singletons-design.md`.
 

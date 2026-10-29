@@ -177,13 +177,9 @@ Every such holder is one of:
    - **A `static` class property initialised with `new X(…)`, an object
      literal or an array literal**, mutated or not: it is a module-level
      holder reached through its class.
-   - **Not flagged:**
-     - a `const` initialised with any other call (`withErrorHandler(…)`,
-       `z.object(…)`, `createCoalescer(…)`);
-     - mutation through an alias (`const s = store[p]; s.set(…)`);
-     - mutation from another file.
-
-     These are the guard's stated blind spots, in its own docblock. The
+   - **Not flagged:** the shapes the guard's docblock
+     (`src/lib/process-state-census.test.ts`) lists as what it does not see,
+     each pinned by a fixture. That docblock is the list. The
      call-initialised shape would flag 259 non-test sites by a rough grep,
      route exports and zod schemas included, for a handful of real holders.
      The known ones (`coalescer`, `decodeSlot`, the streak trackers, `pino`)
@@ -192,14 +188,16 @@ Every such holder is one of:
 
    The guard proves itself on fixtures: a planted holder of each flagged
    shape fails, the same holder with a reason passes, and a planted holder
-   of each blind-spot shape passes (pinning the blind spot as documented
-   rather than accidental).
+   of each shape the docblock lists as unseen passes, except the shadowing
+   fixture, which flags (the loud direction). Each fixture pins its shape as
+   documented rather than accidental.
 6. **Immutable constants are not holders.** A `const` that the rule in
    Decision 5 does not flag is skipped, whatever its type. `pg-error.ts`
    `MESSAGE_READERS` is filled by `fromMessage` calls that run during its own
    module's evaluation. A syntax scan cannot know that, so it flags the
    holder, and the holder carries `// per-instance: filled once at module
-   evaluation`.
+   evaluation with this copy's own readers, and read only against them, so a
+   split copy holds a complete set of its own`.
 7. **Client-only modules are out of scope by file directive only.**
    `attendance-sync.ts`, `offline-status.ts` and `attendance-outbox.ts` have
    no `'use client'` directive, and are imported only by `'use client'`
