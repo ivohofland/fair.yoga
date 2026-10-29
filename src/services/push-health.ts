@@ -117,5 +117,5 @@ export function createPushDispatchTick(
   };
 }
 
-// per-instance: only the once-started sweep ticks this, so a later copy is never read; a split would only restart the failed-tick count
+// per-instance: a split copy counts its failed ticks from zero, so the alarm waits for `PUSH_MAX_FAILED_TICKS` of its own
 export const runPushDispatchTick = createPushDispatchTick((db) => dispatchPushes(db));

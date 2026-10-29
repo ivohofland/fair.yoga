@@ -57,6 +57,7 @@ const fromIndex: ConstraintReader = (cause) => {
 };
 
 /** The readers `fromMessage` built, whose name can depend on Postgres's message wording; `namesConstraintInMessage` keys on it. */
+// per-instance: filled once at module evaluation with this copy's own readers, and read only against them, so a split copy holds a complete set of its own
 const MESSAGE_READERS = new WeakSet<ConstraintReader>();
 
 /** `structured` first when given, then the anchored `clause` on the primary message. */

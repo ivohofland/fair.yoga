@@ -2,7 +2,7 @@ const WINDOW_MS = 5 * 60 * 1000;
 const SYSTEMIC_THRESHOLD = 3;
 
 declare global {
-  // The detector counts a burst across every route handler and hot reload, so it cannot be one module copy's.
+  // A burst counts across every evaluation of this module, bundle layers and dev reloads alike, so it cannot be one copy's.
   var __fairYogaNotifyHealth: { recentFailures: number[] } | undefined;
 }
 
