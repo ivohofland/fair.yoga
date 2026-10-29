@@ -118,9 +118,10 @@ export function ResumePaymentsForm({
       return;
     }
     // Only the app's own busy or rate-limit answer says the resume did not
-    // happen; anything else (a gateway, a proxy's page, an uncoded refusal)
-    // leaves the outcome unknown.
-    if (res.status === 503 && message !== '') {
+    // happen; anything else (a gateway, a proxy's page, an uncoded refusal, a
+    // lost database connection, which may have committed) leaves the outcome
+    // unknown.
+    if (res.status === 503 && message !== '' && code !== 'DATABASE_CONNECTION_FAILED') {
       setState({ kind: 'refused', message: RETRY_COPY, signOut: false });
       return;
     }

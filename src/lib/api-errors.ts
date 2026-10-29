@@ -127,8 +127,9 @@ function terminalViolationOf(error: unknown): PgError | null {
  * Transient failures a retry can eventually win, not a bad request —
  * `isTransientDbError` answers `true` for every kind. In this file `kind`
  * picks the log level (`TRANSIENT_KIND_LEVEL`), the `detail.transientKind`
- * field and the 503 message (`TRANSIENT_KIND_MESSAGE`); it never changes
- * whether an error is transient.
+ * field, the 503 message (`TRANSIENT_KIND_MESSAGE`) and whether the 503
+ * carries a code (`classifyApiError`); it never changes whether an error is
+ * transient.
  *
  * - `lock_timeout` (`55P03`) — a `SET LOCAL lock_timeout` expired. This
  *   project sets one at every `lockClassRow` call and at the two template
@@ -572,6 +573,9 @@ export function classifyApiError(error: unknown): ApiFailure {
       logMessage: 'transient database failure surfaced to a client',
       level: transient.level,
       detail: { transientKind: transient.kind },
+      // A lost connection may have committed (`TRANSIENT_KIND_MESSAGE`), so it
+      // is coded for a client to tell apart from a 503 that rolled back.
+      ...(transient.kind === 'connection' ? { code: 'DATABASE_CONNECTION_FAILED' } : {}),
     };
   }
 

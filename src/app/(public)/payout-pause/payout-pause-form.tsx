@@ -76,13 +76,14 @@ export function PayoutPauseForm() {
     }
     logRequestFailure('payout-pause', { status: res.status, code }, new Error('pause refused'));
     // Only a coded refusal or the app's own busy answer says the pause did not
-    // happen; anything else (a gateway, a proxy's page, an uncoded refusal)
-    // leaves the outcome unknown.
+    // happen; anything else (a gateway, a proxy's page, an uncoded refusal, a
+    // lost database connection, which may have committed) leaves the outcome
+    // unknown.
     if (code !== undefined && res.status >= 400 && res.status < 500) {
       setState('rejected');
       return;
     }
-    if (res.status === 503 && message !== '') {
+    if (res.status === 503 && message !== '' && code !== 'DATABASE_CONNECTION_FAILED') {
       setState('failed');
       return;
     }

@@ -1822,12 +1822,15 @@ matched from source only on every path, and `57P01` on its typed path (see the
 shape table). The connect timeout carries pg's termination error as its
 `cause`, so both depths match; the walk stops at depth 0, and the answer is
 the same `connection` either way. The one dropped-connection shape left a 500
-is `write EPIPE`, which the shape table says why. A `connection` failure never
+is `write EPIPE`; the shape table says why. A `connection` failure never
 reaches a service's `busy` arm, whose copy says nothing was changed: a
 connection lost mid-`COMMIT` was measured to have applied the write on both
 cuts, so the service rethrows it to `classifyApiError`, which answers the
 `connection` 503 and its copy, which says the request may not have gone
-through.
+through. That 503 alone carries a code, `DATABASE_CONNECTION_FAILED`, because
+every other transient kind rolled back, so a client that reads an app-written
+503 as "nothing happened" (the payout-pause, passkey-revoke and resume-payments
+forms) must route this code to its outcome-unknown state instead.
 
 What `pool_exhausted` covers, measured there on 2026-10-27 (`poolMax: 1`, the
 one connection held by an interactive transaction): any call whose wait for a
