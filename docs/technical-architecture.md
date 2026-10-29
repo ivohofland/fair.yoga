@@ -1598,9 +1598,8 @@ externals it leaves are `@prisma/client/runtime/client`, the query compiler's
 and `pg`, as a hashed external linked from `.next-build/node_modules/`. Next
 externalises `pg` and `@prisma/client` by default, so the config sets no
 `serverExternalPackages`, and there is no `export *` warning over a CommonJS
-external. The standalone tree therefore carries `pg` with `pg-pool`,
-`pg-protocol`, `pg-types` and `pg-connection-string`, the client runtime and
-the query compiler's files, and no Prisma `*.node`; the commands that show it,
+external. The image therefore carries `pg` with the packages it
+depends on, the client runtime and the query compiler's files, and no Prisma `*.node`; the commands that show it,
 and what the runner probe proves, are in `docs/supply-chain.md` ("Prisma's
 engine in the images").
 

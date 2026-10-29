@@ -403,8 +403,7 @@ dependency that reaches this repo with a build/install script and no entry in
 `allowBuilds` **errors the install** — on a laptop, not only in CI.
 `allowBuilds` grants four packages, and every one of them is live:
 `@prisma/engines`, `esbuild`, `prisma`, `unrs-resolver`. `@prisma/client` is
-not among them: 7.10.1 declares no `preinstall`, `install` or `postinstall`
-script, so pnpm never gates it (measured 2026-10-29, Prisma 7.10.1).
+not among them; why pnpm never gates it is re-derived below.
 
 **`strictDepBuilds` is written out rather than left to the default**, for the
 reason the census guard's docblock gives about `--frozen-lockfile`: a default
@@ -872,19 +871,18 @@ The adapter is bundled. The bundle reaches `pg` as a hashed external,
 `/app/.next-build/node_modules/pg-<hash>` →
 `../../node_modules/.pnpm/pg@<version>/node_modules/pg`, not through
 `/app/node_modules/pg`: removing that top-level link leaves the client loading.
-Measured in the runner image built from a scratch `git archive` tree
-(`docker build -t fy925-runner <tree>`), 2026-10-29, `node:24-alpine` arm64,
-Next 16.4.1, Prisma 7.10.1. Re-derive:
+Measured 2026-10-29 in the runner image (`docker build -t fairyoga .`),
+`node:24-alpine` arm64, Next 16.4.1, Prisma 7.10.1. Re-derive:
 
 ```bash
-docker run --rm --entrypoint sh fy925-runner -c "find / -name '*.node' -not -path '/proc/*' 2>/dev/null"
-docker run --rm --entrypoint sh fy925-runner -c "find /app/node_modules -maxdepth 4 -type d -path '*pg*'; ls -l /app/.next-build/node_modules"
-docker run --rm --entrypoint sh fy925-runner -c "find /app -name 'query_compiler*'"
+docker run --rm --entrypoint sh fairyoga -c "find / -name '*.node' -not -path '/proc/*' 2>/dev/null"
+docker run --rm --entrypoint sh fairyoga -c "find /app/node_modules -maxdepth 4 -type d -path '*pg*'; ls -l /app/.next-build/node_modules"
+docker run --rm --entrypoint sh fairyoga -c "find /app -name 'query_compiler*'"
 ```
 
 The first prints sharp's one file; the second prints the `pg*` directories
 under `.pnpm` and the `pg-<hash>` link; the third prints the two query
-compiler files. The top-level-link claim: a scratch image `FROM fy925-runner`
+compiler files. The top-level-link claim: a scratch image `FROM fairyoga`
 with `USER root` and `RUN rm -v /app/node_modules/pg`, then the CI runner
 probe under `--network none`, still prints its success line. The remaining
 lines come from a host build, not the image. Re-derive them after
