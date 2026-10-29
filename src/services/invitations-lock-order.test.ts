@@ -204,9 +204,9 @@ describe('Invitation and TeacherStudent take one lock order (#174 task 7)', () =
    * does not fail this exact assertion. Run against unmodified `main` this
    * produced ZERO rejections, not the one 40P01 the brief expected: both
    * transactions committed. Confirmed by direct query logging (`DEBUG=
-   * prisma:query` emits nothing at all on Prisma 6.19.3 — a standalone
-   * `new PrismaClient({ log: [{ emit: 'event', level: 'query' }] })` was
-   * used instead) that `tx.teacherStudent.upsert({ where, update: {},
+   * prisma:query` prints nothing at all on Prisma 7.10.1 — a client from
+   * `createPrismaClient` with `log: [{ emit: 'event', level: 'query' }]` was
+   * used instead, 2026-10-29) that `tx.teacherStudent.upsert({ where, update: {},
    * create })` compiles to three plain, non-locking `SELECT`s when the row
    * already exists, not an atomic `INSERT ... ON CONFLICT DO UPDATE` — so
    * transaction A's upsert never asks Postgres for the row lock the cycle

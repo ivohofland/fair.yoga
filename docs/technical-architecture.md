@@ -1702,10 +1702,13 @@ anything, so the defaults are unit-tested on their own
   pre-lock relies on lock ⊇ delete, which this makes an equality). Read as a
   `timestamptz` it is taken in the session `TimeZone`: the same instant only
   while the session runs UTC, which production's and CI's `postgres:16-alpine`
-  do by default. With no context at all it fails `42P18` (`could not
-  determine data type of parameter`). Measured on 6.19.3 with
-  `SELECT ${date}::text` and `'2026-08-15'::date > ${date}` under
-  `SET LOCAL TimeZone` = UTC, `America/New_York` and `Asia/Tokyo`.
+  do by default. Where nothing fixes its type (`SELECT ${date} IS NULL`) it
+  fails `42P18` (`could not determine data type of parameter`); a bare
+  `SELECT ${date}` is read as `text`. Measured 2026-10-29 on 7.10.1 with
+  `SELECT ${date}::text`, `'2026-08-15'::date > ${date}` and
+  `SELECT ${date}::timestamptz::text` under `SET LOCAL TimeZone` = UTC,
+  `America/New_York` and `Asia/Tokyo` (`$queryRaw` inside a transaction, on the
+  test database).
 - **A missing or empty URL throws at construction**:
   `createPrismaClient: no url given and DATABASE_URL is not set`. pg would
   read an empty `connectionString` as "libpq defaults" (localhost as the OS
