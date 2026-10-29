@@ -16,8 +16,8 @@ import {
   migrationSqlFiles,
   type MigrationFunction,
 } from '../../tests/migration-sql';
-import { ADAPTER_KINDS } from './pg-error';
-import { knownWithAdapterCause, pgCause, pgConnectTimeout, pgPoolTimeout, socketCause, typedCallError } from '../../tests/adapter-errors';
+import { ADAPTER_KINDS, isPgConnectionTerminated } from './pg-error';
+import { knownWithAdapterCause, pgCause, pgConnectionTerminated, pgConnectTimeout, pgPoolTimeout, socketCause, typedCallError } from '../../tests/adapter-errors';
 
 /**
  * Matches the construction used in src/services/studio-class-generator.test.ts
@@ -1057,11 +1057,16 @@ describe('transientDbFailure', () => {
     ]);
   });
 
-  // Not classified yet: pg's bare termination error carries nothing structured (see #931).
-  it('answers a bare Connection terminated unexpectedly with a non-transient 500', () => {
-    const error = new Error('Connection terminated unexpectedly');
-    expect(transientDbFailure(error)).toBeNull();
-    expect(classifyApiError(error).status).toBe(500);
+  it('answers a bare Connection terminated unexpectedly as connection, at error', () => {
+    const error = pgConnectionTerminated();
+    expect(transientDbFailure(error)).toEqual({ kind: 'connection', level: 'error' });
+    expect(classifyApiError(error)).toMatchObject({ status: 503, level: 'error', detail: { transientKind: 'connection' } });
+  });
+
+  it('classifies the connect timeout once, as connection, though its cause is the bare termination', () => {
+    const error = pgConnectTimeout();
+    expect(isPgConnectionTerminated(error.cause)).toBe(true);
+    expect(transientDbFailure(error)).toEqual({ kind: 'connection', level: 'error' });
   });
 
   it('does not treat an adapter kind outside the connection set as transient', () => {

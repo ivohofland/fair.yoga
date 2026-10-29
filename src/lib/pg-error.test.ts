@@ -9,9 +9,9 @@ import { classifyApiError, isRestrictViolationOn } from './api-errors';
 import { isCheckViolationOn } from './check-violation';
 import { isExclusionConflictOn } from './exclusion-conflict';
 import { serializeErr, type SerializedErr } from './log-serializers';
-import { ADAPTER_KINDS, PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf } from './pg-error';
+import { ADAPTER_KINDS, PG_CONNECTION_TERMINATED_MESSAGE, PG_CONNECT_TIMEOUT_MESSAGE, PG_POOL_TIMEOUT_MESSAGE, adapterKindOf, isPgConnectionTerminated, isPgConnectTimeout, isPgPoolTimeout, pgErrorOf } from './pg-error';
 import { UNIQUE_CONSTRAINTS, isUniqueConflictOn, type UniqueConstraintName } from './unique-conflict';
-import { driverAdapterError, knownWithAdapterCause, pgCause, pgConnectTimeout, pgPoolTimeout } from '../../tests/adapter-errors';
+import { driverAdapterError, knownWithAdapterCause, pgCause, pgConnectionTerminated, pgConnectTimeout, pgPoolTimeout } from '../../tests/adapter-errors';
 import { fixtureRun, type RoomFixture } from '../../tests/room-fixtures';
 import type { ClassWithEntry } from '../../tests/class-fixtures';
 
@@ -108,6 +108,33 @@ describe('isPgConnectTimeout', () => {
     expect(isPgConnectTimeout(err)).toBe(false);
   });
 });
+
+describe('isPgConnectionTerminated', () => {
+  it('matches pg\'s plain termination error', () => {
+    const req = createRequire(path.join(process.cwd(), 'package.json'));
+    const clientSource = readFileSync(path.join(path.dirname(req.resolve('pg')), 'client.js'), 'utf8');
+    expect(clientSource).toContain(`new Error('${PG_CONNECTION_TERMINATED_MESSAGE}')`);
+    expect(isPgConnectionTerminated(pgConnectionTerminated())).toBe(true);
+  });
+  it.each([
+    ['the graceful-end text', Object.assign(new Error('Connection terminated'), { clientVersion: 'test' })],
+    ['a trailing period', new Error('Connection terminated unexpectedly.')],
+    ['a different case', new Error('connection terminated unexpectedly')],
+    ['a wrapper quoting it', new Error('query failed: Connection terminated unexpectedly')],
+    ['an own code', Object.assign(pgConnectionTerminated(), { code: 'ECONNRESET' })],
+    ['a non-Error', { message: PG_CONNECTION_TERMINATED_MESSAGE }],
+    ['the right message carrying a Postgres error', terminationCarryingPgError()],
+  ])('rejects %s', (_label, err) => {
+    expect(isPgConnectionTerminated(err)).toBe(false);
+  });
+});
+
+/** `connectTimeoutCarryingPgError` for pg's termination message. */
+function terminationCarryingPgError(): Prisma.PrismaClientKnownRequestError {
+  const err = connectTimeoutCarryingPgError();
+  err.message = PG_CONNECTION_TERMINATED_MESSAGE;
+  return err;
+}
 
 /**
  * pg-pool's connect-timeout message on a Known error whose adapter cause holds
