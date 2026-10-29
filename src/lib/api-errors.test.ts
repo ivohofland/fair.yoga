@@ -1048,6 +1048,15 @@ describe('transientDbFailure', () => {
     },
   );
 
+  it('pins TRANSIENT_ADAPTER_KIND to exactly these adapter kinds', () => {
+    expect([...TRANSIENT_ADAPTER_KIND.keys()].sort()).toEqual([
+      'ConnectionClosed',
+      'DatabaseNotReachable',
+      'SocketTimeout',
+      'TooManyConnections',
+    ]);
+  });
+
   // Not classified yet: pg's bare termination error carries nothing structured (see #931).
   it('answers a bare Connection terminated unexpectedly with a non-transient 500', () => {
     const error = new Error('Connection terminated unexpectedly');

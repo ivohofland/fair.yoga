@@ -1305,9 +1305,9 @@ export async function createClassTemplate(
     // logs this the same way when it escapes uncaught, so catching it here
     // must not be what removes that line).
     const transient = transientDbFailure(err);
-    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
-    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
-    // `classifyApiError` answers the `connection` 503.
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s claim that
+    // nothing was applied could be false. Rethrown unlogged: `withErrorHandler`
+    // logs it and `classifyApiError` answers the `connection` 503.
     if (transient?.kind === 'connection') throw err;
     if (transient) {
       log[transient.level](

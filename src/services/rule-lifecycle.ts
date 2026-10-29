@@ -886,9 +886,9 @@ export async function archiveOrUnarchiveRule<TChild>(
     // method and the same path, and the query parameter that separates them is
     // deliberately excluded from request logs.
     const transient = transientDbFailure(err);
-    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
-    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
-    // `classifyApiError` answers the `connection` 503.
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s claim that
+    // nothing was applied could be false. Rethrown unlogged: `withErrorHandler`
+    // logs it and `classifyApiError` answers the `connection` 503.
     if (transient?.kind === 'connection') throw err;
     if (transient) {
       // `target` because this function serves both directions and the message
@@ -1478,16 +1478,17 @@ export async function pauseOrResumeRule<TChild>(
       { timeout: 10_000 },
     );
   } catch (err) {
-    // Transient is the one branch that RETURNS, and a returned failure never
-    // reaches `withErrorHandler`, so the line inside it is the only record of
-    // that case. The message names this VERB because the wrapper cannot — a
+    // A transient failure other than `connection` RETURNS, and a returned
+    // failure never reaches `withErrorHandler`, so the line inside it is the
+    // only record of that case; a `connection` one rethrows to the wrapper,
+    // which logs it. The message names this VERB because the wrapper cannot — a
     // pause and an archive reach the same route with the same method and the
     // same path, and the query parameter that separates them is deliberately
     // excluded from request logs.
     const transient = transientDbFailure(err);
-    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
-    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
-    // `classifyApiError` answers the `connection` 503.
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s claim that
+    // nothing was applied could be false. Rethrown unlogged: `withErrorHandler`
+    // logs it and `classifyApiError` answers the `connection` 503.
     if (transient?.kind === 'connection') throw err;
     if (transient) {
       // `target` because the message names the verb and stops there: it reads
@@ -1809,9 +1810,9 @@ export async function updateRule<TChild>(
     updatedRule = written.newRule;
   } catch (err) {
     const transient = transientDbFailure(err);
-    // A lost connection may have landed mid-`COMMIT`, so `busy`'s "nothing was
-    // changed" could be false. Rethrown unlogged: `withErrorHandler` logs it and
-    // `classifyApiError` answers the `connection` 503.
+    // A lost connection may have landed mid-`COMMIT`, so `busy`'s claim that
+    // nothing was applied could be false. Rethrown unlogged: `withErrorHandler`
+    // logs it and `classifyApiError` answers the `connection` 503.
     if (transient?.kind === 'connection') throw err;
     if (transient) {
       log[transient.level](
