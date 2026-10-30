@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Website embed — mockups v2</title>
+<style>
+  :root {
+    --teal:#1A5653; --teal-tint:#E8F0EF; --cream:#F7F4EF; --sand:#E8DCC8; --sand-soft:#F0E9DC;
+    --brown:#6B5B4E; --brown-light:#71645A; --ink:#2D2D2D; --gold:#C4A96A; --gold-tint:#F3ECDC;
+    --border:#D4C9B8; --danger:#A24E4E;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#e9e6e1; font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color:var(--brown); }
+  h1,h2,h3 { font-family:Georgia, serif; color:var(--ink); margin:0; }
+  .page { max-width:1240px; margin:0 auto; padding:24px 16px 64px; }
+  .intro { max-width:760px; margin-bottom:24px; }
+  .intro h1 { font-size:24px; margin-bottom:6px; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; }
+  .tag { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#8a7d72; margin:0 0 8px; }
+
+  /* ---- phone frame: the app ---- */
+  .phone { width:390px; background:var(--cream); border:1px solid var(--border); border-radius:28px; padding:18px 16px 28px; }
+  .back { color:var(--teal); font-size:14px; margin-bottom:12px; }
+  .phone h2 { font-size:24px; margin-bottom:4px; }
+  .cap { font-size:13px; color:var(--brown-light); }
+  .card { background:var(--sand-soft); border:1px solid var(--border); border-radius:16px; padding:16px; margin-top:14px; }
+  .card h3 { font-size:16px; margin-bottom:10px; }
+  .field { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:44px; border-top:1px solid var(--border); padding:8px 0; }
+  .field:first-of-type { border-top:none; }
+  .field .l { color:var(--ink); font-size:14px; }
+  .field .h { font-size:12px; color:var(--brown-light); }
+  .seg { display:flex; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .seg span { padding:6px 10px; font-size:13px; background:var(--cream); color:var(--brown); border-left:1px solid var(--border); }
+  .seg span:first-child { border-left:none; }
+  .seg span.on { background:var(--teal); color:var(--cream); }
+  .toggle { width:44px; height:26px; border-radius:13px; background:var(--sand); position:relative; flex:none; border:1px solid var(--border); }
+  .toggle::after { content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:var(--cream); border:1px solid var(--border); }
+  .toggle.on { background:var(--teal); border-color:var(--teal); }
+  .toggle.on::after { left:20px; }
+  .select { border:1px solid var(--border); background:var(--cream); border-radius:10px; padding:6px 10px; font-size:13px; color:var(--ink); }
+  .code { background:var(--ink); color:#e8e2d8; font:12px/1.5 ui-monospace, Menlo, monospace; border-radius:12px; padding:12px; white-space:pre-wrap; word-break:break-all; }
+  .btn { display:block; text-align:center; background:var(--teal); color:var(--cream); border-radius:12px; padding:12px; font-weight:600; margin-top:10px; }
+  .btn.ghost { background:transparent; color:var(--teal); border:1px solid var(--teal); }
+  .danger-link { color:var(--danger); font-size:13px; margin-top:14px; display:block; }
+  .url { background:var(--cream); border:1px solid var(--border); border-radius:10px; padding:8px 10px; font:12px ui-monospace, Menlo, monospace; color:var(--ink); word-break:break-all; }
+  .note { font-size:12px; color:var(--brown-light); margin-top:8px; }
+
+  /* ---- the widget (themed) ---- */
+  .fy { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .fy-day { font-family:Georgia, serif; font-weight:bold; color:var(--ink); font-size:15px; margin:14px 0 6px; }
+  .fy-day:first-child { margin-top:0; }
+  .fy-item { display:flex; align-items:center; gap:12px; background:var(--sand-soft); border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-bottom:8px; }
+  .fy-item.studio { background:transparent; border-style:dashed; }
+  .fy-time { font-variant-numeric:tabular-nums; color:var(--teal); font-weight:600; width:46px; flex:none; font-size:15px; }
+  .fy-main { flex:1; min-width:0; }
+  .fy-type { color:var(--ink); font-weight:600; font-size:15px; }
+  .fy-meta { font-size:12.5px; color:var(--brown-light); }
+  .fy-cta { flex:none; font-size:13px; font-weight:600; color:var(--teal); border:1px solid var(--teal); border-radius:10px; padding:6px 10px; white-space:nowrap; }
+  .fy-cta.wait { color:var(--gold-deep, #7A6739); border-color:var(--gold); background:var(--gold-tint); }
+  .fy-cta.ext { border-style:dashed; }
+  .fy-foot { display:flex; justify-content:flex-end; align-items:center; gap:6px; margin-top:10px; font-size:11.5px; color:#9a8e83; }
+  .fy-foot .wm { font-family:Georgia, serif; color:#8a7d72; font-size:12.5px; }
+  .fy-foot .wm b { color:var(--teal); font-size:15px; }
+
+  /* dark themed */
+  .fy.dark { --d-bg:#1f2423; --d-card:#28302f; --d-border:#3a4544; }
+  .fy.dark .fy-day { color:#efe9df; }
+  .fy.dark .fy-item { background:var(--d-card); border-color:var(--d-border); }
+  .fy.dark .fy-item.studio { background:transparent; }
+  .fy.dark .fy-type { color:#efe9df; }
+  .fy.dark .fy-meta { color:#b4aa9e; }
+  .fy.dark .fy-time, .fy.dark .fy-cta { color:#8cc5c0; border-color:#8cc5c0; }
+  .fy.dark .fy-cta.wait { background:transparent; color:#d8c08a; border-color:#d8c08a; }
+  .fy.dark .fy-foot, .fy.dark .fy-foot .wm { color:#8f877d; }
+  .fy.dark .fy-foot .wm b { color:#8cc5c0; }
+
+  /* ---- teacher's website frames ---- */
+  .site { width:520px; border-radius:12px; overflow:hidden; border:1px solid #cfc8bd; background:#fff8; }
+  .site .bar { background:#ddd6cc; padding:8px 12px; font-size:12px; color:#6f655b; display:flex; gap:6px; align-items:center; }
+  .site .bar i { width:10px; height:10px; border-radius:50%; background:#c2b8ab; display:inline-block; }
+  .site .bar .addr { margin-left:10px; background:#ece6dd; border-radius:6px; padding:2px 10px; flex:1; }
+  .site .body { padding:22px; }
+  .site.light .body { background:#fbfaf7; }
+  .site.light .hero { font-family:"Helvetica Neue", Arial, sans-serif; font-size:26px; font-weight:300; color:#333; margin-bottom:4px; letter-spacing:.02em; }
+  .site.light .sub { color:#888; font-size:14px; margin-bottom:18px; }
+  .site.dark .body { background:#1f2423; }
+  .site.dark .hero { font-family:"Didot", Georgia, serif; font-size:26px; color:#efe9df; margin-bottom:4px; }
+  .site.dark .sub { color:#9a9188; font-size:14px; margin-bottom:18px; }
+  .site.plain .body { background:#ffffff; font-family:"Trebuchet MS", sans-serif; color:#222; }
+  .site.plain .hero { font-family:"Trebuchet MS", sans-serif; font-size:24px; color:#b0413e; font-weight:bold; margin-bottom:12px; }
+
+  /* unstyled = host CSS only */
+  .unstyled h4 { font-size:15px; margin:14px 0 4px; color:#b0413e; }
+  .unstyled ul { margin:0; padding-left:18px; }
+  .unstyled li { margin:4px 0; font-size:14px; }
+  .unstyled a { color:#b0413e; }
+  .unstyled .credit { font-size:11px; color:#999; margin-top:12px; }
+
+  .explain { max-width:1240px; margin:36px 0 0; padding:16px 20px; background:#fff8; border:1px solid #cfc8bd; border-radius:12px; font-size:14px; }
+  .explain li { margin:4px 0; }
+
+  .embed-box { position:relative; outline:1.5px dashed #c08a3e; outline-offset:8px; border-radius:6px; margin-top:12px; }
+  .embed-box::before { content:"embed"; position:absolute; top:-22px; right:-6px; font:11px ui-monospace, Menlo, monospace; color:#c08a3e; background:inherit; padding:0 4px; }
+  .variant { border-top:1px dashed var(--border); margin-top:12px; padding-top:10px; }
+  .variant .tagline { font-size:11.5px; color:#8a7d72; text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px; }
+  .plainprev { font-family:Times, serif; color:#000; font-size:14px; background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 12px; }
+  .plainprev b { display:block; margin-top:6px; }
+  .plainprev ul { margin:2px 0; padding-left:18px; }
+  .plainprev a { color:#00e; text-decoration:underline; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="intro">
+    <h1>Website embed — mockups v2</h1>
+    <p>Left: the new settings page in the app (after the teacher has switched the embed on). Right: what visitors see on the teacher's own website, in three looks. Changes since v1: filters removed; settings split into what's saved vs. what only changes the code; Colours hidden for “Your site's” style; dashed outline marks exactly what the embed renders.</p>
+  </div>
+
+  <div class="row">
+    <!-- ================= SETTINGS PAGE ================= -->
+    <div>
+      <p class="tag">In the app · Settings → Website embed</p>
+      <div class="phone">
+        <div class="back">‹ Settings</div>
+        <h2>Website embed</h2>
+        <p class="cap">Show your schedule on your own website. Visitors book here, on fair.yoga, in a new tab.</p>
+
+        <div class="card">
+          <h3>Your schedule</h3>
+          <p class="cap" style="margin:-4px 0 6px">Saved for all your embeds and your calendar feed.</p>
+          <div class="field"><div><div class="l">Weeks ahead</div></div>
+            <div class="seg"><span>1</span><span>2</span><span>3</span><span class="on">4</span></div></div>
+          <div class="field"><div><div class="l">Show studio classes</div><div class="h">Classes you teach for a studio</div></div>
+            <div class="toggle on"></div></div>
+        </div>
+
+        <div class="card">
+          <h3>Look</h3>
+          <p class="cap" style="margin:-4px 0 6px">Only changes the code below.</p>
+          <div class="field"><div class="l">Style</div>
+            <div class="seg"><span class="on">fair.yoga</span><span>Your site's</span></div></div>
+          <div class="field"><div class="l">Colours</div>
+            <div class="seg"><span>Light</span><span>Dark</span><span class="on">Auto</span></div></div>
+          <div class="variant">
+            <div class="tagline">When “Your site's” is picked</div>
+            <div class="field"><div class="l">Style</div>
+              <div class="seg"><span>fair.yoga</span><span class="on">Your site's</span></div></div>
+            <p class="cap" style="margin:4px 0 8px">No Colours row. Preview becomes:</p>
+            <div class="plainprev">
+              <b>Tuesday 3 November</b>
+              <ul><li>19:00 Vinyasa — De Pijp, 75 min, income-based · <a>Book</a></li></ul>
+              <span style="font-size:11px">Schedule by fair.yoga</span>
+            </div>
+            <p class="note">On your site this takes your own fonts and colours.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Preview</h3>
+          <div class="fy">
+            <div class="fy-day">Tue 3 Nov</div>
+            <div class="fy-item"><div class="fy-time">19:00</div><div class="fy-main"><div class="fy-type">Vinyasa</div><div class="fy-meta">De Pijp · 75 min · Income-based</div></div><div class="fy-cta">Book ↗</div></div>
+            <div class="fy-day">Thu 5 Nov</div>
+            <div class="fy-item studio"><div class="fy-time">19:00</div><div class="fy-main"><div class="fy-type">Hatha</div><div class="fy-meta">at Studio Zuid · 60 min</div></div><div class="fy-cta ext">Book ↗</div></div>
+            <div class="fy-foot">Schedule by <span class="wm">fair<b>.</b>yoga</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Your code</h3>
+          <p class="cap" style="margin:0 0 8px">Paste this where the schedule should appear. It updates as you change the options above.</p>
+<div class="code">&lt;script src="https://fair.yoga/embed/v1.js" defer&gt;&lt;/script&gt;
+&lt;fair-yoga-schedule key="k7Qm2xR9vT" theme="themed" color-scheme="auto"&gt;
+  &lt;a href="https://fair.yoga/anna"&gt;See my schedule&lt;/a&gt;
+&lt;/fair-yoga-schedule&gt;</div>
+          <div class="btn">Copy code</div>
+        </div>
+
+        <div class="card">
+          <h3>Calendar feed</h3>
+          <p class="cap" style="margin:0 0 8px">Students can subscribe to this in their calendar app. Also works on site builders that block scripts.</p>
+          <div class="url">https://fair.yoga/feed/k7Qm2xR9vT.ics</div>
+          <div class="btn ghost">Copy link</div>
+        </div>
+
+        <a class="danger-link">Reset embed key…</a>
+        <p class="note">Your pasted code and feed stop working until you paste the new code. Use this if you want to take your schedule off a site.</p>
+        <a class="danger-link">Turn off website embed…</a>
+      </div>
+    </div>
+
+    <!-- ================= ON THE TEACHER'S SITE ================= -->
+    <div style="display:flex; flex-direction:column; gap:28px;">
+      <div>
+        <p class="tag">A · fair.yoga style, light — on a light site</p>
+        <div class="site light">
+          <div class="bar"><i></i><i></i><i></i><span class="addr">annayoga.nl/schedule</span></div>
+          <div class="body">
+            <div class="hero">Classes with Anna</div>
+            <div class="sub">Amsterdam · Vinyasa, Hatha & Yin</div>
+            <div class="fy embed-box" style="background:#fbfaf7">
+              <div class="fy-day">Tue 3 Nov</div>
+              <div class="fy-item"><div class="fy-time">19:00</div><div class="fy-main"><div class="fy-type">Vinyasa</div><div class="fy-meta">De Pijp · 75 min · Income-based</div></div><div class="fy-cta">Book ↗</div></div>
+              <div class="fy-day">Wed 4 Nov</div>
+              <div class="fy-item"><div class="fy-time">09:00</div><div class="fy-main"><div class="fy-type">Yin</div><div class="fy-meta">Online · 60 min · Pay what you can</div></div><div class="fy-cta wait">Waitlist ↗</div></div>
+              <div class="fy-day">Thu 5 Nov</div>
+              <div class="fy-item studio"><div class="fy-time">19:00</div><div class="fy-main"><div class="fy-type">Hatha</div><div class="fy-meta">at Studio Zuid · 60 min</div></div><div class="fy-cta ext">Book ↗</div></div>
+              <div class="fy-item studio"><div class="fy-time">20:30</div><div class="fy-main"><div class="fy-type">Restorative</div><div class="fy-meta">at Yoga West · 60 min</div></div></div>
+              <div class="fy-foot">Schedule by <span class="wm">fair<b>.</b>yoga</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p class="tag">B · fair.yoga style, dark — on a dark site</p>
+        <div class="site dark">
+          <div class="bar"><i></i><i></i><i></i><span class="addr">mira-movement.com</span></div>
+          <div class="body">
+            <div class="hero">Practice with Mira</div>
+            <div class="sub">Weekly classes</div>
+            <div class="fy dark embed-box" style="background:#1f2423">
+              <div class="fy-day">Tue 3 Nov</div>
+              <div class="fy-item"><div class="fy-time">19:00</div><div class="fy-main"><div class="fy-type">Vinyasa</div><div class="fy-meta">De Pijp · 75 min · Income-based</div></div><div class="fy-cta">Book ↗</div></div>
+              <div class="fy-item studio"><div class="fy-time">20:30</div><div class="fy-main"><div class="fy-type">Restorative</div><div class="fy-meta">at Yoga West · 60 min</div></div></div>
+              <div class="fy-foot">Schedule by <span class="wm">fair<b>.</b>yoga</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p class="tag">C · "Your site's" style — plain list, takes the site's own fonts and colours</p>
+        <div class="site plain">
+          <div class="bar"><i></i><i></i><i></i><span class="addr">sunflower-yoga.org/rooster</span></div>
+          <div class="body">
+            <div class="hero">Lesrooster</div>
+            <div class="unstyled embed-box" style="background:#fff">
+              <h4>Tuesday 3 November</h4>
+              <ul><li>19:00 Vinyasa — De Pijp, 75 min, income-based · <a>Book (opens in new tab)</a></li></ul>
+              <h4>Thursday 5 November</h4>
+              <ul><li>19:00 Hatha — at Studio Zuid, 60 min · <a>Book at the studio</a></li>
+                  <li>20:30 Restorative — at Yoga West, 60 min</li></ul>
+              <div class="credit">Schedule by fair.yoga</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="explain">
+    <strong>What changed in v2</strong>
+    <ul>
+      <li><b>Dashed outline</b> on the right marks exactly what the embed draws: from the first day heading down to “Schedule by fair.yoga”. Everything above it (“Classes with Anna”) is the teacher's own page.</li>
+      <li><b>Two cards instead of one:</b> “Your schedule” (weeks ahead, studio classes) is saved on the server and applies to every embed and the feed; “Look” only changes the copied code.</li>
+      <li><b>Class type and location filters are gone</b> (not in v1).</li>
+      <li><b>“Your site's” style hides the Colours row</b>, drops <code>color-scheme</code> from the code, and the preview shows a bare list with a note.</li>
+    </ul>
+  </div>
+</div>
+</div>
+</body>
+</html>
