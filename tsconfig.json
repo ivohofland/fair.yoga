@@ -12,7 +12,7 @@
     "noUncheckedIndexedAccess": true,
     "noUncheckedSideEffectImports": true,
     "libReplacement": false,
-    // Node's globals are named here rather than arriving through Next's typings.
+    // Only @types/node loads globally; any other @types package takes effect only when imported.
     "types": [
       "node"
     ],

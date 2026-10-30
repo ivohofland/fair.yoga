@@ -30,7 +30,7 @@
 
 The test configs must live inside the repo directory. A `types` entry resolves from the directory of the config that sets it, and a config in the scratchpad fails with TS2688 for that reason alone.
 
-Without `types`, `@types/node` enters the program through `next/dist/types.d.ts` and `undici-types`, not through `next-env.d.ts` as #945 says. That file is gitignored and absent in CI.
+Without `types`, `@types/node` still enters the program, through `/// <reference types="node" />` in many dependencies' typings (re-derive: `pnpm exec tsc --noEmit --explainFiles | grep -A20 '@types/node/index.d.ts$'`). `next-env.d.ts` is gitignored and absent in CI, so none of those routes depend on it. What `types: ["node"]` changes is the other direction: every other `@types/*` package (today `pg`, `qrcode`, `react`, `react-dom`) stops loading globally and takes effect only when imported.
 
 ## Review Focus
 
@@ -49,11 +49,11 @@ Without `types`, `@types/node` enters the program through `next/dist/types.d.ts`
 
 **Interfaces:** none (no later task).
 
-- [ ] **Step 1: Add the options.** In `compilerOptions`, add `"types": ["node"]`, `"noUncheckedSideEffectImports": true` and `"libReplacement": false`. Above `types`, add one `//` comment line, present tense, saying that the Node globals are named here rather than arriving through Next's typings. Do not mention TypeScript 6 or what the defaults "used to" be. That history belongs in the PR body (CLAUDE.md, *Comment Discipline*).
+- [ ] **Step 1: Add the options.** In `compilerOptions`, add `"types": ["node"]`, `"noUncheckedSideEffectImports": true` and `"libReplacement": false`. Above `types`, add one `//` comment line, present tense, saying what the line does: only `@types/node` loads globally, and any other `@types` package takes effect only when imported. Name no other module. Do not mention TypeScript 6 or what the defaults "used to" be. That history belongs in the PR body (CLAUDE.md, *Comment Discipline*).
 
 - [ ] **Step 2: Typecheck.** Run `pnpm run typecheck`. Expected: exit 0, no output.
 
-- [ ] **Step 3: Prove `noUncheckedSideEffectImports` bites.** Temporarily add `import './does-not-exist-945'` to the top of any `src/**/*.ts` file. Run `pnpm run typecheck`. Expected: exit 2 with `error TS2882` naming `./does-not-exist-945`. Record the exact error line for the PR body. Remove the import and re-run: exit 0. Then delete the option, re-run with the bogus import, and confirm exit 0. That proves the option, not something else, is what bites. Restore the option.
+- [ ] **Step 3: Prove `noUncheckedSideEffectImports` bites.** Temporarily add `import './does-not-exist-945'` to the top of any `src/**/*.ts` file. Run `pnpm run typecheck`. Expected: exit 2 with `error TS2307: Cannot find module './does-not-exist-945' or its corresponding type declarations.`. Record the exact error line for the PR body. Remove the import and re-run: exit 0. Then delete the option, re-run with the bogus import, and confirm exit 0. That proves the option, not something else, is what bites. Restore the option.
 
 - [ ] **Step 4: Prove `types` is honoured.** Temporarily set `"types": ["node-945-missing"]` and run `pnpm run typecheck`. Expected: `error TS2688: Cannot find type definition file for 'node-945-missing'`. Restore `["node"]` and re-run: exit 0.
 
@@ -65,5 +65,5 @@ Without `types`, `@types/node` enters the program through `next/dist/types.d.ts`
 
 ### After the task (lead, not the implementer)
 
-- Correct #945's body: `@types/node` currently arrives through `next/dist/types.d.ts` and `undici-types`, and `next-env.d.ts` is gitignored and absent in CI. Replace the wrong sentence; don't annotate it.
+- Correct #945's body: without `types`, `@types/node` arrives through many dependencies' typings (`--explainFiles`), not through `next-env.d.ts`, which is gitignored and absent in CI. Replace the wrong sentence; don't annotate it.
 - PR body: the measurement table above, the mutation error lines from Steps 3–4, the Review Focus item 2 finding, and the verify totals. **#944 is unaffected** (it stays open for the bump).
