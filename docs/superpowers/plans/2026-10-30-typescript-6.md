@@ -48,7 +48,7 @@
 
 - [ ] **Step 2: Drop `dom.iterable` from `tsconfig.json`'s `lib`.** Leave `dom` and `esnext`. Run `pnpm run typecheck`. Expected: exit 0. That the removal depends on 6.0 is already measured (5.9.3: 5 errors, see above). There's no need to re-run it.
 
-- [ ] **Step 3: Restate the `type-pins.ts` measurement.** Change "Measured on TypeScript 5.9.3" to "Measured on TypeScript 6.0.3". Keep the rest of the sentence: the planning re-measurement confirmed it unchanged. Re-run the throwaway fixture against the installed 6.0.3 to confirm, then delete it: both `NoneOf` forms over `never`, `'a'` and `'a' | 'b'`. Expected: only unbracketed `never` errors, with TS2322 `Type 'true' is not assignable to type 'never'`. No new error comes from an unused `@ts-expect-error`.
+- [ ] **Step 3: Restate the `type-pins.ts` measurement.** Change "Measured on TypeScript 5.9.3" to "Measured on TypeScript 6.0.3". Keep the rest of the sentence: the planning re-measurement confirmed it unchanged. Re-run the throwaway fixture against the installed 6.0.3 to confirm, then delete it: both `NoneOf` forms over `never`, `'a'` and `'a' | 'b'`. Expected: only unbracketed `never` errors, with TS2322 `Type 'true' is not assignable to type 'never'`. No new error comes from an unused `@ts-expect-error`. At PR review, the version stamp was replaced by the compiler pin `_unbracketedBreaksOnlyOnNever` in the same file, so no version-stamped sentence remains.
 
 - [ ] **Step 4: Full verification.** `pnpm run worktree:setup`, then `worktree:up`, then `pnpm run verify`, then `worktree:down`. Expected: green. Read the lint section for a typescript-eslint version warning (Review Focus 1). Expected: none. Record the vitest totals.
 
