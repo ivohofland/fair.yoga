@@ -10,6 +10,12 @@
     "skipLibCheck": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
+    "libReplacement": false,
+    // Node's globals are named here rather than arriving through Next's typings.
+    "types": [
+      "node"
+    ],
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
