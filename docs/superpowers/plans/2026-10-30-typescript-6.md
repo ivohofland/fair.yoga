@@ -44,7 +44,7 @@
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Bump.** `pnpm add -D --save-exact typescript@6.0.3`. Expected: `package.json` reads `"typescript": "6.0.3"`, and the lockfile's `importers` entry and every `(typescript@…)` peer suffix read 6.0.3. Read the install output for `unmet peer`. Expected: none naming `typescript`. Then `pnpm run check-lockfile`. Expected: pass.
+- [ ] **Step 1: Bump.** `pnpm add -D --save-exact typescript@6.0.3`. Expected: `package.json` reads `"typescript": "6.0.3"`, and the lockfile's `importers` entry and every `(typescript@…)` peer suffix read 6.0.3. Read the install output for `unmet peer`. Expected: none naming `typescript`. Then `pnpm run check-lockfile`. Expected: pass. Note: pnpm writes `^6.0.3` despite `--save-exact` and reflows `devEngines`. Restore `package.json`, set `"typescript": "6.0.3"` by hand, and run `pnpm install` to sync the lockfile's specifier.
 
 - [ ] **Step 2: Drop `dom.iterable` from `tsconfig.json`'s `lib`.** Leave `dom` and `esnext`. Run `pnpm run typecheck`. Expected: exit 0. That the removal depends on 6.0 is already measured (5.9.3: 5 errors, see above). There's no need to re-run it.
 
