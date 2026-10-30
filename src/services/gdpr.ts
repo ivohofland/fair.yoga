@@ -1712,6 +1712,7 @@ export async function deleteTeacherAccount(
           email: erasedAddress(teacherId),
           bio: '',
           pageSlug: `deleted-${teacherId}`,
+          scheduleShareKey: null,
           customDomain: null,
           paymentLink: null,
           ...TEACHER_PUSH_ERASED,

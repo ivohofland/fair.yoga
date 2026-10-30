@@ -23,6 +23,7 @@ const base = {
   startTime: '09:00',
   durationMinutes: 60,
   location: 'Yoga Studio Centrum',
+  bookingUrl: null,
   hourlyRate: new Prisma.Decimal(45),
   isActive: true,
   isArchived: false,

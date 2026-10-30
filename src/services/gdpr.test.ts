@@ -170,6 +170,7 @@ let studentAccountId: string;
         bio: 'GDPR tests',
         pageSlug: `gdpr-teacher-${uniqueSuffix}`,
         paymentLink: 'https://revolut.me/gdpr-teacher',
+        scheduleShareKey: `share-${uniqueSuffix}`,
         bankAccounts: { create: { currency: 'EUR', holderName: 'G. Teacher', iban: 'NL00TEST0123456789' } },
       },
     });
@@ -522,6 +523,7 @@ let studentAccountId: string;
     expect(await prisma.teacherBankAccount.count({ where: { teacherId } })).toBe(0);
     expect(teacher.pageSlug).toBe(`deleted-${teacherId}`);
     expect(teacher.paymentLink).toBeNull();
+    expect(teacher.scheduleShareKey).toBeNull();
     expect(teacher.deletedAt).not.toBeNull();
 
     // Cancellation is the ENTRY's column since #327 — the class keeps its

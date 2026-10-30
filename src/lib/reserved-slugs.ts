@@ -12,7 +12,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // Routes the app has today.
   'login', 'verify', 'signup', 'bookings', 'settings', 'schedule', 'students',
   'inbox', 'class', 'studio-class', 'api', 'admin', 'account', 'updates', 'start',
-  'payout-pause', 'unsubscribe', 'passkey-revoke',
+  'payout-pause', 'unsubscribe', 'passkey-revoke', 'embed', 'feed',
   // Common website pages.
   'home', 'about', 'about-us', 'contact', 'contact-us', 'help', 'support', 'faq',
   'pricing', 'prices', 'costs', 'running-costs', 'donate', 'donations', 'blog', 'news',
