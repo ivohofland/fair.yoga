@@ -34,6 +34,7 @@ export default async function EditStudioTemplatePage({
     durationMinutes: scheduleRule.durationMinutes,
     location: template.location,
     hourlyRate: Number(template.hourlyRate),
+    bookingUrl: template.bookingUrl,
   };
 
   return (

@@ -57,6 +57,7 @@ export default async function StudioClassEditPage({
           startTime: timeToHHmm(entry.startTime),
           durationMinutes: entry.durationMinutes,
           hourlyRate: Number(studioClass.hourlyRate),
+          bookingUrl: studioClass.bookingUrl,
         }}
       />
     </div>

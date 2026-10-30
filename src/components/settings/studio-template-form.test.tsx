@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { BOOKING_LINK_MESSAGES } from '@/lib/payment-link';
 import { StudioTemplateForm } from './studio-template-form';
 import { routerPush, routerRefresh } from '../../../tests/setup/components';
 import { UNREADABLE_CONFIRMATION_MESSAGE } from './template-action-messages';
@@ -52,7 +53,7 @@ describe('StudioTemplateForm', () => {
     };
   }
 
-  const SIX_KEYS = ['classType', 'dayOfWeek', 'durationMinutes', 'hourlyRate', 'location', 'startTime'];
+  const FORM_KEYS = ['bookingUrl', 'classType', 'dayOfWeek', 'durationMinutes', 'hourlyRate', 'location', 'startTime'];
 
   /**
    * The `initial` prop for the edit-mode cases below, which assert on the
@@ -67,6 +68,7 @@ describe('StudioTemplateForm', () => {
     durationMinutes: 60,
     location: 'Studio A',
     hourlyRate: 20,
+    bookingUrl: null,
   };
 
   it('steps the start time by five minutes from midnight', () => {
@@ -100,7 +102,7 @@ describe('StudioTemplateForm', () => {
    * would carry the create-mode fill-ins into the edit-mode assertion instead
    * of exercising `initial` at all.
    */
-  it('sends the same six fields in both create and update modes', async () => {
+  it('sends the same fields in both create and update modes', async () => {
     stubFetch();
     const create = render(<StudioTemplateForm currency="EUR" mode="create" />);
     fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
@@ -108,7 +110,7 @@ describe('StudioTemplateForm', () => {
     const created = await submit();
     expect(created.url).toBe('/api/studio-class-templates');
     expect(created.method).toBe('POST');
-    expect(Object.keys(created.body).sort()).toEqual(SIX_KEYS);
+    expect(Object.keys(created.body).sort()).toEqual(FORM_KEYS);
     create.unmount();
 
     fetchMock.mockReset();
@@ -124,13 +126,14 @@ describe('StudioTemplateForm', () => {
           durationMinutes: 60,
           location: 'Studio A',
           hourlyRate: 20,
+    bookingUrl: null,
         }}
       />,
     );
     const updated = await submit();
     expect(updated.url).toBe('/api/studio-class-templates/tpl-1');
     expect(updated.method).toBe('PUT');
-    expect(Object.keys(updated.body).sort()).toEqual(SIX_KEYS);
+    expect(Object.keys(updated.body).sort()).toEqual(FORM_KEYS);
   });
 
   /**
@@ -151,7 +154,28 @@ describe('StudioTemplateForm', () => {
       durationMinutes: 60,
       location: 'Studio A',
       hourlyRate: 0,
+      bookingUrl: null,
     });
+  });
+
+  it('sends a typed booking link normalised, and null when it is cleared', async () => {
+    stubFetch();
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Booking page'), { target: { value: ' https://Studio.example/book ' } });
+    expect((await submit()).body.bookingUrl).toBe('https://studio.example/book');
+  });
+
+  it('refuses a booking link that is not https before any request', async () => {
+    stubFetch();
+    render(<StudioTemplateForm currency="EUR" mode="create" />);
+    fireEvent.change(screen.getByLabelText('Class type'), { target: { value: 'Vinyasa' } });
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Studio A' } });
+    fireEvent.change(screen.getByLabelText('Booking page'), { target: { value: 'http://studio.example' } });
+    fireEvent.click(screen.getByRole('button', { name: /save|create/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(BOOKING_LINK_MESSAGES.not_https);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   /**

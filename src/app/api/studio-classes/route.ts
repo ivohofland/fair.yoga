@@ -109,6 +109,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
         location: body.location,
         currency: teacher.currency,
         hourlyRate: body.hourlyRate,
+        bookingUrl: body.bookingUrl,
       },
     });
     return { ok: true as const, entry, studioClass };

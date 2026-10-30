@@ -2385,3 +2385,108 @@ describe('DELETE /api/studio-classes/[id]', () => {
     });
   });
 });
+
+describe('the studio booking link (#916)', () => {
+  const LINK = 'https://studio.example/book';
+
+  it('POST /api/studio-class-templates stores it and stamps it on the generated window', async () => {
+    const res = await send('POST', ownerToken, '/api/studio-class-templates', {
+      classType: 'Booking Link Create',
+      dayOfWeek: 5,
+      startTime: '16:00',
+      durationMinutes: 60,
+      location: 'Link Studio',
+      hourlyRate: 40,
+      bookingUrl: ` ${LINK} `,
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string } };
+
+    const template = await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: data.id } });
+    expect(template.bookingUrl).toBe(LINK);
+    const classes = await prisma.studioClass.findMany({ where: { calendarEntry: { scheduleRuleId: template.scheduleRuleId } } });
+    expect(classes.length).toBeGreaterThan(0);
+    expect(classes.every((c) => c.bookingUrl === LINK)).toBe(true);
+  });
+
+  it('PUT /api/studio-class-templates/[id] changes the template and clears it with an empty string', async () => {
+    const t = await makeTemplate(ownerId, 'Booking Link Template', 5, '18:00');
+
+    expect((await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, { bookingUrl: LINK })).status).toBe(200);
+    expect((await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } })).bookingUrl).toBe(LINK);
+
+    expect((await send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, { bookingUrl: '' })).status).toBe(200);
+    expect((await prisma.studioClassTemplate.findUniqueOrThrow({ where: { id: t.id } })).bookingUrl).toBeNull();
+  });
+
+  it('refuses an http link on both template routes and both class routes', async () => {
+    const t = await makeTemplate(ownerId, 'Booking Link Refused', 5, '20:00');
+    const bad = { bookingUrl: 'http://studio.example' };
+    const sc = await createStudioClassFixture(prisma, {
+      teacherId: ownerId,
+      classType: 'Booking Link Refused',
+      date: new Date('2099-08-03'),
+      startTime: hhmmToTime('05:00'),
+      durationMinutes: 30,
+      location: 'Link Studio',
+      hourlyRate: 40,
+    });
+
+    const responses = await Promise.all([
+      send('POST', ownerToken, '/api/studio-class-templates', {
+        classType: 'Booking Link Refused 2', dayOfWeek: 5, startTime: '22:00', durationMinutes: 30,
+        location: 'Link Studio', hourlyRate: 40, ...bad,
+      }),
+      send('PUT', ownerToken, `/api/studio-class-templates/${t.id}`, bad),
+      send('POST', ownerToken, '/api/studio-classes', {
+        classType: 'Booking Link Refused 3', date: '2099-08-04', startTime: '05:00', durationMinutes: 30,
+        location: 'Link Studio', hourlyRate: 40, ...bad,
+      }),
+      send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, bad),
+    ]);
+    expect(responses.map((r) => r.status)).toEqual([400, 400, 400, 400]);
+  });
+
+  it('POST /api/studio-classes stores it', async () => {
+    const res = await send('POST', ownerToken, '/api/studio-classes', {
+      classType: 'Booking Link Manual', date: '2099-08-05', startTime: '05:00', durationMinutes: 30,
+      location: 'Link Studio', hourlyRate: 40, bookingUrl: LINK,
+    });
+    expect(res.status).toBe(201);
+    const { data } = (await res.json()) as { data: { id: string; bookingUrl: string | null } };
+    expect(data.bookingUrl).toBe(LINK);
+    expect((await prisma.studioClass.findUniqueOrThrow({ where: { id: data.id } })).bookingUrl).toBe(LINK);
+  });
+
+  it('PUT /api/studio-classes/[id] persists it on a future class', async () => {
+    const sc = await createStudioClassFixture(prisma, {
+      teacherId: ownerId,
+      classType: 'Booking Link Future',
+      date: new Date('2099-08-06'),
+      startTime: hhmmToTime('05:00'),
+      durationMinutes: 30,
+      location: 'Link Studio',
+      hourlyRate: 40,
+    });
+    const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, { bookingUrl: LINK });
+    expect(res.status).toBe(200);
+    expect((await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).bookingUrl).toBe(LINK);
+  });
+
+  it('PUT /api/studio-classes/[id] refuses it on a past class like any gated field', async () => {
+    const sc = await createStudioClassFixture(prisma, {
+      teacherId: ownerId,
+      classType: 'Booking Link Past',
+      date: new Date('2020-01-01'),
+      startTime: hhmmToTime('05:00'),
+      durationMinutes: 30,
+      location: 'Link Studio',
+      hourlyRate: 40,
+    });
+    const res = await send('PUT', ownerToken, `/api/studio-classes/${sc.id}`, { bookingUrl: LINK });
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string } };
+    expect(json.error.code).toBe('STUDIO_CLASS_INCOME_RECORD');
+    expect((await prisma.studioClass.findUniqueOrThrow({ where: { id: sc.id } })).bookingUrl).toBeNull();
+  });
+});

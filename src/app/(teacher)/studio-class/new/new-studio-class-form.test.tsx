@@ -58,7 +58,7 @@ describe('NewStudioClassPage', () => {
     expect(input.checkValidity()).toBe(true);
   });
 
-  it('sends exactly these six fields', async () => {
+  it('sends exactly these fields', async () => {
     stubFetch();
     render(<NewStudioClassForm currency="EUR" />);
 
@@ -78,6 +78,7 @@ describe('NewStudioClassPage', () => {
     expect(url).toBe('/api/studio-classes');
     expect(opts.method).toBe('POST');
     expect(Object.keys(body).sort()).toEqual([
+      'bookingUrl',
       'classType',
       'date',
       'durationMinutes',
@@ -121,6 +122,7 @@ describe('NewStudioClassPage', () => {
       startTime: '10:15',
       durationMinutes: 75,
       hourlyRate: 22.5,
+      bookingUrl: null,
     });
   });
 

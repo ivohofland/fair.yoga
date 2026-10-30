@@ -5,6 +5,7 @@ import {
   type StudioClassEditInitial,
 } from './studio-class-edit-form';
 import { routerRefresh } from '../../../tests/setup/components';
+import { BOOKING_LINK_MESSAGES } from '@/lib/payment-link';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX } from '@/lib/input-bounds';
 
@@ -34,6 +35,7 @@ describe('StudioClassEditForm', () => {
     startTime: '09:30',
     durationMinutes: 60,
     hourlyRate: 45,
+    bookingUrl: null,
   };
 
   function renderForm(dateEditable = true) {
@@ -96,6 +98,7 @@ describe('StudioClassEditForm', () => {
       startTime: '09:30',
       durationMinutes: 60,
       hourlyRate: 45,
+      bookingUrl: null,
     });
   });
 
@@ -107,7 +110,7 @@ describe('StudioClassEditForm', () => {
   it('omits the date key entirely when the date may not move', async () => {
     const body = await saveWith(false);
     expect(Object.keys(body).sort()).toEqual([
-      'classType', 'durationMinutes', 'hourlyRate', 'location', 'startTime',
+      'bookingUrl', 'classType', 'durationMinutes', 'hourlyRate', 'location', 'startTime',
     ]);
     expect(body).not.toHaveProperty('date');
   });
@@ -128,6 +131,7 @@ describe('StudioClassEditForm', () => {
     fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '18:45' } });
     fireEvent.change(screen.getByLabelText('Duration (minutes)'), { target: { value: '75' } });
     fireEvent.change(screen.getByLabelText(/Hourly rate/), { target: { value: '52.5' } });
+    fireEvent.change(screen.getByLabelText('Booking page'), { target: { value: 'https://studio.example/b' } });
     save();
 
     expect(await sentBody()).toEqual({
@@ -137,6 +141,7 @@ describe('StudioClassEditForm', () => {
       startTime: '18:45',
       durationMinutes: 75,
       hourlyRate: 52.5,
+      bookingUrl: 'https://studio.example/b',
     });
   });
 
@@ -314,5 +319,13 @@ describe('StudioClassEditForm', () => {
     renderForm();
     expect(screen.getByLabelText('Class type')).toHaveAttribute('maxlength', String(CLASS_TYPE_MAX));
     expect(screen.getByLabelText('Location')).toHaveAttribute('maxlength', String(LOCATION_MAX));
+  });
+
+  it('refuses a booking link that is not https, naming the field, before any request', () => {
+    renderForm();
+    fireEvent.change(screen.getByLabelText('Booking page'), { target: { value: 'http://studio.example' } });
+    save();
+    expect(screen.getByText(BOOKING_LINK_MESSAGES.not_https)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

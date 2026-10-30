@@ -14,6 +14,7 @@ import { startTimeInputProps } from '@/lib/time-of-day';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
 import { useTodayLocal } from '@/lib/use-today-local';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { BookingLinkField, readBookingLink } from '@/components/studio-class/booking-link-field';
 import { STUDIO_CLASS_EDIT_REFUSALS } from '@/services/studio-class-edit-refusals';
 
 export interface StudioClassEditInitial {
@@ -23,6 +24,7 @@ export interface StudioClassEditInitial {
   startTime: string;
   durationMinutes: number;
   hourlyRate: number;
+  bookingUrl: string | null;
 }
 
 type UpdateStudioClassWire = z.infer<typeof updateStudioClassSchema>;
@@ -89,6 +91,7 @@ function toFormState(initial: StudioClassEditInitial): FormState {
     startTime: initial.startTime,
     durationMinutes: String(initial.durationMinutes),
     hourlyRate: String(initial.hourlyRate),
+    bookingUrl: initial.bookingUrl ?? '',
   };
 }
 
@@ -122,6 +125,9 @@ function validate(form: FormState, dateEditable: boolean): FieldErrors {
   } else if (rate > MONEY_MAX) {
     errors.hourlyRate = `The hourly rate can be at most ${MONEY_MAX.toLocaleString('en-US')}.`;
   }
+
+  const link = readBookingLink(form.bookingUrl);
+  if (!link.ok) errors.bookingUrl = link.message;
 
   return errors;
 }
@@ -177,12 +183,15 @@ export function StudioClassEditForm({
       // Trimmed client-side so a padded value never round-trips as a 400 the
       // user has to decode — the wire schema trims too, so an untrimmed `'   '`
       // would be refused, not stored.
+      // `validate` has refused the save if this is not ok.
+      const link = readBookingLink(form.bookingUrl);
       const payload: UpdateStudioClassWire = {
         classType: form.classType.trim(),
         location: form.location.trim(),
         startTime: form.startTime,
         durationMinutes: Number(form.durationMinutes),
         hourlyRate: parseDecimal(form.hourlyRate, MONEY_DECIMALS),
+        bookingUrl: link.ok ? link.url : null,
       };
       if (dateEditable) {
         payload.date = form.date;
@@ -291,6 +300,11 @@ export function StudioClassEditForm({
             onChange={(e) => set('hourlyRate', e.target.value)}
           />
         </div>
+        <BookingLinkField
+          value={form.bookingUrl}
+          error={fieldErrors.bookingUrl}
+          onChange={(v) => set('bookingUrl', v)}
+        />
       </section>
 
       <div className="flex items-center gap-3">

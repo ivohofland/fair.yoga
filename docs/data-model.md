@@ -806,6 +806,8 @@ above. See Design Notes for what they enforce and why. `vat_percent` and
 
 No pricing engine. No individual registration. No link to Room or Student. No `status`. This is income tracking for classes the teacher gives at someone else's studio; the calendar half is the entry above.
 
+`StudioClassTemplate` holds the economics a generated studio class is stamped from: `location`, `hourly_rate` and `booking_url` (#916). `booking_url` is copied onto each class when the generator creates it, so editing it on the template reaches only classes generated afterwards, like every other template field (Class Lifecycle, "A template is a stamp, not a live link").
+
 ---
 
 ## Bookings

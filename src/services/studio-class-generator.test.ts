@@ -186,6 +186,46 @@ describe('generateStudioClassInstances (DB)', () => {
   });
 
   /**
+   * #916. `bookingUrl` is stamped like `location`: a generated class carries
+   * the template's link as it stood at generation, and a later template edit
+   * reaches only classes generated afterwards. Own template, own weekday, so
+   * the window it fills is nobody else's.
+   */
+  it('stamps the template\'s bookingUrl, and a later edit leaves generated classes alone', async () => {
+    const from = new Date('2099-01-01T00:00:00Z');
+    const tpl = await prisma.studioClassTemplate.create({
+      data: {
+        scheduleRule: {
+          create: {
+            teacherId, kind: 'studio', classType: 'Link Stamp', dayOfWeek: 4,
+            startTime: hhmmToTime('15:00'), durationMinutes: 60, isActive: true,
+          },
+        },
+        location: 'Studio Gen Test',
+        hourlyRate: 45,
+        bookingUrl: 'https://studio.example/first',
+      },
+    });
+    const read = () => prisma.studioClassTemplate.findUniqueOrThrow({
+      where: { id: tpl.id },
+      include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
+    });
+    const generated = () => prisma.studioClass.findMany({
+      where: { calendarEntry: { scheduleRuleId: tpl.scheduleRuleId } },
+      orderBy: { calendarEntry: { date: 'asc' } },
+    });
+
+    await generateStudioInstancesForTemplate(prisma, await read(), from);
+    const first = await generated();
+    expect(first).toHaveLength(4);
+    expect(first.map((c) => c.bookingUrl)).toEqual(Array(4).fill('https://studio.example/first'));
+
+    await prisma.studioClassTemplate.update({ where: { id: tpl.id }, data: { bookingUrl: 'https://studio.example/second' } });
+    await generateStudioInstancesForTemplate(prisma, await read(), from);
+    expect((await generated()).map((c) => c.bookingUrl)).toEqual(Array(4).fill('https://studio.example/first'));
+  });
+
+  /**
    * Named for what it can see, which is not the row lock. This used to be
    * called "never creates duplicates under concurrent runs (row lock
    * serialises the sweeps)", and the distinctness assertion below cannot
