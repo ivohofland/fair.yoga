@@ -60,7 +60,7 @@ Then:
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 curl -s http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up"}
-curl -s -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"degradations":{"open":0}}
+curl -s -H "Authorization: Bearer $CRON_SECRET" http://127.0.0.1:3000/api/health   # → {"status":"ok","db":"up","jobs":{...},"pool":{"lastExhaustedAt":null},"degradations":{"open":0}}
 ```
 
 The `migrate` service applies Prisma migrations before the app starts, then
