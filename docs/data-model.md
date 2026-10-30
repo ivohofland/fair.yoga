@@ -153,6 +153,9 @@ link on the browser that asked for it never touches this row.
 | bio | string(250) | |
 | page_slug | string, unique | Public booking page URL |
 | custom_domain | string, nullable | |
+| schedule_share_key | string, unique, nullable | The secret in the public schedule links (website embed and calendar feed, #916). Null means sharing is off, so one nullable column is both the switch and the secret; erasure clears it |
+| schedule_share_weeks | int, default 4 | How many weeks ahead the shared schedule shows, 1 to 4 by `Teacher_schedule_share_weeks_range` — the generator only lays down four weeks, so more would show nothing |
+| schedule_share_studio | boolean, default false | Whether studio classes appear in the shared schedule; off unless the teacher opts in, because a studio class is the teacher's income record |
 | **Defaults** | | |
 | currency | enum `Currency`, default EUR | The teacher's live currency: what every priced row without a `currency` column of its own, and any new class, is priced in. A row with its own snapshot ("Currency lives where it can be frozen", below) keeps it once frozen, so changing this relabels only what is still editable. `PUT /api/teachers/[id]` runs `switchTeacherCurrency` (`src/services/currency-switch.ts`) through `updateTeacherProfile` (`src/services/teacher-profile.ts`); the lock order is in `docs/lock-order.md` |
 | defaultVatPercent | decimal(6,3), default 0 | The VAT percentage the teacher usually charges (9 means 9%), 0 to 100 with at most 3 decimals: `vatPercentViolation` (`src/lib/vat.ts`) on the wire, `Teacher_default_vat_percent_range_check` in the database. Saved by `PUT /api/teachers/[id]`. Pre-fills each new class and class template's `vat_percent`. |
@@ -793,6 +796,7 @@ above. See Design Notes for what they enforce and why. `vat_percent` and
 | *calendar_entry_id* (FK) | → CalendarEntry, unique | Same arrangement as `Class` above (#327): the calendar identity, cancellation included, lives on the entry |
 | kind | enum: regular, studio | Always `studio` here, pinned by a `CHECK`; half of the composite FK above |
 | location | string | Free text (not linked to Room) |
+| booking_url | string, nullable | Where a visitor books this studio class, shown in the shared schedule (#916). `StudioClassTemplate.booking_url` is the same column on the template, stamped onto generated classes |
 | student_count | int, nullable | |
 | currency | enum `Currency`, not null | Snapshot of the teacher's currency, stamped by every writer; `hourly_rate` is denominated in it. Frozen once the entry's date is before the teacher's today (the income-record rule) — `studio_class_currency_frozen_guard` is the database's coarser version, with a one-day margin because a trigger cannot read the teacher's timezone; a currency switch relabels today-or-later rows |
 | hourly_rate | decimal | Teacher's rate at this studio |

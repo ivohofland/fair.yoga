@@ -45,6 +45,7 @@ function studioRow(overrides?: { cancelled?: boolean; studentCount?: number | nu
       updatedAt: AT,
     },
     location: 'Studio Zen',
+    bookingUrl: null,
     currency: 'EUR' as const,
     studentCount: overrides?.studentCount ?? null,
     hourlyRate: new Prisma.Decimal(50),

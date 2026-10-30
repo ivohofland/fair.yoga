@@ -239,6 +239,13 @@ model Teacher {
   pageSlug              String                      @unique
   customDomain          String?
   paymentLink           String?
+  /// The secret in the public schedule links (embed JSON and calendar feed).
+  /// Null means sharing is off; erasure clears it.
+  scheduleShareKey      String?                     @unique
+  /// How many weeks ahead the shared schedule shows.
+  scheduleShareWeeks    Int                         @default(4)
+  /// Whether studio classes appear in the shared schedule.
+  scheduleShareStudio   Boolean                     @default(false)
   currency              Currency                    @default(EUR)
   defaultVatPercent     Decimal                     @default(0) @db.Decimal(6, 3)
   defaultTimezone       String                      @default("Europe/Amsterdam")
@@ -798,6 +805,8 @@ model StudioClassTemplate {
   scheduleRuleId String      @unique
   kind           ClassFamily
   location       String
+  /// Where a visitor books this studio class, shown in the shared schedule.
+  bookingUrl     String?
   hourlyRate     Decimal     @db.Decimal(10, 2)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
@@ -1194,6 +1203,8 @@ model StudioClass {
   calendarEntryId String      @unique
   kind            ClassFamily
   location        String
+  /// Where a visitor books this studio class, shown in the shared schedule.
+  bookingUrl      String?
   studentCount    Int?
   currency        Currency
   hourlyRate      Decimal     @db.Decimal(10, 2)

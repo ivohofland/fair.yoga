@@ -218,6 +218,12 @@ void _studioTemplateAllowlistHasNoStaleFields;
 type PlainUpdateForbiddenStudioTemplateField = 'id' | 'scheduleRuleId' | 'kind' | 'createdAt' | 'updatedAt';
 
 /**
+ * Columns no teacher-facing schema routes to this model yet, so they are
+ * neither teacher-editable nor forbidden.
+ */
+type ServerManagedStudioTemplateField = 'bookingUrl';
+
+/**
  * Compile-time pin (completeness): every column on the model must be claimed by
  * one of the two lists above. Catches a deletion from either, and a column a
  * migration adds that nobody classified — checked against the live Prisma
@@ -244,7 +250,7 @@ type PlainUpdateForbiddenStudioTemplateField = 'id' | 'scheduleRuleId' | 'kind' 
 const _studioTemplateListsPartitionTheModel: NoneOf<
   Exclude<
     keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput,
-    TeacherEditableStudioTemplateField | PlainUpdateForbiddenStudioTemplateField
+    TeacherEditableStudioTemplateField | PlainUpdateForbiddenStudioTemplateField | ServerManagedStudioTemplateField
   >
 > = true;
 void _studioTemplateListsPartitionTheModel;
