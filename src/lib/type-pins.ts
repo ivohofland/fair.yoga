@@ -32,9 +32,9 @@
  * distribution over the empty union is `never`. The failure mode is the
  * counter-intuitive direction: `NoneOf<never>` — the case where the invariant
  * HOLDS — would resolve to `never` and reject `true`, leaving the build
- * permanently red with no offending field to name. Measured on TypeScript
- * 6.0.3: unbracketed, only the passing case breaks; both forms still reject one
- * and two offenders correctly.
+ * permanently red with no offending field to name. Unbracketed, only the
+ * passing case breaks; both forms still reject one and two offenders correctly
+ * — `_unbracketedBreaksOnlyOnNever` below has the compiler re-check that.
  *
  * Before the fixture below existed, defanging the body to
  * `[T] extends [T] ? true : T` kept `T` referenced (so lint stayed green) and
@@ -82,6 +82,17 @@ export type Assert<T extends true> = T;
 type _noneOfHoldsIsTrue = Assert<Equals<NoneOf<never>, true>>;
 // Invariant broken -> the offender itself, so the build names the field.
 type _noneOfNamesOneOffender = Assert<Equals<NoneOf<'x'>, 'x'>>;
-// Two offenders must not collapse — this is what the tuple brackets buy.
+// Two offenders must not collapse — the union comes back whole, not narrowed to one member.
 type _noneOfNamesTwoOffenders = Assert<Equals<NoneOf<'x' | 'y'>, 'x' | 'y'>>;
-void 0 as unknown as [_noneOfHoldsIsTrue, _noneOfNamesOneOffender, _noneOfNamesTwoOffenders];
+// What the tuple brackets buy: the same body unbracketed distributes, so only
+// the passing case (`never`) goes wrong — it becomes `never`, rejecting `true`.
+type _Unbracketed<T extends PropertyKey> = T extends never ? true : T;
+type _unbracketedBreaksOnlyOnNever = Assert<
+  Equals<[_Unbracketed<never>, _Unbracketed<'x'>, _Unbracketed<'x' | 'y'>], [never, 'x', 'x' | 'y']>
+>;
+void 0 as unknown as [
+  _noneOfHoldsIsTrue,
+  _noneOfNamesOneOffender,
+  _noneOfNamesTwoOffenders,
+  _unbracketedBreaksOnlyOnNever,
+];
