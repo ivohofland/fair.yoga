@@ -272,7 +272,11 @@ The numbers above are starting values, not decided limits.
 - One small TypeScript file, no runtime dependencies, compiled to a single
   script. *(Builder's call how; preferably with the existing `typescript`
   compiler rather than a new build dependency — see `docs/supply-chain.md`.)*
-  Served with a short cache (~1 h), no SRI, always the latest v1.
+  Served with a short cache (~1 h), no SRI, always the latest v1. Loaded as
+  `<script type="module">` (deferred by default; `import.meta.url` gives the
+  fair.yoga origin), so `/embed/v1.js` also sends
+  `Access-Control-Allow-Origin: *` — module scripts are fetched in CORS mode.
+  *(Planning call.)*
 - `<fair-yoga-schedule key="…" theme="themed|unstyled" color-scheme="light|dark|auto">`.
 - `fetch` with `credentials: 'omit'`; sets no cookies or storage; loads nothing
   else. A test proves it.
