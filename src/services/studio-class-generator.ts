@@ -58,6 +58,7 @@ export const STUDIO_GENERATOR: GeneratorFamily<StudioClassTemplate, 'studio'> = 
         calendarEntryId: entry.id,
         kind: 'studio' as const,
         location: template.location,
+        bookingUrl: template.bookingUrl,
         currency: template.scheduleRule.teacher.currency,
         hourlyRate: template.hourlyRate,
       })),

@@ -31,6 +31,18 @@ export const VIDEO_LINK_MESSAGES = {
 } as const satisfies Record<PaymentLinkFailure, string>;
 
 /**
+ * Messages for a studio's booking page link. Optional like the video link, so
+ * `required` is worded only to keep the record total over `PaymentLinkFailure`.
+ */
+export const BOOKING_LINK_MESSAGES = {
+  required: 'Enter the booking page link.',
+  too_long: 'That link is too long.',
+  invalid: 'Paste the whole link — it starts with https://',
+  not_https: 'Use a secure link — one that starts with https://',
+  has_userinfo: 'Enter the link without a name and @ before the address.',
+} as const satisfies Record<PaymentLinkFailure, string>;
+
+/**
  * An `https://` link with no userinfo, at most `max` characters before and
  * after normalisation. The query string and fragment are kept.
  */

@@ -168,10 +168,11 @@ export const PUT = withErrorHandler(async (
   // `durationMinutes` and `cancelledAt` are the calendar identity and live on
   // the entry. `studentCount` stays on the child, which is why the gate above
   // could exempt it.
-  const { location, hourlyRate, classType, startTime, durationMinutes } = gated;
+  const { location, hourlyRate, bookingUrl, classType, startTime, durationMinutes } = gated;
   const studioData: Prisma.StudioClassUncheckedUpdateInput = {
     location,
     hourlyRate,
+    bookingUrl,
     ...(studentCount !== undefined ? { studentCount } : {}),
   };
   const entryData: Prisma.CalendarEntryUncheckedUpdateInput = {

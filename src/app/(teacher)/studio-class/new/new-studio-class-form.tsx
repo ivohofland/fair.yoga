@@ -14,6 +14,7 @@ import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { parseDecimal } from '@/lib/decimal-input';
+import { BookingLinkField, readBookingLink } from '@/components/studio-class/booking-link-field';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { PageHeader } from '@/components/layout/page-header';
 
@@ -28,6 +29,7 @@ interface StudioClassFormValues {
   startTime: string;
   durationMinutes: number;
   hourlyRate: number;
+  bookingUrl: string | null;
 }
 
 type CreateStudioClassWire = z.infer<typeof createStudioClassSchema>;
@@ -62,6 +64,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
   const [startTime, setStartTime] = useState('09:00');
   const [durationMinutes, setDurationMinutes] = useState('60');
   const [hourlyRate, setHourlyRate] = useState('0');
+  const [bookingUrl, setBookingUrl] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   /**
@@ -132,6 +135,12 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
       return;
     }
 
+    const link = readBookingLink(bookingUrl);
+    if (!link.ok) {
+      setError(link.message);
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
@@ -142,6 +151,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
       startTime,
       durationMinutes: duration,
       hourlyRate: rate,
+      bookingUrl: link.url,
     };
 
     let res: Response;
@@ -213,6 +223,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
         <Input label="Start time" type="time" {...startTimeInputProps()} value={startTime} onChange={updateField(setStartTime)} />
         <Input label="Duration (minutes)" type="number" max={DURATION_MAX_MINUTES} value={durationMinutes} onChange={updateField(setDurationMinutes)} />
         <Input label={`Hourly rate (${currencyLabel(currency)})`} type="text" inputMode="decimal" value={hourlyRate} onChange={updateField(setHourlyRate)} />
+        <BookingLinkField value={bookingUrl} onChange={(v) => { setBookingUrl(v); setError(''); }} />
 
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 

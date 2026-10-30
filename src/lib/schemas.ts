@@ -7,7 +7,7 @@ import { PHONE_MAX, ADDRESS_MAX } from '@/lib/contact-details';
 import { isValidTimeZone, modernTimeZone } from '@/lib/iana-timezone';
 import { economicsViolations, type ClassEconomics } from '@/lib/class-economics';
 import { vatPercentViolation } from '@/lib/vat';
-import { parseHttpsLink, VIDEO_LINK_MESSAGES } from '@/lib/payment-link';
+import { parseHttpsLink, VIDEO_LINK_MESSAGES, BOOKING_LINK_MESSAGES } from '@/lib/payment-link';
 import { FORMAT_SHAPE_MESSAGES } from '@/lib/class-location';
 import { RESERVED_SLUGS } from '@/lib/reserved-slugs';
 import {
@@ -36,6 +36,7 @@ import {
   BANK_FIELD_MAX,
   PAYMENT_LINK_MAX,
   VIDEO_URL_MAX,
+  BOOKING_URL_MAX,
   HOLDER_NAME_MAX,
 } from '@/lib/input-bounds';
 
@@ -767,6 +768,24 @@ export const updateClassTemplateSchema = z.object({
 // Cross-field economics and the format shape are checked on the merged row by
 // the update service (economicsViolations, formatShapeViolations).
 
+/**
+ * A studio's booking page link as a request carries it: the same shape as
+ * `videoUrlField` (trimmed, normalised to the parsed href, null or blank for
+ * none), worded by `BOOKING_LINK_MESSAGES`.
+ */
+const bookingUrlField = () =>
+  singleLineCharacters(z.string().trim(), BOOKING_URL_MAX * 2)
+    .max(BOOKING_URL_MAX * 2)
+    .transform((raw, ctx) => {
+      if (raw === '') return null;
+      const parsed = parseHttpsLink(raw, BOOKING_URL_MAX);
+      if (parsed.ok) return parsed.url;
+      ctx.addIssue({ code: 'custom', message: BOOKING_LINK_MESSAGES[parsed.error] });
+      return z.NEVER;
+    })
+    .nullable()
+    .optional();
+
 // ============================================================================
 // STUDIO CLASS TEMPLATES
 // ============================================================================
@@ -778,6 +797,7 @@ export const createStudioClassTemplateSchema = z.object({
   durationMinutes: durationMinutesField(),
   location: singleLineText(LOCATION_MAX).min(1),
   hourlyRate: moneyField(),
+  bookingUrl: bookingUrlField(),
 });
 
 export const updateStudioClassTemplateSchema = z.object({
@@ -787,6 +807,7 @@ export const updateStudioClassTemplateSchema = z.object({
   durationMinutes: durationMinutesField().optional(),
   location: singleLineText(LOCATION_MAX).min(1).optional(),
   hourlyRate: moneyField().optional(),
+  bookingUrl: bookingUrlField(),
 }).strict();
 
 // ============================================================================
@@ -800,6 +821,7 @@ export const createStudioClassSchema = z.object({
   durationMinutes: durationMinutesField(),
   location: singleLineText(LOCATION_MAX).min(1),
   hourlyRate: moneyField(),
+  bookingUrl: bookingUrlField(),
 });
 
 export const updateStudioClassSchema = z.object({
@@ -810,6 +832,7 @@ export const updateStudioClassSchema = z.object({
   startTime: timeHHmm.optional(),
   durationMinutes: durationMinutesField().optional(),
   hourlyRate: moneyField().optional(),
+  bookingUrl: bookingUrlField(),
   cancelledAt: z.string().datetime().nullable().optional(),
 }).strict();
 

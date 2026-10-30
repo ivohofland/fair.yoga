@@ -6,6 +6,7 @@ import { Currency, PricingMode } from '@/lib/prisma-client';
 import type { Prisma } from '@/lib/prisma-client';
 import * as schemas from './schemas';
 import { MOLLIE_METHODS } from './processor-methods';
+import { BOOKING_LINK_MESSAGES } from './payment-link';
 import {
   transitionClassSchema,
   magicLinkSendSchema,
@@ -14,6 +15,8 @@ import {
   createClassSchema,
   createClassTemplateSchema,
   createStudioClassSchema,
+  createStudioClassTemplateSchema,
+  updateStudioClassSchema,
   createRoomSchema,
   updateRoomSchema,
   updateClassSchema,
@@ -364,6 +367,7 @@ describe('createStudioClassSchema', () => {
   // a rest spread, so neither name appeared in the handler at all.
   it('accepts exactly the client-settable studio create field set', () => {
     expect(Object.keys(createStudioClassSchema.shape).sort()).toEqual([
+      'bookingUrl',
       'classType',
       'date',
       'durationMinutes',
@@ -371,6 +375,57 @@ describe('createStudioClassSchema', () => {
       'location',
       'startTime',
     ]);
+  });
+});
+
+describe('the studio booking link (#916)', () => {
+  const template = {
+    classType: 'Hatha',
+    dayOfWeek: 1,
+    startTime: '10:00',
+    durationMinutes: 60,
+    location: 'Studio',
+    hourlyRate: 40,
+  };
+  const studioClass = { ...template, date: '2099-01-05' };
+  const { dayOfWeek: _dayOfWeek, ...studioClassBase } = studioClass;
+  void _dayOfWeek;
+  const bodies = [
+    ['createStudioClassTemplateSchema', (bookingUrl: unknown) => createStudioClassTemplateSchema.safeParse({ ...template, bookingUrl })],
+    ['updateStudioClassTemplateSchema', (bookingUrl: unknown) => updateStudioClassTemplateSchema.safeParse({ bookingUrl })],
+    ['createStudioClassSchema', (bookingUrl: unknown) => createStudioClassSchema.safeParse({ ...studioClassBase, bookingUrl })],
+    ['updateStudioClassSchema', (bookingUrl: unknown) => updateStudioClassSchema.safeParse({ bookingUrl })],
+  ] as const;
+
+  describe.each(bodies)('%s', (_name, parse) => {
+    it('accepts and normalises an https link', () => {
+      const r = parse(' https://Studio.example/book ');
+      expect(r.success && (r.data as { bookingUrl?: string | null }).bookingUrl).toBe('https://studio.example/book');
+    });
+
+    it('maps an empty string to null', () => {
+      const r = parse('   ');
+      expect(r.success && (r.data as { bookingUrl?: string | null }).bookingUrl).toBeNull();
+    });
+
+    it('refuses http with the secure-link message', () => {
+      const r = parse('http://studio.example');
+      expect(r.success).toBe(false);
+      if (r.success) return;
+      expect(r.error.issues.map((i) => i.message)).toEqual([BOOKING_LINK_MESSAGES.not_https]);
+    });
+
+    it('refuses javascript: as not https', () => {
+      const r = parse('javascript:alert(1)');
+      expect(r.success).toBe(false);
+      if (r.success) return;
+      expect(r.error.issues.map((i) => i.message)).toEqual([BOOKING_LINK_MESSAGES.not_https]);
+    });
+  });
+
+  it('is optional on the create bodies', () => {
+    expect(createStudioClassTemplateSchema.safeParse(template).success).toBe(true);
+    expect(createStudioClassSchema.safeParse(studioClassBase).success).toBe(true);
   });
 });
 
@@ -595,6 +650,7 @@ describe('updateStudioClassTemplateSchema', () => {
   // test — this test is what makes an *authorized* addition deliberate.
   it('accepts exactly the teacher-editable field set', () => {
     expect(Object.keys(updateStudioClassTemplateSchema.shape).sort()).toEqual([
+      'bookingUrl',
       'classType',
       'dayOfWeek',
       'durationMinutes',

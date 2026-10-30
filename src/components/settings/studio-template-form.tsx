@@ -13,6 +13,7 @@ import { parseDecimal } from '@/lib/decimal-input';
 import { currencyLabel } from '@/lib/format';
 import { startTimeInputProps } from '@/lib/time-of-day';
 import { CLASS_TYPE_MAX, DURATION_MAX_MINUTES, LOCATION_MAX, MONEY_MAX, MONEY_DECIMALS } from '@/lib/input-bounds';
+import { BookingLinkField, readBookingLink } from '@/components/studio-class/booking-link-field';
 import { SettledNotice } from '@/components/ui/settled-notice';
 import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
 import {
@@ -37,6 +38,7 @@ export interface StudioTemplateFormValues {
   durationMinutes: number;
   location: string;
   hourlyRate: number;
+  bookingUrl: string | null;
 }
 
 type CreateStudioTemplateWire = z.infer<typeof createStudioClassTemplateSchema>;
@@ -87,6 +89,7 @@ interface FormState {
   durationMinutes: string;
   location: string;
   hourlyRate: string;
+  bookingUrl: string;
 }
 
 function toFormState(initial?: StudioTemplateFormValues): FormState {
@@ -97,6 +100,7 @@ function toFormState(initial?: StudioTemplateFormValues): FormState {
     durationMinutes: String(initial?.durationMinutes ?? 60),
     location: initial?.location ?? '',
     hourlyRate: String(initial?.hourlyRate ?? 0),
+    bookingUrl: initial?.bookingUrl ?? '',
   };
 }
 
@@ -156,6 +160,12 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
       return;
     }
 
+    const link = readBookingLink(form.bookingUrl);
+    if (!link.ok) {
+      setError(link.message);
+      return;
+    }
+
     setSubmitting(true);
     setError('');
     setSuccess('');
@@ -176,6 +186,7 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
         startTime: form.startTime,
         durationMinutes: duration,
         hourlyRate: rate,
+        bookingUrl: link.url,
       };
 
       let res: Response;
@@ -399,6 +410,8 @@ export function StudioTemplateForm({ mode, templateId, currency, initial }: Stud
         onChange={(e) => update('location', e.target.value)}
         placeholder="e.g. Yoga Studio Centrum, Amsterdam"
       />
+
+      <BookingLinkField value={form.bookingUrl} onChange={(v) => update('bookingUrl', v)} />
 
       <Select
         id="dayOfWeek"

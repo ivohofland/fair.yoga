@@ -151,7 +151,7 @@ void _studioTemplateUpdateColumnsExist;
  * allowlist now, with the same `ScheduleRule_teacher_slot_excl` and
  * stamp-not-link consequences this docblock used to record for them here.
  */
-type TeacherEditableStudioTemplateField = 'location' | 'hourlyRate';
+type TeacherEditableStudioTemplateField = 'location' | 'hourlyRate' | 'bookingUrl';
 
 /**
  * Compile-time pin (forward): every field the schema routes to
@@ -218,12 +218,6 @@ void _studioTemplateAllowlistHasNoStaleFields;
 type PlainUpdateForbiddenStudioTemplateField = 'id' | 'scheduleRuleId' | 'kind' | 'createdAt' | 'updatedAt';
 
 /**
- * Columns no teacher-facing schema routes to this model yet, so they are
- * neither teacher-editable nor forbidden.
- */
-type ServerManagedStudioTemplateField = 'bookingUrl';
-
-/**
  * Compile-time pin (completeness): every column on the model must be claimed by
  * one of the two lists above. Catches a deletion from either, and a column a
  * migration adds that nobody classified — checked against the live Prisma
@@ -250,7 +244,7 @@ type ServerManagedStudioTemplateField = 'bookingUrl';
 const _studioTemplateListsPartitionTheModel: NoneOf<
   Exclude<
     keyof Prisma.StudioClassTemplateUncheckedUpdateManyInput,
-    TeacherEditableStudioTemplateField | PlainUpdateForbiddenStudioTemplateField | ServerManagedStudioTemplateField
+    TeacherEditableStudioTemplateField | PlainUpdateForbiddenStudioTemplateField
   >
 > = true;
 void _studioTemplateListsPartitionTheModel;
@@ -751,6 +745,7 @@ export async function createStudioClassTemplate(
           kind: 'studio',
           location: input.location,
           hourlyRate: input.hourlyRate,
+          bookingUrl: input.bookingUrl,
         },
         include: { scheduleRule: { include: { teacher: { select: { defaultTimezone: true, currency: true } } } } },
       });

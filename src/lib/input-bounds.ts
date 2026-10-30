@@ -34,6 +34,8 @@ export const HOLDER_NAME_MAX = 200;
 export const PAYMENT_LINK_MAX = 500;
 /** A class's or template's video link, as stored. */
 export const VIDEO_URL_MAX = 500;
+/** A studio class's or template's booking page link, as stored. */
+export const BOOKING_URL_MAX = VIDEO_URL_MAX;
 
 // ---------------------------------------------------------------------------
 // Number limits.
