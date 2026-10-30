@@ -33,7 +33,7 @@
  * counter-intuitive direction: `NoneOf<never>` — the case where the invariant
  * HOLDS — would resolve to `never` and reject `true`, leaving the build
  * permanently red with no offending field to name. Measured on TypeScript
- * 5.9.3: unbracketed, only the passing case breaks; both forms still reject one
+ * 6.0.3: unbracketed, only the passing case breaks; both forms still reject one
  * and two offenders correctly.
  *
  * Before the fixture below existed, defanging the body to
