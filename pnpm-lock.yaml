@@ -179,8 +179,8 @@ importers:
         specifier: 7.10.1
         version: 7.10.1(prisma@7.10.1(@types/node@24.13.6)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(magicast@0.3.5)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@6.0.3))(typescript@6.0.3)
       '@simplewebauthn/browser':
-        specifier: ^13.3.0
-        version: 13.3.0
+        specifier: ^14.0.0
+        version: 14.0.0
       '@simplewebauthn/server':
         specifier: ^13.3.2
         version: 13.3.2
@@ -1238,8 +1238,8 @@ packages:
   '@rtsao/scc@1.1.0':
     resolution: {integrity: sha512-zt6OdqaDoOnJ1ZYsCYGt9YmWzDXl4vQdKTyJev62gFhRGKdx7mcT54V9KIjg+d2wi9EXsPvAPKe7i7WjfVWB8g==}
 
-  '@simplewebauthn/browser@13.3.0':
-    resolution: {integrity: sha512-BE/UWv6FOToAdVk0EokzkqQQDOWtNydYlY6+OrmiZ5SCNmb41VehttboTetUM3T/fr6EAFYVXjz4My2wg230rQ==}
+  '@simplewebauthn/browser@14.0.0':
+    resolution: {integrity: sha512-1odWVqeEBTl7lJ9zMKLEsmTlnyrDO5iRcTvfMKKk1WThUnp/i8JJdffdj2icP+tty159s4PgwE3BiMoEW9NFow==}
 
   '@simplewebauthn/server@13.3.2':
     resolution: {integrity: sha512-KEDhfcGP1PAKRVSDjA3npTQFqS2b/srm+ipoNBNHdkzrHAlaRQUTE+a5f4ywsx6thxAw1NU2rYcLEY1949RGbQ==}
@@ -4675,7 +4675,7 @@ snapshots:
 
   '@rtsao/scc@1.1.0': {}
 
-  '@simplewebauthn/browser@13.3.0': {}
+  '@simplewebauthn/browser@14.0.0': {}
 
   '@simplewebauthn/server@13.3.2':
     dependencies:

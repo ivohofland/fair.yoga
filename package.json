@@ -43,7 +43,7 @@
     "@oslojs/encoding": "^1.1.0",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
-    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^13.3.2",
     "next": "16.4.1",
     "pg": "^8.23.1",
