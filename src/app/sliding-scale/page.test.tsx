@@ -41,6 +41,11 @@ describe('/sliding-scale page', () => {
     const trail = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(trail.textContent).toContain('Sliding scale');
     expect(trail.querySelector('a')?.getAttribute('href')).toBe('/');
+    const data = JSON.parse(document.querySelector('script[type="application/ld+json"]')?.textContent ?? '{}') as {
+      itemListElement?: { name: string; item: string }[];
+    };
+    expect(data.itemListElement?.map((i) => i.name)).toEqual(['fair.yoga', 'Sliding scale']);
+    expect(data.itemListElement?.[1]?.item.endsWith('/sliding-scale')).toBe(true);
   });
 
   it('presses the chip named by ?example=', async () => {
