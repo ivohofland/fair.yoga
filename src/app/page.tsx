@@ -1,12 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import type { ReactNode } from 'react';
 import { getSession } from '@/lib/session';
 import { siteUrl } from '@/lib/seo';
 import { Icon } from '@/components/ui/icon';
 import { FeatureBand } from '@/components/landing/feature-band';
 import { SiteFooter } from '@/components/landing/site-footer';
 import { SiteHeader } from '@/components/landing/site-header';
+import { Band, HEADING, KICKER, LEAD } from '@/components/landing/band';
 import {
   COLUMN,
   PRIMARY_LINK,
@@ -40,10 +40,6 @@ function structuredData(): string {
   // `<` escaped so no string in the data can close the script element.
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }
-
-const KICKER = 'text-sm font-medium text-brown';
-const HEADING = 'font-heading font-bold text-[28px] leading-[1.25]';
-const LEAD = 'type-body text-lg leading-[1.6]';
 
 const PROMISES = [
   {
@@ -85,25 +81,6 @@ const STEPS = [
   { title: 'Class', body: 'Time, size and what you’d like to earn' },
   { title: 'Share', body: 'Send your page to your students' },
 ] as const;
-
-/** A full-width band under a hairline, holding one column of content. */
-function Band({
-  id,
-  className = '',
-  bottom = 'pb-16 sm:pb-24',
-  children,
-}: {
-  id?: string;
-  className?: string;
-  bottom?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section id={id} className="border-t border-border">
-      <div className={`${COLUMN} pt-16 sm:pt-24 ${bottom} ${className}`.trim()}>{children}</div>
-    </section>
-  );
-}
 
 /**
  * The public front door, the same page for everyone. The app's own door is

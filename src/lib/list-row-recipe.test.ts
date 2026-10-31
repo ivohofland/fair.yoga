@@ -19,6 +19,8 @@ const SPLIT_RECIPE_SITES: Readonly<Record<string, string>> = {
     'a checklist label inside a bordered box: px-4, no vertical padding, the border on its li',
   'components/student/method-chooser.tsx':
     'a disclosure: the border sits on <details> so an open panel stays above it; min-h-14 and py-3 sit on <summary> so the tap target alone is 56px',
+  'app/sliding-scale/page.tsx':
+    'the same disclosure shape, for the questions: border on <details>, min-h-14 and py-3 on <summary>',
 };
 
 function sourceFiles(dir: string): string[] {
