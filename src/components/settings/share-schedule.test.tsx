@@ -32,7 +32,7 @@ describe('ShareSchedule', () => {
 
   it('shows the embed code and the feed link while sharing is on', () => {
     renderPage();
-    expect(screen.getByText(/<fair-yoga-schedule key="k7Qm2xR9vT" theme="themed" color-scheme="light">/)).toBeInTheDocument();
+    expect(screen.getByText(/<fair-yoga-schedule schedule-key="k7Qm2xR9vT" theme="themed" color-scheme="light">/)).toBeInTheDocument();
     expect(screen.getByText('https://fair.yoga/feed/k7Qm2xR9vT.ics')).toBeInTheDocument();
   });
 

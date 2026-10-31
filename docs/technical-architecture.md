@@ -2429,7 +2429,7 @@ When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-rea
 
 **Cache.** `getCachedSchedule` (`src/lib/public-schedule-cache.ts`) holds the listing for a minute, bounded and LRU, on `globalThis`. Its key is the window mode, the teacher, the weeks and the studio setting, never the share key: turning studio classes off takes effect at once, and a calendar-mode listing can never be served the bookable one. Writes do not bust it; a minute of staleness is accepted. "At once" means on the server: a browser may hold a response for its `max-age`, so the settings preview fetches with `cache: 'no-store'`.
 
-**The widget's known limits** (`src/embed/schedule-widget.ts`). The themed look is an inline `<style>` in the shadow root, so a host page whose Content-Security-Policy `style-src` forbids inline styles shows the widget unstyled. The element reads `key` when it connects and `theme` and `color-scheme` when the response arrives, so changing any of them afterwards changes nothing; a new element is needed.
+**The widget's known limits** (`src/embed/schedule-widget.ts`). The themed look is an inline `<style>` in the shadow root, so a host page whose Content-Security-Policy `style-src` forbids inline styles shows the widget unstyled. The element reads `schedule-key` when it connects and `theme` and `color-scheme` when the response arrives, so changing any of them afterwards changes nothing; a new element is needed.
 
 ### Production compose
 

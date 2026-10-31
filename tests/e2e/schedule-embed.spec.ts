@@ -67,7 +67,7 @@ test.describe('<fair-yoga-schedule> on a teacher site', () => {
     const snippet = `<!doctype html><html><head><title>Teacher site</title></head><body>
 <h1>Classes with Embed</h1>
 <script type="module" src="${BASE_URL}/embed/v1.js"></script>
-<fair-yoga-schedule key="${key}" theme="themed" color-scheme="auto"><a href="${BASE_URL}/${slug}">See my schedule</a></fair-yoga-schedule>
+<fair-yoga-schedule schedule-key="${key}" theme="themed" color-scheme="auto"><a href="${BASE_URL}/${slug}">See my schedule</a></fair-yoga-schedule>
 </body></html>`;
     await page.route(`${TEACHER_SITE}/**`, (route) =>
       route.fulfill({ status: 200, contentType: 'text/html', body: snippet }),

@@ -14,7 +14,7 @@ export function buildEmbedSnippet(o: EmbedSnippetOptions): string {
   const scheme = o.theme === 'themed' ? ` color-scheme="${o.colorScheme}"` : '';
   return [
     `<script type="module" src="${esc(o.origin)}/embed/v1.js"></script>`,
-    `<fair-yoga-schedule key="${esc(o.key)}" theme="${o.theme}"${scheme}>`,
+    `<fair-yoga-schedule schedule-key="${esc(o.key)}" theme="${o.theme}"${scheme}>`,
     `  <a href="${esc(o.origin)}/${esc(o.slug)}">See my schedule</a>`,
     '</fair-yoga-schedule>',
   ].join('\n');

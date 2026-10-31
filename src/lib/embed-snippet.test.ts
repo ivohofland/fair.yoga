@@ -8,11 +8,16 @@ describe('buildEmbedSnippet', () => {
     expect(buildEmbedSnippet({ ...BASE, theme: 'themed', colorScheme: 'auto' })).toBe(
       [
         '<script type="module" src="https://fair.yoga/embed/v1.js"></script>',
-        '<fair-yoga-schedule key="k7Qm2xR9vT" theme="themed" color-scheme="auto">',
+        '<fair-yoga-schedule schedule-key="k7Qm2xR9vT" theme="themed" color-scheme="auto">',
         '  <a href="https://fair.yoga/anna">See my schedule</a>',
         '</fair-yoga-schedule>',
       ].join('\n'),
     );
+  });
+
+  it('names no attribute React reserves, so the snippet survives being pasted into JSX', () => {
+    const snippet = buildEmbedSnippet({ ...BASE, theme: 'themed', colorScheme: 'auto' });
+    expect(snippet).not.toMatch(/\s(key|ref)=/);
   });
 
   it('carries the chosen colour scheme', () => {
@@ -34,7 +39,7 @@ describe('buildEmbedSnippet', () => {
       theme: 'themed',
       colorScheme: 'light',
     });
-    expect(snippet).toContain('key="a&quot;b&lt;c&gt;&amp;d"');
+    expect(snippet).toContain('schedule-key="a&quot;b&lt;c&gt;&amp;d"');
     expect(snippet).toContain('href="https://fair.yoga/x&quot;&gt;&lt;script&gt;"');
     expect(snippet).not.toContain('<script>');
   });
