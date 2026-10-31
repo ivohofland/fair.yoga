@@ -16,6 +16,7 @@ type FallbackKind = 'neutral' | 'none';
 // its own skeleton or an entry here (docs/design-brief.md, Loading states).
 const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '': 'none',
+  'sliding-scale': 'none',
   '(admin)/admin/(gated)': 'none',
   '(admin)/admin/sign-in': 'none',
   '(public)/[slug]': 'none',
