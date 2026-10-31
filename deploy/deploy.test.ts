@@ -53,10 +53,13 @@ function commitToOrigin(label: string): string {
   return git(work, 'rev-parse', 'HEAD');
 }
 
-/** Commits a compose file whose `db` service runs `image` to origin's main and returns the new SHA. */
-function commitComposeToOrigin(image: string): string {
+/**
+ * Commits a compose file whose `db` service runs `image` to origin's main and
+ * returns the new SHA. `above` is written into the service before the `image:` line.
+ */
+function commitComposeToOrigin(image: string, above = ''): string {
   const work = path.join(root, 'work');
-  fs.writeFileSync(path.join(work, COMPOSE_FILE), `services:\n  db:\n    image: ${image}\n`);
+  fs.writeFileSync(path.join(work, COMPOSE_FILE), `services:\n  db:\n${above ? `    ${above}\n` : ''}    image: ${image}\n`);
   git(work, 'add', COMPOSE_FILE);
   git(work, 'commit', '-q', '-m', image);
   git(work, 'push', '-q', 'origin', 'main');
@@ -219,7 +222,7 @@ describe('deploy/deploy.sh', () => {
     expect(recorded()).toBe(before);
   });
 
-  it('puts the checkout back and replaces no container when the migration fails', () => {
+  it('puts the checkout back and does not replace the app when the migration fails', () => {
     const before = head();
     const v2 = commitToOrigin('v2');
     const result = run({ sshCommand: v2, env: { FAKE_MIGRATE_FAIL: '1' } });
@@ -228,7 +231,7 @@ describe('deploy/deploy.sh', () => {
     expect(head()).toBe(before);
     expect(calls().some((c) => / up( |$)/.test(c))).toBe(false);
     expect(result.stderr).toContain('migrate');
-    expect(result.stderr).toContain('no container was replaced');
+    expect(result.stderr).toContain('the running app was not replaced');
     expect(recorded()).toBe(before);
   });
 
@@ -247,14 +250,52 @@ describe('deploy/deploy.sh', () => {
     expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
   });
 
-  it('deploys a postgres digest change within the same major', () => {
-    const before = commitComposeToOrigin(`postgres:16-alpine@sha256:${'a'.repeat(64)}`);
+  it.each([
+    ['a downgrade', 'postgres:18-alpine', '', 'postgres:16-alpine', 'postgres 18 -> 16'],
+    ['a two-digit major', 'postgres:9-alpine', '', 'postgres:10-alpine', 'postgres 9 -> 10'],
+    ['a quoted new spelling', 'postgres:16-alpine', '', '"postgres:18-alpine"', 'postgres 16 -> 18'],
+    ['a registry-qualified new spelling', 'postgres:16-alpine', '', 'docker.io/library/postgres:18-alpine', 'postgres 16 -> 18'],
+    ['an old image left commented above the new one', 'postgres:16-alpine', '# image: postgres:16-alpine', 'postgres:18-alpine', 'postgres 16 -> 18'],
+    ['a major moved into a variable', 'postgres:16-alpine', '', 'postgres:${PG_MAJOR:-16}-alpine', 'cannot tell'],
+    ['a different image', 'postgres:16-alpine', '', 'pgvector/pgvector:pg17', 'cannot tell'],
+    ['a floating tag', 'postgres:16-alpine', '', 'postgres:latest', 'cannot tell'],
+  ])('refuses %s, before any docker call', (_label, from, above, to, message) => {
+    const deployed = commitComposeToOrigin(`${from}@sha256:${'a'.repeat(64)}`);
+    expect(run({ sshCommand: deployed }).status).toBe(0);
+    fs.rmSync(callLog);
+    const next = commitComposeToOrigin(to, above);
+
+    const result = run({ sshCommand: next });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(message);
+    expect(result.stderr).toContain('#949');
+    expect(head()).toBe(deployed);
+    expect(recorded()).toBe(deployed);
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  });
+
+  it.each([
+    ['a digest change', 'postgres:16-alpine@sha256:' + 'a'.repeat(64), '', 'postgres:16-alpine@sha256:' + 'c'.repeat(64)],
+    ['a minor tag change', 'postgres:16-alpine', '', 'postgres:16.4-alpine'],
+    ['a commented older major above the same one', 'postgres:16-alpine', '# image: postgres:15-alpine', 'postgres:16-alpine@sha256:' + 'c'.repeat(64)],
+  ])('deploys %s within the same postgres major', (_label, from, above, to) => {
+    const before = commitComposeToOrigin(from);
     expect(run({ sshCommand: before }).status).toBe(0);
-    const after = commitComposeToOrigin(`postgres:16-alpine@sha256:${'c'.repeat(64)}`);
+    const after = commitComposeToOrigin(to, above);
 
     const result = run({ sshCommand: after });
     expect(result.status, result.stderr).toBe(0);
     expect(recorded()).toBe(after);
+  });
+
+  it('refuses an absolute COMPOSE_FILE, which git cannot read at the deployed commit, moving nothing', () => {
+    const v2 = commitToOrigin('v2');
+    const before = head();
+    const result = run({ sshCommand: v2, env: { COMPOSE_FILE: path.join(app, COMPOSE_FILE) } });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('COMPOSE_FILE');
+    expect(head()).toBe(before);
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
   });
 
   it('names both commits and the rollback when replacing the containers fails', () => {

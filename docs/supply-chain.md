@@ -971,6 +971,21 @@ Dependabot ecosystem entry — a genuinely **separate** ecosystem from
 scans `Dockerfile`s, `docker-compose` scans compose files, and neither
 scans the other's format.
 
+**Majors are not Dependabot's to propose.** The `docker-compose` entry ignores
+`version-update:semver-major` for `postgres`, the same rule and the same tag
+reduction as `node`'s (`16-alpine` has the segments `[16]`):
+dependabot-core's `docker/lib/dependabot/docker_compose.rb` registers
+`Dependabot::Docker::Version` as the `docker_compose` version class, so the
+`node` paragraph's re-derivation applies unchanged. Digest and same-major
+updates still arrive monthly. A Postgres major cannot read the previous
+major's data directory, so it is a data migration, not an image bump: #604,
+Dependabot's `16-alpine` → `18-alpine` PR, would have stopped the production
+database on deploy (measured 2026-10-31; the findings are in #948). As a
+second line, `deploy/deploy.sh` deploys a `db` image change only when it
+provably keeps the major (DEPLOYMENT.md §6), and the upgrade itself is #949.
+The four CI `services:` pins below are not involved: the freshness script
+follows `16-alpine`'s own digest and never proposes a major.
+
 **The remaining four — the CI workflow `services:` blocks — are now
 covered a different way.** No Dependabot ecosystem scans a GitHub Actions
 `services:`/`container:` image reference at all: `github-actions` scans
@@ -1059,16 +1074,6 @@ why the workflow scan does.
 Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a
 reason to look, not a reason to stop an unrelated PR.
-
-**Majors are not Dependabot's to propose.** The `docker-compose` entry ignores
-`version-update:semver-major` for `postgres`, the same rule and the same tag
-reduction as `node` above (`16-alpine` has the segments `[16]`), so digest and
-same-major updates still arrive monthly. A Postgres major cannot read the
-previous major's data directory, so it is a data migration, not an image
-bump. #604, Dependabot's `16-alpine` → `18-alpine` PR, would have stopped the
-production database on deploy (measured 2026-10-31; the findings are in #948).
-`deploy/deploy.sh` refuses a commit that changes the major in
-`docker-compose.prod.yml` as a second line, and the upgrade itself is #949.
 
 ### The package manager binary
 

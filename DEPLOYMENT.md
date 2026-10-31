@@ -231,9 +231,10 @@ reports success for a run in which a sweep did not run.
 A commit on `main` deploys itself once every CI test job has passed: the
 `deploy` job in `.github/workflows/ci.yml` connects over SSH and runs
 `deploy/deploy.sh` with that commit's hash. The script checks the commit out,
-builds while the old containers keep serving, applies the migrations as a step
+builds while the old app keeps serving, applies the migrations as a step
 of its own (`docker compose run --rm migrate`, which then checks that no
-teacher holds a reserved page slug), then replaces the containers
+teacher holds a reserved page slug, and which first restarts `db` when the
+commit changed its image), then replaces the containers
 and waits up to two minutes for `/api/health` to report `"status":"ok"`.
 Migrations get their own step because `up` replaces the app container before
 the `migrate` it depends on has finished, so a migration failing inside `up`
@@ -252,6 +253,14 @@ again for the failed commit, or re-running the CI job, deploys it again; or
 roll back. Running the recorded commit, or an older one, instead refuses,
 naming both commits, rather than answering that it is already there. The app
 is unreachable for the few seconds the container swap takes.
+
+A commit that changes the `db` image is deployed only when the change provably
+keeps the postgres major: a new major cannot read the old one's data
+directory. Anything else, including an image line the script cannot read, is
+refused before any docker call, with the checkout put back. A major upgrade is
+done by hand (#949); why: `docs/supply-chain.md` (The database image).
+`COMPOSE_FILE` must be a path inside the checkout, because the check reads the
+file at the deployed commit.
 
 The health gate also reads `degraded` while a pool exhaustion is inside its
 15-minute window (§7). The new container is a new process with an empty
@@ -401,8 +410,8 @@ it applied, and put anything still missing in a new migration on `main`.
 After the migrations, the migrate step runs `scripts/check-reserved-slugs.ts`,
 which refuses while any teacher's page slug is in `RESERVED_SLUGS`
 (`src/lib/reserved-slugs.ts`). It prints each such slug with its teacher's id,
-and the deploy stops as a failed migrate step does: no container is replaced
-and the checkout goes back where the run found it. The migrations it applied
+and the deploy stops as a failed migrate step does: the running app is not
+replaced and the checkout goes back where the run found it. The migrations it applied
 stay applied, which the rule above, that a migration works with the previous
 commit running against it, already makes safe.
 
