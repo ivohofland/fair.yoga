@@ -98,7 +98,7 @@ function timeRange(c) {
         throw new Error('Malformed duration in schedule data');
     const end = ((Math.round(minutes) % 1440) + 1440) % 1440;
     const pad = (n) => String(n).padStart(2, '0');
-    return `${start}–${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+    return `${start}\u00a0–\u00a0${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
 }
 const PRICING_HOOK = { tiered: 'income-based', donation: 'pay-what-you-can' };
 function metaLine(c) {

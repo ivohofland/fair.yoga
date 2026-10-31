@@ -324,7 +324,7 @@ The numbers above are starting values, not decided limits.
   attribute on the element (`loading` / `ready` / `error`), which themed mode
   uses to reserve height while loading; `schedule-key` watched, with only the
   latest load rendering; `data-kind`, `data-availability` and `data-pricing`
-  on each row; and the row's time as `HH:MM–HH:MM` inside a
+  on each row; and the row's time as `HH:MM – HH:MM` (no-break spaces around the dash) inside a
   `<time datetime>` carrying the start. Exact shapes:
   `docs/technical-architecture.md` (Public API (v1), the widget's host surface).
 
