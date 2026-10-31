@@ -85,8 +85,8 @@ function PillButton({ pressed, onClick, children }: { pressed: boolean; onClick:
       type="button"
       aria-pressed={pressed}
       onClick={onClick}
-      className={`min-h-11 px-4 rounded-full border type-label ${
-        pressed ? 'bg-teal border-teal text-cream' : 'bg-transparent border-border text-ink hover:bg-sand'
+      className={`min-h-11 px-4 rounded-pill border type-label ${
+        pressed ? 'bg-teal border-teal text-cream' : 'bg-transparent border-border text-ink hover:bg-sand-hover'
       }`}
     >
       {children}

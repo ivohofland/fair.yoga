@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getSession } from '@/lib/session';
+import { isSignedIn } from '@/lib/marketing-session';
 import { Icon } from '@/components/ui/icon';
 import { Band, HEADING, KICKER, LEAD } from '@/components/landing/band';
 import { GivePagePhone } from '@/components/landing/give-page-phone';
@@ -68,7 +69,7 @@ function PointList({ points }: { points: readonly string[] }) {
 /** Explains donation classes, with an illustration of what students see; the same page for everyone. */
 export default async function DonationBasedPage() {
   const session = await getSession();
-  const signedIn = session !== null;
+  const signedIn = isSignedIn(session);
 
   return (
     <div className="flex flex-col flex-1 text-pretty">

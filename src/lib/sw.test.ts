@@ -406,7 +406,7 @@ describe('public/sw.js', () => {
     expect(self.clients.claim).toHaveBeenCalledTimes(1);
   });
 
-  it('redacts a cross-origin push url to the site root before showing the notification', async () => {
+  it('redacts a cross-origin push url to the door, /start, before showing the notification', async () => {
     const { self, listeners } = loadWorker([]);
     const e = pushEvent({ id: 'n4', title: 'Title', body: 'Body', url: 'https://evil.example/' } satisfies PushPayload);
     listeners.push!(e);

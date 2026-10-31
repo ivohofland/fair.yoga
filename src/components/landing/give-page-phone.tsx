@@ -1,6 +1,7 @@
 import { Icon } from '@/components/ui/icon';
 import { MethodChooser } from '@/components/student/method-chooser';
 import type { GiftMethod } from '@/components/student/method-panel';
+import { paymentReference } from '@/lib/payment-methods';
 import { GIVE_PAGE_BACK, GIVE_PAGE_HEADING, giveCaption } from '@/lib/give-page-copy';
 
 const SAMPLE_METHODS: GiftMethod[] = [
@@ -13,10 +14,8 @@ const SAMPLE_METHODS: GiftMethod[] = [
   { kind: 'payment_link', url: 'https://example.com/anna', host: 'example.com' },
 ];
 
-const CAPTION = giveCaption(
-  { classType: 'Slow flow', date: new Date('2026-11-03T00:00:00Z') },
-  { firstName: 'Anna', lastName: 'Smith' },
-);
+const SAMPLE_ENTRY = { classType: 'Slow flow', date: new Date('2026-11-03T00:00:00Z') };
+const CAPTION = giveCaption(SAMPLE_ENTRY, { firstName: 'Anna', lastName: 'Smith' });
 
 /** An illustration of the student's give page, built from the page's own words and chooser. */
 export function GivePagePhone() {
@@ -38,7 +37,7 @@ export function GivePagePhone() {
           methods={SAMPLE_METHODS}
           amount={{ kind: 'open' }}
           currency="EUR"
-          reference="Slow flow"
+          reference={paymentReference(SAMPLE_ENTRY)}
         />
       </div>
     </div>

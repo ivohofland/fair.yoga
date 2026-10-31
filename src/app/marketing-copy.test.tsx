@@ -10,8 +10,9 @@ vi.mock('next/navigation', () => ({
 
 beforeEach(() => document.body.replaceChildren());
 
-// The copy never names the project it was inspired by. Spec §8.
-const FORBIDDEN = /\bdana\b/i;
+// No religious or spiritual vocabulary, to avoid misinterpretation (spec §2
+// anti-goals); the Sanskrit word for giving is the one this guards.
+const FORBIDDEN = /\bd[aā]na\b/i;
 
 describe('marketing copy', () => {
   it('the landing page keeps to its own words', async () => {

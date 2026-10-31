@@ -35,7 +35,7 @@ const INDEXABLE_PUBLIC = new Set([
   'start',
 ]);
 
-/** Root-level pages (outside every route group), all promoted in the sitemap. */
+/** Root-level pages (outside every route group). */
 const INDEXABLE_ROOT = new Set(['sliding-scale', 'donation-based']);
 
 function rootPages(): string[] {

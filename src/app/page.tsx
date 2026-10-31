@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getSession } from '@/lib/session';
+import { isSignedIn } from '@/lib/marketing-session';
 import { siteUrl } from '@/lib/seo';
 import { Icon } from '@/components/ui/icon';
 import { FeatureBand } from '@/components/landing/feature-band';
@@ -87,7 +88,7 @@ const STEPS = [
  * `/start`, which the header and footer offer a signed-in visitor.
  */
 export default async function LandingPage() {
-  const signedIn = (await getSession()) !== null;
+  const signedIn = isSignedIn(await getSession());
 
   return (
     // text-pretty is inherited: no paragraph on the page ends on a lone word
