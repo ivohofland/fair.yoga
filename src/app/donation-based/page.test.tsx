@@ -49,7 +49,7 @@ describe('/donation-based page', () => {
     for (const t of ['Offer the class', 'Everyone is welcome', 'An open hand, once', 'Receive with thanks']) {
       expect(screen.getByText(t)).toBeTruthy();
     }
-    expect(document.body.textContent).toContain('Choose By donation for a single class or a recurring one. Students book as they would for any other class.');
+    expect(document.body.textContent).toContain('Choose By donation when you set up a class. Students book as usual.');
     expect(document.body.textContent).toContain('No price appears anywhere, so nobody has to weigh whether they can afford to come.');
     expect(document.body.textContent).toContain('After class, everyone who came receives one quiet invitation to give, if and as they wish.');
     expect(document.body.textContent).toContain('Note what came in for the class as a whole, for your own records.');
