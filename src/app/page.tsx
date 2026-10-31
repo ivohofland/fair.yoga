@@ -7,9 +7,14 @@ import { siteUrl } from '@/lib/seo';
 import { Icon } from '@/components/ui/icon';
 import { Wordmark } from '@/components/layout/wordmark';
 import { LandingPricingDemo } from '@/components/landing/landing-pricing-demo';
-
-const REPO_URL = 'https://github.com/ivohofland/fair.yoga';
-const CONTACT_HREF = 'mailto:hello@fair.yoga';
+import {
+  COLUMN,
+  CONTACT_HREF,
+  PRIMARY_LINK,
+  QUIET_LINK,
+  REPO_URL,
+  SECONDARY_LINK,
+} from '@/components/landing/landing-links';
 
 const TITLE = 'fair.yoga — free sliding-scale and donation booking for yoga teachers';
 const DESCRIPTION =
@@ -38,14 +43,6 @@ function structuredData(): string {
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }
 
-const PRIMARY_LINK =
-  'inline-flex items-center justify-center text-center bg-teal text-cream hover:bg-teal-hover hover:text-cream active:bg-teal-pressed rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
-const SECONDARY_LINK =
-  'inline-flex items-center justify-center text-center border-[1.5px] border-teal text-teal hover:bg-teal-tint hover:text-teal rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
-const QUIET_LINK = 'inline-flex items-center min-h-11 no-underline hover:text-teal';
-
-/** The landing page's own column: wider than the app's, for a desktop reader. */
-const COLUMN = 'mx-auto w-full max-w-[960px] px-4 sm:px-10';
 const KICKER = 'text-sm font-medium text-brown';
 const HEADING = 'font-heading font-bold text-[28px] leading-[1.25]';
 const LEAD = 'type-body text-lg leading-[1.6]';
