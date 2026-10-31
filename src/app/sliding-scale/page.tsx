@@ -34,8 +34,8 @@ const QUESTIONS = [
     a: 'Below your minimum number of students, the class auto-cancels at the time you choose. At or above it, you earn at least your minimum rate.',
   },
   {
-    q: 'Can I just charge one price?',
-    a: 'Yes: set your minimum equal to your target and you earn the same every class.',
+    q: 'Can I earn the same every class?',
+    a: 'Yes: set your minimum equal to your target. Students still pay by income tier, and the more people come, the less each pays.',
   },
   {
     q: 'What does fair.yoga take?',

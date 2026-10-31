@@ -23,7 +23,7 @@ const CARDS: readonly Card[] = [
       <>
         <Link href="/donation-based">Donation-based</Link>: students give what they can after class
       </>,
-      'Or one flat rate, if you prefer',
+      'Or earn the same every class, with one flat rate for you',
       'VAT and your own currency',
     ],
     extra: <ProofBox />,

@@ -25,6 +25,12 @@ describe('FeatureBand', () => {
     expect(cards).toEqual(['Pricing', 'Classes', 'Students', 'Money']);
   });
 
+  // A flat rate is the teacher's income, never one price for every student.
+  it('offers the flat rate as the teacher’s income', () => {
+    render(<FeatureBand />);
+    expect(screen.getByText('Or earn the same every class, with one flat rate for you')).toBeTruthy();
+  });
+
   it('links only the two pricing subpages and the proof examples', () => {
     render(<FeatureBand />);
     const links = screen.getAllByRole('link').map((a) => [a.textContent, a.getAttribute('href')]);
