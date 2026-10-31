@@ -94,9 +94,12 @@ describe('/donation-based page', () => {
     ]) {
       expect(screen.getByText(q)).toBeTruthy();
     }
-    const items = document.querySelectorAll('details:not([name])');
+    // One shared name: opening a question closes the others. The phone
+    // illustration's method rows are details too, under their own name.
+    const items = document.querySelectorAll('details[name="faq"]');
     expect(items).toHaveLength(5);
     expect(items[0]?.hasAttribute('open')).toBe(true);
+    expect(items[1]?.hasAttribute('open')).toBe(false);
     expect(document.body.textContent).toContain(
       'Not yet: fair.yoga’s Mollie payments are for a set amount, and a gift has none. If Mollie is all you use, students are invited to give to you directly, however suits them. Add your bank details or a payment link alongside it, and they can give online too.',
     );
