@@ -2417,6 +2417,18 @@ the rest do not, and one runbook section per code.
 
 When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-real-ip` both absent), the request is *not* exempted from its IP-keyed check — `checkIpRateLimit` routes it into one bucket shared by every such caller instead (`UNRESOLVED_IP_ID`), and logs a throttled warning, so an operator learns the trusted-proxy assumption above has broken rather than the check silently vanishing. Under normal operation (nginx configured as documented) this path never fires.
 
+### Public API (v1)
+
+`GET /api/public/v1/schedule/[key]` (`src/app/api/public/v1/schedule/[key]/route.ts`) is what the embeddable widget fetches. The key is the teacher's `scheduleShareKey`; an unknown key, sharing switched off and an erased teacher all answer the same 404. The body is `PublicScheduleJson` (`src/lib/public-schedule-json.ts`), built from `listPublicSchedule` in its bookable window, and carries no amount, spots left, video link, teacher name or address.
+
+**Permanence.** Every field of v1 is permanent: add fields, never remove or rename one. A change that would break a pasted widget is a `/v2/`.
+
+**CORS.** Every response, 404, 429 and 500 included, carries `Access-Control-Allow-Origin: *` (`withCors`, `src/lib/cors.ts`); a refusal without it is hidden from the widget by the browser. `Cache-Control: public, max-age=60` on a 200.
+
+**Limits, per client IP**, in this order: `public-schedule:ip` (a request limit in `rate-limit.ts`), then `checkDistinctKeyLimit` (`src/lib/distinct-key-limit.ts`; a key the address already asked about in the window never counts again, and unknown keys count, which is what makes walking keys expensive), then the key lookup. The feed has its own flood prefix, `schedule-feed:ip`, and no distinct-key limit, because calendar services fetch many subscribers' feeds from a few addresses. The numbers are the constants at the top of each file.
+
+**Cache.** `getCachedSchedule` (`src/lib/public-schedule-cache.ts`) holds the listing for a minute, bounded and LRU, on `globalThis`. Its key is the window mode, the teacher, the weeks and the studio setting, never the share key: turning studio classes off takes effect at once, and a calendar-mode listing can never be served the bookable one. Writes do not bust it; a minute of staleness is accepted.
+
 ### Production compose
 
 The production stack is `docker-compose.prod.yml`; read it there rather than in a copy here. Its database publishes no port, so Postgres is reachable only on the compose network.
