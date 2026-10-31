@@ -1,17 +1,15 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getSession } from '@/lib/session';
 import { siteUrl } from '@/lib/seo';
 import { Icon } from '@/components/ui/icon';
-import { Wordmark } from '@/components/layout/wordmark';
-import { LandingPricingDemo } from '@/components/landing/landing-pricing-demo';
+import { FeatureBand } from '@/components/landing/feature-band';
+import { SiteFooter } from '@/components/landing/site-footer';
+import { SiteHeader } from '@/components/landing/site-header';
 import {
   COLUMN,
-  CONTACT_HREF,
   PRIMARY_LINK,
-  QUIET_LINK,
   REPO_URL,
   SECONDARY_LINK,
 } from '@/components/landing/landing-links';
@@ -46,30 +44,6 @@ function structuredData(): string {
 const KICKER = 'text-sm font-medium text-brown';
 const HEADING = 'font-heading font-bold text-[28px] leading-[1.25]';
 const LEAD = 'type-body text-lg leading-[1.6]';
-
-const FEATURES = [
-  {
-    area: 'Scheduling',
-    title: 'Plan your classes',
-    body: 'Add your room, what it costs and what you’d like to earn. The prices are worked out for you.',
-  },
-  {
-    area: 'Bookings',
-    title: 'Share one link',
-    body: 'Students book in a few taps. They share which income tier fits them, and their price is set from that.',
-  },
-  {
-    area: 'Payments',
-    title: 'Get paid after class',
-    body: 'Students pay you directly once class is done. No lock-in, and fair.yoga takes no percentage.',
-  },
-] as const;
-
-const PRICING_POINTS = [
-  { title: 'You earn your rate', body: 'Prices are set so you always land between your minimum and your target.' },
-  { title: 'No surprises', body: 'See what every class size means for you before you publish. No discounts to manage.' },
-  { title: 'No one priced out', body: 'The lowest tier keeps your classes within reach for people on a tight budget.' },
-] as const;
 
 const PROMISES = [
   {
@@ -132,33 +106,18 @@ function Band({
 }
 
 /**
- * The public front door. A signed-in visitor is sent to their own home
- * instead, so a bookmarked `/` still opens the app.
+ * The public front door, the same page for everyone. The app's own door is
+ * `/start`, which the header and footer offer a signed-in visitor.
  */
 export default async function LandingPage() {
-  const session = await getSession();
-  if (session?.teacherId) redirect('/schedule');
-  if (session?.studentId) redirect('/bookings');
+  const signedIn = (await getSession()) !== null;
 
   return (
     // text-pretty is inherited: no paragraph on the page ends on a lone word
     <div className="flex flex-col flex-1 text-pretty">
       {/* A data block, not a script: the browser never runs it, so the CSP's nonce has no say. */}
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredData() }} />
-      <header className={`${COLUMN} pt-4 sm:pt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2`}>
-        <Wordmark />
-        <nav aria-label="Site" className="flex flex-wrap items-center gap-x-6 text-sm">
-          <Link href="#pricing" className={`${QUIET_LINK} hidden sm:inline-flex`}>
-            How the pricing works
-          </Link>
-          <Link href="#open-source" className={`${QUIET_LINK} hidden sm:inline-flex`}>
-            Open source
-          </Link>
-          <Link href="/login" className="inline-flex items-center min-h-11 text-teal">
-            Sign in
-          </Link>
-        </nav>
-      </header>
+      <SiteHeader signedIn={signedIn} onHome />
 
       <section className={`${COLUMN} pt-12 sm:pt-16 pb-12`}>
         <div className="max-w-[680px] flex flex-col gap-5">
@@ -174,26 +133,11 @@ export default async function LandingPage() {
             <Link href="/signup" className={PRIMARY_LINK}>
               Set up your first class
             </Link>
-            <Link href="#pricing" className="type-body text-center sm:text-left">
-              See how the pricing works <span aria-hidden="true">↓</span>
+            <Link href="#features" className="type-body text-center sm:text-left">
+              See what it does <span aria-hidden="true">↓</span>
             </Link>
           </div>
         </div>
-      </section>
-
-      <section aria-label="What it does" className={`${COLUMN} pb-16 sm:pb-24`}>
-        <ul className="bg-sand border border-border rounded-card py-2 grid sm:grid-cols-3">
-          {FEATURES.map((f) => (
-            <li
-              key={f.title}
-              className="p-6 flex flex-col gap-2 border-border not-first:border-t sm:not-first:border-t-0 sm:not-first:border-l"
-            >
-              <p className="text-[13px] font-medium text-brown">{f.area}</p>
-              <h3 className="type-subtitle text-teal">{f.title}</h3>
-              <p className="type-body">{f.body}</p>
-            </li>
-          ))}
-        </ul>
       </section>
 
       <Band bottom="pb-12 sm:pb-16">
@@ -227,31 +171,7 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      <Band id="pricing" className="flex flex-col lg:flex-row gap-12 lg:items-start">
-        <div className="flex-1 min-w-0 flex flex-col gap-5">
-          <p className={KICKER}>How the pricing works</p>
-          <h2 className={`${HEADING} text-teal`}>Same class, a fair price for each person in it</h2>
-          <p className="type-body">
-            Everyone books the same class. Each student shares which income tier fits them, and pays a little
-            more or a little less accordingly. The highest tier never pays more than about twice the lowest.
-          </p>
-          <p className="type-body">
-            You enter the room cost, the least you need to earn and what you’d like to earn. The app works out
-            every price and shows its sums. Nothing hidden, nothing to haggle over.
-          </p>
-          <ul className="flex flex-col gap-5 mt-2">
-            {PRICING_POINTS.map((p) => (
-              <li key={p.title} className="border-t border-border pt-4 flex flex-col gap-1">
-                <h3 className="type-subtitle text-teal">{p.title}</h3>
-                <p className="type-body">{p.body}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="flex-1 min-w-0">
-          <LandingPricingDemo />
-        </div>
-      </Band>
+      <FeatureBand />
 
       <Band className="flex flex-col gap-10">
         <div className="max-w-[680px] flex flex-col gap-5">
@@ -332,25 +252,7 @@ export default async function LandingPage() {
         </div>
       </Band>
 
-      <footer className="border-t border-border">
-        <div className={`${COLUMN} pt-8 pb-12 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4`}>
-          <div className="flex flex-col gap-1">
-            <Wordmark />
-            <p className="text-[13px] text-brown">A free, open source booking system for independent yoga teachers.</p>
-          </div>
-          <nav aria-label="Footer" className="flex gap-4 text-[13px]">
-            <a href={REPO_URL} className="inline-flex items-center min-h-11">
-              Open source
-            </a>
-            <a href={CONTACT_HREF} className="inline-flex items-center min-h-11">
-              Contact
-            </a>
-            <Link href="/login" className="inline-flex items-center min-h-11">
-              Sign in
-            </Link>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter signedIn={signedIn} />
     </div>
   );
 }
