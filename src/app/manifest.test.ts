@@ -14,6 +14,10 @@ function pngSize(file: string): string {
 describe('manifest', () => {
   const m = manifest();
 
+  it('describes the product by what it does', () => {
+    expect(m.description).toBe('Free booking for independent yoga teachers. Prices follow income.');
+  });
+
   it('opens standalone at /start', () => {
     expect(m).toMatchObject({ id: '/start', start_url: '/start', scope: '/', display: 'standalone' });
   });

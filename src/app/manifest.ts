@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: '/start',
     name: 'fair.yoga',
     short_name: 'fair.yoga',
-    description: 'Ethical pricing for independent yoga teachers',
+    description: 'Free booking for independent yoga teachers. Prices follow income.',
     start_url: '/start',
     scope: '/',
     display: 'standalone',

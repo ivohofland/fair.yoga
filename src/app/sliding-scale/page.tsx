@@ -4,6 +4,7 @@ import { getSession } from '@/lib/session';
 import { isSignedIn } from '@/lib/marketing-session';
 import { Icon } from '@/components/ui/icon';
 import { Band, HEADING, KICKER, LEAD } from '@/components/landing/band';
+import { Breadcrumb } from '@/components/landing/breadcrumb';
 import { COLUMN, PRIMARY_LINK } from '@/components/landing/landing-links';
 import { PricingCalculator } from '@/components/landing/pricing-calculator';
 import { SiteFooter } from '@/components/landing/site-footer';
@@ -58,9 +59,7 @@ export default async function SlidingScalePage({
 
       <section className={`${COLUMN} pt-8 sm:pt-12 pb-12`}>
         <div className="max-w-[680px] flex flex-col gap-5">
-          <nav aria-label="Breadcrumb" className={KICKER}>
-            <Link href="/">fair.yoga</Link> / <span>Sliding scale</span>
-          </nav>
+          <Breadcrumb current="Sliding scale" path="/sliding-scale" />
           <h1 className="font-heading font-bold text-[clamp(28px,4.2vw,44px)] leading-[1.2] text-ink">
             <em className="text-teal">Sliding-scale pricing</em> for yoga classes, worked out for you
           </h1>

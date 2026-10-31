@@ -248,7 +248,7 @@ are not put in the URL.
    - Four promises (check icons):
      - **No price on generosity** — No suggested amount, no default. Even the QR code leaves the amount blank.
      - **Asked once, never chased** — One invitation after class. A reminder would turn a gift into a debt.
-     - **Giving stays private** — You see what came in for the class, never who gave what.
+     - **Giving stays private** — fair.yoga shows you what came in for the class, never who gave what.
      - **From hand to hand** — Gifts go straight to your own account or payment link. Nothing passes through fair.yoga.
 5. **Which fits your class?** band. Heading: **Two ways to keep the door open.** Two columns:
    - **By donation** (sand-soft): The teaching is a gift, open to anyone · What you receive follows generosity, not a formula · For community classes, or whenever you’d rather not set a price

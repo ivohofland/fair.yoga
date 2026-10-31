@@ -42,6 +42,11 @@ describe('/donation-based page', () => {
     const trail = screen.getByRole('navigation', { name: 'Breadcrumb' });
     expect(trail.textContent).toContain('Donation-based classes');
     expect(trail.querySelector('a')?.getAttribute('href')).toBe('/');
+    const data = JSON.parse(document.querySelector('script[type="application/ld+json"]')?.textContent ?? '{}') as {
+      itemListElement?: { name: string; item: string }[];
+    };
+    expect(data.itemListElement?.map((i) => i.name)).toEqual(['fair.yoga', 'Donation-based classes']);
+    expect(data.itemListElement?.[1]?.item.endsWith('/donation-based')).toBe(true);
   });
 
   it('shows the four steps, numbered', async () => {
@@ -62,7 +67,7 @@ describe('/donation-based page', () => {
     }
     expect(document.body.textContent).toContain('No suggested amount, no default. Even the QR code leaves the amount blank.');
     expect(document.body.textContent).toContain('One invitation after class. A reminder would turn a gift into a debt.');
-    expect(document.body.textContent).toContain('You see what came in for the class, never who gave what.');
+    expect(document.body.textContent).toContain('fair.yoga shows you what came in for the class, never who gave what.');
     expect(document.body.textContent).toContain('Gifts go straight to your own account or payment link. Nothing passes through fair.yoga.');
   });
 

@@ -4,6 +4,7 @@ import { getSession } from '@/lib/session';
 import { isSignedIn } from '@/lib/marketing-session';
 import { Icon } from '@/components/ui/icon';
 import { Band, HEADING, KICKER, LEAD } from '@/components/landing/band';
+import { Breadcrumb } from '@/components/landing/breadcrumb';
 import { GivePagePhone } from '@/components/landing/give-page-phone';
 import { COLUMN, PRIMARY_LINK } from '@/components/landing/landing-links';
 import { SiteFooter } from '@/components/landing/site-footer';
@@ -26,7 +27,7 @@ const STEPS = [
 const PROMISES = [
   { title: 'No price on generosity', body: 'No suggested amount, no default. Even the QR code leaves the amount blank.' },
   { title: 'Asked once, never chased', body: 'One invitation after class. A reminder would turn a gift into a debt.' },
-  { title: 'Giving stays private', body: 'You see what came in for the class, never who gave what.' },
+  { title: 'Giving stays private', body: 'fair.yoga shows you what came in for the class, never who gave what.' },
   { title: 'From hand to hand', body: 'Gifts go straight to your own account or payment link. Nothing passes through fair.yoga.' },
 ] as const;
 
@@ -77,9 +78,7 @@ export default async function DonationBasedPage() {
 
       <section className={`${COLUMN} pt-8 sm:pt-12 pb-12`}>
         <div className="max-w-[680px] flex flex-col gap-5">
-          <nav aria-label="Breadcrumb" className={KICKER}>
-            <Link href="/">fair.yoga</Link> / <span>Donation-based classes</span>
-          </nav>
+          <Breadcrumb current="Donation-based classes" path="/donation-based" />
           <h1 className="font-heading font-bold text-[clamp(28px,4.2vw,44px)] leading-[1.2] text-ink">
             <em className="text-teal">Donation-based yoga classes</em>, offered freely.
           </h1>
