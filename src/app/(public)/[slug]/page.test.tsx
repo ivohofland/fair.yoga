@@ -20,7 +20,15 @@ describe('teacher page metadata', () => {
     expect(metadata.title).toBe('Anna Smith');
     expect(metadata.description).toBe('Hatha and yin in Utrecht.');
     expect(metadata.alternates?.canonical).toBe('/anna');
-    expect(metadata.openGraph).toMatchObject({ title: 'Anna Smith', description: 'Hatha and yin in Utrecht.', url: '/anna' });
+  });
+
+  // A page's own openGraph replaces the root's wholesale, preview image
+  // included; left unset, the card inherits the image and takes its title and
+  // description from the page's.
+  it('leaves the preview card to the root, so it keeps the image', async () => {
+    findUnique.mockResolvedValue({ firstName: 'Anna', lastName: 'Smith', bio: null, deletedAt: null });
+
+    expect((await generateMetadata(params('anna'))).openGraph).toBeUndefined();
   });
 
   it('falls back to a plain line when the teacher wrote no bio', async () => {

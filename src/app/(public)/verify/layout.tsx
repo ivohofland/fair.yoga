@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { NOINDEX } from '@/lib/seo';
 
-// The page is a client component, which cannot export metadata; its URL
+// Holds /verify's metadata, since its page is a client component; its URL
 // carries a sign-in token.
 export const metadata: Metadata = NOINDEX;
 

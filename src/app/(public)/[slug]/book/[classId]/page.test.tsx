@@ -35,8 +35,9 @@ describe('booking page metadata', () => {
     expect(metadata.title).toBe('Slow flow with Anna Smith');
     expect(metadata.description).toBe('Tuesday, 3 Nov at 09:30 · 75 min.');
     expect(metadata.alternates?.canonical).toBe('/anna/book/c1');
-    expect(metadata.openGraph).toMatchObject({ title: 'Slow flow with Anna Smith', url: '/anna/book/c1' });
     expect(metadata.robots).toBeUndefined();
+    // A page's own openGraph would replace the root's, preview image included.
+    expect(metadata.openGraph).toBeUndefined();
   });
 
   it('keeps a private class out of search indexes', async () => {
@@ -52,6 +53,8 @@ describe('booking page metadata', () => {
   it.each([
     ['under another teacher’s slug', params('someone-else'), row()],
     ['a draft', params('anna'), row({ status: 'draft' })],
+    ['a class in progress', params('anna'), row({ status: 'in_progress' })],
+    ['a completed class', params('anna'), row({ status: 'completed' })],
     ['a cancelled class', params('anna'), row({ cancelledAt: new Date() })],
     ['an erased teacher’s class', params('anna'), row({ deletedAt: new Date() })],
   ])('names nothing for %s', async (_case, args, cls) => {

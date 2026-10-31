@@ -836,8 +836,9 @@ describe('pageSlugField', () => {
   it('reserves every static top-level route segment and public/ name', () => {
     const app = path.resolve(__dirname, '../app');
     const entries = (dir: string) => readdirSync(dir, { withFileTypes: true });
-    // A generated metadata image (`opengraph-image.tsx`) serves at its bare
-    // name, with no extension, so it claims a segment the way a folder does.
+    // A metadata image generated from code (`opengraph-image.tsx`, `icon.ts`, …)
+    // serves at its bare name, with no extension, so it claims a segment the way
+    // a folder does. A static one keeps its extension, which no slug can carry.
     const GENERATED_IMAGE = /^((?:opengraph|twitter)-image|icon|apple-icon)\d*\.[jt]sx?$/;
     const segments = (dir: string): string[] =>
       entries(dir).flatMap((d) => {

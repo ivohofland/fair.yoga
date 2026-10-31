@@ -1,23 +1,54 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+
+const { error } = vi.hoisted(() => ({ error: vi.fn() }));
+vi.mock('@/lib/log', () => ({ log: { error } }));
+
 import { siteUrl, snippet, NOINDEX } from './seo';
 
 describe('siteUrl', () => {
+  beforeEach(() => error.mockClear());
   afterEach(() => vi.unstubAllEnvs());
 
   it('is NEXT_PUBLIC_APP_URL', () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://fair.yoga');
     expect(siteUrl().href).toBe('https://fair.yoga/');
+    expect(error).not.toHaveBeenCalled();
   });
 
-  it('falls back to localhost when unset', () => {
+  it('falls back to localhost quietly in development', () => {
+    vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
     expect(siteUrl().href).toBe('http://localhost:3000/');
+    expect(error).not.toHaveBeenCalled();
   });
 
-  it('falls back to localhost when it does not parse, rather than failing every page', () => {
-    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'not a url');
+  // The build never sees the variable, by design (DEPLOYMENT.md).
+  it('falls back quietly while `next build` runs', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PHASE', 'phase-production-build');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
     expect(siteUrl().href).toBe('http://localhost:3000/');
+    expect(error).not.toHaveBeenCalled();
   });
+
+  it('says so when a running production server has no value', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PHASE', '');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', '');
+    expect(siteUrl().href).toBe('http://localhost:3000/');
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+
+  // `fair.yoga` throws in `new URL`; `localhost:3000` parses, as scheme `localhost:`.
+  it.each(['fair.yoga', 'localhost:3000', 'not a url'])(
+    'falls back, and says so, for %s, which is not an http(s) URL',
+    (value) => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('NEXT_PUBLIC_APP_URL', value);
+      expect(siteUrl().href).toBe('http://localhost:3000/');
+      expect(error).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe('snippet', () => {
@@ -39,7 +70,7 @@ describe('snippet', () => {
 });
 
 describe('NOINDEX', () => {
-  it('asks search engines not to index, in the shape the private-class page already ships', () => {
+  it('asks search engines not to index the page', () => {
     expect(NOINDEX).toEqual({ robots: { index: false } });
   });
 });

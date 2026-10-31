@@ -22,8 +22,18 @@ import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
 
-// Indexable but never promoted: the sitemap leaves this page out, so a search
-// engine finds it only where the teacher shared it. A page that 404s names no one.
+/**
+ * Whether this page shows `teacher`; anything else is a 404. The body and its
+ * metadata both ask, so the head never names a teacher the body hides.
+ * `deletedAt` is checked on its own, not left to the slug.
+ */
+function isShown<T extends { deletedAt: Date | null }>(teacher: T | null): teacher is T {
+  return teacher !== null && !teacher.deletedAt;
+}
+
+// Indexable: this page asks search engines nothing either way. No openGraph of
+// its own, which would replace the inherited preview image; the card takes
+// this title and description. Policy: docs/technical-architecture.md (Search engines).
 export async function generateMetadata({
   params,
 }: {
@@ -34,16 +44,13 @@ export async function generateMetadata({
     where: { pageSlug: slug },
     select: { firstName: true, lastName: true, bio: true, deletedAt: true },
   });
-  if (!teacher || teacher.deletedAt) return {};
+  if (!isShown(teacher)) return {};
 
   const name = `${teacher.firstName} ${teacher.lastName}`;
-  const description = teacher.bio ? snippet(teacher.bio) : `Book a class with ${name}.`;
-  const url = `/${slug}`;
   return {
     title: name,
-    description,
-    alternates: { canonical: url },
-    openGraph: { title: name, description, url, siteName: 'fair.yoga', type: 'profile' },
+    description: teacher.bio ? snippet(teacher.bio) : `Book a class with ${name}.`,
+    alternates: { canonical: `/${slug}` },
   };
 }
 
@@ -69,8 +76,7 @@ export default async function TeacherBookingPage({
       photo: { select: { id: true } },
     },
   });
-  // deletedAt: erasure renames the slug, but never rely on that alone.
-  if (!teacher || teacher.deletedAt) notFound();
+  if (!isShown(teacher)) notFound();
 
   // The teacher's calendar today, not UTC's. `CalendarEntry.date` is
   // `@db.Date`, so

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import robots from './robots';
+import robots, { dynamic } from './robots';
 
 describe('robots.txt', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -12,5 +12,11 @@ describe('robots.txt', () => {
       rules: { userAgent: '*', allow: '/' },
       sitemap: 'https://fair.yoga/sitemap.xml',
     });
+  });
+
+  // `next build` never sees NEXT_PUBLIC_APP_URL; a prerendered file would
+  // point at the localhost fallback forever.
+  it('is rendered per request, not at build time', () => {
+    expect(dynamic).toBe('force-dynamic');
   });
 });
