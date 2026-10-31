@@ -310,12 +310,12 @@ async function warm(paths) {
 }
 
 function safePath(url) {
-  if (typeof url !== 'string') return '/';
+  if (typeof url !== 'string') return '/start';
   try {
     const u = new URL(url, self.location.origin);
-    return u.origin === self.location.origin ? u.pathname + u.search + u.hash : '/';
+    return u.origin === self.location.origin ? u.pathname + u.search + u.hash : '/start';
   } catch {
-    return '/';
+    return '/start';
   }
 }
 
@@ -347,7 +347,7 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     if (isCacheablePath(url.pathname)) {
       handleCacheablePage(event, url.pathname);
-    } else if (url.pathname === '/' || url.pathname === '/start') {
+    } else if (url.pathname === '/start') {
       event.respondWith(networkFirst(fetch(request), scheduleRedirect));
     } else {
       event.respondWith(fetch(request).catch(() => offlineResponse()));
@@ -383,7 +383,7 @@ self.addEventListener('push', (event) => {
           icon: '/icons/icon-192.png',
           data: { url: safePath(payload.url) },
         })
-      : self.registration.showNotification('fair.yoga', { body: 'You have a new update.', data: { url: '/' } });
+      : self.registration.showNotification('fair.yoga', { body: 'You have a new update.', data: { url: '/start' } });
   event.waitUntil(shown.catch((err) => console.error('[sw] showNotification failed', err)));
 });
 
