@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { Wordmark } from '@/components/layout/wordmark';
 import { COLUMN, QUIET_LINK } from './landing-links';
 
+const ACCOUNT_LINK = 'inline-flex items-center min-h-11 text-teal';
+
 /** The marketing pages' header; `onHome` keeps its anchors in-page, elsewhere they lead back to `/`. */
 export function SiteHeader({ signedIn, onHome }: { signedIn: boolean; onHome: boolean }) {
   const prefix = onHome ? '' : '/';
@@ -9,7 +11,9 @@ export function SiteHeader({ signedIn, onHome }: { signedIn: boolean; onHome: bo
     <header
       className={`${COLUMN} pt-4 sm:pt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2`}
     >
-      <Wordmark />
+      <Link href="/" aria-label="fair.yoga home" className="inline-flex items-center min-h-11 no-underline">
+        <Wordmark />
+      </Link>
       <nav aria-label="Site" className="flex flex-wrap items-center gap-x-6 text-sm">
         <Link href={`${prefix}#features`} className={`${QUIET_LINK} hidden sm:inline-flex`}>
           What it does
@@ -18,11 +22,11 @@ export function SiteHeader({ signedIn, onHome }: { signedIn: boolean; onHome: bo
           Open source
         </Link>
         {signedIn ? (
-          <Link href="/start" className="inline-flex items-center min-h-11 text-teal">
+          <Link href="/start" className={ACCOUNT_LINK}>
             Open the app
           </Link>
         ) : (
-          <Link href="/login" className="inline-flex items-center min-h-11 text-teal">
+          <Link href="/login" className={ACCOUNT_LINK}>
             Sign in
           </Link>
         )}
