@@ -45,7 +45,7 @@ describe('FeatureBand', () => {
     render(<FeatureBand />);
     const { prices, teacherRate } = examplePreview('typical');
     const proof = screen.getByLabelText('Example class');
-    expect(within(proof).getByText('Example: 7 students, a €20 room, your target €90')).toBeTruthy();
+    expect(within(proof).getByText('Example: 7 students, a €30 room, your target €90')).toBeTruthy();
     expect(within(proof).getByText(formatMoney(prices[1], 'EUR'))).toBeTruthy();
     expect(within(proof).getByText(formatMoney(prices[5], 'EUR'))).toBeTruthy();
     expect(within(proof).getByText(formatMoney(teacherRate, 'EUR'))).toBeTruthy();
