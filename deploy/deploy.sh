@@ -42,6 +42,9 @@ exec 9>"$LOCK_FILE"
 flock -n 9 || fail "another deploy is running"
 
 cd "$APP_DIR"
+# The postgres check below reads the compose file at the deployed commit, which
+# git can do only by a path inside the checkout.
+[[ "$COMPOSE_FILE" != /* ]] || fail "COMPOSE_FILE must be relative to $APP_DIR, got '$COMPOSE_FILE'"
 git fetch --quiet origin main
 git merge-base --is-ancestor "$SHA" origin/main 2>/dev/null \
   || fail "$SHA is not on origin/main"
@@ -74,7 +77,7 @@ git merge-base --is-ancestor "$PREVIOUS" "$SHA" \
 echo "deploying $PREVIOUS -> $SHA"
 
 # Build and migrate while the running app keeps serving; only `up` replaces
-# it. Any exit before `up`, a failure or a signal, puts the checkout back where
+# it, though `run` first restarts `db` when its image changed. Any exit before `up`, a failure or a signal, puts the checkout back where
 # this run found it, which is not the record when an earlier swap failed: that
 # HEAD is what makes the check above refuse. The signal traps turn TERM, HUP
 # and INT into an exit, so the EXIT trap runs without depending on how a given
@@ -98,14 +101,30 @@ trap '' PIPE
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
 # A postgres major cannot read the previous major's data directory, and `run`
-# below already recreates `db` on a changed image, so a major change stops the
-# database before anything here could notice. It is refused while nothing has
-# been touched. A compose file without a postgres image on either side passes.
-pg_major() { grep -oE 'image:[[:space:]]*postgres:[0-9]+' | head -n1 | grep -oE '[0-9]+$' || true; }
-OLD_PG="$({ git show "$PREVIOUS:$COMPOSE_FILE" 2>/dev/null || true; } | pg_major)"
-NEW_PG="$({ cat "$COMPOSE_FILE" 2>/dev/null || true; } | pg_major)"
-if [[ -n "$OLD_PG" && -n "$NEW_PG" && "$OLD_PG" != "$NEW_PG" ]]; then
-  fail "postgres $OLD_PG -> $NEW_PG is a data migration, not a deploy; upgrade by hand (#949)"
+# below recreates `db` on a changed image, so a major change would take the
+# database down at the migrate step. An image change passes only when it
+# provably keeps the postgres major; anything this cannot read is refused, and
+# all of it before any docker call, with the EXIT trap putting the checkout
+# back. A compose file the deployed commit does not have is not checked.
+images() {  # each uncommented `image:` value, without quotes, trailing comment or digest
+  grep -E '^[[:space:]]*image:' \
+    | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+#.*$//; s/["'\'']//g; s/@sha256:[0-9a-f]+$//' || true
+}
+pg_major() { grep -m1 -oE '^(docker\.io/)?(library/)?postgres:[0-9]+' | grep -oE '[0-9]+$' || true; }
+if git cat-file -e "$PREVIOUS:$COMPOSE_FILE" 2>/dev/null; then
+  OLD_COMPOSE="$(git show "$PREVIOUS:$COMPOSE_FILE")" || fail "could not read $COMPOSE_FILE at $PREVIOUS"
+  NEW_COMPOSE="$(cat "$COMPOSE_FILE")" || fail "could not read $COMPOSE_FILE at $SHA"
+  OLD_IMAGES="$(images <<< "$OLD_COMPOSE")"
+  NEW_IMAGES="$(images <<< "$NEW_COMPOSE")"
+  if [[ "$OLD_IMAGES" != "$NEW_IMAGES" ]]; then
+    OLD_PG="$(pg_major <<< "$OLD_IMAGES")"
+    NEW_PG="$(pg_major <<< "$NEW_IMAGES")"
+    if [[ -n "$OLD_PG" && -n "$NEW_PG" && "$OLD_PG" != "$NEW_PG" ]]; then
+      fail "postgres $OLD_PG -> $NEW_PG is a data migration, not a deploy; upgrade by hand (#949)"
+    fi
+    [[ -n "$OLD_PG" && "$OLD_PG" == "$NEW_PG" ]] \
+      || fail "cannot tell that the images in $COMPOSE_FILE keep the postgres major ($(tr '\n' ' ' <<< "$OLD_IMAGES")-> $(tr '\n' ' ' <<< "$NEW_IMAGES")); upgrade by hand (#949)"
+  fi
 fi
 
 if ! docker compose -f "$COMPOSE_FILE" build; then
@@ -114,7 +133,7 @@ fi
 # Migrations run as their own step so a failing one leaves the app alone.
 # Why: DEPLOYMENT.md §6.
 if ! docker compose -f "$COMPOSE_FILE" run --rm migrate; then
-  fail "migrate failed; no container was replaced (DEPLOYMENT.md §6, a failed migration)"
+  fail "migrate failed; the running app was not replaced (DEPLOYMENT.md §6, a failed migration)"
 fi
 
 trap - EXIT
