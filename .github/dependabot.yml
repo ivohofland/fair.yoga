@@ -78,3 +78,9 @@ updates:
       interval: monthly
     cooldown:
       default-days: 8
+    # Postgres majors are an issue, not a monthly PR: a new major cannot read
+    # the old one's data directory. Reasons: docs/supply-chain.md (The
+    # database image).
+    ignore:
+      - dependency-name: postgres
+        update-types: ['version-update:semver-major']
