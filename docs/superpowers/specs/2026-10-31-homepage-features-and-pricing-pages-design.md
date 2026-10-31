@@ -238,7 +238,7 @@ are not put in the URL.
 1. Shared header; trail **fair.yoga / Donation-based classes**.
 2. H1: ***Donation-based yoga classes**, offered freely.* Lead: **Offer your teaching without a price, and let students give what they can, if they can. fair.yoga quietly takes care of the practical part.**
 3. **How it works** band. Heading: **Offered freely, received with thanks.** Four step cards (numbered circles, as the landing's five steps):
-   1. **Offer the class** — When you set up a class, or a recurring one, choose By donation. Students book, join the waitlist and walk in just as they would for any other class.
+   1. **Offer the class** — Choose By donation for a single class or a recurring one. Students book as they would for any other class.
    2. **Everyone is welcome** — No price appears anywhere, so nobody has to weigh whether they can afford to come.
    3. **An open hand, once** — After class, everyone who came receives one quiet invitation to give, if and as they wish.
    4. **Receive with thanks** — Note what came in for the class as a whole, for your own records.
