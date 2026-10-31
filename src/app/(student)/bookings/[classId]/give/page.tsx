@@ -6,7 +6,7 @@ import { redirectNonStudent } from '@/lib/student-guard';
 import { Icon } from '@/components/ui/icon';
 import { MethodChooser } from '@/components/student/method-chooser';
 import { canSeeGivePage } from '@/lib/donation-prompt';
-import { formatDayHeader } from '@/lib/format';
+import { GIVE_PAGE_BACK, GIVE_PAGE_HEADING, giveCaption } from '@/lib/give-page-copy';
 import {
   PAYMENTS_PAUSED_COPY,
   paymentMethodsForTeacher,
@@ -66,11 +66,11 @@ export default async function GivePage({ params }: { params: Promise<{ classId: 
         className="inline-flex items-center gap-1.5 type-label text-teal no-underline mb-2"
       >
         <Icon name="arrow-left" size={18} />
-        Your bookings
+        {GIVE_PAGE_BACK}
       </Link>
-      <h1 className="type-title">Thank you for coming.</h1>
+      <h1 className="type-title">{GIVE_PAGE_HEADING}</h1>
       <p className="type-caption mb-4">
-        {`${entry.classType} · ${formatDayHeader(entry.date)} · with ${teacher.firstName} ${teacher.lastName}`}
+        {giveCaption(entry, teacher)}
       </p>
       {answer.kind === 'paused' ? (
         <p className="type-body mb-6">{PAYMENTS_PAUSED_COPY}</p>

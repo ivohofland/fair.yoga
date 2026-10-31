@@ -17,6 +17,7 @@ type FallbackKind = 'neutral' | 'none';
 const FALLBACK_ROUTES: Readonly<Record<string, FallbackKind>> = {
   '': 'none',
   'sliding-scale': 'none',
+  'donation-based': 'none',
   '(admin)/admin/(gated)': 'none',
   '(admin)/admin/sign-in': 'none',
   '(public)/[slug]': 'none',
