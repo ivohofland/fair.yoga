@@ -253,7 +253,7 @@ Key design decisions:
 
 Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be good with numbers. The v2 design system lives in `docs/design_handoff_fairyoga/`; tokens are in `src/app/globals.css` (Tailwind v4 `@theme`, no tailwind.config).
 
-- **Mobile-first** — teachers use this on their phone between and during classes; 640px content column, applied by each route group's layout (`ContentColumn`) — the landing page at `/` sits outside every group and lays out its own 960px one
+- **Mobile-first** — teachers use this on their phone between and during classes; 640px content column, applied by each route group's layout (`ContentColumn`) — the marketing pages (`/`, `/sliding-scale`, `/donation-based`) sit outside every group and lay out their own 960px one
 - **Essentially no motion** — no transitions or hover lift; hover/press are defined color steps
 - **Depth without shadows** — sand-soft cards (radius 16) + 1px border on cream; the only shadow is reserved for sheets/modals
 - **Cards for classes, rows for directories** — class cards carry the signature registration progress bar (danger→teal fill, ink tick at minimum); directories use ≥56px chevron rows
@@ -261,7 +261,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 - **Icons narrowly** — Lucide-style line icons (stroke 1.75, inlined, no dependency) in the tab bar, chevrons, and checkmarks; words come first everywhere else
 - **No gamification** — no streaks, no reward badges, no monthly summaries, no loyalty messaging
 - **No attention economy patterns** — this is a tool, not an engagement platform
-- **Cursor pointer on all interactive elements** — all `<a>` and `<button>` elements get `cursor: pointer` globally via CSS. No need to add `cursor-pointer` class individually.
+- **Cursor pointer on all interactive elements** — all `<a>`, `<button>` and `<summary>` elements get `cursor: pointer` globally via CSS. No need to add `cursor-pointer` class individually.
 - Typography: six styles only (`type-display/title/subtitle/body/label/caption/number`) — Georgia bold headings (teal/ink), system sans body, tabular teal numbers
 - Colors: teal (#1A5653) primary + success, cream (#F7F4EF) page bg, sand-soft (#F0E9DC) surfaces, brown (#6B5B4E) text, gold (#C4A96A) attention, danger (#B85C5C) outlines/text only — never pure white, no gradients
 
@@ -279,7 +279,7 @@ Calm utility, warm minimalism — a thoughtful yoga teacher who happens to be go
 ## Open Questions
 
 - Level 2 failed payment retry policy (parked)
-- Tier labels — the class-form pricing preview and the landing demo (`PricingPreviewResult`) show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the class-detail price tables (`PricingPreview`, `PricingBreakdown`) still read "Tier N". Whether those follow, and the labels' wording, are still the UX copy phase's
+- Tier labels — the class-form pricing preview and the `/sliding-scale` calculator (`PricingPreviewResult`) show the number with its `TIER_INFO` label ("1 · Getting by") since #773; the class-detail price tables (`PricingPreview`, `PricingBreakdown`) still read "Tier N". Whether those follow, and the labels' wording, are still the UX copy phase's
 - Tier adjustment framing — deferred to UX copy phase
 - GDPR/legal review — parked for proper legal consultation
 
