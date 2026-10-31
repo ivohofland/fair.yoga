@@ -10,14 +10,13 @@ import { Icon } from '@/components/ui/icon';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Avatar } from '@/components/ui/avatar';
 import { formatDayHeader } from '@/lib/format';
-import { publicClassLocation, locationLabel } from '@/lib/class-location';
-import { startOfLocalDay } from '@/lib/timezone';
+import { locationLabel } from '@/lib/class-location';
 import { timeToHHmm } from '@/lib/time-of-day';
 import { ClassPriceLine } from '@/components/booking/price-range';
 import { PricingExplainer } from '@/components/booking/pricing-explainer';
 import { readIncomeTier } from '@/lib/tiers.server';
 import { resolvePriceLine, type PriceLineViewer } from '@/lib/price-line';
-import { CHARGED_STATUSES } from '@/services/class-lifecycle';
+import { listPublicSchedule, type PublicClassEntry } from '@/services/public-schedule';
 import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
@@ -78,35 +77,16 @@ export default async function TeacherBookingPage({
   });
   if (!isShown(teacher)) notFound();
 
-  // The teacher's calendar today, not UTC's. `CalendarEntry.date` is
-  // `@db.Date`, so
-  // this compares a calendar date to a calendar date; a UTC start-of-day
-  // would hide a class still hours from starting for any teacher west of UTC,
-  // and is the boundary #86's archive rule is written to agree with.
-  const today = startOfLocalDay(new Date(), teacher.defaultTimezone);
-
-  // `cancelledAt: null` beside `status: 'open'` (#327): a cancelled class
-  // keeps its `open` status, and this page is the public booking list — it is
-  // the one place a cancelled class must never appear. A private class (#910)
-  // stays off it too: it is booked by its own link.
-  const classes = await prisma.class.findMany({
-    where: {
-      status: 'open',
-      isPrivate: false,
-      calendarEntry: { teacherId: teacher.id, cancelledAt: null, date: { gte: today } },
-    },
-    orderBy: [{ calendarEntry: { date: 'asc' } }, { calendarEntry: { startTime: 'asc' } }],
-    // A public page: the video link is not even read (#911).
-    omit: { videoUrl: true },
-    include: {
-      calendarEntry: true,
-      teacherRoom: { include: { room: true } },
-      registrations: {
-        where: { status: { in: [...CHARGED_STATUSES] } },
-        select: { id: true, tierAtBooking: true, status: true, studentId: true },
-      },
-    },
+  // The service decides what is bookable: open, public, not cancelled, and not
+  // yet started, by the teacher's calendar rather than UTC's.
+  const schedule = await listPublicSchedule(prisma, {
+    teacherId: teacher.id,
+    timeZone: teacher.defaultTimezone,
+    now: new Date(),
+    mode: { kind: 'bookable', weeks: null },
+    includeStudio: false,
   });
+  const classes = schedule.filter((e): e is PublicClassEntry => e.kind === 'class');
 
   // A signed-in student's own state on these classes — everyone else
   // sees the cards unchanged.
@@ -174,8 +154,8 @@ export default async function TeacherBookingPage({
       ) : (
         <div className="flex flex-col gap-3">
           {classes.map((cls) => {
-            const activeCount = cls.registrations.filter((r) => r.status !== 'late_cancel').length;
-            const isFull = activeCount >= cls.maxStudents;
+            const activeCount = cls.economics.registrations.filter((r) => r.status !== 'late_cancel').length;
+            const isFull = activeCount >= cls.economics.maxStudents;
 
             return (
               <Link
@@ -185,24 +165,24 @@ export default async function TeacherBookingPage({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="type-label text-ink">
-                    {formatDayHeader(cls.calendarEntry.date)} · {timeToHHmm(cls.calendarEntry.startTime)}
+                    {formatDayHeader(cls.date)} · {timeToHHmm(cls.startTime)}
                   </span>
                   <StatusBadge variant={isFull ? 'full' : 'registering'}>
                     {isFull ? 'Full — join the waitlist' : 'Open'}
                   </StatusBadge>
                 </div>
                 <div className="flex items-center gap-3 mt-1">
-                  <span className="type-subtitle flex-1 min-w-0">{cls.calendarEntry.classType}</span>
+                  <span className="type-subtitle flex-1 min-w-0">{cls.classType}</span>
                   <Icon name="chevron-right" size={20} className="text-brown-light" />
                 </div>
                 <p className="type-caption mt-0.5">
-                  {locationLabel(publicClassLocation(cls))}
-                  {' · '}{cls.calendarEntry.durationMinutes} min
+                  {locationLabel(cls.location)}
+                  {' · '}{cls.durationMinutes} min
                 </p>
                 <RegistrationProgress
                   registered={activeCount}
-                  min={cls.minStudents}
-                  max={cls.maxStudents}
+                  min={cls.economics.minStudents}
+                  max={cls.economics.maxStudents}
                   className="mt-3"
                 />
                 {(bookedClassIds.has(cls.id) || waitingClassIds.has(cls.id)) && (
@@ -213,16 +193,16 @@ export default async function TeacherBookingPage({
                 <ClassPriceLine
                   line={resolvePriceLine({
                     pricingMode: cls.pricingMode,
-                    roomCost: Number(cls.roomCost),
-                    minRate: Number(cls.minRate),
-                    targetRate: Number(cls.targetRate),
-                    minStudents: cls.minStudents,
-                    maxStudents: cls.maxStudents,
-                    vatPercent: Number(cls.vatPercent),
-                    registrations: cls.registrations,
+                    roomCost: cls.economics.roomCost,
+                    minRate: cls.economics.minRate,
+                    targetRate: cls.economics.targetRate,
+                    minStudents: cls.economics.minStudents,
+                    maxStudents: cls.economics.maxStudents,
+                    vatPercent: cls.economics.vatPercent,
+                    registrations: cls.economics.registrations,
                     viewer,
                   })}
-                  currency={cls.currency}
+                  currency={cls.economics.currency}
                   className={bookedClassIds.has(cls.id) || waitingClassIds.has(cls.id) ? 'mt-1' : 'mt-2'}
                 />
               </Link>
