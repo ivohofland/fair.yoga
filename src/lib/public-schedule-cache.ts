@@ -4,7 +4,7 @@ export const PUBLIC_SCHEDULE_CACHE_CAPACITY = 2_000;
 type CacheEntry = { expiresAt: number; value: Promise<unknown> };
 
 declare global {
-  // The route handlers for the JSON and the feed are separate bundle entries; one cache is what keeps a minute a minute.
+  // Several route bundles import this module, so they must share one cache.
   var __fairYogaPublicScheduleCache: Map<string, CacheEntry> | undefined;
 }
 

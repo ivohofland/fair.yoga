@@ -112,12 +112,13 @@ describe('GET /feed/[key].ics', () => {
     expect(ev).toContain('STATUS:CONFIRMED');
   });
 
-  it('never carries a private class or a video link', async () => {
+  it('never carries a private class or a video link, and names an online class only as Online', async () => {
     const body = await (await feed(`${key}.ics`)).text();
     expect(body).not.toContain(PRIVATE);
     expect(body).not.toContain(VIDEO);
     expect(eventFor(body, ONLINE)).toBeDefined();
-    expect(eventFor(body, ONLINE)).not.toContain('LOCATION');
+    expect(eventFor(body, ONLINE)).toContain('LOCATION:Online');
+    expect(eventFor(body, ONLINE)).not.toContain(VIDEO);
   });
 
   it('does not apply the distinct-key limit: twenty different keys answer 404, not 429', async () => {

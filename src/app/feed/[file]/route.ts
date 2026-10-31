@@ -32,7 +32,7 @@ function toEvent(e: PublicScheduleEntry, pageSlug: string, origin: string): IcsE
   return {
     ...base,
     location:
-      e.location.format === 'online' ? null : formatRoomLocation(e.location.room.roomName, e.location.room.venueName),
+      e.location.format === 'online' ? 'Online' : formatRoomLocation(e.location.room.roomName, e.location.room.venueName),
     description: PRICING_LABEL[e.pricingMode],
     url: `${origin}/${pageSlug}/book/${e.id}`,
   };

@@ -229,14 +229,18 @@ function schemeOf(value: string | null): 'light' | 'dark' | 'auto' {
 /**
  * Registers `<fair-yoga-schedule>` against `origin`. A second call, from the
  * script included twice on one page, finds the element registered and
- * returns.
+ * returns, so `cache` only takes effect for the first call; an element can
+ * also set its own `cache` property before it connects, which always wins.
+ * `cache` is passed to `fetch` as given; unset, the browser's default applies.
  */
-export function defineScheduleElement(opts: { origin: string }): void {
+export function defineScheduleElement(opts: { origin: string; cache?: RequestCache }): void {
   if (customElements.get(ELEMENT_NAME)) return;
   const origin = opts.origin;
 
   class FairYogaSchedule extends HTMLElement {
     private started = false;
+    /** Read at fetch time, so a preview can set it after the element is defined. */
+    cache: RequestCache | undefined = opts.cache;
 
     connectedCallback(): void {
       if (this.started) return;
@@ -253,6 +257,7 @@ export function defineScheduleElement(opts: { origin: string }): void {
         const res = await fetch(`${origin}/api/public/v1/schedule/${encoded}`, {
           credentials: 'omit',
           referrerPolicy: 'no-referrer',
+          ...(this.cache === undefined ? {} : { cache: this.cache }),
         });
         if (!res.ok) return;
         data = (await res.json()) as WidgetScheduleJson;

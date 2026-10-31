@@ -87,8 +87,15 @@ function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme
     const node = host.current;
     if (node === null) return;
     // The app's own origin, so the preview's fetch is always same-origin whatever origin the snippet carries.
-    defineScheduleElement({ origin: window.location.origin });
-    const element = document.createElement('fair-yoga-schedule');
+    // The JSON answer is browser-cacheable, so the preview bypasses the HTTP cache to show a settings change at once.
+    // The property is what takes effect when the element was already defined by an earlier call.
+    defineScheduleElement({ origin: window.location.origin, cache: 'no-store' });
+    const element: HTMLElement & { cache?: RequestCache } = document.createElement('fair-yoga-schedule');
+    element.cache = 'no-store';
+    const fallback = document.createElement('p');
+    fallback.className = 'type-caption';
+    fallback.textContent = 'The preview is unavailable right now. Try again in a minute.';
+    element.append(fallback);
     element.setAttribute('key', shareKey);
     element.setAttribute('theme', theme);
     if (theme === 'themed') element.setAttribute('color-scheme', colorScheme);
@@ -96,7 +103,7 @@ function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme
     return () => node.replaceChildren();
   }, [shareKey, theme, colorScheme]);
 
-  // These hex values mirror the widget's own light and dark surfaces (`src/embed/schedule-widget.ts`).
+  // Host-page backgrounds the preview sits on, as in `docs/superpowers/specs/2026-10-30-share-your-schedule-mockup.html`; not the widget's own surfaces.
   const surface =
     theme === 'unstyled'
       ? 'bg-cream'

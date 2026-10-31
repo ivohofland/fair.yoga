@@ -301,6 +301,24 @@ describe('<fair-yoga-schedule>', () => {
     expect(feed?.getAttribute('href')).toBe('webcal://fair.example/feed/k123.ics');
   });
 
+  it('fetches without a cache option unless the element sets one', async () => {
+    fetchMock.mockResolvedValue(ok(DATA));
+    const el = mount({ key: 'k123' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![1]).not.toHaveProperty('cache');
+    await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
+  });
+
+  it('passes an element-level cache option to fetch', async () => {
+    fetchMock.mockResolvedValue(ok(DATA));
+    const el = document.createElement('fair-yoga-schedule') as HTMLElement & { cache?: RequestCache };
+    el.setAttribute('key', 'k124');
+    el.cache = 'no-store';
+    document.body.append(el);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ cache: 'no-store' });
+  });
+
   it('sets no cookie and writes no storage', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
     const el = mount({ key: 'k123' });

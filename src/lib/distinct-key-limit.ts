@@ -12,7 +12,7 @@ declare global {
 const limits = (globalThis.__fairYogaDistinctKeyLimits ??= new Map<string, Seen>());
 
 /**
- * Whether `ip` may look at `key`: at most ten different keys per hour. A key
+ * Whether `ip` may look at `key`: at most `MAX_DISTINCT_KEYS` different keys per `WINDOW_MS`. A key
  * the address already looked at in the window never counts again, and a refused
  * key is not recorded, so a scraper cannot spend the budget by being refused.
  */
