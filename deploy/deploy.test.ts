@@ -53,6 +53,16 @@ function commitToOrigin(label: string): string {
   return git(work, 'rev-parse', 'HEAD');
 }
 
+/** Commits a compose file whose `db` service runs `image` to origin's main and returns the new SHA. */
+function commitComposeToOrigin(image: string): string {
+  const work = path.join(root, 'work');
+  fs.writeFileSync(path.join(work, COMPOSE_FILE), `services:\n  db:\n    image: ${image}\n`);
+  git(work, 'add', COMPOSE_FILE);
+  git(work, 'commit', '-q', '-m', image);
+  git(work, 'push', '-q', 'origin', 'main');
+  return git(work, 'rev-parse', 'HEAD');
+}
+
 function scriptEnv(input: { sshCommand?: string; env?: Record<string, string> }): NodeJS.ProcessEnv {
   return {
     NODE_ENV: 'test',
@@ -220,6 +230,31 @@ describe('deploy/deploy.sh', () => {
     expect(result.stderr).toContain('migrate');
     expect(result.stderr).toContain('no container was replaced');
     expect(recorded()).toBe(before);
+  });
+
+  it('refuses a commit that changes the postgres major, before any docker call, putting the checkout back', () => {
+    const v16 = commitComposeToOrigin(`postgres:16-alpine@sha256:${'a'.repeat(64)}`);
+    expect(run({ sshCommand: v16 }).status).toBe(0);
+    fs.rmSync(callLog);
+    const v18 = commitComposeToOrigin(`postgres:18-alpine@sha256:${'b'.repeat(64)}`);
+
+    const result = run({ sshCommand: v18 });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('postgres 16 -> 18');
+    expect(result.stderr).toContain('#949');
+    expect(head()).toBe(v16);
+    expect(recorded()).toBe(v16);
+    expect(calls().filter((c) => c.startsWith('docker'))).toEqual([]);
+  });
+
+  it('deploys a postgres digest change within the same major', () => {
+    const before = commitComposeToOrigin(`postgres:16-alpine@sha256:${'a'.repeat(64)}`);
+    expect(run({ sshCommand: before }).status).toBe(0);
+    const after = commitComposeToOrigin(`postgres:16-alpine@sha256:${'c'.repeat(64)}`);
+
+    const result = run({ sshCommand: after });
+    expect(result.status, result.stderr).toBe(0);
+    expect(recorded()).toBe(after);
   });
 
   it('names both commits and the rollback when replacing the containers fails', () => {

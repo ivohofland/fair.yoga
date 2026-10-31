@@ -1060,6 +1060,16 @@ Non-blocking for the same reason the package manager pin check above is:
 a registry hiccup, or a genuine upstream rebuild of `16-alpine`, is a
 reason to look, not a reason to stop an unrelated PR.
 
+**Majors are not Dependabot's to propose.** The `docker-compose` entry ignores
+`version-update:semver-major` for `postgres`, the same rule and the same tag
+reduction as `node` above (`16-alpine` has the segments `[16]`), so digest and
+same-major updates still arrive monthly. A Postgres major cannot read the
+previous major's data directory, so it is a data migration, not an image
+bump. #604, Dependabot's `16-alpine` → `18-alpine` PR, would have stopped the
+production database on deploy (measured 2026-10-31; the findings are in #948).
+`deploy/deploy.sh` refuses a commit that changes the major in
+`docker-compose.prod.yml` as a second line, and the upgrade itself is #949.
+
 ### The package manager binary
 
 Checked, not gated. `scripts/check-package-manager-freshness.ts` (`pnpm run

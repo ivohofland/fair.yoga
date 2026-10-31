@@ -97,6 +97,17 @@ trap 'exit 130' INT
 trap '' PIPE
 git -c advice.detachedHead=false checkout --quiet --detach "$SHA"
 
+# A postgres major cannot read the previous major's data directory, and `run`
+# below already recreates `db` on a changed image, so a major change stops the
+# database before anything here could notice. It is refused while nothing has
+# been touched. A compose file without a postgres image on either side passes.
+pg_major() { grep -oE 'image:[[:space:]]*postgres:[0-9]+' | head -n1 | grep -oE '[0-9]+$' || true; }
+OLD_PG="$({ git show "$PREVIOUS:$COMPOSE_FILE" 2>/dev/null || true; } | pg_major)"
+NEW_PG="$({ cat "$COMPOSE_FILE" 2>/dev/null || true; } | pg_major)"
+if [[ -n "$OLD_PG" && -n "$NEW_PG" && "$OLD_PG" != "$NEW_PG" ]]; then
+  fail "postgres $OLD_PG -> $NEW_PG is a data migration, not a deploy; upgrade by hand (#949)"
+fi
+
 if ! docker compose -f "$COMPOSE_FILE" build; then
   fail "build failed; no container was replaced"
 fi
