@@ -134,7 +134,7 @@ export default async function LandingPage() {
             people who’d benefit most quietly drift away. Add booking fees and platform commissions on top, and
             it’s you and your students who end up short.
           </p>
-          <p className="type-body text-ink">
+          <p className="type-subtitle">
             Nobody’s doing it wrong. The numbers were just never built to be fair to both sides at once.
           </p>
         </div>
