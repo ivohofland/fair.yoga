@@ -154,7 +154,7 @@ export default async function DonationBasedPage() {
         </p>
         <div className="max-w-[680px] flex flex-col">
           {QUESTIONS.map((item, i) => (
-            <details key={item.q} open={i === 0} className="group border-t border-border last:border-b">
+            <details key={item.q} name="faq" open={i === 0} className="group border-t border-border last:border-b">
               <summary className="flex items-center justify-between gap-4 min-h-14 py-3 font-semibold text-ink list-none [&::-webkit-details-marker]:hidden">
                 {item.q}
                 <Icon name="chevron-right" size={20} className="text-teal shrink-0 group-open:rotate-90" />

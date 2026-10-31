@@ -83,6 +83,10 @@ describe('/sliding-scale page', () => {
     expect(items).toHaveLength(4);
     expect(items[0]?.hasAttribute('open')).toBe(true);
     expect(items[1]?.hasAttribute('open')).toBe(false);
+    // One shared name: opening a question closes the others.
+    const names = new Set([...items].map((d) => d.getAttribute('name')));
+    expect(names.size).toBe(1);
+    expect([...names][0]).toBeTruthy();
     expect(document.body.textContent).toContain('a choice that’s off by one makes only a small difference.');
     // A flat rate is the teacher's income; students still pay by tier.
     expect(document.body.textContent).toContain(
