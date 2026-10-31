@@ -244,7 +244,7 @@ describe('public/sw.js', () => {
     listeners.push!(e);
     await e.done();
     expect(self.registration.showNotification).toHaveBeenCalledTimes(1);
-    expect(self.registration.showNotification).toHaveBeenCalledWith('fair.yoga', { body: 'You have a new update.', data: { url: '/' } });
+    expect(self.registration.showNotification).toHaveBeenCalledWith('fair.yoga', { body: 'You have a new update.', data: { url: '/start' } });
   });
 
   it('focuses an open window, then navigates it, on tap', async () => {
@@ -411,7 +411,7 @@ describe('public/sw.js', () => {
     const e = pushEvent({ id: 'n4', title: 'Title', body: 'Body', url: 'https://evil.example/' } satisfies PushPayload);
     listeners.push!(e);
     await e.done();
-    expect(self.registration.showNotification).toHaveBeenCalledWith('Title', expect.objectContaining({ data: { url: '/' } }));
+    expect(self.registration.showNotification).toHaveBeenCalledWith('Title', expect.objectContaining({ data: { url: '/start' } }));
   });
 
   it.each([
@@ -427,7 +427,7 @@ describe('public/sw.js', () => {
     const e = { ...extendable(), notification: { close: vi.fn(), data: { url: maliciousUrl } } };
     listeners.notificationclick!(e);
     await e.done();
-    expect(self.clients.openWindow).toHaveBeenCalledWith('/');
+    expect(self.clients.openWindow).toHaveBeenCalledWith('/start');
   });
 });
 
@@ -844,7 +844,8 @@ describe('offline', () => {
   });
 
   describe('launch urls', () => {
-    it.each(['/', '/start'])('sends %s offline to the stored schedule', async (pathname) => {
+    it('sends /start offline to the stored schedule', async () => {
+      const pathname = '/start';
       const { listeners, caches } = loadWorker([]);
       seedPage(caches, '/schedule');
       const res = await navigate(listeners, pathname);

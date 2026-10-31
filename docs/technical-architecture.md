@@ -793,7 +793,7 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 
 **What is stored, and why only that.** Three path shapes: `/schedule`, `/class/<id>` and `/studio-class/<id>` (`<id>` not `new`, nothing deeper). They are what a teacher needs at the door, and they carry names only (`studentNameSelect`, `src/lib/student-visibility.ts`), never contact data, which lives on `/students/[id]` and is never stored. Other same-origin navigations go to the network and, when that fails, get the offline page (never stored); `/_next/static/*` is the only other request it answers. RSC fetches, API routes, the SSE stream and cross-origin requests are passed through untouched.
 
-**Network first, with patience.** The network is asked first. The stored copy is served when the request fails, when it answers 502, 503 or 504 (a deploy or an outage), or when 8 s pass with no response and a stored copy exists; a slow response that does arrive still replaces the stored copy. `/` and `/start` (the installed app's launch URL and both detail pages' back link) redirect to the stored schedule when they fail; with none, any failed navigation gets the offline page, an inline "You're offline" HTML string inside `sw.js`, so it cannot fail to install.
+**Network first, with patience.** The network is asked first. The stored copy is served when the request fails, when it answers 502, 503 or 504 (a deploy or an outage), or when 8 s pass with no response and a stored copy exists; a slow response that does arrive still replaces the stored copy. `/start` (the installed app's launch URL and both detail pages' back link) redirects to the stored schedule when it fails; `/` is the public homepage, not a door, so a failed `/` gets the offline page like any other uncached page, and a notification with no usable URL opens `/start`; with none, any failed navigation gets the offline page, an inline "You're offline" HTML string inside `sw.js`, so it cannot fail to install.
 
 **Three caches** (`fy-pages-v1`, `fy-static-v1`, `fy-meta-v1`):
 
@@ -1007,11 +1007,14 @@ person is reading their mail.
 `/start` (`src/app/(public)/start/page.tsx`) is the installed app's
 `manifest.ts` `start_url`. It routes by profile — a teacher to `/schedule`, a
 student-only account to `/bookings`, a two-hat account to the teacher home,
-and a signed-out visitor to `/login` rather than the public pitch `/` shows —
+and a signed-out visitor to `/login` rather than the public homepage —
 and it stays outside `SIGNED_IN_SECTIONS` in `src/proxy.ts` deliberately: the
 proxy would turn the signed-out case into `/login?redirect=/start`, trading
 `/start`'s own per-profile routing for a fixed redirect target nobody asked
 for. (The proxy's matcher does cover it, since every page needs a CSP nonce.)
+`/` is the public homepage for everyone, signed in or not, and nothing
+sends a visitor there as the app's door: `/start` is the only one, in the
+manifest and in the service worker alike.
 Pinned by `tests/integration/pwa.test.ts`.
 
 ### Content Security Policy

@@ -273,10 +273,15 @@ test.describe('Offline schedule', () => {
     await expect(cancel).toBeDisabled();
     await expect(cancel).toHaveCSS('opacity', '0.5');
 
-    await page.goto('/');
+    await page.goto('/start');
     await expect(page).toHaveURL(/\/schedule$/);
     await expect(page.getByRole('status').filter({ hasText: 'Offline' })).toBeVisible();
     await expect(page.getByText('Offline Vinyasa').first()).toBeVisible();
+
+    // The public homepage is not the app's door: offline it gets the generic offline page.
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("This page wasn't saved on this device")).toBeVisible();
 
     await page.goto('/students');
     await expect(page.getByText("You're offline")).toBeVisible();
