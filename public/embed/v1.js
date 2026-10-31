@@ -3,8 +3,15 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
 const START_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const CSS = `
+const LIMIT_PATTERN = /^[1-9]\d*$/;
+const LOAD_EVENT = 'fair-yoga-schedule:load';
+const ERROR_EVENT = 'fair-yoga-schedule:error';
+const SR_ONLY = 'position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;';
+const HOST_CSS = `
 :host { display: block; }
+:host([data-state="loading"]) { min-height: 6rem; }
+`;
+const CSS = `${HOST_CSS}
 .fy {
   --fy-a: var(--fy-accent, #1A5653);
   --fy-ink: #2D2D2D; --fy-muted: #71645A; --fy-card: #F0E9DC; --fy-line: #D4C9B8;
@@ -29,7 +36,7 @@ const CSS = `
 .fy-day:first-child .fy-day-heading { margin-top: 0; }
 .fy-class { display: flex; align-items: center; gap: 12px; background: var(--fy-card); border: 1px solid var(--fy-line); border-radius: 14px; padding: 12px 14px; margin-bottom: 8px; }
 .fy-class.fy-studio { background: transparent; border-style: dashed; }
-.fy-time { font-variant-numeric: tabular-nums; color: var(--fy-a); font-weight: 600; width: 46px; flex: none; }
+.fy-time { font-variant-numeric: tabular-nums; color: var(--fy-a); font-weight: 600; white-space: nowrap; flex: none; }
 .fy-main { flex: 1; min-width: 0; }
 .fy-type { display: block; color: var(--fy-ink); font-weight: 600; overflow-wrap: anywhere; }
 .fy-meta { display: block; font-size: 12.5px; color: var(--fy-muted); overflow-wrap: anywhere; }
@@ -43,7 +50,7 @@ const CSS = `
 .fy-credit { text-decoration: none; }
 .fy-wordmark { font-family: Georgia, serif; font-size: 12.5px; }
 .fy-dot { color: var(--fy-a); font-size: 15px; font-weight: bold; }
-.fy-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.fy-sr { ${SR_ONLY} }
 `;
 function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -75,13 +82,25 @@ function newTabLink(href, className) {
     return a;
 }
 function appendNewTabNote(a) {
-    a.append(el('span', 'fy-sr fy-new-tab', ' (opens in a new tab)'));
+    const note = el('span', 'fy-sr fy-new-tab', ' (opens in a new tab)');
+    note.style.cssText = SR_ONLY;
+    a.append(note);
 }
 function dayHeading(start) {
     const [y, m, d] = start.slice(0, 10).split('-').map(Number);
     const date = new Date(Date.UTC(y, m - 1, d));
     return `${WEEKDAYS[date.getUTCDay()]} ${d} ${MONTHS[m - 1]}`;
 }
+function timeRange(c) {
+    const start = c.start.slice(11, 16);
+    const minutes = Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5)) + c.durationMinutes;
+    if (!Number.isFinite(minutes))
+        throw new Error('Malformed duration in schedule data');
+    const end = ((Math.round(minutes) % 1440) + 1440) % 1440;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${start}–${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+}
+const PRICING_HOOK = { tiered: 'income-based', donation: 'pay-what-you-can' };
 function metaLine(c) {
     const parts = [];
     if (c.location.format === 'online')
@@ -97,7 +116,18 @@ function metaLine(c) {
 }
 function classRow(c, origin) {
     const li = el('li', c.kind === 'studio' ? 'fy-class fy-studio' : 'fy-class');
-    li.append(el('span', 'fy-time', c.start.slice(11, 16)), ' ');
+    li.setAttribute('data-kind', c.kind);
+    if (c.kind === 'class') {
+        if (c.availability !== null)
+            li.setAttribute('data-availability', c.availability);
+        if (c.pricing !== null)
+            li.setAttribute('data-pricing', PRICING_HOOK[c.pricing]);
+    }
+    const time = el('time', undefined, timeRange(c));
+    time.dateTime = c.start;
+    const timeCell = el('span', 'fy-time');
+    timeCell.append(time);
+    li.append(timeCell, ' ');
     const main = el('span', 'fy-main');
     main.append(el('span', 'fy-type', c.classType), ' ', el('span', 'fy-meta', metaLine(c)));
     li.append(main);
@@ -136,6 +166,9 @@ export function renderSchedule(root, data, opts) {
         frame.append(style, wrap);
         container = wrap;
     }
+    const limit = opts.limit;
+    const capped = limit !== undefined && Number.isInteger(limit) && limit > 0;
+    const shown = capped ? data.classes.slice(0, limit) : data.classes;
     if (data.classes.length === 0) {
         container.append(el('p', 'fy-empty', 'No upcoming classes right now.'));
     }
@@ -145,7 +178,7 @@ export function renderSchedule(root, data, opts) {
         if (themed)
             schedule.setAttribute('role', 'list');
         let day = null;
-        for (const c of data.classes) {
+        for (const c of shown) {
             if (!START_PATTERN.test(c.start))
                 throw new Error('Malformed start in schedule data');
             const date = c.start.slice(0, 10);
@@ -164,9 +197,16 @@ export function renderSchedule(root, data, opts) {
     }
     container.append(footer(opts));
     root.replaceChildren(frame);
+    return shown.length;
 }
 function schemeOf(value) {
     return value === 'dark' || value === 'auto' ? value : 'light';
+}
+function limitOf(value) {
+    return value !== null && LIMIT_PATTERN.test(value) ? Number(value) : undefined;
+}
+function validKey(value) {
+    return value !== null && KEY_PATTERN.test(value);
 }
 export function defineScheduleElement(opts) {
     if (customElements.get(ELEMENT_NAME))
@@ -176,54 +216,111 @@ export function defineScheduleElement(opts) {
         constructor() {
             super(...arguments);
             this.started = false;
+            this.key = null;
+            this.loads = 0;
             this.cache = opts.cache;
         }
         connectedCallback() {
-            if (this.started)
-                return;
             const key = this.getAttribute('schedule-key');
-            if (key === null || !KEY_PATTERN.test(key))
-                return;
-            this.started = true;
-            void this.load(key);
+            if (!this.started) {
+                this.started = true;
+                this.begin(key);
+            }
+            else if (validKey(key) && key !== this.key) {
+                this.begin(key);
+            }
         }
-        async load(key) {
+        attributeChangedCallback(_name, _old, value) {
+            if (!this.started || !this.isConnected)
+                return;
+            if (validKey(value) && value !== this.key)
+                this.begin(value);
+        }
+        begin(key) {
+            const load = ++this.loads;
+            this.key = key;
+            if (!validKey(key)) {
+                this.setAttribute('data-state', 'error');
+                queueMicrotask(() => {
+                    if (load === this.loads)
+                        this.fail({ reason: 'invalid-key' });
+                });
+                return;
+            }
+            this.setAttribute('data-state', 'loading');
+            void this.load(key, load);
+        }
+        fail(detail) {
+            this.setAttribute('data-state', 'error');
+            this.dispatchEvent(new CustomEvent(ERROR_EVENT, { detail, bubbles: true, composed: true }));
+        }
+        async load(key, load) {
+            const themed = this.getAttribute('theme') !== 'unstyled';
+            if (themed && this.shadowRoot === null) {
+                const style = el('style');
+                style.textContent = HOST_CSS;
+                this.attachShadow({ mode: 'open' }).replaceChildren(style, el('slot'));
+            }
+            else if (!themed && this.shadowRoot !== null) {
+                this.shadowRoot.replaceChildren(el('slot'));
+            }
             const encoded = encodeURIComponent(key);
             let data;
             try {
-                const res = await fetch(`${origin}/api/public/v1/schedule/${encoded}`, {
-                    credentials: 'omit',
-                    referrerPolicy: 'no-referrer',
-                    ...(this.cache === undefined ? {} : { cache: this.cache }),
-                });
-                if (!res.ok)
+                let res;
+                try {
+                    res = await fetch(`${origin}/api/public/v1/schedule/${encoded}`, {
+                        credentials: 'omit',
+                        referrerPolicy: 'no-referrer',
+                        ...(this.cache === undefined ? {} : { cache: this.cache }),
+                    });
+                }
+                catch {
+                    if (load === this.loads)
+                        this.fail({ reason: 'network' });
                     return;
+                }
+                if (load !== this.loads)
+                    return;
+                if (!res.ok) {
+                    this.fail({ reason: 'http', status: res.status });
+                    return;
+                }
                 data = (await res.json());
             }
             catch {
+                if (load === this.loads)
+                    this.fail({ reason: 'data' });
                 return;
             }
-            const themed = this.getAttribute('theme') !== 'unstyled';
+            if (load !== this.loads)
+                return;
             const renderOpts = {
                 theme: themed ? 'themed' : 'unstyled',
                 feedUrl: `webcal://${new URL(origin).host}/feed/${encoded}.ics`,
                 origin,
                 colorScheme: schemeOf(this.getAttribute('color-scheme')),
+                limit: limitOf(this.getAttribute('limit')),
             };
             const target = themed ? document.createElement('div') : this;
+            let count;
             try {
-                renderSchedule(target, data, renderOpts);
+                count = renderSchedule(target, data, renderOpts);
             }
             catch {
+                this.fail({ reason: 'data' });
                 return;
             }
-            if (!themed)
-                return;
-            const shadow = this.shadowRoot ?? this.attachShadow({ mode: 'open' });
-            shadow.replaceChildren(...target.childNodes);
-            this.replaceChildren();
+            if (themed && this.shadowRoot !== null) {
+                this.shadowRoot.replaceChildren(...target.childNodes);
+                this.replaceChildren();
+            }
+            this.setAttribute('data-state', 'ready');
+            const detail = { count };
+            this.dispatchEvent(new CustomEvent(LOAD_EVENT, { detail, bubbles: true, composed: true }));
         }
     }
+    FairYogaSchedule.observedAttributes = ['schedule-key'];
     customElements.define(ELEMENT_NAME, FairYogaSchedule);
 }
 defineScheduleElement({ origin: new URL(import.meta.url).origin });

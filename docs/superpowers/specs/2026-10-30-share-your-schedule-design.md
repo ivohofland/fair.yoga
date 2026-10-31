@@ -281,7 +281,8 @@ The numbers above are starting values, not decided limits.
   fair.yoga origin), so `/embed/v1.js` also sends
   `Access-Control-Allow-Origin: *` — module scripts are fetched in CORS mode.
   *(Planning call.)*
-- `<fair-yoga-schedule schedule-key="…" theme="themed|unstyled" color-scheme="light|dark|auto">`.
+- `<fair-yoga-schedule schedule-key="…" theme="themed|unstyled" color-scheme="light|dark|auto" limit="N">`
+  (`limit` optional; added in the follow-up below).
 - `fetch` with `credentials: 'omit'`; sets no cookies or storage; loads nothing
   else. A test proves it.
 - **themed** — fair.yoga look inside a shadow DOM; a small fixed set of custom
@@ -295,7 +296,9 @@ The numbers above are starting values, not decided limits.
   import `globals.css`.
 - **unstyled** — semantic list markup with stable class names in the light DOM,
   no CSS of ours; the host site styles it. `color-scheme` is ignored (and
-  documented as such) since a teacher can hand-edit the snippet.
+  documented as such) since a teacher can hand-edit the snippet. The one
+  deliberate exception: the "(opens in a new tab)" note carries an inline
+  visually-hidden style, so an unstyled host does not show screen-reader text.
 - Rows: day headings; time, class type, location, duration, pricing label
   ("Income-based" / "Pay what you can"); a "Book ↗" or "Waitlist ↗" link
   (`target="_blank" rel="noopener noreferrer"`, with announced "opens in a new tab").
@@ -313,6 +316,17 @@ The numbers above are starting values, not decided limits.
   an empty box. The JSON's 404 carries no slug, which is why the link must come
   from the snippet. An empty schedule renders a calm one-line note. *(Builder's
   call on copy.)*
+- *(Follow-up, after first teacher feedback.)* Added to the v1 surface, all of
+  it permanent: a `limit` attribute (a positive integer; the first N classes);
+  `fair-yoga-schedule:load` (`detail: { count }`) and
+  `fair-yoga-schedule:error` (`detail: { reason }`, `invalid-key` / `http` with
+  `status` / `network` / `data`), bubbling and composed; a `data-state`
+  attribute on the element (`loading` / `ready` / `error`), which themed mode
+  uses to reserve height while loading; `schedule-key` watched, with only the
+  latest load rendering; `data-kind`, `data-availability` and `data-pricing`
+  on each row; and the row's time as `HH:MM–HH:MM` inside a
+  `<time datetime>` carrying the start. Exact shapes:
+  `docs/technical-architecture.md` (Public API (v1), the widget's host surface).
 
 ### `/[slug]`
 

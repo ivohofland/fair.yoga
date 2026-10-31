@@ -80,6 +80,15 @@ test.describe('<fair-yoga-schedule> on a teacher site', () => {
       route.continue({ headers: { ...route.request().headers(), ...ip } }),
     );
 
+    // Registered before any page script runs, as a host page's own listener would be.
+    await page.addInitScript(() => {
+      const loads: unknown[] = [];
+      Object.assign(window, { __fyLoads: loads });
+      document.addEventListener('fair-yoga-schedule:load', (e) => {
+        loads.push({ detail: (e as CustomEvent).detail, bubbles: e.bubbles });
+      });
+    });
+
     const scheduleResponse = page.waitForResponse((r) => r.url().includes('/api/public/v1/schedule/'));
     await page.goto(`${TEACHER_SITE}/schedule`);
     expect((await scheduleResponse).status()).toBe(200);
@@ -92,6 +101,10 @@ test.describe('<fair-yoga-schedule> on a teacher site', () => {
       `webcal://${new URL(BASE_URL).host}/feed/${key}.ics`,
     );
     await expect(widget.getByText('See my schedule')).toHaveCount(0);
+    await expect(widget).toHaveAttribute('data-state', 'ready');
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __fyLoads: unknown[] }).__fyLoads))
+      .toEqual([{ detail: { count: 1 }, bubbles: true }]);
 
     expect(await context.cookies()).toEqual([]);
   });

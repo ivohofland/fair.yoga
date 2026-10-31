@@ -80,7 +80,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-/** Mounts a fresh `<fair-yoga-schedule>`; the element reads `schedule-key` when it connects and `theme` and `color-scheme` when its response arrives, so changing any afterwards changes nothing and the parent re-keys it on every change. */
+/** Mounts a fresh `<fair-yoga-schedule>`; the element reads `theme` and `color-scheme` only when a load starts, so the parent re-keys it on every change. */
 function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme: Theme; colorScheme: ColorScheme }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
