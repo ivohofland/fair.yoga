@@ -1,6 +1,8 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { snippet } from '@/lib/seo';
 import { getSession } from '@/lib/session';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { RegistrationProgress } from '@/components/ui/registration-progress';
@@ -19,6 +21,31 @@ import { CHARGED_STATUSES } from '@/services/class-lifecycle';
 import { log } from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
+
+// Indexable but never promoted: the sitemap leaves this page out, so a search
+// engine finds it only where the teacher shared it. A page that 404s names no one.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const teacher = await prisma.teacher.findUnique({
+    where: { pageSlug: slug },
+    select: { firstName: true, lastName: true, bio: true, deletedAt: true },
+  });
+  if (!teacher || teacher.deletedAt) return {};
+
+  const name = `${teacher.firstName} ${teacher.lastName}`;
+  const description = teacher.bio ? snippet(teacher.bio) : `Book a class with ${name}.`;
+  const url = `/${slug}`;
+  return {
+    title: name,
+    description,
+    alternates: { canonical: url },
+    openGraph: { title: name, description, url, siteName: 'fair.yoga', type: 'profile' },
+  };
+}
 
 // The teacher's public booking page: profile + upcoming open classes with
 // honest per-tier price estimates. This is the teacher's own front door —

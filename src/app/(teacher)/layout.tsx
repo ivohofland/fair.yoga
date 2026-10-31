@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+import { NOINDEX } from '@/lib/seo';
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { getSession } from '@/lib/session';
@@ -11,6 +13,8 @@ import {
   AttendanceSyncProvider,
   AttendanceSyncStatus,
 } from '@/components/layout/attendance-sync-status';
+
+export const metadata: Metadata = NOINDEX;
 
 export default async function TeacherLayout({
   children,

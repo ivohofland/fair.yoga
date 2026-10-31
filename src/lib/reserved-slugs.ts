@@ -17,6 +17,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   'home', 'about', 'about-us', 'contact', 'contact-us', 'help', 'support', 'faq',
   'pricing', 'prices', 'costs', 'running-costs', 'donate', 'donations', 'blog', 'news',
   'press', 'changelog', 'status', 'docs', 'open-source', 'team', 'jobs', 'careers',
+  'alternatives',
   // Legal pages.
   'privacy', 'privacy-policy', 'terms', 'terms-of-service', 'tos', 'legal', 'cookies',
   'gdpr', 'imprint', 'impressum', 'accessibility', 'security',
@@ -29,5 +30,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   'calendar', 'notifications', 'payments', 'search', 'explore',
   // Infrastructure and technical names.
   'www', 'app', 'mail', 'email', 'static', 'assets', 'cdn', 'icons', 'images', 'public',
-  'robots', 'sitemap', 'favicon', 'health', 'null', 'undefined', 'test',
+  'robots', 'sitemap', 'favicon', 'opengraph-image', 'twitter-image', 'health', 'null',
+  'undefined', 'test',
 ]);

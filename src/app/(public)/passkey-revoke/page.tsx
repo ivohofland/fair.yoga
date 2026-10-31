@@ -1,4 +1,8 @@
+import type { Metadata } from 'next';
+import { NOINDEX } from '@/lib/seo';
 import { PasskeyRevokeForm } from './passkey-revoke-form';
+
+export const metadata: Metadata = NOINDEX;
 
 /**
  * Where a passkey-added email's "This wasn't me" button lands. Public and the

@@ -1,4 +1,8 @@
+import type { Metadata } from 'next';
+import { NOINDEX } from '@/lib/seo';
 import { UnsubscribeForm } from './unsubscribe-form';
+
+export const metadata: Metadata = NOINDEX;
 
 /** Where an email's unsubscribe link lands. Public and the same for everyone. */
 export default function UnsubscribePage() {

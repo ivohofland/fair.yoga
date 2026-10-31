@@ -133,3 +133,32 @@ describe('LandingPage', () => {
     expect(screen.getByRole('slider', { name: 'Your target rate' })).toBeTruthy();
   });
 });
+
+describe('LandingPage metadata', () => {
+  it('names what people search for, canonical at the root', async () => {
+    const { metadata } = await import('./page');
+    const title = String((metadata.title as { absolute: string }).absolute);
+    const description = metadata.description ?? '';
+
+    expect(title).toMatch(/free/i);
+    expect(title).toMatch(/sliding.scale/i);
+    expect(title).toMatch(/donation/i);
+    expect(description).toMatch(/yoga teachers/i);
+    expect(description.length).toBeLessThanOrEqual(160);
+    expect(metadata.alternates?.canonical).toBe('/');
+    expect(metadata.openGraph?.url).toBe('/');
+  });
+
+  it('describes itself to search engines as free software', async () => {
+    await renderAsVisitor();
+
+    const script = document.querySelector('script[type="application/ld+json"]');
+    const data = JSON.parse(script?.textContent ?? '{}') as Record<string, unknown>;
+    expect(data).toMatchObject({
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: 'fair.yoga',
+      offers: { '@type': 'Offer', price: '0' },
+    });
+  });
+});

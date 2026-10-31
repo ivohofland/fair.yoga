@@ -1,4 +1,8 @@
+import type { Metadata } from 'next';
+import { NOINDEX } from '@/lib/seo';
 import { PayoutPauseForm } from './payout-pause-form';
+
+export const metadata: Metadata = NOINDEX;
 
 /**
  * Where a payout-change email's "This wasn't me" button lands. Public and
