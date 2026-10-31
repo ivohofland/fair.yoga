@@ -6,13 +6,13 @@ import { buildIcs, type IcsEvent } from '@/lib/ics';
 import { getCachedSchedule } from '@/lib/public-schedule-cache';
 import { checkIpRateLimit, clientIp, respondRateLimited } from '@/lib/rate-limit';
 import { listPublicSchedule, type PublicScheduleEntry } from '@/services/public-schedule';
-import { teacherByShareKey } from '@/services/schedule-share';
+import { SHARE_KEY_PATTERN, teacherByShareKey } from '@/services/schedule-share';
 
 export const dynamic = 'force-dynamic';
 
 const PER_IP_LIMIT = 600;
 const WINDOW_MS = 60 * 1000;
-const FILE_PATTERN = /^([A-Za-z0-9_-]+)\.ics$/;
+const FILE_PATTERN = /^(.*)\.ics$/;
 
 const PRICING_LABEL = { tiered: 'Income-based', donation: 'Pay what you can' } as const;
 
@@ -43,7 +43,7 @@ const guarded = withErrorHandler(
     const { file } = await params;
     const match = FILE_PATTERN.exec(file);
     const key = match?.[1];
-    if (key === undefined) return respondError('Not found.', 404);
+    if (key === undefined || !SHARE_KEY_PATTERN.test(key)) return respondError('Not found.', 404);
 
     const now = Date.now();
     const ipLimit = checkIpRateLimit('schedule-feed:ip', clientIp(request), PER_IP_LIMIT, WINDOW_MS, 'schedule-feed', now);

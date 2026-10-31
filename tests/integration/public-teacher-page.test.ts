@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { BASE_URL, freshIp, uniqueSuffix } from '../helpers';
-import { createClassFixture, wallSlotAt } from '../class-fixtures';
+import { createClassFixture, startedEarlierToday, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { mintScheduleShareKey } from '@/services/schedule-share';
 import { createPrismaClient } from '@/lib/prisma-client';
@@ -8,6 +8,7 @@ import { createPrismaClient } from '@/lib/prisma-client';
 const prisma = createPrismaClient();
 const suffix = uniqueSuffix();
 const slug = `public-page-${suffix}`;
+const STARTED_AT = startedEarlierToday(10);
 const STARTED = `StartedFlow${suffix.replace(/\W/g, '')}`;
 const UPCOMING = `UpcomingFlow${suffix.replace(/\W/g, '')}`;
 
@@ -36,8 +37,10 @@ describe('GET /[slug] (page) — the public class list', () => {
       data: { teacherId, roomId: room.id, capacityOverride: 10, rentalRate: 20 },
     });
     const own = { teacherId, teacherRoomId: tr.id, roomCost: 20, minRate: 10, targetRate: 30, minStudents: 2, maxStudents: 10, status: 'open' as const };
-    const started = wallSlotAt(new Date(Date.now() - 10 * 60_000), 'UTC');
-    await createClassFixture(prisma, { ...own, classType: STARTED, ...started, durationMinutes: 5 });
+    if (STARTED_AT !== null) {
+      const started = wallSlotAt(STARTED_AT, 'UTC');
+      await createClassFixture(prisma, { ...own, classType: STARTED, ...started, durationMinutes: 5 });
+    }
     const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
     await createClassFixture(prisma, {
       ...own,
@@ -56,7 +59,7 @@ describe('GET /[slug] (page) — the public class list', () => {
     await prisma.$disconnect();
   });
 
-  it('lists an upcoming open class and not one that started ten minutes ago', async () => {
+  it.skipIf(STARTED_AT === null)('lists an upcoming open class and not one that started earlier today', async () => {
     const res = await fetch(`${BASE_URL}/${slug}`, { headers: freshIp() });
     expect(res.status).toBe(200);
     const html = await res.text();

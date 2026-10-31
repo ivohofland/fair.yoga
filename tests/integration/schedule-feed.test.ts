@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { BASE_URL, freshIp, uniqueSuffix, teardownTeacher } from '../helpers';
-import { createClassFixture, createStudioClassFixture, wallSlotAt } from '../class-fixtures';
+import { createClassFixture, createStudioClassFixture, startedEarlierToday, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
 import { mintScheduleShareKey } from '@/services/schedule-share';
 import { createPrismaClient } from '@/lib/prisma-client';
@@ -15,6 +15,7 @@ const PRIVATE = `PrivateFlow${clean}`;
 const CANCELLED = `CancelledFlow${clean}`;
 const ONLINE = `OnlineFlow${clean}`;
 const STUDIO = `StudioFlow${clean}`;
+const STARTED_AT = startedEarlierToday(60);
 const VIDEO = `https://video.example/room-${clean}`;
 
 const feed = (name: string, ip = freshIp()) => fetch(`${BASE_URL}/feed/${name}`, { headers: ip });
@@ -64,8 +65,10 @@ describe('GET /feed/[key].ics', () => {
       format: 'online', roomCost: 0, minRate: 10, targetRate: 30, minStudents: 2, maxStudents: 10,
       status: 'open', videoUrl: VIDEO,
     });
-    const started = wallSlotAt(new Date(Date.now() - 60 * 60_000), 'UTC');
-    await createClassFixture(prisma, { ...own, classType: STARTED, ...started, durationMinutes: 30, status: 'in_progress' });
+    if (STARTED_AT !== null) {
+      const started = wallSlotAt(STARTED_AT, 'UTC');
+      await createClassFixture(prisma, { ...own, classType: STARTED, ...started, durationMinutes: 30, status: 'in_progress' });
+    }
     await createStudioClassFixture(prisma, {
       teacherId, classType: STUDIO, date: dayFromNow(5), startTime: hhmmToTime('10:00'),
       durationMinutes: 30, location: 'The Loft', hourlyRate: 40, bookingUrl: 'https://studio.example/book',
@@ -106,7 +109,7 @@ describe('GET /feed/[key].ics', () => {
     expect(ev).toContain('STATUS:CANCELLED');
   });
 
-  it('keeps a class that started an hour ago today', async () => {
+  it.skipIf(STARTED_AT === null)('keeps a class that started earlier today (an hour ago, or at 00:01 UTC just after midnight)', async () => {
     const ev = eventFor(await (await feed(`${key}.ics`)).text(), STARTED);
     expect(ev).toBeDefined();
     expect(ev).toContain('STATUS:CONFIRMED');
@@ -132,6 +135,12 @@ describe('GET /feed/[key].ics', () => {
   it('answers 404 to a name that is not <key>.ics', async () => {
     expect((await feed('bad.txt')).status).toBe(404);
     expect((await feed(`${key}.ical`)).status).toBe(404);
+  });
+
+  it('answers 404 to a key that is not the minted shape, whatever its characters', async () => {
+    expect((await feed(`${key}x.ics`)).status).toBe(404);
+    expect((await feed(`${key.slice(1)}.ics`)).status).toBe(404);
+    expect((await feed(`${'a'.repeat(300)}.ics`)).status).toBe(404);
   });
 
   it('answers 404 once sharing is off', async () => {

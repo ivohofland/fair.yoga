@@ -2419,7 +2419,7 @@ When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-rea
 
 ### Public API (v1)
 
-`GET /api/public/v1/schedule/[key]` (`src/app/api/public/v1/schedule/[key]/route.ts`) is what the embeddable widget fetches. The key is the teacher's `scheduleShareKey`; an unknown key, sharing switched off and an erased teacher all answer the same 404. The body is `PublicScheduleJson` (`src/lib/public-schedule-json.ts`), built from `listPublicSchedule` in its bookable window, and carries no amount, spots left, video link, teacher name or address.
+`GET /api/public/v1/schedule/[key]` (`src/app/api/public/v1/schedule/[key]/route.ts`) is what the embeddable widget fetches. The key is the teacher's `scheduleShareKey`; an unknown key, sharing switched off and an erased teacher all answer the same 404. The body is `PublicScheduleJson` (`src/lib/public-schedule-json.ts`), built from `listPublicSchedule` in its bookable window, and carries no amount, spots left, video link or teacher name, and has no structured address field (a studio class's location is the teacher's own free text).
 
 **Permanence.** Every field of v1 is permanent: add fields, never remove or rename one. A change that would break a pasted widget is a `/v2/`.
 
@@ -2429,7 +2429,7 @@ When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-rea
 
 **Cache.** `getCachedSchedule` (`src/lib/public-schedule-cache.ts`) holds the listing for a minute, bounded and LRU, on `globalThis`. Its key is the window mode, the teacher, the weeks and the studio setting, never the share key: turning studio classes off takes effect at once, and a calendar-mode listing can never be served the bookable one. Writes do not bust it; a minute of staleness is accepted. "At once" means on the server: a browser may hold a response for its `max-age`, so the settings preview fetches with `cache: 'no-store'`.
 
-**The widget's known limits** (`src/embed/schedule-widget.ts`). The themed look is an inline `<style>` in the shadow root, so a host page whose Content-Security-Policy `style-src` forbids inline styles shows the widget unstyled. The element reads its `key`, `theme` and `color-scheme` attributes once, when it connects, so changing one afterwards changes nothing; a new element is needed.
+**The widget's known limits** (`src/embed/schedule-widget.ts`). The themed look is an inline `<style>` in the shadow root, so a host page whose Content-Security-Policy `style-src` forbids inline styles shows the widget unstyled. The element reads `key` when it connects and `theme` and `color-scheme` when the response arrives, so changing any of them afterwards changes nothing; a new element is needed.
 
 ### Production compose
 

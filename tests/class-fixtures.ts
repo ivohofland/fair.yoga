@@ -284,3 +284,15 @@ export function wallSlotAt(instant: Date, timeZone: string): { date: Date; start
   }
   return slot;
 }
+
+/**
+ * An instant `offsetMinutes` ago, clamped to no earlier than today 00:01 UTC so
+ * it is always earlier on today's UTC date; `null` when now is itself before
+ * 00:02 UTC, where no such instant exists. A caller skips its test on `null`.
+ */
+export function startedEarlierToday(offsetMinutes: number, now: Date = new Date()): Date | null {
+  const startOfToday = new Date(`${now.toISOString().slice(0, 10)}T00:00:00Z`).getTime();
+  const earliest = startOfToday + 60_000;
+  if (now.getTime() < earliest + 60_000) return null;
+  return new Date(Math.max(now.getTime() - offsetMinutes * 60_000, earliest));
+}

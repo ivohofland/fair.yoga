@@ -40,7 +40,7 @@ Two channels, one switch, one key:
   one key per student).
 - **A feed link on `/bookings`.**
 - **schema.org `Event` JSON-LD.** *(Builder's/design call, not discussed.)* The
-  public JSON carries no address, and `Event` without a location address is of
+  public JSON carries no structured address field (a studio class's location is the teacher's own free text), and `Event` without a location address is of
   little use; leave it out of v1 rather than ship it half-filled.
 - **Showing studio classes on `/[slug]`.** `/[slug]` stays the page of classes
   booked through fair.yoga.
@@ -224,7 +224,7 @@ removals and renames are not).
 `location`; `kind: "studio"` already says it is a studio class, so `format`
 gains no third value.
 
-Decided out: amounts, spots left, teacher name, bio, photo, address.
+Decided out: amounts, spots left, teacher name, bio, photo, structured address field (a studio class's location is the teacher's own free text).
 "waitlist" rather than "full": a full class always takes waitlist sign-ups
 until it starts (`addToWaitlist` refuses only cancelled, not-open, started, or
 not-full), and the listing excludes started classes.
@@ -298,7 +298,7 @@ The numbers above are starting values, not decided limits.
   documented as such) since a teacher can hand-edit the snippet.
 - Rows: day headings; time, class type, location, duration, pricing label
   ("Income-based" / "Pay what you can"); a "Book ↗" or "Waitlist ↗" link
-  (`target="_blank" rel="noopener"`, with announced "opens in a new tab").
+  (`target="_blank" rel="noopener noreferrer"`, with announced "opens in a new tab").
   Booking always opens fair.yoga in a new tab — magic links and passkeys cannot
   work inside someone else's page.
 - **Footer:** a subtle "Schedule by fair.yoga" (the wordmark — Georgia, teal

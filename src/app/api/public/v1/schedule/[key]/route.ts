@@ -7,7 +7,7 @@ import { getCachedSchedule } from '@/lib/public-schedule-cache';
 import { toPublicScheduleJson } from '@/lib/public-schedule-json';
 import { checkIpRateLimit, clientIp, respondRateLimited, type RateLimitResult } from '@/lib/rate-limit';
 import { listPublicSchedule } from '@/services/public-schedule';
-import { teacherByShareKey } from '@/services/schedule-share';
+import { SHARE_KEY_PATTERN, teacherByShareKey } from '@/services/schedule-share';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +28,7 @@ const guarded = withErrorHandler(
 
     const ipLimit = checkIpRateLimit('public-schedule:ip', ip, PER_IP_LIMIT, WINDOW_MS, 'public-schedule', now);
     if (!ipLimit.allowed) return refuseRateLimited(ipLimit);
+    if (!SHARE_KEY_PATTERN.test(key)) return respondError('Not found.', 404);
     const keyLimit = checkDistinctKeyLimit(ip, key, now);
     if (!keyLimit.allowed) return refuseRateLimited(keyLimit);
 

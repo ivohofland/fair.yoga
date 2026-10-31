@@ -11,7 +11,7 @@ declare global {
 const cache = (globalThis.__fairYogaPublicScheduleCache ??= new Map<string, CacheEntry>());
 
 /**
- * Returns the value cached under `cacheKey` while it is under a minute old,
+ * Returns the value cached under `cacheKey` within `TTL_MS`,
  * otherwise loads and stores it. The promise is stored, so concurrent callers
  * share one load; a load that rejects is dropped so the next call retries.
  */

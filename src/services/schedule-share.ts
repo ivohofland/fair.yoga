@@ -3,8 +3,7 @@ import type { PrismaClient } from '@/lib/prisma-client';
 
 /**
  * Sharing a schedule publicly (#916): a secret key in the URL, switched on and
- * off by the teacher. Framework-agnostic; the routes map the outcomes to
- * responses.
+ * off by the teacher. Framework-agnostic.
  */
 
 export type ScheduleShareState = {
@@ -33,6 +32,9 @@ function toState(row: {
 }): ScheduleShareState {
   return { key: row.scheduleShareKey, weeks: row.scheduleShareWeeks, includeStudio: row.scheduleShareStudio };
 }
+
+/** The shape `mintScheduleShareKey` produces: 16 random bytes in base64url are always 22 characters. */
+export const SHARE_KEY_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 
 export function mintScheduleShareKey(): string {
   return randomBytes(16).toString('base64url');

@@ -60,21 +60,22 @@ export type PublicScheduleEntry = PublicClassEntry | PublicStudioEntry;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** The entry holds the schedule and cancellation, so a change to it is a change to the row. */
 function laterOf(a: Date, b: Date): Date {
   return a.getTime() >= b.getTime() ? a : b;
 }
 
 /**
- * The classes a teacher shows the public, in one shape for every channel.
+ * The classes a teacher shows the public.
  * `bookable` is what a visitor can still book; `calendar` is the teacher's
- * whole window, cancelled entries marked rather than dropped.
+ * whole window, cancelled entries marked rather than dropped. A `bookable`
+ * mode with `weeks: null` has no upper bound.
  */
 export async function listPublicSchedule(
   db: PrismaClient,
   input: PublicScheduleInput,
 ): Promise<PublicScheduleEntry[]> {
   const { teacherId, timeZone, now, mode, includeStudio } = input;
+  // The teacher's local day, not UTC's: a teacher west of UTC would otherwise lose a class still hours from starting.
   const today = startOfLocalDay(now, timeZone);
   const end = mode.weeks === null ? null : new Date(today.getTime() + mode.weeks * 7 * DAY_MS);
   const dateWindow = end === null ? { gte: today } : { gte: today, lt: end };
@@ -84,6 +85,7 @@ export async function listPublicSchedule(
     db.class.findMany({
       where: {
         isPrivate: false,
+        // A cancelled class keeps its status (#327), so `cancelledAt: null` below is what drops it.
         status: bookable ? 'open' : { in: ['open', 'in_progress', 'completed'] },
         calendarEntry: {
           teacherId,
@@ -91,6 +93,7 @@ export async function listPublicSchedule(
           ...(bookable ? { cancelledAt: null } : {}),
         },
       },
+      // Keeps the link out of every public type (#911).
       omit: { videoUrl: true },
       include: {
         calendarEntry: true,
@@ -120,6 +123,7 @@ export async function listPublicSchedule(
       kind: 'class',
       id: cls.id,
       calendarEntryId: e.id,
+      // The entry holds the schedule and cancellation, so a change to it is a change to the row.
       updatedAt: laterOf(cls.updatedAt, e.updatedAt),
       date: e.date,
       startTime: e.startTime,
@@ -151,6 +155,7 @@ export async function listPublicSchedule(
       kind: 'studio',
       id: sc.id,
       calendarEntryId: e.id,
+      // The entry holds the schedule and cancellation, so a change to it is a change to the row.
       updatedAt: laterOf(sc.updatedAt, e.updatedAt),
       date: e.date,
       startTime: e.startTime,
