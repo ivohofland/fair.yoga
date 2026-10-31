@@ -173,6 +173,8 @@ export function StudioClassEditForm({
     // gets here, and a thrown fetch leaves it false.
     let answered = false;
     try {
+      // `validate` has refused the save if this is not ok.
+      const link = readBookingLink(form.bookingUrl);
       // Everything in `StudioClassEditInitial` goes in every payload — the pins
       // above are what keep that set honest against the schema. `date` does
       // not: the API refuses its PRESENCE on a row whose `dateEditable` is
@@ -183,8 +185,6 @@ export function StudioClassEditForm({
       // Trimmed client-side so a padded value never round-trips as a 400 the
       // user has to decode — the wire schema trims too, so an untrimmed `'   '`
       // would be refused, not stored.
-      // `validate` has refused the save if this is not ok.
-      const link = readBookingLink(form.bookingUrl);
       const payload: UpdateStudioClassWire = {
         classType: form.classType.trim(),
         location: form.location.trim(),

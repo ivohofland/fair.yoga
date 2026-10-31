@@ -289,8 +289,8 @@ void _studioTemplateAllowlistHasNoForbiddenFields;
 // The rule half of the partition (issue 298)
 //
 // `updateStudioClassTemplate`'s wire schema spans two models now: the
-// economics (`location`, `hourlyRate`) stayed on `StudioClassTemplate`
-// (pinned above), the slot fields moved to `ScheduleRule`. Mirrors the pin
+// economics (`TeacherEditableStudioTemplateField`) stayed on
+// `StudioClassTemplate` (pinned above), the slot fields moved to `ScheduleRule`. Mirrors the pin
 // set above, against `keyof Prisma.ScheduleRuleUncheckedUpdateManyInput`
 // rather than `StudioClassTemplate`'s. Deliberately the same names as
 // `class-template-lifecycle.ts`'s twin set — separate modules, so no
