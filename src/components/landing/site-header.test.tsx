@@ -28,4 +28,9 @@ describe('SiteHeader', () => {
     expect(href('What it does')).toBe('/#features');
     expect(href('Open source')).toBe('/#open-source');
   });
+
+  it.each([false, true])('links the wordmark home (signedIn=%s)', (signedIn) => {
+    render(<SiteHeader signedIn={signedIn} onHome={false} />);
+    expect(href('fair.yoga home')).toBe('/');
+  });
 });
