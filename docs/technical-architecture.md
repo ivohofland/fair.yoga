@@ -1519,6 +1519,40 @@ transaction, since a batch at Read Committed gives each statement its own
 snapshot. The service returns the parts and no total field, so a total cannot disagree
 with them.
 
+### Search engines
+
+Platform pages are promoted; a teacher's pages are discoverable but never
+promoted.
+
+- **`robots.txt` names no path.** It allows everything and points at the
+  sitemap. The file is public, so a `Disallow` line would advertise the path it
+  names, and it would not keep that path out of an index anyway: `robots.txt`
+  governs crawling, and a disallowed URL can still be listed from a link.
+- **A page that must stay out of search says `noindex` itself** (`NOINDEX`,
+  `src/lib/seo.ts`). Every route group but `(public)` says it in its layout;
+  inside `(public)`, the token-link pages and the steps within signup say it.
+  `src/app/noindex.test.tsx` derives both sets from the filesystem, so a new
+  route group or public page fails until it is classified as noindex or
+  deliberately indexable. The admin host is covered separately, by the proxy's
+  `X-Robots-Tag` (Admin surface, above).
+- **The sitemap lists platform pages only.** A teacher's page (`/[slug]`) and
+  its booking pages are indexable, but nothing lists or links them: a search
+  engine finds one where it was shared. A private class's booking page says
+  `noindex` (#910).
+- **`robots.ts` and `sitemap.ts` render per request** (`dynamic =
+  'force-dynamic'`). Next prerenders metadata routes at `next build` otherwise,
+  and the build never sees `NEXT_PUBLIC_APP_URL`, so the files would carry
+  `siteUrl()`'s localhost fallback. The fallback is logged wherever it means a
+  broken deploy.
+- **Page metadata sets no `openGraph` of its own** except on `/`. Next replaces
+  a parent's `openGraph` wholesale rather than merging it, which would drop the
+  preview image (`src/app/opengraph-image.png`, applied at the root); left
+  unset, the card inherits the image and takes the page's title and
+  description.
+- **The page head never names what its body hides.** A page that can 404 asks
+  the same predicate in `generateMetadata` and in its body (`isShown` on
+  `/[slug]`, `isShownUnder` on the booking page).
+
 ## Database
 
 ### Where Prisma comes from (#884, #886, #888)

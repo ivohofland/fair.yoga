@@ -5,7 +5,7 @@ import { isAdminHost, adminReturnPath } from '@/lib/admin-host';
 import { ADMIN_AUTH_WINDOW_MS } from '@/lib/admin-access';
 import { PasskeySignIn } from '@/components/booking/passkey-sign-in';
 
-export const metadata: Metadata = { title: 'Admin sign-in · fair.yoga', robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: 'Admin sign-in', robots: { index: false, follow: false } };
 
 export default async function AdminSignInPage({
   searchParams,

@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ProfileSetupForm } from '@/components/signup/profile-setup-form';
@@ -5,6 +6,10 @@ import { SignupForm } from '@/components/signup/signup-form';
 import { peekSignupTicket, ticketTokenFrom } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
+import { NOINDEX } from '@/lib/seo';
+
+// A step inside signup, not a way into it: `/signup` is the indexable door.
+export const metadata: Metadata = NOINDEX;
 
 /**
  * Step two of teacher signup (#385). Three ways to arrive, and this page

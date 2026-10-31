@@ -29,9 +29,9 @@ export const dynamic = 'force-dynamic';
 /**
  * Whether this page shows `cls` under `slug`; anything else is a 404. The
  * body and its metadata both ask, so the head never names a class the body
- * hides. deletedAt: erasure renames the slug, but never rely on that alone.
- * `cancelledAt` beside the status (#327): a cancelled class keeps its `open`
- * status, and this is the page that takes a booking.
+ * hides. `deletedAt` is checked on its own, not left to the slug.
+ * `cancelledAt` beside the status (#327): a cancelled class keeps its status,
+ * `open` included, and this is the page that takes a booking.
  */
 function isShownUnder(
   cls: {
@@ -47,7 +47,9 @@ function isShownUnder(
 }
 
 // A private class is booked by its link alone, so it stays out of search
-// indexes, whether or not the page will show it.
+// indexes, whether or not the page will show it. No openGraph of its own,
+// which would replace the inherited preview image; the card takes this title
+// and description.
 export async function generateMetadata({
   params,
 }: {
@@ -76,15 +78,11 @@ export async function generateMetadata({
   if (!isShownUnder(cls, slug)) return robots;
 
   const entry = cls.calendarEntry;
-  const title = `${entry.classType} with ${entry.teacher.firstName} ${entry.teacher.lastName}`;
-  const description = `${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)} · ${entry.durationMinutes} min.`;
-  const url = `/${slug}/book/${classId}`;
   return {
     ...robots,
-    title,
-    description,
-    alternates: { canonical: url },
-    openGraph: { title, description, url, siteName: 'fair.yoga', type: 'website' },
+    title: `${entry.classType} with ${entry.teacher.firstName} ${entry.teacher.lastName}`,
+    description: `${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)} · ${entry.durationMinutes} min.`,
+    alternates: { canonical: `/${slug}/book/${classId}` },
   };
 }
 
