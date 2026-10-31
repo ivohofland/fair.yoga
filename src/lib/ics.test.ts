@@ -55,9 +55,20 @@ describe('buildIcs', () => {
 
   it('escapes backslash, semicolon, comma and newline in TEXT properties', () => {
     const out = build([event({ summary: 'Hatha; slow, deep\nflow', location: 'A\\B; C, D', description: 'x\ny' })]);
-    expect(out).toContain('SUMMARY:Hatha\; slow\\, deep\\nflow\r\n');
-    expect(out).toContain('LOCATION:A\\\\B\; C\\, D\r\n');
+    expect(out).toContain('SUMMARY:Hatha\\; slow\\, deep\\nflow\r\n');
+    expect(out).toContain('LOCATION:A\\\\B\\; C\\, D\r\n');
     expect(out).toContain('DESCRIPTION:x\\ny\r\n');
+    expect(out).toContain('Hatha\\;');
+    expect(out).not.toContain('Hatha;');
+  });
+
+  it('cannot be made to start a new property by a line break in a summary', () => {
+    for (const summary of ['Flow\r\nATTENDEE:mailto:x@example.com', 'Flow\rATTENDEE:mailto:x@example.com']) {
+      const out = build([event({ summary })]);
+      expect(out.split('\r\n').some((l) => l.startsWith('ATTENDEE'))).toBe(false);
+      const lines = unfold(out).split('\r\n').filter((l) => l.startsWith('SUMMARY'));
+      expect(lines).toEqual(['SUMMARY:Flow\\nATTENDEE:mailto:x@example.com']);
+    }
   });
 
   it('leaves the URL unescaped', () => {

@@ -120,7 +120,7 @@ describe('GET /feed/[key].ics', () => {
     expect(eventFor(body, ONLINE)).not.toContain('LOCATION');
   });
 
-  it('answers 200 to twenty different keys from one IP', async () => {
+  it('does not apply the distinct-key limit: twenty different keys answer 404, not 429', async () => {
     const ip = freshIp();
     for (let i = 0; i < 20; i++) {
       const res = await feed(`${i === 0 ? key : mintScheduleShareKey()}.ics`, ip);
