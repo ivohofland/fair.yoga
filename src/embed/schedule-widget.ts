@@ -243,7 +243,7 @@ export function defineScheduleElement(opts: { origin: string; cache?: RequestCac
 
     connectedCallback(): void {
       if (this.started) return;
-      const key = this.getAttribute('key');
+      const key = this.getAttribute('schedule-key');
       if (key === null || !KEY_PATTERN.test(key)) return;
       this.started = true;
       void this.load(key);

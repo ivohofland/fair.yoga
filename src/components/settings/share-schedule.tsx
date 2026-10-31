@@ -80,7 +80,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-/** Mounts a fresh `<fair-yoga-schedule>`; the element reads `key` when it connects and `theme` and `color-scheme` when its response arrives, so changing any afterwards changes nothing and the parent re-keys it on every change. */
+/** Mounts a fresh `<fair-yoga-schedule>`; the element reads `schedule-key` when it connects and `theme` and `color-scheme` when its response arrives, so changing any afterwards changes nothing and the parent re-keys it on every change. */
 function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme: Theme; colorScheme: ColorScheme }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -96,7 +96,7 @@ function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme
     fallback.className = 'type-caption';
     fallback.textContent = 'The preview is unavailable right now. Try again in a minute.';
     element.append(fallback);
-    element.setAttribute('key', shareKey);
+    element.setAttribute('schedule-key', shareKey);
     element.setAttribute('theme', theme);
     if (theme === 'themed') element.setAttribute('color-scheme', colorScheme);
     node.replaceChildren(element);

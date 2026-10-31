@@ -281,7 +281,7 @@ The numbers above are starting values, not decided limits.
   fair.yoga origin), so `/embed/v1.js` also sends
   `Access-Control-Allow-Origin: *` — module scripts are fetched in CORS mode.
   *(Planning call.)*
-- `<fair-yoga-schedule key="…" theme="themed|unstyled" color-scheme="light|dark|auto">`.
+- `<fair-yoga-schedule schedule-key="…" theme="themed|unstyled" color-scheme="light|dark|auto">`.
 - `fetch` with `credentials: 'omit'`; sets no cookies or storage; loads nothing
   else. A test proves it.
 - **themed** — fair.yoga look inside a shadow DOM; a small fixed set of custom

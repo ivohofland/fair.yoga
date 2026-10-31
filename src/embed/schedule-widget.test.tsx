@@ -290,7 +290,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('fetches its key once, without credentials, and renders the rows', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
@@ -303,7 +303,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('fetches without a cache option unless the element sets one', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0]![1]).not.toHaveProperty('cache');
     await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
@@ -312,7 +312,7 @@ describe('<fair-yoga-schedule>', () => {
   it('passes an element-level cache option to fetch', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
     const el = document.createElement('fair-yoga-schedule') as HTMLElement & { cache?: RequestCache };
-    el.setAttribute('key', 'k124');
+    el.setAttribute('schedule-key', 'k124');
     el.cache = 'no-store';
     document.body.append(el);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
@@ -321,7 +321,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('sets no cookie and writes no storage', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
     expect(document.cookie).toBe('');
     expect(localStorage.length).toBe(0);
@@ -330,7 +330,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('leaves the fallback link in place when the fetch fails', async () => {
     fetchMock.mockRejectedValue(new TypeError('network'));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
     expect(el.shadowRoot).toBeNull();
@@ -339,7 +339,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('leaves the fallback link in place on a 404', async () => {
     fetchMock.mockResolvedValue(new Response('{"error":"Not found."}', { status: 404 }));
-    const el = mount({ key: 'gone' });
+    const el = mount({ 'schedule-key': 'gone' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
     expect(el.shadowRoot).toBeNull();
@@ -349,8 +349,8 @@ describe('<fair-yoga-schedule>', () => {
   it('survives being defined twice, and two elements both render', async () => {
     expect(() => defineScheduleElement({ origin: ORIGIN })).not.toThrow();
     fetchMock.mockImplementation(async () => ok(DATA));
-    const a = mount({ key: 'k1' });
-    const b = mount({ key: 'k2', theme: 'unstyled' });
+    const a = mount({ 'schedule-key': 'k1' });
+    const b = mount({ 'schedule-key': 'k2', theme: 'unstyled' });
     await waitFor(() => {
       expect(classRows(surface(a))).toHaveLength(4);
       expect(classRows(surface(b))).toHaveLength(4);
@@ -359,7 +359,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('renders unstyled into the light DOM with no style, whatever color-scheme says', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123', theme: 'unstyled', 'color-scheme': 'dark' });
+    const el = mount({ 'schedule-key': 'k123', theme: 'unstyled', 'color-scheme': 'dark' });
     await waitFor(() => expect(classRows(el)).toHaveLength(4));
     expect(el.shadowRoot).toBeNull();
     expect(el.querySelector('style')).toBeNull();
@@ -369,13 +369,13 @@ describe('<fair-yoga-schedule>', () => {
 
   it('treats an absent color-scheme as light', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
     expect(el.shadowRoot?.querySelector('.fy')?.getAttribute('data-scheme')).toBe('light');
   });
 
   it.each(['..', 'a/b'])('fetches nothing for the key %j and keeps the fallback', async (key) => {
-    const el = mount({ key });
+    const el = mount({ 'schedule-key': key });
     await new Promise((r) => setTimeout(r, 0));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(el.shadowRoot).toBeNull();
@@ -391,7 +391,7 @@ describe('<fair-yoga-schedule>', () => {
     ['a row with a malformed start', { timezone: 'UTC', classes: [row({ start: 'soon' })] }],
   ])('keeps the fallback for %s', async (_label, body) => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
-    const el = mount({ key: 'k123' });
+    const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
     expect(el.shadowRoot).toBeNull();
@@ -400,7 +400,7 @@ describe('<fair-yoga-schedule>', () => {
 
   it('marks the themed root dark for color-scheme="dark"', async () => {
     fetchMock.mockResolvedValue(ok(DATA));
-    const el = mount({ key: 'k123', 'color-scheme': 'dark' });
+    const el = mount({ 'schedule-key': 'k123', 'color-scheme': 'dark' });
     await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
     expect(el.shadowRoot?.querySelector('.fy')?.getAttribute('data-scheme')).toBe('dark');
   });
