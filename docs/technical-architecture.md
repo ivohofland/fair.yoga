@@ -1536,9 +1536,12 @@ promoted.
   inside `(public)`, the token-link pages and the steps within signup say it.
   `src/app/noindex.test.tsx` derives both sets from the filesystem, so a new
   route group or public page fails until it is classified as noindex or
-  deliberately indexable. The admin host is covered separately, by the proxy's
+  deliberately indexable. Pages directly under `src/app` outside any route group
+  (`/sliding-scale`, `/donation-based`) are classified the same way, in the
+  census's `INDEXABLE_ROOT`. The admin host is covered separately, by the proxy's
   `X-Robots-Tag` (Admin surface, above).
-- **The sitemap lists platform pages only.** A teacher's page (`/[slug]`) and
+- **The sitemap lists platform pages only**: `/`, `/sliding-scale` and
+  `/donation-based`. A teacher's page (`/[slug]`) and
   its booking pages are indexable, but nothing lists or links them: a search
   engine finds one where it was shared. A private class's booking page says
   `noindex` (#910).
