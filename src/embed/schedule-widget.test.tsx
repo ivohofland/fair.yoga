@@ -189,6 +189,45 @@ describe('renderSchedule styling', () => {
     expect(rendered('themed').querySelector('style')).not.toBeNull();
     expect(rendered('unstyled').querySelector('style')).toBeNull();
   });
+
+  it('themed hides the new-tab note visually; unstyled leaves it to the host', () => {
+    for (const span of rendered('themed').querySelectorAll('.fy-new-tab')) expect(span).toHaveClass('fy-sr');
+    expect(rendered('unstyled').querySelector('.fy-new-tab')).not.toBeNull();
+  });
+
+  it('themed lists keep their list role; unstyled lists carry none of ours', () => {
+    const themed = rendered('themed');
+    const lists = [...themed.querySelectorAll('ol')];
+    expect(lists.length).toBeGreaterThan(1);
+    for (const ol of lists) expect(ol.getAttribute('role')).toBe('list');
+    for (const ol of rendered('unstyled').querySelectorAll('ol')) expect(ol.hasAttribute('role')).toBe(false);
+  });
+
+  it('themed defaults to the light scheme', () => {
+    expect(rendered('themed').querySelector('.fy')?.getAttribute('data-scheme')).toBe('light');
+  });
+});
+
+describe('the own-origin exception to https-only links', () => {
+  const HTTP_ORIGIN = 'http://fair.example';
+
+  function linkFor(bookingUrl: string): HTMLAnchorElement | null {
+    const root = document.createElement('div');
+    renderSchedule(
+      root,
+      { timezone: 'UTC', classes: [row({ bookingUrl })] },
+      { theme: 'unstyled', feedUrl: FEED, origin: HTTP_ORIGIN },
+    );
+    return root.querySelector('li.fy-class a');
+  }
+
+  it('links a plain-http URL on the widget origin', () => {
+    expect(linkFor('http://fair.example/x/book/1')?.getAttribute('href')).toBe('http://fair.example/x/book/1');
+  });
+
+  it.each(['http://fair.example.evil/', 'http://fair.example:8080/'])('does not link %s', (url) => {
+    expect(linkFor(url)).toBeNull();
+  });
 });
 
 describe('day grouping follows the teacher, not the visitor', () => {
@@ -256,7 +295,7 @@ describe('<fair-yoga-schedule>', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`${ORIGIN}/api/public/v1/schedule/k123`);
-    expect(init).toMatchObject({ credentials: 'omit' });
+    expect(init).toMatchObject({ credentials: 'omit', referrerPolicy: 'no-referrer' });
     expect(el.shadowRoot).not.toBeNull();
     const feed = [...surface(el).querySelectorAll('a')].find((a) => a.textContent === 'Add this schedule to your calendar');
     expect(feed?.getAttribute('href')).toBe('webcal://fair.example/feed/k123.ics');
@@ -308,6 +347,37 @@ describe('<fair-yoga-schedule>', () => {
     expect(el.querySelector('style')).toBeNull();
     expect(document.querySelector('style')).toBeNull();
     expect(el.textContent).not.toContain('See my schedule');
+  });
+
+  it('treats an absent color-scheme as light', async () => {
+    fetchMock.mockResolvedValue(ok(DATA));
+    const el = mount({ key: 'k123' });
+    await waitFor(() => expect(classRows(surface(el))).toHaveLength(4));
+    expect(el.shadowRoot?.querySelector('.fy')?.getAttribute('data-scheme')).toBe('light');
+  });
+
+  it.each(['..', 'a/b'])('fetches nothing for the key %j and keeps the fallback', async (key) => {
+    const el = mount({ key });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(el.shadowRoot).toBeNull();
+    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
+  });
+
+  const noLocation: Partial<Row> = row({});
+  delete noLocation.location;
+  it.each([
+    ['{}', {}],
+    ['null', null],
+    ['a row without location', { timezone: 'UTC', classes: [noLocation] }],
+    ['a row with a malformed start', { timezone: 'UTC', classes: [row({ start: 'soon' })] }],
+  ])('keeps the fallback for %s', async (_label, body) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+    const el = mount({ key: 'k123' });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(el.shadowRoot).toBeNull();
+    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
   });
 
   it('marks the themed root dark for color-scheme="dark"', async () => {

@@ -27,6 +27,8 @@
 
 # production
 /build
+# tsconfig.embed.json's outDir, written only by a hand-run `tsc -p tsconfig.embed.json`
+/.embed-build/
 
 # misc
 .DS_Store
