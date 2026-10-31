@@ -2,9 +2,8 @@ import type { ReactNode } from 'react';
 import type { Currency } from '@/lib/prisma-client';
 import { formatMoney } from '@/lib/format';
 import { TIER_INFO } from '@/lib/tiers';
-import { tierPrices, priceSpread, studentsIn, type TierCounts } from '@/lib/pricing-preview';
-import { vatThousandths, withVat } from '@/lib/vat';
-import { calculateEffectiveTeacherRate } from '@/services/pricing';
+import { previewClass, priceSpread, type TierCounts } from '@/lib/pricing-preview';
+import { vatThousandths } from '@/lib/vat';
 
 export interface PricingPreviewInputs {
   currency: Currency;
@@ -42,27 +41,15 @@ export function PricingPreviewResult({
   distributionControl,
   showRateProgress = true,
 }: PricingPreviewResultProps) {
-  const teacherRate = calculateEffectiveTeacherRate({
-    studentCount: studentsIn(distribution),
-    minStudents,
-    maxStudents,
-    minRate,
-    targetRate,
-  });
-
-  const thousandths = vatThousandths(vatPercent);
-  const chargesVat = thousandths > 0;
-  const baseCost = roomCost + teacherRate;
-  // The engine's own total, rounded to cents once; the VAT line is what that
-  // total adds to the rounded base, so the lines shown add up to it.
-  const totalCents = chargesVat ? Math.round(withVat(baseCost, thousandths) * 100) : 0;
-  const vatCents = totalCents - Math.round(baseCost * 100);
-  const totalCost = chargesVat ? totalCents / 100 : baseCost;
+  const { teacherRate, totalCost, vatCents, prices } = previewClass(
+    { roomCost, minRate, targetRate, minStudents, maxStudents, vatPercent },
+    distribution,
+  );
+  const chargesVat = vatThousandths(vatPercent) > 0;
   const rateRange = targetRate - minRate;
   const rateProgress =
     rateRange === 0 ? 100 : Math.round(((teacherRate - minRate) / rateRange) * 100);
 
-  const prices = tierPrices(withVat(baseCost, thousandths), distribution);
   const spread = priceSpread(prices, distribution);
 
   return (

@@ -1,4 +1,7 @@
 import { INCOME_TIERS, TIER_RATIOS, type IncomeTier } from '@/lib/tiers';
+import { vatThousandths, withVat } from '@/lib/vat';
+import { calculateEffectiveTeacherRate } from '@/services/pricing';
+import type { PricingPreviewInputs } from '@/components/class/pricing-preview-result';
 
 /** Students in each tier of one class. */
 export type TierCounts = Readonly<Record<IncomeTier, number>>;
@@ -66,4 +69,31 @@ export function priceSpread(prices: TierPrices, counts: TierCounts): string | nu
 /** An empty class, for building counts one student at a time. */
 export function emptyCounts(): Record<IncomeTier, number> {
   return byTier(() => 0);
+}
+
+/** What the class in `distribution` earns the teacher and costs each tier. */
+export function previewClass(
+  inputs: Omit<PricingPreviewInputs, 'currency' | 'hideRoomCost'>,
+  distribution: TierCounts,
+): { teacherRate: number; totalCost: number; vatCents: number; prices: TierPrices } {
+  const { roomCost, minRate, targetRate, minStudents, maxStudents, vatPercent } = inputs;
+  const teacherRate = calculateEffectiveTeacherRate({
+    studentCount: studentsIn(distribution),
+    minStudents,
+    maxStudents,
+    minRate,
+    targetRate,
+  });
+
+  const thousandths = vatThousandths(vatPercent);
+  const chargesVat = thousandths > 0;
+  const baseCost = roomCost + teacherRate;
+  // The engine's own total, rounded to cents once; the VAT is what that total
+  // adds to the rounded base, so the lines shown add up to it.
+  const totalCents = chargesVat ? Math.round(withVat(baseCost, thousandths) * 100) : 0;
+  const vatCents = chargesVat ? totalCents - Math.round(baseCost * 100) : 0;
+  const totalCost = chargesVat ? totalCents / 100 : baseCost;
+  const prices = tierPrices(withVat(baseCost, thousandths), distribution);
+
+  return { teacherRate, totalCost, vatCents, prices };
 }
