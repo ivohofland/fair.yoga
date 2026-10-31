@@ -182,8 +182,8 @@ importers:
         specifier: ^13.3.0
         version: 13.3.0
       '@simplewebauthn/server':
-        specifier: ^13.3.2
-        version: 13.3.2
+        specifier: ^14.0.3
+        version: 14.0.3
       next:
         specifier: 16.4.1
         version: 16.4.1(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.61.1)(@types/node@24.13.6)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -958,38 +958,71 @@ packages:
   '@peculiar/asn1-android@2.6.0':
     resolution: {integrity: sha512-cBRCKtYPF7vJGN76/yG8VbxRcHLPF3HnkoHhKOZeHpoVtbMYfY9ROKtH3DtYUY9m8uI1Mh47PRhHf2hSK3xcSQ==}
 
-  '@peculiar/asn1-cms@2.6.1':
-    resolution: {integrity: sha512-vdG4fBF6Lkirkcl53q6eOdn3XYKt+kJTG59edgRZORlg/3atWWEReRCx5rYE1ZzTTX6vLK5zDMjHh7vbrcXGtw==}
+  '@peculiar/asn1-asym-key@2.11.0':
+    resolution: {integrity: sha512-r2957WdSZle/Zt4t9og7OMQYXNJ9/3ANXVtFwLCDJuHORlBZ4AFmDt1Qee0CzyTbHQg4ZZApBGEz5/6cFsyCRg==}
+    engines: {node: '>=14'}
 
-  '@peculiar/asn1-csr@2.6.1':
-    resolution: {integrity: sha512-WRWnKfIocHyzFYQTka8O/tXCiBquAPSrRjXbOkHbO4qdmS6loffCEGs+rby6WxxGdJCuunnhS2duHURhjyio6w==}
+  '@peculiar/asn1-cms@2.11.0':
+    resolution: {integrity: sha512-SlAiDoT/Cd8qaNmbTt78gqyaEvu2fQd6ML6KWJkdjXGrgDKnHHrusVkfQUelkfinL2p665IIADb0JBixtT8W1g==}
+    engines: {node: '>=14'}
+
+  '@peculiar/asn1-csr@2.11.0':
+    resolution: {integrity: sha512-M/ED0yJ05qMK+UADPKnIa8vhAeewOJALSxTAZB7RQ/batRHhIJZkwznCcWAbFO5saHJ1yEQ+m4lncEcG9RnQSg==}
+    engines: {node: '>=14'}
+
+  '@peculiar/asn1-ecc@2.11.0':
+    resolution: {integrity: sha512-jj1alGEKev7/un+cI+exyVK9m31lmP7cCBMCZuCb0wkFQH2zmKmJzNiG4wqXFNzlcP8timHLnzf3lV3OxBpb/Q==}
+    engines: {node: '>=14'}
 
   '@peculiar/asn1-ecc@2.6.1':
     resolution: {integrity: sha512-+Vqw8WFxrtDIN5ehUdvlN2m73exS2JVG0UAyfVB31gIfor3zWEAQPD+K9ydCxaj3MLen9k0JhKpu9LqviuCE1g==}
 
-  '@peculiar/asn1-pfx@2.6.1':
-    resolution: {integrity: sha512-nB5jVQy3MAAWvq0KY0R2JUZG8bO/bTLpnwyOzXyEh/e54ynGTatAR+csOnXkkVD9AFZ2uL8Z7EV918+qB1qDvw==}
+  '@peculiar/asn1-pfx@2.11.0':
+    resolution: {integrity: sha512-ykSAWRu8KkmzU8LRpk9ZQC3zuLmBEtoSMjIv9XHVamD5W7amqreV5wttKqnvtjWOzzSJQxA/HVT8/tHwpEEGSQ==}
+    engines: {node: '>=14'}
 
-  '@peculiar/asn1-pkcs8@2.6.1':
-    resolution: {integrity: sha512-JB5iQ9Izn5yGMw3ZG4Nw3Xn/hb/G38GYF3lf7WmJb8JZUydhVGEjK/ZlFSWhnlB7K/4oqEs8HnfFIKklhR58Tw==}
+  '@peculiar/asn1-pkcs8@2.11.0':
+    resolution: {integrity: sha512-lragjkjQGnQ5luxC+sxoAfAO/jBiQ7hOEGlDKJUk7MC5zY3AzjB2DU0GyPUH1Sswdv10t7DurY0zylOYMLb88w==}
+    engines: {node: '>=14'}
 
-  '@peculiar/asn1-pkcs9@2.6.1':
-    resolution: {integrity: sha512-5EV8nZoMSxeWmcxWmmcolg22ojZRgJg+Y9MX2fnE2bGRo5KQLqV5IL9kdSQDZxlHz95tHvIq9F//bvL1OeNILw==}
+  '@peculiar/asn1-pkcs9@2.11.0':
+    resolution: {integrity: sha512-gDdFjpqV0weJjgNUvueUVf4D8uVbpq+VbG0TsxLAY2QGljAkJyL9qwQ7avol9j0jaYSJ7Ey7v7RZp0M3GTcQSA==}
+    engines: {node: '>=14'}
+
+  '@peculiar/asn1-rsa@2.11.0':
+    resolution: {integrity: sha512-S2sBJmbfI09Kzdt9cEhE6pDNjHpVTkURs+811+PxS8AvsTLxC4woMNRhxHYaIbClkkNfAVt0tZxJdINVfUmzuA==}
+    engines: {node: '>=14'}
 
   '@peculiar/asn1-rsa@2.6.1':
     resolution: {integrity: sha512-1nVMEh46SElUt5CB3RUTV4EG/z7iYc7EoaDY5ECwganibQPkZ/Y2eMsTKB/LeyrUJ+W/tKoD9WUqIy8vB+CEdA==}
 
+  '@peculiar/asn1-schema@2.11.0':
+    resolution: {integrity: sha512-8xh4avo53/vXO6UEv9yaoJ83hY581geaLTygf61NPIXP5AeIZCPjJhpTaYU23IZkG+NpLN/C9FYzWp7hphIT9A==}
+    engines: {node: '>=14'}
+
   '@peculiar/asn1-schema@2.6.0':
     resolution: {integrity: sha512-xNLYLBFTBKkCzEZIw842BxytQQATQv+lDTCEMZ8C196iJcJJMBUZxrhSTxLaohMyKK8QlzRNTRkUmanucnDSqg==}
 
-  '@peculiar/asn1-x509-attr@2.6.1':
-    resolution: {integrity: sha512-tlW6cxoHwgcQghnJwv3YS+9OO1737zgPogZ+CgWRUK4roEwIPzRH4JEiG770xe5HX2ATfCpmX60gurfWIF9dcQ==}
+  '@peculiar/asn1-x509-attr@2.11.0':
+    resolution: {integrity: sha512-Fgvnd9REmLxEj/4cbDP54dNUNUXkzUksXLqEHqs1mHBuSRjSTCUSPM/WQIZYSvrdG7ND9CX1AQtPoIBekhgQSA==}
+    engines: {node: '>=14'}
+
+  '@peculiar/asn1-x509-post-quantum@2.11.0':
+    resolution: {integrity: sha512-K6EnquTX3xJ2G+uLPFH0jVkh7W8y6eTzoCxvSoXAj0sWS5uvVB2PEvpBPdzY4+ytaedUM3x9ZVgX0AZKb316ew==}
+    engines: {node: '>=14'}
+
+  '@peculiar/asn1-x509@2.11.0':
+    resolution: {integrity: sha512-J1sHAwGNlk+8J+FeR1eLVc6Gq0T9f9ITc3HWyPYgJraoW6U8AJuQiWVJ3SCEpltfTdpOY7fHdHT5oKAsbK/jww==}
+    engines: {node: '>=14'}
 
   '@peculiar/asn1-x509@2.6.1':
     resolution: {integrity: sha512-O9jT5F1A2+t3r7C4VT7LYGXqkGLK7Kj1xFpz7U0isPrubwU5PbDoyYtx6MiGst29yq7pXN5vZbQFKRCP+lLZlA==}
 
-  '@peculiar/x509@1.14.3':
-    resolution: {integrity: sha512-C2Xj8FZ0uHWeCXXqX5B4/gVFQmtSkiuOolzAgutjTfseNOHT3pUjljDZsTSxXFGgio54bCzVFqmEOUrIVk8RDA==}
+  '@peculiar/utils@2.0.3':
+    resolution: {integrity: sha512-+oL3HPFRIZ1St2K50lWCXiioIgSoxzz7R1J3uF6neO2yl1sgmpgY6XXJH4BdpoDkMWznQTeYF6oWNDZLCdQ4eQ==}
+
+  '@peculiar/x509@2.2.0':
+    resolution: {integrity: sha512-adpW58ySPQMOUPv8pTKT3RIyCFqfUFt8X05ukPdtkQToXDVr8dMtxuenik1yx8tNFTbpApWsM/Hi5SzlIx48+Q==}
     engines: {node: '>=20.0.0'}
 
   '@pinojs/redact@0.4.0':
@@ -1241,8 +1274,8 @@ packages:
   '@simplewebauthn/browser@13.3.0':
     resolution: {integrity: sha512-BE/UWv6FOToAdVk0EokzkqQQDOWtNydYlY6+OrmiZ5SCNmb41VehttboTetUM3T/fr6EAFYVXjz4My2wg230rQ==}
 
-  '@simplewebauthn/server@13.3.2':
-    resolution: {integrity: sha512-KEDhfcGP1PAKRVSDjA3npTQFqS2b/srm+ipoNBNHdkzrHAlaRQUTE+a5f4ywsx6thxAw1NU2rYcLEY1949RGbQ==}
+  '@simplewebauthn/server@14.0.3':
+    resolution: {integrity: sha512-D39/0fiDiYmGV+nraY9s63D1Ho2AX/waMLy22/9gUadTUuvbAnstfb4bpbHYbwZuV5ZLDYN1SmzDKuiHzKAA4Q==}
     engines: {node: '>=20.0.0'}
 
   '@simplewebauthn/types@12.0.0':
@@ -1756,6 +1789,10 @@ packages:
 
   asn1js@3.0.7:
     resolution: {integrity: sha512-uLvq6KJu04qoQM6gvBfKFjlh6Gl0vOKQuR5cJMDHQkmwfMOQeN3F3SHCv9SNYSL+CRoHvOGFfllDlVz03GQjvQ==}
+    engines: {node: '>=12.0.0'}
+
+  asn1js@3.1.0:
+    resolution: {integrity: sha512-HWYi1THkOqguCiO+vwj09ZkQFD2kKEsejYHAYCtX0D80WVdoDnvRc9IukXX/jeb0T9NRWJnRtqwdbHltnFjwXA==}
     engines: {node: '>=12.0.0'}
 
   assertion-error@2.0.1:
@@ -3201,6 +3238,10 @@ packages:
     resolution: {integrity: sha512-KTqnxsgGiQ6ZAzZCVlJH5eOjSnvlyEgx1m8bkRJfOhmGRqfo5KLvmAlACQkrjEtOQ4B7wF9TdSLIs9O90MX9xA==}
     engines: {node: '>=16.0.0'}
 
+  pvutils@1.2.0:
+    resolution: {integrity: sha512-BbubeCEyTuQjVMakvJQ/Sxbc93F2pwmbsxONT/ZRrwU7Ua38d8unYTwXpTVLAKJ4BDuH9IGztCjQcd/N/39Dvg==}
+    engines: {node: '>=16.0.0'}
+
   qrcode@1.5.4:
     resolution: {integrity: sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg==}
     engines: {node: '>=10.13.0'}
@@ -4364,19 +4405,34 @@ snapshots:
       asn1js: 3.0.7
       tslib: 2.8.1
 
-  '@peculiar/asn1-cms@2.6.1':
+  '@peculiar/asn1-asym-key@2.11.0':
     dependencies:
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
-      '@peculiar/asn1-x509-attr': 2.6.1
-      asn1js: 3.0.7
+      '@peculiar/asn1-pkcs8': 2.11.0
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
       tslib: 2.8.1
 
-  '@peculiar/asn1-csr@2.6.1':
+  '@peculiar/asn1-cms@2.11.0':
     dependencies:
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
-      asn1js: 3.0.7
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      '@peculiar/asn1-x509-attr': 2.11.0
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
+  '@peculiar/asn1-csr@2.11.0':
+    dependencies:
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
+  '@peculiar/asn1-ecc@2.11.0':
+    dependencies:
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
       tslib: 2.8.1
 
   '@peculiar/asn1-ecc@2.6.1':
@@ -4386,31 +4442,38 @@ snapshots:
       asn1js: 3.0.7
       tslib: 2.8.1
 
-  '@peculiar/asn1-pfx@2.6.1':
+  '@peculiar/asn1-pfx@2.11.0':
     dependencies:
-      '@peculiar/asn1-cms': 2.6.1
-      '@peculiar/asn1-pkcs8': 2.6.1
-      '@peculiar/asn1-rsa': 2.6.1
-      '@peculiar/asn1-schema': 2.6.0
-      asn1js: 3.0.7
+      '@peculiar/asn1-cms': 2.11.0
+      '@peculiar/asn1-pkcs8': 2.11.0
+      '@peculiar/asn1-rsa': 2.11.0
+      '@peculiar/asn1-schema': 2.11.0
+      asn1js: 3.1.0
       tslib: 2.8.1
 
-  '@peculiar/asn1-pkcs8@2.6.1':
+  '@peculiar/asn1-pkcs8@2.11.0':
     dependencies:
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
-      asn1js: 3.0.7
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
       tslib: 2.8.1
 
-  '@peculiar/asn1-pkcs9@2.6.1':
+  '@peculiar/asn1-pkcs9@2.11.0':
     dependencies:
-      '@peculiar/asn1-cms': 2.6.1
-      '@peculiar/asn1-pfx': 2.6.1
-      '@peculiar/asn1-pkcs8': 2.6.1
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
-      '@peculiar/asn1-x509-attr': 2.6.1
-      asn1js: 3.0.7
+      '@peculiar/asn1-cms': 2.11.0
+      '@peculiar/asn1-pfx': 2.11.0
+      '@peculiar/asn1-pkcs8': 2.11.0
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      '@peculiar/asn1-x509-attr': 2.11.0
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
+  '@peculiar/asn1-rsa@2.11.0':
+    dependencies:
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
       tslib: 2.8.1
 
   '@peculiar/asn1-rsa@2.6.1':
@@ -4420,17 +4483,38 @@ snapshots:
       asn1js: 3.0.7
       tslib: 2.8.1
 
+  '@peculiar/asn1-schema@2.11.0':
+    dependencies:
+      '@peculiar/utils': 2.0.3
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
   '@peculiar/asn1-schema@2.6.0':
     dependencies:
       asn1js: 3.0.7
       pvtsutils: 1.3.6
       tslib: 2.8.1
 
-  '@peculiar/asn1-x509-attr@2.6.1':
+  '@peculiar/asn1-x509-attr@2.11.0':
     dependencies:
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
-      asn1js: 3.0.7
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
+  '@peculiar/asn1-x509-post-quantum@2.11.0':
+    dependencies:
+      '@peculiar/asn1-asym-key': 2.11.0
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      asn1js: 3.1.0
+      tslib: 2.8.1
+
+  '@peculiar/asn1-x509@2.11.0':
+    dependencies:
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/utils': 2.0.3
+      asn1js: 3.1.0
       tslib: 2.8.1
 
   '@peculiar/asn1-x509@2.6.1':
@@ -4440,17 +4524,21 @@ snapshots:
       pvtsutils: 1.3.6
       tslib: 2.8.1
 
-  '@peculiar/x509@1.14.3':
+  '@peculiar/utils@2.0.3':
     dependencies:
-      '@peculiar/asn1-cms': 2.6.1
-      '@peculiar/asn1-csr': 2.6.1
-      '@peculiar/asn1-ecc': 2.6.1
-      '@peculiar/asn1-pkcs9': 2.6.1
-      '@peculiar/asn1-rsa': 2.6.1
-      '@peculiar/asn1-schema': 2.6.0
-      '@peculiar/asn1-x509': 2.6.1
+      tslib: 2.8.1
+
+  '@peculiar/x509@2.2.0':
+    dependencies:
+      '@peculiar/asn1-cms': 2.11.0
+      '@peculiar/asn1-csr': 2.11.0
+      '@peculiar/asn1-ecc': 2.11.0
+      '@peculiar/asn1-pkcs9': 2.11.0
+      '@peculiar/asn1-rsa': 2.11.0
+      '@peculiar/asn1-schema': 2.11.0
+      '@peculiar/asn1-x509': 2.11.0
+      '@peculiar/asn1-x509-post-quantum': 2.11.0
       pvtsutils: 1.3.6
-      reflect-metadata: 0.2.2
       tslib: 2.8.1
       tsyringe: 4.10.0
 
@@ -4677,7 +4765,7 @@ snapshots:
 
   '@simplewebauthn/browser@13.3.0': {}
 
-  '@simplewebauthn/server@13.3.2':
+  '@simplewebauthn/server@14.0.3':
     dependencies:
       '@hexagon/base64': 1.1.28
       '@levischuck/tiny-cbor': 0.2.11
@@ -4686,7 +4774,9 @@ snapshots:
       '@peculiar/asn1-rsa': 2.6.1
       '@peculiar/asn1-schema': 2.6.0
       '@peculiar/asn1-x509': 2.6.1
-      '@peculiar/x509': 1.14.3
+      '@peculiar/asn1-x509-post-quantum': 2.11.0
+      '@peculiar/x509': 2.2.0
+      reflect-metadata: 0.2.2
 
   '@simplewebauthn/types@12.0.0': {}
 
@@ -5261,6 +5351,12 @@ snapshots:
     dependencies:
       pvtsutils: 1.3.6
       pvutils: 1.1.5
+      tslib: 2.8.1
+
+  asn1js@3.1.0:
+    dependencies:
+      pvtsutils: 1.3.6
+      pvutils: 1.2.0
       tslib: 2.8.1
 
   assertion-error@2.0.1: {}
@@ -6835,6 +6931,8 @@ snapshots:
       tslib: 2.8.1
 
   pvutils@1.1.5: {}
+
+  pvutils@1.2.0: {}
 
   qrcode@1.5.4:
     dependencies:
