@@ -91,4 +91,44 @@ describe('ShareSchedule', () => {
     const sheet = await screen.findByRole('dialog', { hidden: true });
     expect(within(sheet).getByText('Students subscribed to your calendar feed will stop getting updates.')).toBeInTheDocument();
   });
+
+  it('shows a failed turn-off inside the sheet, where the page behind is inert', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off sharing…' }));
+    const sheet = await screen.findByRole('dialog', { hidden: true });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Turn off', hidden: true }));
+    expect(await within(sheet).findByRole('alert', { hidden: true })).toHaveTextContent('Network error. Please try again.');
+  });
+
+  it('shows a reset refused as already off inside the sheet', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'Sharing is off, so there is no link to reset.', code: 'SCHEDULE_SHARE_OFF' }), { status: 409 })),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset embed key…' }));
+    const sheet = await screen.findByRole('dialog', { hidden: true });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Reset key', hidden: true }));
+    expect(await within(sheet).findByRole('alert', { hidden: true })).toHaveTextContent('Sharing is off, so there is no link to reset.');
+  });
+
+  it('shows the state the server returns when turning on was already done', async () => {
+    stubFetch({ ...ON, weeks: 3 });
+    renderPage(OFF);
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: '3' })).toHaveAttribute('aria-checked', 'true'));
+    expect(screen.getByText('https://fair.yoga/feed/k7Qm2xR9vT.ics')).toBeInTheDocument();
+  });
+
+  it('announces a copy and forgets it when the code changes', async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Code copied');
+    fireEvent.click(screen.getByRole('radio', { name: 'Dark' }));
+    expect(screen.getByRole('button', { name: 'Copy code' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
 });
