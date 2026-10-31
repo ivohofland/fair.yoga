@@ -60,6 +60,11 @@ export type PublicScheduleEntry = PublicClassEntry | PublicStudioEntry;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** The entry holds the schedule and cancellation, so a change to it is a change to the row. */
+function laterOf(a: Date, b: Date): Date {
+  return a.getTime() >= b.getTime() ? a : b;
+}
+
 /**
  * The classes a teacher shows the public, in one shape for every channel.
  * `bookable` is what a visitor can still book; `calendar` is the teacher's
@@ -115,7 +120,7 @@ export async function listPublicSchedule(
       kind: 'class',
       id: cls.id,
       calendarEntryId: e.id,
-      updatedAt: cls.updatedAt,
+      updatedAt: laterOf(cls.updatedAt, e.updatedAt),
       date: e.date,
       startTime: e.startTime,
       start,
@@ -146,7 +151,7 @@ export async function listPublicSchedule(
       kind: 'studio',
       id: sc.id,
       calendarEntryId: e.id,
-      updatedAt: sc.updatedAt,
+      updatedAt: laterOf(sc.updatedAt, e.updatedAt),
       date: e.date,
       startTime: e.startTime,
       start,
