@@ -4,6 +4,9 @@
 .claude/*
 !.claude/skills/
 
+# Superpowers scratch: subagent ledgers, task briefs, reports, review packages.
+/.superpowers/
+
 # dependencies
 /node_modules
 /.pnp
