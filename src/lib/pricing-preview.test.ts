@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalSpread, tierPrices, priceSpread, studentsIn } from './pricing-preview';
+import { normalSpread, tierPrices, priceSpread, studentsIn, previewClass } from './pricing-preview';
 
 describe('normalSpread', () => {
   it.each([
@@ -56,5 +56,28 @@ describe('priceSpread', () => {
 
   it('has nothing to compare with a single occupied tier', () => {
     expect(priceSpread({ 1: 0, 2: 0, 3: 20, 4: 0, 5: 0 }, { 1: 0, 2: 0, 3: 1, 4: 0, 5: 0 })).toBeNull();
+  });
+});
+
+describe('previewClass', () => {
+  const typical = { roomCost: 20, minRate: 40, targetRate: 90, minStudents: 4, maxStudents: 12 };
+
+  it('previews the typical example the way the landing demo always has', () => {
+    const p = previewClass({ ...typical, vatPercent: 0 }, normalSpread(7));
+    expect(p.teacherRate).toBe(58.75);
+    expect(p.prices[1]).toBe(7.31);
+    expect(p.prices[5]).toBe(15.19);
+  });
+
+  it('adds VAT once on the rounded total', () => {
+    const p = previewClass({ ...typical, vatPercent: 21 }, normalSpread(7));
+    expect(p.totalCost).toBe(95.29);
+    expect(p.vatCents).toBe(1654);
+  });
+
+  it('reports no VAT when the class charges none', () => {
+    const p = previewClass({ ...typical, vatPercent: 0 }, normalSpread(7));
+    expect(p.vatCents).toBe(0);
+    expect(p.totalCost).toBe(78.75);
   });
 });
