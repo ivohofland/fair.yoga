@@ -17,7 +17,7 @@
     "verifiedAt": "2026-10-13"
   },
   "public-page": {
-    "sourceSha256": "a0b8ea64709d5e22f20bdb93e5c0d0dca31010bd3a1016bc6bab13094fec0158",
+    "sourceSha256": "7de2b4e5c48860da795793c385a506ffea723c263a9e6a457c17cbb5d0553881",
     "baselineSha256": "bd49541dbb0465ba062c51b301664657d2c17725164dc96d99384bf528363d43",
     "verifiedAt": "2026-10-31",
     "note": "The /[slug] listing moved to listPublicSchedule and gained a subscribe link shown only when sharing is on (#916)"
