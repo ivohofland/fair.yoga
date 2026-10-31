@@ -60,6 +60,16 @@ export const ROUTE_BASELINES: readonly RouteBaseline[] = [
     baselineFiles: baselineFiles('landing'),
   },
   {
+    name: 'sliding-scale',
+    sourceFiles: ['src/app/sliding-scale/page.tsx'],
+    baselineFiles: baselineFiles('sliding-scale'),
+  },
+  {
+    name: 'donation-based',
+    sourceFiles: ['src/app/donation-based/page.tsx'],
+    baselineFiles: baselineFiles('donation-based'),
+  },
+  {
     name: 'public-page',
     sourceFiles: ['src/app/(public)/[slug]/page.tsx'],
     baselineFiles: baselineFiles('public-page'),

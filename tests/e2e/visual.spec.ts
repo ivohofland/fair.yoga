@@ -371,6 +371,20 @@ test.describe('Visual regression', () => {
     await expect(page).toHaveScreenshot('landing.png', { fullPage: true, stylePath: hideDevOverlay });
   });
 
+  test('sliding-scale', async ({ page }) => {
+    await page.goto('/sliding-scale');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await freezeDates(page);
+    await expect(page).toHaveScreenshot('sliding-scale.png', { fullPage: true, stylePath: hideDevOverlay });
+  });
+
+  test('donation-based', async ({ page }) => {
+    await page.goto('/donation-based');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await freezeDates(page);
+    await expect(page).toHaveScreenshot('donation-based.png', { fullPage: true, stylePath: hideDevOverlay });
+  });
+
   test('public teacher page', async ({ page }) => {
     await page.goto(`/${slug}`);
     await expect(page.getByText('Visual Vinyasa')).toBeVisible();
