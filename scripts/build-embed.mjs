@@ -4,7 +4,7 @@
  * widget). The compiled module gets one appended line that defines the
  * element against the origin the script was loaded from.
  *   pnpm run build:embed            writes public/embed/v1.js
- *   node scripts/build-embed.mjs D  writes D/v1.js (src/embed/build.test.ts)
+ *   node scripts/build-embed.mjs D  writes D/v1.js
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

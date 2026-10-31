@@ -1,5 +1,7 @@
 const ELEMENT_NAME = 'fair-yoga-schedule';
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+const START_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const CSS = `
 :host { display: block; }
@@ -138,13 +140,20 @@ export function renderSchedule(root, data, opts) {
         container.append(el('p', 'fy-empty', 'No upcoming classes right now.'));
     }
     else {
+        const themed = opts.theme === 'themed';
         const schedule = el('ol', 'fy-schedule');
+        if (themed)
+            schedule.setAttribute('role', 'list');
         let day = null;
         for (const c of data.classes) {
+            if (!START_PATTERN.test(c.start))
+                throw new Error('Malformed start in schedule data');
             const date = c.start.slice(0, 10);
             if (day === null || day.date !== date) {
                 const li = el('li', 'fy-day');
                 const list = el('ol', 'fy-classes');
+                if (themed)
+                    list.setAttribute('role', 'list');
                 li.append(el('h3', 'fy-day-heading', dayHeading(c.start)), list);
                 schedule.append(li);
                 day = { date, list };
@@ -172,7 +181,7 @@ export function defineScheduleElement(opts) {
             if (this.started)
                 return;
             const key = this.getAttribute('key');
-            if (!key)
+            if (key === null || !KEY_PATTERN.test(key))
                 return;
             this.started = true;
             void this.load(key);

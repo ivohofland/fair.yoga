@@ -277,6 +277,10 @@ const eslintConfig = defineConfig([
     'coverage/**',
     // The Prisma client `prisma generate` writes; never authored.
     'src/generated/**',
+    // The website widget's build output (scripts/build-embed.mjs); its source
+    // is src/embed/schedule-widget.ts, which is linted.
+    'public/embed/**',
+    '.embed-build/**',
   ]),
 ]);
 

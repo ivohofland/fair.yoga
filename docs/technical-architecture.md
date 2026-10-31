@@ -2429,6 +2429,8 @@ When `clientIp()` can't resolve any address at all (`x-forwarded-for` and `x-rea
 
 **Cache.** `getCachedSchedule` (`src/lib/public-schedule-cache.ts`) holds the listing for a minute, bounded and LRU, on `globalThis`. Its key is the window mode, the teacher, the weeks and the studio setting, never the share key: turning studio classes off takes effect at once, and a calendar-mode listing can never be served the bookable one. Writes do not bust it; a minute of staleness is accepted.
 
+**The widget's known limits** (`src/embed/schedule-widget.ts`). The themed look is an inline `<style>` in the shadow root, so a host page whose Content-Security-Policy `style-src` forbids inline styles shows the widget unstyled. The element reads its `key`, `theme` and `color-scheme` attributes once, when it connects, so changing one afterwards changes nothing; a new element is needed.
+
 ### Production compose
 
 The production stack is `docker-compose.prod.yml`; read it there rather than in a copy here. Its database publishes no port, so Postgres is reachable only on the compose network.
