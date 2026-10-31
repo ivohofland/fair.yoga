@@ -149,4 +149,45 @@ describe('listPublicSchedule (DB)', () => {
     expect(walk(list)).not.toContain('videoUrl');
     expect(JSON.stringify(list)).not.toContain('meet.example');
   });
+
+  it('takes updatedAt from the calendar entry when only the entry changed', async () => {
+    const c = await createClassFixture(prisma, {
+      teacherId, classType: 'entry-touch', date: day(10), startTime: hhmmToTime('10:00'),
+      durationMinutes: 30, ...own, roomCost: 0, format: 'online', status: 'open',
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const touched = await prisma.calendarEntry.update({
+      where: { id: c.calendarEntryId }, data: { cancelledAt: new Date('2099-03-02T00:00:00Z') },
+    });
+    const child = await prisma.class.findUniqueOrThrow({ where: { id: c.id } });
+    expect(touched.updatedAt.getTime()).toBeGreaterThan(child.updatedAt.getTime());
+    const list = await listPublicSchedule(prisma, input({ mode: { kind: 'calendar', weeks: 4 } }));
+    expect(list.find((e) => e.id === c.id)?.updatedAt).toEqual(touched.updatedAt);
+  });
+
+  it('puts a class after the spring-forward at the right UTC instant', async () => {
+    const mkAt = (date: Date) => createClassFixture(prisma, {
+      teacherId, classType: 'dst', date, startTime: hhmmToTime('18:00'),
+      durationMinutes: 30, ...own, roomCost: 0, format: 'online', status: 'open',
+    });
+    const before = await mkAt(new Date(Date.UTC(2027, 2, 22)));
+    const after = await mkAt(new Date(Date.UTC(2027, 2, 29)));
+    const list = await listPublicSchedule(
+      prisma,
+      input({ now: new Date('2027-03-20T12:00:00Z'), mode: { kind: 'bookable', weeks: 4 } }),
+    );
+    expect(list.find((e) => e.id === before.id)?.start.toISOString()).toBe('2027-03-22T17:00:00.000Z');
+    expect(list.find((e) => e.id === after.id)?.start.toISOString()).toBe('2027-03-29T16:00:00.000Z');
+  });
+
+  it('drops a cancelled studio class when bookable and marks it in the calendar', async () => {
+    const s = await createStudioClassFixture(prisma, {
+      teacherId, classType: 'studio-cancelled', date: day(11), startTime: hhmmToTime('10:00'),
+      durationMinutes: 30, location: 'X', hourlyRate: 40, cancelledAt: new Date('2099-03-02T00:00:00Z'),
+    });
+    const b = idsOf(await listPublicSchedule(prisma, input({ mode: { kind: 'bookable', weeks: null }, includeStudio: true })));
+    const c = await listPublicSchedule(prisma, input({ mode: { kind: 'calendar', weeks: 4 }, includeStudio: true }));
+    expect(b).not.toContain(s.id);
+    expect(c.find((e) => e.id === s.id)?.cancelled).toBe(true);
+  });
 });
