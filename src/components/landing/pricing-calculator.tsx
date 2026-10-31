@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { PricingPreviewResult } from '@/components/class/pricing-preview-result';
 import { formatMoney } from '@/lib/format';
 import { PRICING_EXAMPLES, type PricingExample, type PricingExampleKey } from '@/lib/pricing-examples';
@@ -95,6 +95,7 @@ function PillButton({ pressed, onClick, children }: { pressed: boolean; onClick:
 }
 
 export function PricingCalculator({ initialExample }: { initialExample: PricingExampleKey }) {
+  const uid = useId();
   const [key, setKey] = useState(initialExample);
   const [values, setValues] = useState(() => adjustableOf(PRICING_EXAMPLES[initialExample]));
   const example = PRICING_EXAMPLES[key];
@@ -110,7 +111,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap gap-2">
+      <div role="group" aria-label="Example classes" className="flex flex-wrap gap-2">
         {EXAMPLE_KEYS.map((k) => (
           <PillButton key={k} pressed={k === key} onClick={() => choose(k)}>
             {PRICING_EXAMPLES[k].label}
@@ -122,7 +123,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
       <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
         <div className="bg-sand border border-border rounded-card p-6 flex flex-col gap-6 [&_.type-caption]:text-brown">
           <Control
-            id="calc-students"
+            id={`${uid}-students`}
             label="Students registered"
             hint={`The class runs from ${minStudents}; your target is reached at ${maxStudents}.`}
             readout={
@@ -135,7 +136,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
             }
           >
             <RangeTrack
-              id="calc-students"
+              id={`${uid}-students`}
               {...STUDENTS}
               step={1}
               value={students}
@@ -147,13 +148,13 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
           </Control>
 
           <Control
-            id="calc-room"
+            id={`${uid}-room`}
             label="Room cost"
             hint="What the room costs for the class"
             readout={<span className="type-number text-base">{formatMoney(roomCost, 'EUR')}</span>}
           >
             <RangeTrack
-              id="calc-room"
+              id={`${uid}-room`}
               {...ROOM}
               value={roomCost}
               fillClass="bg-teal"
@@ -163,7 +164,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
           </Control>
 
           <Control
-            id="calc-minimum"
+            id={`${uid}-minimum`}
             label="Your minimum"
             hint={
               minRate < 0
@@ -173,7 +174,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
             readout={<span className="type-number text-base">{formatMoney(minRate, 'EUR')}</span>}
           >
             <RangeTrack
-              id="calc-minimum"
+              id={`${uid}-minimum`}
               {...MINIMUM}
               value={minRate}
               fillClass="bg-teal"
@@ -183,7 +184,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
           </Control>
 
           <Control
-            id="calc-target"
+            id={`${uid}-target`}
             label="Your target"
             hint={
               targetRate === minRate
@@ -193,7 +194,7 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
             readout={<span className="type-number text-base">{formatMoney(targetRate, 'EUR')}</span>}
           >
             <RangeTrack
-              id="calc-target"
+              id={`${uid}-target`}
               {...TARGET}
               value={targetRate}
               fillClass="bg-teal"
@@ -202,8 +203,8 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
             />
           </Control>
 
-          <div role="group" aria-labelledby="calc-vat-label">
-            <p id="calc-vat-label" className="type-label text-ink mb-2">
+          <div role="group" aria-labelledby={`${uid}-vat`}>
+            <p id={`${uid}-vat`} className="type-label text-ink mb-2">
               VAT
             </p>
             <div className="flex gap-2">
@@ -230,7 +231,16 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
         </div>
 
         <div className="flex flex-col gap-6 lg:sticky lg:top-6">
-          {goesAhead ? (
+          {/* Mounted empty so screen readers announce the note when it fills */}
+          <p
+            role="status"
+            className={goesAhead ? '' : 'type-body text-danger border border-danger rounded-card p-5'}
+          >
+            {goesAhead
+              ? null
+              : `With ${students} students, this class is below your minimum of ${minStudents}. It would auto-cancel at the time you choose, and nobody pays.`}
+          </p>
+          {goesAhead && (
             <>
               <PricingPreviewResult
                 currency="EUR"
@@ -247,11 +257,6 @@ export function PricingCalculator({ initialExample }: { initialExample: PricingE
                 <p className="type-caption">Above your target size, extra students only lower prices.</p>
               )}
             </>
-          ) : (
-            <p role="status" className="type-body text-danger border border-danger rounded-card p-5">
-              With {students} students, this class is below your minimum of {minStudents}. It would auto-cancel at the
-              time you choose, and nobody pays.
-            </p>
           )}
         </div>
       </div>

@@ -133,4 +133,29 @@ describe('PricingCalculator', () => {
     expect(screen.getByText('What you earn with 4 students')).toBeTruthy();
     expect(screen.getByText('What you earn with 12 or more')).toBeTruthy();
   });
+
+  it('keeps its live region mounted so the cancellation is announced when it appears', () => {
+    render(<PricingCalculator initialExample="typical" />);
+    const region = screen.getByRole('status');
+    expect(region.textContent).toBe('');
+
+    fireEvent.change(students(), { target: { value: '3' } });
+
+    expect(screen.getByRole('status')).toBe(region);
+    expect(region.textContent).toContain('this class is below your minimum of 4');
+
+    fireEvent.change(students(), { target: { value: '7' } });
+    expect(region.textContent).toBe('');
+  });
+
+  it('loads the new example values when a chip is chosen after adjusting', () => {
+    render(<PricingCalculator initialExample="typical" />);
+    fireEvent.change(target(), { target: { value: '30' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'A flat rate' }));
+
+    expect(minimum().getAttribute('aria-valuetext')).toBe('€60.00');
+    expect(target().getAttribute('aria-valuetext')).toBe('€60.00');
+    expect(students().getAttribute('aria-valuetext')).toBe('8 students');
+  });
 });
