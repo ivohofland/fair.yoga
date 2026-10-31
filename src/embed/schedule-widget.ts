@@ -8,7 +8,7 @@
  * `docs/superpowers/specs/2026-10-30-share-your-schedule-design.md`.
  */
 
-/** The widget's own copy of `PublicScheduleJson`; `schedule-widget.test.tsx` fails to compile if they drift. */
+/** The widget's own copy of `PublicScheduleJson`: it imports nothing, so the type is restated, and it must stay assignable both ways to the server's. */
 export type WidgetScheduleJson = {
   timezone: string;
   classes: {
@@ -109,7 +109,7 @@ function linkable(url: string | null, origin: string): string | null {
   return null;
 }
 
-/** A link that opens in a new tab, tells a screen reader so, and hands the new page no opener or referrer. */
+/** A link that opens in a new tab and hands the new page no opener or referrer; callers add `appendNewTabNote`. */
 function newTabLink(href: string, className: string): HTMLAnchorElement {
   const a = el('a', className);
   a.href = href;
@@ -123,9 +123,8 @@ function appendNewTabNote(a: HTMLAnchorElement): void {
 }
 
 /**
- * "Tue 3 Nov" from the date part of `start`, which the server writes in the
- * teacher's zone. Read as a UTC calendar date, so the visitor's zone never
- * moves it.
+ * "Tue 3 Nov" from the date part of `start`. Read as a UTC calendar date, so
+ * the visitor's zone never moves it.
  */
 function dayHeading(start: string): string {
   const [y, m, d] = start.slice(0, 10).split('-').map(Number) as [number, number, number];
@@ -239,7 +238,7 @@ export function defineScheduleElement(opts: { origin: string; cache?: RequestCac
 
   class FairYogaSchedule extends HTMLElement {
     private started = false;
-    /** Read at fetch time, so a preview can set it after the element is defined. */
+    /** Read at fetch time, so a caller can set it after the element is defined. */
     cache: RequestCache | undefined = opts.cache;
 
     connectedCallback(): void {

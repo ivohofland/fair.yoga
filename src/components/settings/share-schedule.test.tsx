@@ -101,16 +101,19 @@ describe('ShareSchedule', () => {
     expect(await within(sheet).findByRole('alert', { hidden: true })).toHaveTextContent('Network error. Please try again.');
   });
 
-  it('shows a reset refused as already off inside the sheet', async () => {
+  it('switches to the off state, closes the sheet and says so when a reset finds sharing already off', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => new Response(JSON.stringify({ error: 'Sharing is off, so there is no link to reset.', code: 'SCHEDULE_SHARE_OFF' }), { status: 409 })),
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Sharing is off, so there is no link to reset.', code: 'SCHEDULE_SHARE_OFF' } }), { status: 409 })),
     );
     renderPage();
     fireEvent.click(screen.getByRole('button', { name: 'Reset embed key…' }));
     const sheet = await screen.findByRole('dialog', { hidden: true });
     fireEvent.click(within(sheet).getByRole('button', { name: 'Reset key', hidden: true }));
-    expect(await within(sheet).findByRole('alert', { hidden: true })).toHaveTextContent('Sharing is off, so there is no link to reset.');
+    expect(await screen.findByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Sharing was already off.');
+    expect(screen.queryByText('Your code')).not.toBeInTheDocument();
   });
 
   it('shows the state the server returns when turning on was already done', async () => {

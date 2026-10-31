@@ -78,8 +78,6 @@ export default async function TeacherBookingPage({
   });
   if (!isShown(teacher)) notFound();
 
-  // The service decides what is bookable: open, public, not cancelled, and not
-  // yet started, by the teacher's calendar rather than UTC's.
   const schedule = await listPublicSchedule(prisma, {
     teacherId: teacher.id,
     timeZone: teacher.defaultTimezone,

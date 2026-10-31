@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { BASE_URL, freshIp, uniqueSuffix, teardownTeacher } from '../helpers';
-import { createClassFixture, createStudioClassFixture } from '../class-fixtures';
+import { createClassFixture, createStudioClassFixture, startedEarlierToday, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
-import { mintScheduleShareKey } from '@/services/schedule-share';
+import { SHARE_KEY_PATTERN, mintScheduleShareKey } from '@/services/schedule-share';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -13,6 +13,9 @@ const OPEN = `OpenFlow${clean}`;
 const PRIVATE = `PrivateFlow${clean}`;
 const CANCELLED = `CancelledFlow${clean}`;
 const STUDIO = `StudioFlow${clean}`;
+const STARTED_OPEN = `StartedOpen${clean}`;
+const STARTED_RUNNING = `StartedRunning${clean}`;
+const STARTED_AT = startedEarlierToday(60);
 
 const url = (key: string) => `${BASE_URL}/api/public/v1/schedule/${key}`;
 const get = (key: string, ip = freshIp()) => fetch(url(key), { headers: ip });
@@ -66,6 +69,13 @@ describe('GET /api/public/v1/schedule/[key]', () => {
     await createClassFixture(prisma, { ...own, classType: OPEN, date: dayFromNow(2) });
     await createClassFixture(prisma, { ...own, classType: PRIVATE, date: dayFromNow(3), isPrivate: true });
     await createClassFixture(prisma, { ...own, classType: CANCELLED, date: dayFromNow(4), cancelledAt: new Date() });
+    if (STARTED_AT !== null) {
+      // One minute each, back to back, so the teacher-slot constraint sees no overlap even when the clamp pins the first to 00:01.
+      const first = wallSlotAt(STARTED_AT, 'UTC');
+      const second = wallSlotAt(new Date(STARTED_AT.getTime() + 60_000), 'UTC');
+      await createClassFixture(prisma, { ...own, classType: STARTED_OPEN, ...first, durationMinutes: 1 });
+      await createClassFixture(prisma, { ...own, classType: STARTED_RUNNING, ...second, durationMinutes: 1, status: 'in_progress' });
+    }
     await createStudioClassFixture(prisma, {
       teacherId, classType: STUDIO, date: dayFromNow(5), startTime: hhmmToTime('10:00'),
       durationMinutes: 30, location: 'The Loft', hourlyRate: 40,
@@ -131,6 +141,38 @@ describe('GET /api/public/v1/schedule/[key]', () => {
     expect((await get(oldKey)).status).toBe(200);
     await prisma.teacher.update({ where: { id }, data: { scheduleShareKey: mintScheduleShareKey() } });
     expect((await get(oldKey)).status).toBe(404);
+  });
+
+  it('answers 404 with CORS for a key that is not the minted shape, however long', async () => {
+    const res = await get('a'.repeat(300));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+
+  it('never counts a malformed key toward the distinct-key limit', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 11; i++) {
+      const bad = `${'x'.repeat(21)}${i}-`;
+      expect(SHARE_KEY_PATTERN.test(bad)).toBe(false);
+      expect((await get(bad, ip)).status, `malformed key ${i}`).toBe(404);
+    }
+    expect((await get(mintScheduleShareKey(), ip)).status).toBe(404);
+  });
+
+  it.skipIf(STARTED_AT === null)('leaves out a class that started earlier today, open or in progress, and keeps the upcoming one', async () => {
+    const types = ((await (await get(key)).json()) as { classes: { classType: string }[] }).classes.map((c) => c.classType);
+    expect(types).toContain(OPEN);
+    expect(types).not.toContain(STARTED_OPEN);
+    expect(types).not.toContain(STARTED_RUNNING);
+  });
+
+  it('links to the new page address the moment the teacher renames it', async () => {
+    const ip = freshIp();
+    await get(key, ip);
+    const newSlug = `${slug}-renamed`;
+    await prisma.teacher.update({ where: { id: teacherId }, data: { pageSlug: newSlug } });
+    const body = await (await get(key, ip)).json() as { classes: { classType: string; bookingUrl: string | null }[] };
+    expect(body.classes.find((c) => c.classType === OPEN)!.bookingUrl).toContain(`/${newSlug}/book/`);
   });
 
   it('refuses the eleventh distinct key from one address with a 429 that still carries CORS', async () => {

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
 import { defineScheduleElement } from '@/embed/schedule-widget';
 import { buildEmbedSnippet } from '@/lib/embed-snippet';
-import { logRequestFailure, readErrorMessage } from '@/lib/client-errors';
+import { logRequestFailure, readError } from '@/lib/client-errors';
 import type { ScheduleShareState } from '@/services/schedule-share';
 
 const ENDPOINT = '/api/account/schedule-share';
@@ -80,7 +80,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-/** Mounts a fresh `<fair-yoga-schedule>`; the element reads its attributes once at connect, so the parent re-keys it on every change. */
+/** Mounts a fresh `<fair-yoga-schedule>`; the element reads `key` when it connects and `theme` and `color-scheme` when its response arrives, so changing any afterwards changes nothing and the parent re-keys it on every change. */
 function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme: Theme; colorScheme: ColorScheme }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -121,19 +121,28 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
   const [colorScheme, setColorScheme] = useState<ColorScheme>('light');
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [sheet, setSheet] = useState<'reset' | 'off' | null>(null);
   const [copied, setCopied] = useState<{ which: 'code' | 'feed'; text: string } | null>(null);
 
   async function send(action: Pending, url: string, method: string, body?: unknown): Promise<boolean> {
     setPending(action);
     setError('');
+    setNotice('');
     try {
       const res = await fetch(url, {
         method,
         ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
       });
       if (!res.ok) {
-        setError(await readErrorMessage(res, 'Something went wrong. Please try again.'));
+        const { code, message } = await readError(res, 'Something went wrong. Please try again.');
+        if (action === 'reset' && code === 'SCHEDULE_SHARE_OFF') {
+          setState((s) => ({ ...s, key: null }));
+          setSheet(null);
+          setNotice('Sharing was already off.');
+          return false;
+        }
+        setError(message);
         return false;
       }
       const json: { data: ScheduleShareState } = await res.json();
@@ -166,6 +175,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
           Show your schedule on your own website, and let students subscribe to it in their calendar app. Visitors
           book here, on fair.yoga.
         </p>
+        {notice && <p role="status" className="type-label text-ink mb-4">{notice}</p>}
         {error && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
         <Button onClick={() => send('enable', ENDPOINT, 'POST')} disabled={pending !== null}>Turn on</Button>
       </div>

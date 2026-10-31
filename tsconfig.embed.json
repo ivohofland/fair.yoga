@@ -1,7 +1,6 @@
 {
-  // Builds `public/embed/v1.js` (scripts/build-embed.mjs). Every option that
-  // shapes the emitted bytes is pinned here, so the same compiler gives the
-  // same file on any machine and src/embed/build.test.ts can compare them.
+  // Builds `public/embed/v1.js` (scripts/build-embed.mjs). The options that
+  // shape the emitted bytes are pinned here; the build test catches any drift.
   "compilerOptions": {
     "target": "es2020",
     "module": "es2020",
