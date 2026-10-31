@@ -386,3 +386,33 @@ export function isBeforeOpening(opensAt: Date, now: Date): boolean {
   }
   return now < opensAt;
 }
+
+/**
+ * An instant as ISO 8601 in a zone, with its numeric offset
+ * ("2026-11-02T19:00:00-05:00"). The offset is the zone's at that instant, so
+ * a class either side of a clock change carries the right one. An unreadable
+ * instant or an unknown zone is a caller bug; both throw rather than guess.
+ */
+export function formatIsoWithOffset(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZone,
+  }).formatToParts(instant);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)!.value;
+  const wall = Date.UTC(
+    Number(get('year')), Number(get('month')) - 1, Number(get('day')),
+    Number(get('hour')), Number(get('minute')), Number(get('second')),
+  );
+  const offsetMinutes = Math.round((wall - Math.floor(instant.getTime() / 1000) * 1000) / 60_000);
+  const sign = offsetMinutes < 0 ? '-' : '+';
+  const abs = Math.abs(offsetMinutes);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:${get('second')}${sign}${hh}:${mm}`;
+}

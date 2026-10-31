@@ -65,7 +65,9 @@ export type RateLimitPrefix =
   | 'payout-pause'
   | 'unsubscribe'
   | 'passkey-revoke'
-  | 'csp-report:ip';
+  | 'csp-report:ip'
+  | 'public-schedule:ip'
+  | 'schedule-feed:ip';
 
 export const PREFIX_CAPACITIES = {
   'magic-link:email': 5_000,
@@ -85,6 +87,8 @@ export const PREFIX_CAPACITIES = {
   unsubscribe: 1_000,
   'passkey-revoke': 1_000,
   'csp-report:ip': 1_000,
+  'public-schedule:ip': 2_000,
+  'schedule-feed:ip': 2_000,
 } as const satisfies Record<RateLimitPrefix, number>;
 
 // Longest first: this is now load-bearing, not inert. `'teacher-signup'` and
@@ -280,7 +284,7 @@ function warnUnresolvedClientIp(route: string, now: number): void {
   log.warn({ route }, 'Rate limit IP check degraded to a shared bucket: client IP could not be resolved');
 }
 
-export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'magic-link:claim' | 'passkey-auth-options' | 'student-signup:ip' | 'teacher-signup' | 'slug-available' | 'payout-pause' | 'unsubscribe' | 'passkey-revoke' | 'csp-report:ip'>;
+export type IpRateLimitPrefix = Extract<RateLimitPrefix, 'magic-link:ip' | 'magic-link:claim' | 'passkey-auth-options' | 'student-signup:ip' | 'teacher-signup' | 'slug-available' | 'payout-pause' | 'unsubscribe' | 'passkey-revoke' | 'csp-report:ip' | 'public-schedule:ip' | 'schedule-feed:ip'>;
 
 /**
  * IP-keyed rate limit for an unauthenticated route. An unresolved IP is
