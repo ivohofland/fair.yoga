@@ -1,0 +1,27 @@
+{
+  // Builds `public/embed/v1.js` (scripts/build-embed.mjs). Every option that
+  // shapes the emitted bytes is pinned here, so the same compiler gives the
+  // same file on any machine and src/embed/build.test.ts can compare them.
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "es2020",
+    "lib": ["es2020", "dom", "dom.iterable"],
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "incremental": false,
+    "composite": false,
+    "declaration": false,
+    "sourceMap": false,
+    "removeComments": true,
+    "importHelpers": false,
+    "useDefineForClassFields": false,
+    "newLine": "lf",
+    "rootDir": "src/embed",
+    "outDir": ".embed-build"
+  },
+  "files": ["src/embed/schedule-widget.ts"]
+}

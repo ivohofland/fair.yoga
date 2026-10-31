@@ -48,6 +48,15 @@ const nextConfig: NextConfig = {
       // Static policies for the responses that are not pages (src/lib/csp.ts).
       { source: "/api/:path*", headers: [{ key: "Content-Security-Policy", value: API_CSP }] },
       { source: "/sw.js", headers: [{ key: "Content-Security-Policy", value: SERVICE_WORKER_CSP }] },
+      // The website widget (#916): teachers' pages load it as a module script,
+      // which the browser fetches in CORS mode, and it is always the latest v1.
+      {
+        source: "/embed/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=3600" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
     ];
     if (isDev) {
       // Safari reuses cached dev chunks on plain reload despite
