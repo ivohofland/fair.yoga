@@ -528,6 +528,14 @@ const capacityField = () =>
 /** What a donation class took in (#912); `null` clears the recorded total. */
 export const donationTotalSchema = z.object({ amount: moneyField().nullable() }).strict();
 
+/** What a teacher changes about their shared schedule (#916). */
+export const updateScheduleShareSchema = z
+  .object({
+    weeks: z.number().int().min(1).max(4).optional(),
+    includeStudio: z.boolean().optional(),
+  })
+  .strict();
+
 // ============================================================================
 // ROOMS
 // ============================================================================
