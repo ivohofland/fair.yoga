@@ -176,6 +176,7 @@ export function defineScheduleElement(opts) {
         constructor() {
             super(...arguments);
             this.started = false;
+            this.cache = opts.cache;
         }
         connectedCallback() {
             if (this.started)
@@ -193,6 +194,7 @@ export function defineScheduleElement(opts) {
                 const res = await fetch(`${origin}/api/public/v1/schedule/${encoded}`, {
                     credentials: 'omit',
                     referrerPolicy: 'no-referrer',
+                    ...(this.cache === undefined ? {} : { cache: this.cache }),
                 });
                 if (!res.ok)
                     return;

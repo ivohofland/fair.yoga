@@ -247,6 +247,10 @@ too, or the browser hides them from the widget.
   pricing label in `DESCRIPTION`; no amounts, no video link.
   `SEQUENCE`/`DTSTAMP` such that a moved class updates in place. *(Details are
   the builder's.)*
+- The calendar name is "{firstName}'s schedule". An exception to "no teacher
+  name on public channels": the name is already on `/[slug]`, which links the
+  feed, and a neutral name would make several subscribed teachers
+  indistinguishable in a calendar app. *(Build-time ruling.)*
 - `webcal://` for one-click subscribe links; the settings page shows the
   `https://` form for copying. *(Builder's call.)*
 
