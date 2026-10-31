@@ -20,7 +20,7 @@ export const PRICING_EXAMPLES = {
     label: 'A typical class',
     story: 'Seven students on a normal week. The room is covered and you earn well above your minimum.',
     students: 7,
-    roomCost: 20,
+    roomCost: 30,
     minRate: 40,
     targetRate: 90,
     minStudents: 4,
@@ -32,7 +32,7 @@ export const PRICING_EXAMPLES = {
     story:
       'Just starting out? A low minimum and a small minimum class size keep the class running while word gets around, instead of auto-cancelling.',
     students: 3,
-    roomCost: 20,
+    roomCost: 30,
     minRate: 10,
     targetRate: 70,
     minStudents: 2,
@@ -44,7 +44,7 @@ export const PRICING_EXAMPLES = {
     story:
       'Full, plus two walk-ins. Your rate stays capped at your target, so every extra student lowers everyone’s price.',
     students: 14,
-    roomCost: 20,
+    roomCost: 30,
     minRate: 40,
     targetRate: 90,
     minStudents: 4,
@@ -56,7 +56,7 @@ export const PRICING_EXAMPLES = {
     story:
       'Prefer one simple income? Set your minimum and target to the same amount: you earn the same every class.',
     students: 8,
-    roomCost: 20,
+    roomCost: 30,
     minRate: 60,
     targetRate: 60,
     minStudents: 4,
@@ -68,7 +68,7 @@ export const PRICING_EXAMPLES = {
     story:
       'Registered for VAT? Enter rates without it. Each student’s price includes their share, and what you earn stays the same.',
     students: 7,
-    roomCost: 20,
+    roomCost: 30,
     minRate: 40,
     targetRate: 90,
     minStudents: 4,

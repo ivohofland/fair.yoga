@@ -143,14 +143,14 @@ subpages exist.
 Inside the Pricing card: a cream box (`bg-cream border border-border
 rounded-field`) holding a caption, three numbers and a link.
 
-- Caption: **Example: 7 students, a €20 room, your target €90**
+- Caption: **Example: 7 students, a €30 room, your target €90**
 - Numbers (tabular, teal): **lowest tier pays** · **highest tier pays** · **you earn**
 - Link: **See more examples →** → `/sliding-scale#examples`
 
 The numbers are computed at render from the same example the `/sliding-scale`
-"A typical class" preset uses (§5.3): room €20, minimum €40 from 4 students,
+"A typical class" preset uses (§5.3): room €30, minimum €40 from 4 students,
 target €90 at 12, no VAT, 7 students in the normal spread (`normalSpread`,
-`src/lib/pricing-preview.ts`). Today that is €7.31 / €15.19 / €58.75. The
+`src/lib/pricing-preview.ts`). Today that is €8.24 / €17.12 / €58.75. The
 example's values live in one module both pages import, and the proof's prices
 come from the **same preview function the calculator uses** (`tierPrices` via
 the `PricingPreviewResult` path), not from `calculateClassPricing`: the two
@@ -191,11 +191,11 @@ Five **example buttons** (pill chips, the pressed one filled teal,
 
 | Key (`?example=`) | Label | Story | Students | Room | Minimum | Target | Class size (min–max) | VAT |
 |---|---|---|---|---|---|---|---|---|
-| `typical` (default) | A typical class | Seven students on a normal week. The room is covered and you earn well above your minimum. | 7 | €20 | €40 | €90 | 4–12 | 0 |
-| `new-class` | A new class | Just starting out? A low minimum and a small minimum class size keep the class running while word gets around, instead of auto-cancelling. | 3 | €20 | €10 | €70 | 2–12 | 0 |
-| `popular` | A popular class | Full, plus two walk-ins. Your rate stays capped at your target, so every extra student lowers everyone’s price. | 14 | €20 | €40 | €90 | 4–12 | 0 |
-| `flat-rate` | A flat rate | Prefer one simple income? Set your minimum and target to the same amount: you earn the same every class. | 8 | €20 | €60 | €60 | 4–12 | 0 |
-| `vat` | With VAT | Registered for VAT? Enter rates without it. Each student’s price includes their share, and what you earn stays the same. | 7 | €20 | €40 | €90 | 4–12 | 21% |
+| `typical` (default) | A typical class | Seven students on a normal week. The room is covered and you earn well above your minimum. | 7 | €30 | €40 | €90 | 4–12 | 0 |
+| `new-class` | A new class | Just starting out? A low minimum and a small minimum class size keep the class running while word gets around, instead of auto-cancelling. | 3 | €30 | €10 | €70 | 2–12 | 0 |
+| `popular` | A popular class | Full, plus two walk-ins. Your rate stays capped at your target, so every extra student lowers everyone’s price. | 14 | €30 | €40 | €90 | 4–12 | 0 |
+| `flat-rate` | A flat rate | Prefer one simple income? Set your minimum and target to the same amount: you earn the same every class. | 8 | €30 | €60 | €60 | 4–12 | 0 |
+| `vat` | With VAT | Registered for VAT? Enter rates without it. Each student’s price includes their share, and what you earn stays the same. | 7 | €30 | €40 | €90 | 4–12 | 21% |
 
 **Every example is adjustable.** Controls (the existing `RangeTrack`,
 `src/components/landing/range-track.tsx`, for sliders):

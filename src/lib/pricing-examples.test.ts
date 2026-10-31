@@ -25,7 +25,7 @@ describe('PRICING_EXAMPLES', () => {
   it('the typical example is the one the homepage proof shows', () => {
     expect(examplePreview('typical')).toEqual(
       previewClass(
-        { roomCost: 20, minRate: 40, targetRate: 90, minStudents: 4, maxStudents: 12, vatPercent: 0 },
+        { roomCost: 30, minRate: 40, targetRate: 90, minStudents: 4, maxStudents: 12, vatPercent: 0 },
         normalSpread(7),
       ),
     );
