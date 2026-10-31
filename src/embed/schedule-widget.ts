@@ -167,7 +167,8 @@ function dayHeading(start: string): string {
 }
 
 /**
- * "18:00–19:15": the start's wall-clock time plus the duration, by string
+ * "18:00 – 19:15", spaced with no-break spaces so the range never wraps: the
+ * start's wall-clock time plus the duration, by string
  * arithmetic on `start`, so the visitor's zone never moves it. Past midnight
  * it shows the clock time.
  */
@@ -177,7 +178,7 @@ function timeRange(c: WidgetClass): string {
   if (!Number.isFinite(minutes)) throw new Error('Malformed duration in schedule data');
   const end = ((Math.round(minutes) % 1440) + 1440) % 1440;
   const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${start}–${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
+  return `${start}\u00a0–\u00a0${pad(Math.floor(end / 60))}:${pad(end % 60)}`;
 }
 
 const PRICING_HOOK = { tiered: 'income-based', donation: 'pay-what-you-can' } as const satisfies Record<

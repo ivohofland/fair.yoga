@@ -110,7 +110,7 @@ describe.each(THEMES)('renderSchedule (%s)', (theme) => {
     const root = rendered(theme);
     expect(classRows(root)).toHaveLength(4);
     const vinyasa = rowOf(root, 'Vinyasa');
-    expect(vinyasa.querySelector('.fy-time')?.textContent).toBe('19:00–20:15');
+    expect(vinyasa.querySelector('.fy-time')?.textContent).toBe('19:00\u00a0–\u00a020:15');
     expect(vinyasa.querySelector('.fy-meta')?.textContent).toBe('De Pijp · 75 min · Income-based');
     expect(rowOf(root, 'Yin').querySelector('.fy-meta')?.textContent).toBe('Online · 60 min · Pay what you can');
     expect(rowOf(root, 'Hatha').querySelector('.fy-meta')?.textContent).toBe('at Studio Zuid · 60 min');
@@ -206,9 +206,9 @@ describe.each(THEMES)('renderSchedule (%s)', (theme) => {
         row({ id: 'b', classType: 'Late', start: '2026-11-03T23:30:00+01:00', durationMinutes: 75 }),
       ],
     });
-    expect(rowOf(root, 'Evening').querySelector('.fy-time')?.textContent).toBe('18:00–19:15');
+    expect(rowOf(root, 'Evening').querySelector('.fy-time')?.textContent).toBe('18:00\u00a0–\u00a019:15');
     const late = rowOf(root, 'Late');
-    expect(late.querySelector('.fy-time')?.textContent).toBe('23:30–00:45');
+    expect(late.querySelector('.fy-time')?.textContent).toBe('23:30\u00a0–\u00a000:45');
     expect(late.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-03T23:30:00+01:00');
     expect(late.querySelector('.fy-meta')?.textContent).toContain('75 min');
   });
@@ -310,8 +310,8 @@ describe('day grouping follows the teacher, not the visitor', () => {
       times: [...d.querySelectorAll('.fy-time')].map((t) => t.textContent),
     }));
     expect(days).toEqual([
-      { heading: 'Tue 3 Nov', rows: ['Late'], times: ['23:30–00:45'] },
-      { heading: 'Thu 5 Nov', rows: ['Early'], times: ['00:30–01:45'] },
+      { heading: 'Tue 3 Nov', rows: ['Late'], times: ['23:30\u00a0–\u00a000:45'] },
+      { heading: 'Thu 5 Nov', rows: ['Early'], times: ['00:30\u00a0–\u00a001:45'] },
     ]);
   });
 });
