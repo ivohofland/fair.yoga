@@ -1,7 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { waitFor } from '@testing-library/react';
 import type { PublicScheduleJson } from '@/lib/public-schedule-json';
-import { defineScheduleElement, renderSchedule, type WidgetScheduleJson } from './schedule-widget';
+import {
+  defineScheduleElement,
+  renderSchedule,
+  type RenderOptions,
+  type ScheduleErrorDetail,
+  type ScheduleEventMap,
+  type ScheduleLoadDetail,
+  type WidgetScheduleJson,
+} from './schedule-widget';
 
 // Compile-time tie: the widget cannot import, so it declares its own copy of
 // the v1 shape. Each direction fails `tsc` if the two drift apart.
@@ -72,10 +80,14 @@ const DATA: PublicScheduleJson = {
 
 const THEMES = ['themed', 'unstyled'] as const;
 
-function rendered(theme: 'themed' | 'unstyled', data: PublicScheduleJson = DATA): HTMLElement {
+function rendered(
+  theme: 'themed' | 'unstyled',
+  data: PublicScheduleJson = DATA,
+  extra: Partial<RenderOptions> = {},
+): HTMLElement {
   const root = document.createElement('div');
   document.body.append(root);
-  renderSchedule(root, data, { theme, feedUrl: FEED, origin: ORIGIN });
+  renderSchedule(root, data, { theme, feedUrl: FEED, origin: ORIGIN, ...extra });
   return root;
 }
 
@@ -98,7 +110,7 @@ describe.each(THEMES)('renderSchedule (%s)', (theme) => {
     const root = rendered(theme);
     expect(classRows(root)).toHaveLength(4);
     const vinyasa = rowOf(root, 'Vinyasa');
-    expect(vinyasa.querySelector('.fy-time')?.textContent).toBe('19:00');
+    expect(vinyasa.querySelector('.fy-time')?.textContent).toBe('19:00–20:15');
     expect(vinyasa.querySelector('.fy-meta')?.textContent).toBe('De Pijp · 75 min · Income-based');
     expect(rowOf(root, 'Yin').querySelector('.fy-meta')?.textContent).toBe('Online · 60 min · Pay what you can');
     expect(rowOf(root, 'Hatha').querySelector('.fy-meta')?.textContent).toBe('at Studio Zuid · 60 min');
@@ -171,6 +183,48 @@ describe.each(THEMES)('renderSchedule (%s)', (theme) => {
     expect(root.querySelector('ol.fy-schedule')).toBeNull();
   });
 
+  it('marks each row with its kind, availability and pricing, and its start in a <time>', () => {
+    const root = rendered(theme);
+    const vinyasa = rowOf(root, 'Vinyasa');
+    expect(vinyasa.dataset).toMatchObject({ kind: 'class', availability: 'open', pricing: 'income-based' });
+    expect(vinyasa.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-03T19:00:00+01:00');
+    expect(rowOf(root, 'Yin').dataset).toMatchObject({ kind: 'class', availability: 'waitlist', pricing: 'pay-what-you-can' });
+
+    const hatha = rowOf(root, 'Hatha');
+    expect(hatha.getAttribute('data-kind')).toBe('studio');
+    expect(hatha.hasAttribute('data-availability')).toBe(false);
+    expect(hatha.hasAttribute('data-pricing')).toBe(false);
+    expect(hatha.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-05T19:00:00+01:00');
+    expect(hatha).toHaveClass('fy-class', 'fy-studio');
+  });
+
+  it('shows the end time from the start\'s wall clock, past midnight too', () => {
+    const root = rendered(theme, {
+      timezone: 'Europe/Amsterdam',
+      classes: [
+        row({ id: 'a', classType: 'Evening', start: '2026-11-03T18:00:00+01:00', durationMinutes: 75 }),
+        row({ id: 'b', classType: 'Late', start: '2026-11-03T23:30:00+01:00', durationMinutes: 75 }),
+      ],
+    });
+    expect(rowOf(root, 'Evening').querySelector('.fy-time')?.textContent).toBe('18:00–19:15');
+    const late = rowOf(root, 'Late');
+    expect(late.querySelector('.fy-time')?.textContent).toBe('23:30–00:45');
+    expect(late.querySelector('time')?.getAttribute('datetime')).toBe('2026-11-03T23:30:00+01:00');
+    expect(late.querySelector('.fy-meta')?.textContent).toContain('75 min');
+  });
+
+  it('limit="2" renders the first two classes, and no heading for a day the cap empties', () => {
+    const root = rendered(theme, DATA, { limit: 2 });
+    expect(classRows(root).map((li) => li.querySelector('.fy-type')?.textContent)).toEqual(['Vinyasa', 'Yin']);
+    const headings = [...root.querySelectorAll('.fy-day-heading')].map((h) => h.textContent);
+    expect(headings).toEqual(['Tue 3 Nov', 'Wed 4 Nov']);
+    expect(root.textContent).not.toContain('No upcoming classes right now.');
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])('limit %s renders every class', (limit) => {
+    expect(classRows(rendered(theme, DATA, { limit }))).toHaveLength(4);
+  });
+
   it('ends with the fair.yoga credit and the calendar link', () => {
     const root = rendered(theme);
     const footer = root.querySelector('.fy-footer');
@@ -190,9 +244,15 @@ describe('renderSchedule styling', () => {
     expect(rendered('unstyled').querySelector('style')).toBeNull();
   });
 
-  it('themed hides the new-tab note visually; unstyled leaves it to the host', () => {
-    for (const span of rendered('themed').querySelectorAll('.fy-new-tab')) expect(span).toHaveClass('fy-sr');
-    expect(rendered('unstyled').querySelector('.fy-new-tab')).not.toBeNull();
+  it.each(THEMES)('%s hides the new-tab note visually with an inline style, and keeps its text', (theme) => {
+    const notes = [...rendered(theme).querySelectorAll<HTMLElement>('.fy-new-tab')];
+    expect(notes.length).toBeGreaterThan(0);
+    for (const span of notes) {
+      expect(span).toHaveClass('fy-sr');
+      expect(span.getAttribute('style')).toContain('clip');
+      expect(span.style.position).toBe('absolute');
+      expect(span.textContent).toBe(' (opens in a new tab)');
+    }
   });
 
   it('themed lists keep their list role; unstyled lists carry none of ours', () => {
@@ -250,8 +310,8 @@ describe('day grouping follows the teacher, not the visitor', () => {
       times: [...d.querySelectorAll('.fy-time')].map((t) => t.textContent),
     }));
     expect(days).toEqual([
-      { heading: 'Tue 3 Nov', rows: ['Late'], times: ['23:30'] },
-      { heading: 'Thu 5 Nov', rows: ['Early'], times: ['00:30'] },
+      { heading: 'Tue 3 Nov', rows: ['Late'], times: ['23:30–00:45'] },
+      { heading: 'Thu 5 Nov', rows: ['Early'], times: ['00:30–01:45'] },
     ]);
   });
 });
@@ -276,6 +336,46 @@ describe('<fair-yoga-schedule>', () => {
 
   function surface(el: HTMLElement): ParentNode {
     return el.shadowRoot ?? el;
+  }
+
+  /** The snippet's link is still the light DOM's, and nothing of ours covers it: no shadow root, or one that only slots it. */
+  function expectFallback(el: HTMLElement): void {
+    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
+    if (el.shadowRoot !== null) {
+      expect(el.shadowRoot.querySelector('slot')).not.toBeNull();
+      expect(el.shadowRoot.querySelector('.fy')).toBeNull();
+    }
+  }
+
+  type Heard = { load: ScheduleLoadDetail[]; error: ScheduleErrorDetail[]; bubbles: boolean[]; composed: boolean[] };
+
+  /** Mounts with listeners added before the element connects. */
+  function mountHeard(attrs: Record<string, string>): { el: HTMLElement; heard: Heard } {
+    const el = document.createElement('fair-yoga-schedule');
+    const heard: Heard = { load: [], error: [], bubbles: [], composed: [] };
+    const on = <K extends keyof ScheduleEventMap>(name: K, push: (e: ScheduleEventMap[K]) => void): void =>
+      el.addEventListener(name, (e) => {
+        heard.bubbles.push(e.bubbles);
+        heard.composed.push(e.composed);
+        push(e as ScheduleEventMap[K]);
+      });
+    on('fair-yoga-schedule:load', (e) => heard.load.push(e.detail));
+    on('fair-yoga-schedule:error', (e) => heard.error.push(e.detail));
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    const fallback = document.createElement('a');
+    fallback.href = `${ORIGIN}/anna`;
+    fallback.textContent = 'See my schedule';
+    el.append(fallback);
+    document.body.append(el);
+    return { el, heard };
+  }
+
+  function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
   }
 
   beforeEach(() => {
@@ -333,8 +433,7 @@ describe('<fair-yoga-schedule>', () => {
     const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
-    expect(el.shadowRoot).toBeNull();
-    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
+    expectFallback(el);
   });
 
   it('leaves the fallback link in place on a 404', async () => {
@@ -342,8 +441,7 @@ describe('<fair-yoga-schedule>', () => {
     const el = mount({ 'schedule-key': 'gone' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
-    expect(el.shadowRoot).toBeNull();
-    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
+    expectFallback(el);
   });
 
   it('survives being defined twice, and two elements both render', async () => {
@@ -394,8 +492,101 @@ describe('<fair-yoga-schedule>', () => {
     const el = mount({ 'schedule-key': 'k123' });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await new Promise((r) => setTimeout(r, 0));
-    expect(el.shadowRoot).toBeNull();
-    expect(el.querySelector('a')?.textContent).toBe('See my schedule');
+    expectFallback(el);
+  });
+
+  it('dispatches load with the rendered count, bubbling and composed, and moves data-state loading → ready', async () => {
+    const res = deferred<Response>();
+    fetchMock.mockReturnValue(res.promise);
+    const { el, heard } = mountHeard({ 'schedule-key': 'k123', limit: '3' });
+    expect(el.getAttribute('data-state')).toBe('loading');
+    res.resolve(ok(DATA));
+    await waitFor(() => expect(heard.load).toEqual([{ count: 3 }]));
+    expect(heard.error).toEqual([]);
+    expect(heard.bubbles).toEqual([true]);
+    expect(heard.composed).toEqual([true]);
+    expect(el.getAttribute('data-state')).toBe('ready');
+    expect(classRows(surface(el))).toHaveLength(3);
+  });
+
+  it('reserves height while loading in themed mode only', async () => {
+    fetchMock.mockReturnValue(new Promise<Response>(() => {}));
+    const themed = mount({ 'schedule-key': 'k1' });
+    const unstyled = mount({ 'schedule-key': 'k2', theme: 'unstyled' });
+    expect(themed.shadowRoot?.querySelector('style')?.textContent).toContain(':host([data-state="loading"])');
+    expect(themed.shadowRoot?.querySelector('slot')).not.toBeNull();
+    expect(unstyled.shadowRoot).toBeNull();
+    expect(unstyled.getAttribute('data-state')).toBe('loading');
+  });
+
+  it.each<[string, () => Promise<Response>, ScheduleErrorDetail]>([
+    ['network', () => Promise.reject(new TypeError('network')), { reason: 'network' }],
+    ['http', async () => new Response('{}', { status: 404 }), { reason: 'http', status: 404 }],
+    ['data (bad JSON)', async () => new Response('not json', { status: 200 }), { reason: 'data' }],
+    ['data (render throw)', async () => ok({ timezone: 'UTC', classes: [row({ start: 'soon' })] }), { reason: 'data' }],
+  ])('dispatches error for %s, keeps the fallback, and moves data-state loading → error', async (_label, answer, detail) => {
+    const gate = deferred<void>();
+    fetchMock.mockImplementation(async () => {
+      await gate.promise;
+      return answer();
+    });
+    const { el, heard } = mountHeard({ 'schedule-key': 'k123' });
+    expect(el.getAttribute('data-state')).toBe('loading');
+    gate.resolve();
+    await waitFor(() => expect(heard.error).toEqual([detail]));
+    expect(heard.bubbles).toEqual([true]);
+    expect(heard.load).toEqual([]);
+    expect(el.getAttribute('data-state')).toBe('error');
+    expectFallback(el);
+  });
+
+  it('dispatches error invalid-key for a bad key shape, without fetching', async () => {
+    const { el, heard } = mountHeard({ 'schedule-key': 'a/b' });
+    await waitFor(() => expect(heard.error).toEqual([{ reason: 'invalid-key' }]));
+    expect(heard.bubbles).toEqual([true]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(el.getAttribute('data-state')).toBe('error');
+    expectFallback(el);
+  });
+
+  it('renders the first N classes for limit="2" and all of them for 0, -1 and abc', async () => {
+    fetchMock.mockImplementation(async () => ok(DATA));
+    const two = mount({ 'schedule-key': 'k1', limit: '2' });
+    const others = ['0', '-1', 'abc'].map((limit) => mount({ 'schedule-key': 'k1', limit }));
+    await waitFor(() => {
+      expect(classRows(surface(two))).toHaveLength(2);
+      for (const el of others) expect(classRows(surface(el))).toHaveLength(4);
+    });
+  });
+
+  it('fetches again when schedule-key changes, and not when it is set to the same value', async () => {
+    const other: PublicScheduleJson = { timezone: 'UTC', classes: [row({ id: 'z', classType: 'Kundalini' })] };
+    fetchMock.mockImplementation(async (url) => ok(String(url).endsWith('/k2') ? other : DATA));
+    const { el, heard } = mountHeard({ 'schedule-key': 'k1' });
+    await waitFor(() => expect(heard.load).toHaveLength(1));
+    el.setAttribute('schedule-key', 'k1');
+    el.setAttribute('schedule-key', 'k2');
+    await waitFor(() => expect(heard.load).toHaveLength(2));
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `${ORIGIN}/api/public/v1/schedule/k1`,
+      `${ORIGIN}/api/public/v1/schedule/k2`,
+    ]);
+    expect(classRows(surface(el)).map((li) => li.querySelector('.fy-type')?.textContent)).toEqual(['Kundalini']);
+    expect(heard.load[1]).toEqual({ count: 1 });
+  });
+
+  it('renders the latest key when the earlier response arrives last', async () => {
+    const slow = deferred<Response>();
+    const other: PublicScheduleJson = { timezone: 'UTC', classes: [row({ id: 'z', classType: 'Kundalini' })] };
+    fetchMock.mockImplementation((url) => (String(url).endsWith('/k1') ? slow.promise : Promise.resolve(ok(other))));
+    const { el, heard } = mountHeard({ 'schedule-key': 'k1' });
+    el.setAttribute('schedule-key', 'k2');
+    await waitFor(() => expect(heard.load).toEqual([{ count: 1 }]));
+    slow.resolve(ok(DATA));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(heard.load).toEqual([{ count: 1 }]);
+    expect(classRows(surface(el)).map((li) => li.querySelector('.fy-type')?.textContent)).toEqual(['Kundalini']);
+    expect(el.getAttribute('data-state')).toBe('ready');
   });
 
   it('marks the themed root dark for color-scheme="dark"', async () => {
