@@ -35,6 +35,16 @@ const INDEXABLE_PUBLIC = new Set([
   'start',
 ]);
 
+/** Root-level pages (outside every route group), all promoted in the sitemap. */
+const INDEXABLE_ROOT = new Set(['sliding-scale', 'donation-based']);
+
+function rootPages(): string[] {
+  return readdirSync(APP, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !/^\(.+\)$/.test(d.name) && d.name !== 'api')
+    .filter((d) => readdirSync(path.join(APP, d.name)).includes('page.tsx'))
+    .map((d) => d.name);
+}
+
 function routeGroups(): string[] {
   return readdirSync(APP, { withFileTypes: true })
     .filter((d) => d.isDirectory() && /^\(.+\)$/.test(d.name) && d.name !== '(public)')
@@ -58,6 +68,12 @@ describe('pages kept out of search', () => {
   it('every public page is either noindex or deliberately indexable', () => {
     const unclassified = publicRoutes().filter((r) => !(r in NOINDEX_PUBLIC) && !INDEXABLE_PUBLIC.has(r));
     const stale = [...Object.keys(NOINDEX_PUBLIC), ...INDEXABLE_PUBLIC].filter((r) => !publicRoutes().includes(r));
+    expect({ unclassified, stale }).toEqual({ unclassified: [], stale: [] });
+  });
+
+  it('every root-level page is deliberately indexable', () => {
+    const unclassified = rootPages().filter((r) => !INDEXABLE_ROOT.has(r));
+    const stale = [...INDEXABLE_ROOT].filter((r) => !rootPages().includes(r));
     expect({ unclassified, stale }).toEqual({ unclassified: [], stale: [] });
   });
 

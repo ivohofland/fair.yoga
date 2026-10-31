@@ -8,7 +8,11 @@ describe('sitemap.xml', () => {
   // because fair.yoga listed it.
   it('lists the platform pages and no teacher page', () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://fair.yoga');
-    expect(sitemap().map((entry) => entry.url)).toEqual(['https://fair.yoga/']);
+    expect(sitemap().map((entry) => entry.url)).toEqual([
+      'https://fair.yoga/',
+      'https://fair.yoga/sliding-scale',
+      'https://fair.yoga/donation-based',
+    ]);
   });
 
   // `next build` never sees NEXT_PUBLIC_APP_URL; a prerendered file would
