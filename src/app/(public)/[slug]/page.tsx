@@ -71,6 +71,7 @@ export default async function TeacherBookingPage({
       lastName: true,
       bio: true,
       deletedAt: true,
+      scheduleShareKey: true,
       defaultTimezone: true,
       photo: { select: { id: true } },
     },
@@ -209,6 +210,14 @@ export default async function TeacherBookingPage({
             );
           })}
         </div>
+      )}
+
+      {teacher.scheduleShareKey && (
+        <p className="type-caption mt-6">
+          <a href={`webcal://${new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').host}/feed/${teacher.scheduleShareKey}.ics`}>
+            Subscribe to {teacher.firstName}&apos;s schedule
+          </a>
+        </p>
       )}
     </div>
   );

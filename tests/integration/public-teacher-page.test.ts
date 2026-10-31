@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { BASE_URL, freshIp, uniqueSuffix } from '../helpers';
 import { createClassFixture, wallSlotAt } from '../class-fixtures';
 import { hhmmToTime } from '@/lib/time-of-day';
+import { mintScheduleShareKey } from '@/services/schedule-share';
 import { createPrismaClient } from '@/lib/prisma-client';
 
 const prisma = createPrismaClient();
@@ -61,5 +62,18 @@ describe('GET /[slug] (page) — the public class list', () => {
     const html = await res.text();
     expect(html.includes(UPCOMING), 'upcoming class listed').toBe(true);
     expect(html.includes(STARTED), 'started class listed').toBe(false);
+  });
+
+  it('links the calendar feed only while sharing is on, and the href holds the key', async () => {
+    const before = await (await fetch(`${BASE_URL}/${slug}`, { headers: freshIp() })).text();
+    expect(before).not.toContain('webcal://');
+    const key = mintScheduleShareKey();
+    await prisma.teacher.update({ where: { id: teacherId }, data: { scheduleShareKey: key } });
+    const on = await (await fetch(`${BASE_URL}/${slug}`, { headers: freshIp() })).text();
+    expect(on).toMatch(new RegExp(`href="webcal://[^"]+/feed/${key}\\.ics"`));
+    expect(on.replace(/<!-- -->/g, '')).toMatch(/Subscribe to Public(&#x27;|')s schedule/);
+    await prisma.teacher.update({ where: { id: teacherId }, data: { scheduleShareKey: null } });
+    const off = await (await fetch(`${BASE_URL}/${slug}`, { headers: freshIp() })).text();
+    expect(off).not.toContain('webcal://');
   });
 });

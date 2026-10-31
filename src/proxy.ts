@@ -76,6 +76,6 @@ export const config = {
   // before the route runs, which would defeat the photo upload's refusal of
   // an oversized body before reading it.
   matcher: [
-    '/((?!api/|_next/static|_next/image|favicon\\.ico|icon\\.svg|apple-icon\\.png|manifest\\.webmanifest|sw\\.js|icons/).*)',
+    '/((?!api/|_next/static|_next/image|favicon\\.ico|icon\\.svg|apple-icon\\.png|manifest\\.webmanifest|sw\\.js|icons/|feed/|embed/).*)',
   ],
 };
