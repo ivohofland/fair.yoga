@@ -51,12 +51,15 @@ describe('LandingPage', () => {
     expect(within(nav).queryByRole('link', { name: 'Sign in' })).toBeNull();
   });
 
-  it('shows the page to a signed-in account with neither hat', async () => {
+  it('treats an account with neither hat as signed out: Sign in, not Open the app', async () => {
     const { default: LandingPage } = await import('./page');
     getSession.mockResolvedValue({ ...base, teacherId: null, studentId: null });
     render(await LandingPage());
 
     expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
+    const nav = screen.getByRole('navigation', { name: 'Site' });
+    expect(within(nav).queryByRole('link', { name: 'Open the app' })).toBeNull();
+    expect(within(nav).getByRole('link', { name: 'Sign in' })).toBeTruthy();
   });
 
   it('sends each call to action where it says', async () => {

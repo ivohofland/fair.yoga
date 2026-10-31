@@ -786,6 +786,9 @@ Full design: `docs/superpowers/specs/2026-10-02-web-push-design.md`.
   `VAPID_*` is simply unset); once per process the sweep warns when no
   `VAPID_*` variable is set, and logs an error naming the reason for any
   other problem.
+- `public/sw.js` opens a notification's own URL when its click is
+  handled; a notification whose URL is missing, cross-origin or otherwise not
+  a same-origin path opens `/start`, the app's door.
 
 ### Offline (service worker)
 
@@ -793,7 +796,7 @@ Full design and the alternatives it rejected: `docs/superpowers/specs/2026-10-04
 
 **What is stored, and why only that.** Three path shapes: `/schedule`, `/class/<id>` and `/studio-class/<id>` (`<id>` not `new`, nothing deeper). They are what a teacher needs at the door, and they carry names only (`studentNameSelect`, `src/lib/student-visibility.ts`), never contact data, which lives on `/students/[id]` and is never stored. Other same-origin navigations go to the network and, when that fails, get the offline page (never stored); `/_next/static/*` is the only other request it answers. RSC fetches, API routes, the SSE stream and cross-origin requests are passed through untouched.
 
-**Network first, with patience.** The network is asked first. The stored copy is served when the request fails, when it answers 502, 503 or 504 (a deploy or an outage), or when 8 s pass with no response and a stored copy exists; a slow response that does arrive still replaces the stored copy. `/start` (the installed app's launch URL and both detail pages' back link) redirects to the stored schedule when it fails; `/` is the public homepage, not a door, so a failed `/` gets the offline page like any other uncached page, and a notification with no usable URL opens `/start`; with none, any failed navigation gets the offline page, an inline "You're offline" HTML string inside `sw.js`, so it cannot fail to install.
+**Network first, with patience.** The network is asked first. The stored copy is served when the request fails, when it answers 502, 503 or 504 (a deploy or an outage), or when 8 s pass with no response and a stored copy exists; a slow response that does arrive still replaces the stored copy. `/start` (the installed app's launch URL and both detail pages' back link) redirects to the stored schedule when it fails; `/` is the public homepage, not a door, so a failed `/` gets the offline page like any other uncached page. With no stored schedule, any failed navigation (including `/`) gets the offline page, an inline "You're offline" HTML string inside `sw.js`, so it cannot fail to install.
 
 **Three caches** (`fy-pages-v1`, `fy-static-v1`, `fy-meta-v1`):
 

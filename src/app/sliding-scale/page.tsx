@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getSession } from '@/lib/session';
+import { isSignedIn } from '@/lib/marketing-session';
 import { Icon } from '@/components/ui/icon';
 import { Band, HEADING, KICKER, LEAD } from '@/components/landing/band';
 import { COLUMN, PRIMARY_LINK } from '@/components/landing/landing-links';
@@ -49,7 +50,7 @@ export default async function SlidingScalePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const [session, params] = await Promise.all([getSession(), searchParams]);
-  const signedIn = session !== null;
+  const signedIn = isSignedIn(session);
 
   return (
     <div className="flex flex-col flex-1 text-pretty">
@@ -90,7 +91,7 @@ export default async function SlidingScalePage({
               does, so nobody is priced out and nobody is squeezed.
             </p>
           </div>
-          <ol className="bg-sand border border-border rounded-card divide-y divide-border">
+          <ol className="bg-sand-soft border border-border rounded-card divide-y divide-border">
             {TIER_INFO.map((t) => (
               <li key={t.tier} className="flex items-center gap-4 px-5 py-4">
                 <span className="size-8 shrink-0 rounded-full bg-teal-tint text-teal font-semibold flex items-center justify-center">
