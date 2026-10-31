@@ -693,7 +693,8 @@ that ship matches it:
   Next populates by tracing actual imports — so it holds far less than the
   production dependency tree. (It copies two other trees,
   `.next-build/static` and `public`; neither carries dependencies. `public/`
-  holds the web app manifest's install icons; the site icons are Next's
+  holds the web app manifest's install icons and the website widget's
+  compiled file (*The website widget*, below); the site icons are Next's
   file-based `app/icon.svg` convention. The `build` stage still creates
   `public/` before the copy, so the copy never depends on it; #543 has the
   history.)
@@ -1144,6 +1145,40 @@ unchanged `pnpm-lock.yaml` still passes under it, and the whole
 moment this change merges rather than shipping red — a non-blocking check
 that starts out permanently red trains reviewers to stop reading it, which
 is the opposite of what a non-blocking check is for.
+
+## The website widget
+
+The one artefact this repo ships *outward*: `public/embed/v1.js`, the
+`<fair-yoga-schedule>` element (#916), which every teacher who shares their
+schedule pastes into their own site. Whatever is in that file runs on pages
+this project does not own, so the question this document asks of inbound
+code — what could arrive that nobody chose — applies to it in reverse.
+
+- **Built from this repo with `tsc` only.** `src/embed/schedule-widget.ts`
+  imports nothing; `pnpm run build:embed` (`scripts/build-embed.mjs`)
+  compiles it with the `typescript` devDependency already in the lockfile,
+  under `tsconfig.embed.json`, and appends one line that defines the
+  element. No bundler, no minifier, no new dependency — the `typescript`
+  version that compiles the app compiles the widget.
+- **No runtime dependencies.** The compiled file contains only this repo's
+  code; it loads no other script, stylesheet or font.
+- **Committed, and checked against its source.** The build output is
+  committed so the file served is the file reviewed in the diff.
+  `src/embed/build.test.ts` rebuilds it into a temp directory and fails
+  when the committed bytes differ, so an edit to the source without a
+  rebuild — or a hand-edit to the output — cannot merge. A `typescript`
+  bump that changes the emitted code fails the same test until the file is
+  rebuilt, which puts the new output in front of a reviewer.
+- **No SRI, by decision.** The snippet loads
+  `<script type="module" src="…/embed/v1.js">` with no `integrity`
+  attribute: v1 is one auto-updating file (served with
+  `Cache-Control: public, max-age=3600`), so a fix reaches every teacher's
+  site within the hour without anyone re-pasting code. The cost is that
+  whoever can change what fair.yoga serves can change what runs on those
+  sites. A frozen per-release file with a published hash is a v1 non-goal,
+  left as a possible later addition
+  (`docs/superpowers/specs/2026-10-30-share-your-schedule-design.md`,
+  Non-goals).
 
 ## GitHub Actions
 
