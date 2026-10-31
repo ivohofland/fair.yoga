@@ -25,4 +25,17 @@ describe('buildEmbedSnippet', () => {
     expect(snippet).not.toContain('color-scheme');
     expect(snippet).toContain('theme="unstyled"');
   });
+
+  it('escapes markup characters in the origin, key and slug', () => {
+    const snippet = buildEmbedSnippet({
+      origin: 'https://fair.yoga',
+      key: 'a"b<c>&d',
+      slug: 'x"><script>',
+      theme: 'themed',
+      colorScheme: 'light',
+    });
+    expect(snippet).toContain('key="a&quot;b&lt;c&gt;&amp;d"');
+    expect(snippet).toContain('href="https://fair.yoga/x&quot;&gt;&lt;script&gt;"');
+    expect(snippet).not.toContain('<script>');
+  });
 });

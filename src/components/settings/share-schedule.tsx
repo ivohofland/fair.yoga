@@ -81,20 +81,22 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 /** Mounts a fresh `<fair-yoga-schedule>`; the element reads its attributes once at connect, so the parent re-keys it on every change. */
-function LivePreview({ shareKey, origin, theme, colorScheme }: { shareKey: string; origin: string; theme: Theme; colorScheme: ColorScheme }) {
+function LivePreview({ shareKey, theme, colorScheme }: { shareKey: string; theme: Theme; colorScheme: ColorScheme }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = host.current;
     if (node === null) return;
-    defineScheduleElement({ origin });
+    // The app's own origin, so the preview's fetch is always same-origin whatever origin the snippet carries.
+    defineScheduleElement({ origin: window.location.origin });
     const element = document.createElement('fair-yoga-schedule');
     element.setAttribute('key', shareKey);
     element.setAttribute('theme', theme);
     if (theme === 'themed') element.setAttribute('color-scheme', colorScheme);
     node.replaceChildren(element);
     return () => node.replaceChildren();
-  }, [shareKey, origin, theme, colorScheme]);
+  }, [shareKey, theme, colorScheme]);
 
+  // These hex values mirror the widget's own light and dark surfaces (`src/embed/schedule-widget.ts`).
   const surface =
     theme === 'unstyled'
       ? 'bg-cream'
@@ -113,7 +115,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState('');
   const [sheet, setSheet] = useState<'reset' | 'off' | null>(null);
-  const [copied, setCopied] = useState<'code' | 'feed' | null>(null);
+  const [copied, setCopied] = useState<{ which: 'code' | 'feed'; text: string } | null>(null);
 
   async function send(action: Pending, url: string, method: string, body?: unknown): Promise<boolean> {
     setPending(action);
@@ -142,7 +144,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
   async function copy(which: 'code' | 'feed', text: string) {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(which);
+      setCopied({ which, text });
       setError('');
     } catch (err) {
       logRequestFailure('share-schedule', { action: 'copy' }, err);
@@ -167,13 +169,18 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
   const snippet = buildEmbedSnippet({ origin, key, slug, theme, colorScheme });
   const feedUrl = `${origin}/feed/${key}.ics`;
   const busy = pending !== null;
+  const announcement =
+    copied?.text === snippet && copied.which === 'code' ? 'Code copied'
+    : copied?.text === feedUrl && copied.which === 'feed' ? 'Feed URL copied'
+    : '';
 
   return (
     <div>
       <p className="type-body mb-5">
         Show your schedule on your own website. Visitors book here, on fair.yoga, in a new tab.
       </p>
-      {error && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
+      <p role="status" className="sr-only">{announcement}</p>
+      {error && sheet === null && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
 
       <section className={cardClass}>
         <h2 className="type-subtitle">Your schedule</h2>
@@ -223,7 +230,6 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
         <LivePreview
           key={`${theme}-${colorScheme}-${state.weeks}-${state.includeStudio}-${key}`}
           shareKey={key}
-          origin={origin}
           theme={theme}
           colorScheme={colorScheme}
         />
@@ -235,7 +241,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
         <p className="type-caption mb-2">Paste this where the schedule should appear. It updates as you change the options above.</p>
         <pre className={codeClass}>{snippet}</pre>
         <Button variant="secondary" onClick={() => void copy('code', snippet)}>
-          {copied === 'code' ? 'Copied' : 'Copy code'}
+          {copied?.text === snippet && copied.which === 'code' ? 'Copied' : 'Copy code'}
         </Button>
       </section>
 
@@ -246,12 +252,12 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
         </p>
         <p className={codeClass}>{feedUrl}</p>
         <Button variant="secondary" onClick={() => void copy('feed', feedUrl)}>
-          {copied === 'feed' ? 'Copied' : 'Copy link'}
+          {copied?.text === feedUrl && copied.which === 'feed' ? 'Copied' : 'Copy link'}
         </Button>
       </section>
 
       <div className="flex flex-col gap-3 mt-6">
-        <button type="button" onClick={() => setSheet('reset')} className="type-label text-danger text-left min-h-11">
+        <button type="button" onClick={() => { setError(''); setSheet('reset'); }} className="type-label text-danger text-left min-h-11">
           Reset embed key…
         </button>
         <p className="type-caption">
@@ -259,7 +265,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
           to. Your own site needs the new code afterwards, and the calendar feed link changes, so students who
           subscribed will need the new link.
         </p>
-        <button type="button" onClick={() => setSheet('off')} className="type-label text-danger text-left min-h-11">
+        <button type="button" onClick={() => { setError(''); setSheet('off'); }} className="type-label text-danger text-left min-h-11">
           Turn off sharing…
         </button>
       </div>
@@ -267,6 +273,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
       {sheet === 'reset' && (
         <Sheet title="Reset embed key?" onClose={() => setSheet(null)} dismissible={!busy}>
           <p className="type-body mb-5">Students subscribed to your calendar feed will stop getting updates.</p>
+          {error && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
           <div className="flex flex-col gap-3">
             <Button
               variant="destructive"
@@ -287,6 +294,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
             <li>Students subscribed to your calendar feed stop getting updates.</li>
             <li>If you turn sharing on again, you get new code and a new feed link — the old ones won’t come back.</li>
           </ul>
+          {error && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
           <div className="flex flex-col gap-3">
             <Button autoFocus onClick={() => setSheet(null)} disabled={busy}>Keep sharing</Button>
             <Button
