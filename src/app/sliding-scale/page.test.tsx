@@ -74,7 +74,7 @@ describe('/sliding-scale page', () => {
     for (const q of [
       'Do students have to prove their income?',
       'What if only a few people come?',
-      'Can I just charge one price?',
+      'Can I earn the same every class?',
       'What does fair.yoga take?',
     ]) {
       expect(screen.getByText(q)).toBeTruthy();
@@ -84,6 +84,10 @@ describe('/sliding-scale page', () => {
     expect(items[0]?.hasAttribute('open')).toBe(true);
     expect(items[1]?.hasAttribute('open')).toBe(false);
     expect(document.body.textContent).toContain('a choice that’s off by one makes only a small difference.');
+    // A flat rate is the teacher's income; students still pay by tier.
+    expect(document.body.textContent).toContain(
+      'Yes: set your minimum equal to your target. Students still pay by income tier, and the more people come, the less each pays.',
+    );
   });
 
   it('carries the three points and a call to action to /signup', async () => {

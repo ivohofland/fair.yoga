@@ -111,7 +111,7 @@ Cards (label · promise · items):
 1. **Pricing** · *Charge what’s fair, earn what you need*
    - [Sliding scale](/sliding-scale): five income tiers, the highest pays about twice the lowest
    - [Donation-based](/donation-based): students give what they can after class
-   - Or one flat rate, if you prefer
+   - Or earn the same every class, with one flat rate for you
    - VAT and your own currency
    - **Proof box** (§4.3)
 2. **Classes** · *Your schedule, set once*
@@ -179,7 +179,7 @@ disagree with each other.
 5. **What it means for you** band. Heading: **Your rate, without the guesswork.** The three points moved from the homepage (*You earn your rate* / *No surprises* / *No one priced out*, today's copy), then questions:
    - **Do students have to prove their income?** No. They pick the tier that fits their life right now. The highest tier pays about twice the lowest, so a choice that’s off by one makes only a small difference.
    - **What if only a few people come?** Below your minimum number of students, the class auto-cancels at the time you choose. At or above it, you earn at least your minimum rate.
-   - **Can I just charge one price?** Yes: set your minimum equal to your target and you earn the same every class.
+   - **Can I earn the same every class?** Yes: set your minimum equal to your target. Students still pay by income tier, and the more people come, the less each pays.
    - **What does fair.yoga take?** Nothing. It’s free and open source, and students pay you directly.
 6. A teal-tint call to action: **Try it with your own room and rate** → **Set up your first class** (`/signup`).
 7. Shared footer.
