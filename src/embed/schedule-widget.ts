@@ -335,7 +335,7 @@ export function defineScheduleElement(opts: { origin: string; cache?: RequestCac
 
     attributeChangedCallback(_name: string, _old: string | null, value: string | null): void {
       if (!this.started || !this.isConnected) return;
-      if (validKey(value) && value !== this.key) this.begin(value);
+      if (value !== this.key) this.begin(value);
     }
 
     private begin(key: string | null): void {

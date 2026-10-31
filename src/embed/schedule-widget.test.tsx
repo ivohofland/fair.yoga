@@ -575,6 +575,16 @@ describe('<fair-yoga-schedule>', () => {
     expect(heard.load[1]).toEqual({ count: 1 });
   });
 
+  it('answers a change to an invalid schedule-key with invalid-key, as at first load', async () => {
+    fetchMock.mockImplementation(async () => ok(DATA));
+    const { el, heard } = mountHeard({ 'schedule-key': 'k1' });
+    await waitFor(() => expect(heard.load).toHaveLength(1));
+    el.setAttribute('schedule-key', '../x');
+    await waitFor(() => expect(heard.error).toEqual([{ reason: 'invalid-key' }]));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(el.getAttribute('data-state')).toBe('error');
+  });
+
   it('renders the latest key when the earlier response arrives last', async () => {
     const slow = deferred<Response>();
     const other: PublicScheduleJson = { timezone: 'UTC', classes: [row({ id: 'z', classType: 'Kundalini' })] };

@@ -233,7 +233,7 @@ export function defineScheduleElement(opts) {
         attributeChangedCallback(_name, _old, value) {
             if (!this.started || !this.isConnected)
                 return;
-            if (validKey(value) && value !== this.key)
+            if (value !== this.key)
                 this.begin(value);
         }
         begin(key) {
