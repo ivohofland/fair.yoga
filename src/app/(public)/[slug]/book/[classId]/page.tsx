@@ -4,7 +4,8 @@ import { notFound } from 'next/navigation';
 import { cookies } from 'next/headers';
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
-import type { PricingMode } from '@/lib/prisma-client';
+import type { ClassStatus, PricingMode } from '@/lib/prisma-client';
+import { NOINDEX } from '@/lib/seo';
 import { getSession } from '@/lib/session';
 import { Icon } from '@/components/ui/icon';
 import { estimateTierPrices } from '@/lib/tier-estimates';
@@ -25,19 +26,66 @@ import { getWaitlistWindow } from '@/services/waitlist';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Whether this page shows `cls` under `slug`; anything else is a 404. The
+ * body and its metadata both ask, so the head never names a class the body
+ * hides. deletedAt: erasure renames the slug, but never rely on that alone.
+ * `cancelledAt` beside the status (#327): a cancelled class keeps its `open`
+ * status, and this is the page that takes a booking.
+ */
+function isShownUnder(
+  cls: {
+    status: ClassStatus;
+    calendarEntry: { cancelledAt: Date | null; teacher: { pageSlug: string; deletedAt: Date | null } };
+  },
+  slug: string,
+): boolean {
+  return cls.calendarEntry.teacher.pageSlug === slug
+    && !cls.calendarEntry.teacher.deletedAt
+    && cls.calendarEntry.cancelledAt === null
+    && cls.status === 'open';
+}
+
 // A private class is booked by its link alone, so it stays out of search
-// indexes; whether the class exists is the page body's call, not this one's.
+// indexes, whether or not the page will show it.
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ slug: string; classId: string }>;
 }): Promise<Metadata> {
-  const { classId } = await params;
+  const { slug, classId } = await params;
   const cls = await prisma.class.findUnique({
     where: { id: classId },
-    select: { isPrivate: true },
+    select: {
+      isPrivate: true,
+      status: true,
+      calendarEntry: {
+        select: {
+          classType: true,
+          date: true,
+          startTime: true,
+          durationMinutes: true,
+          cancelledAt: true,
+          teacher: { select: { firstName: true, lastName: true, pageSlug: true, deletedAt: true } },
+        },
+      },
+    },
   });
-  return cls?.isPrivate ? { robots: { index: false } } : {};
+  if (!cls) return {};
+  const robots = cls.isPrivate ? NOINDEX : {};
+  if (!isShownUnder(cls, slug)) return robots;
+
+  const entry = cls.calendarEntry;
+  const title = `${entry.classType} with ${entry.teacher.firstName} ${entry.teacher.lastName}`;
+  const description = `${formatDayHeader(entry.date)} at ${timeToHHmm(entry.startTime)} · ${entry.durationMinutes} min.`;
+  const url = `/${slug}/book/${classId}`;
+  return {
+    ...robots,
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: { title, description, url, siteName: 'fair.yoga', type: 'website' },
+  };
 }
 
 type BookingPricing = ComponentProps<typeof BookingFlow>['pricing'];
@@ -114,16 +162,7 @@ export default async function BookClassPage({
     },
   });
 
-  // deletedAt: erasure renames the slug, but never rely on that alone.
-  // `cancelledAt` beside the status (#327): a cancelled class keeps its `open`
-  // status, and this is the page that takes a booking.
-  if (!cls
-      || cls.calendarEntry.teacher.pageSlug !== slug
-      || cls.calendarEntry.teacher.deletedAt
-      || cls.calendarEntry.cancelledAt !== null
-      || cls.status !== 'open') {
-    notFound();
-  }
+  if (!cls || !isShownUnder(cls, slug)) notFound();
   const entry = cls.calendarEntry;
   const location: PublicClassLocation = publicClassLocation(cls);
 

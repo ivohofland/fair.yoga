@@ -1,13 +1,42 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { getSession } from '@/lib/session';
+import { siteUrl } from '@/lib/seo';
 import { Icon } from '@/components/ui/icon';
 import { Wordmark } from '@/components/layout/wordmark';
 import { LandingPricingDemo } from '@/components/landing/landing-pricing-demo';
 
 const REPO_URL = 'https://github.com/ivohofland/fair.yoga';
 const CONTACT_HREF = 'mailto:hello@fair.yoga';
+
+const TITLE = 'fair.yoga — free sliding-scale and donation booking for yoga teachers';
+const DESCRIPTION =
+  'Free, open source booking for independent yoga teachers. Sliding-scale or donation pricing, in-person and online classes, paid straight to you.';
+
+export const metadata: Metadata = {
+  title: { absolute: TITLE },
+  description: DESCRIPTION,
+  alternates: { canonical: '/' },
+  openGraph: { title: TITLE, description: DESCRIPTION, url: '/', siteName: 'fair.yoga', type: 'website' },
+};
+
+/** schema.org's account of the product, for search results. */
+function structuredData(): string {
+  const data = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'fair.yoga',
+    description: DESCRIPTION,
+    url: siteUrl().href,
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web',
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'EUR' },
+  };
+  // `<` escaped so no string in the data can close the script element.
+  return JSON.stringify(data).replace(/</g, '\\u003c');
+}
 
 const PRIMARY_LINK =
   'inline-flex items-center justify-center text-center bg-teal text-cream hover:bg-teal-hover hover:text-cream active:bg-teal-pressed rounded-pill px-6 min-h-12 font-semibold text-base no-underline';
@@ -117,6 +146,8 @@ export default async function LandingPage() {
   return (
     // text-pretty is inherited: no paragraph on the page ends on a lone word
     <div className="flex flex-col flex-1 text-pretty">
+      {/* A data block, not a script: the browser never runs it, so the CSP's nonce has no say. */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredData() }} />
       <header className={`${COLUMN} pt-4 sm:pt-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2`}>
         <Wordmark />
         <nav aria-label="Site" className="flex flex-wrap items-center gap-x-6 text-sm">

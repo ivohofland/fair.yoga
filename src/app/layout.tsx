@@ -1,12 +1,16 @@
 import type { Metadata, Viewport } from 'next';
 import { connection } from 'next/server';
 import { InstallListener } from '@/components/layout/install-listener';
+import { siteUrl } from '@/lib/seo';
 import { THEME_COLOR } from './manifest';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'fair.yoga',
-  description: 'Ethical pricing for independent yoga teachers',
+  metadataBase: siteUrl(),
+  title: { default: 'fair.yoga', template: '%s · fair.yoga' },
+  description: 'A free, open source booking system for independent yoga teachers.',
+  openGraph: { siteName: 'fair.yoga', type: 'website' },
+  twitter: { card: 'summary_large_image' },
   // 'default' keeps iOS content below the status bar in the installed app.
   appleWebApp: { capable: true, title: 'fair.yoga', statusBarStyle: 'default' },
 };

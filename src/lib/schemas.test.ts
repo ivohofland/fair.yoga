@@ -819,7 +819,7 @@ describe('pageSlugField', () => {
 
   // Names no route holds yet: pages the site may grow, and names that would
   // make a teacher's page read as the platform's own.
-  it.each(['home', 'about-us', 'contact-us', 'privacy', 'impressum', 'yoga', 'fair-yoga', 'official', 'dashboard', 'www', 'icons'])(
+  it.each(['home', 'about-us', 'contact-us', 'privacy', 'impressum', 'yoga', 'fair-yoga', 'official', 'dashboard', 'alternatives', 'www', 'icons'])(
     'rejects the reserved slug %s, which no route holds yet',
     (slug) => {
       expect(() => pageSlugField.parse(slug)).toThrow('That address is reserved.');
@@ -836,10 +836,15 @@ describe('pageSlugField', () => {
   it('reserves every static top-level route segment and public/ name', () => {
     const app = path.resolve(__dirname, '../app');
     const entries = (dir: string) => readdirSync(dir, { withFileTypes: true });
+    // A generated metadata image (`opengraph-image.tsx`) serves at its bare
+    // name, with no extension, so it claims a segment the way a folder does.
+    const GENERATED_IMAGE = /^((?:opengraph|twitter)-image|icon|apple-icon)\d*\.[jt]sx?$/;
     const segments = (dir: string): string[] =>
-      entries(dir)
-        .filter((d) => d.isDirectory())
-        .flatMap((d) => (/^\(.+\)$/.test(d.name) ? segments(path.join(dir, d.name)) : [d.name]));
+      entries(dir).flatMap((d) => {
+        if (d.isFile()) return GENERATED_IMAGE.test(d.name) ? [d.name.replace(/\.[jt]sx?$/, '')] : [];
+        if (!d.isDirectory()) return [];
+        return /^\(.+\)$/.test(d.name) ? segments(path.join(dir, d.name)) : [d.name];
+      });
     const statics = segments(app).filter((name) => !name.startsWith('['));
     const publicNames = entries(path.resolve(__dirname, '../../public')).map((d) => d.name);
     expect(statics.length).toBeGreaterThan(0);
