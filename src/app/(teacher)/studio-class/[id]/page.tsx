@@ -103,7 +103,7 @@ export default async function StudioClassDetailPage({
     <OfflineSnapshot {...stamp}>
       <PageHeader
         title={entry.classType || studioClass.location}
-        backHref="/"
+        backHref="/schedule"
         backLabel="Schedule"
       />
 
