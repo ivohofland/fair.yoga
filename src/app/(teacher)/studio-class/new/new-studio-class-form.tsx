@@ -208,7 +208,7 @@ export function NewStudioClassForm({ currency }: { currency: Currency }) {
 
   return (
     <>
-      <PageHeader title="Log studio class" backHref="/" backLabel="Schedule" />
+      <PageHeader title="Log studio class" backHref="/schedule" backLabel="Schedule" />
       <p className="type-caption -mt-4 mb-6">
         Teach at this studio every week?{' '}
         <Link href="/settings/studio-classes/new" className="text-teal no-underline">

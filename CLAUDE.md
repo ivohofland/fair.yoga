@@ -237,7 +237,7 @@ Key design decisions:
 
 **Bottom tab bar** — 64px, exactly 4 tabs with Lucide-style line icons:
 
-**Schedule** (home, `/`) · **Students** (CRM) · **Inbox** (notifications) · **Settings** (index page: recurring, studio classes, rooms, profile)
+**Schedule** (home, `/schedule`) · **Students** (CRM) · **Inbox** (notifications) · **Settings** (index page: recurring, studio classes, rooms, profile)
 
 - The tab bar renders only on the four tab roots; active tab = teal icon + label in a teal-tint pill, gold dot on Inbox when unread.
 - **Detail views are separate pages** — tapping a class, student, or notification opens a full page with a back link; the tab bar hides there.

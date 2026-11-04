@@ -363,7 +363,7 @@ export default async function ClassDetailPage({
     >
       <PageHeader
         title={cls.calendarEntry.classType}
-        backHref="/" backLabel="Schedule"
+        backHref="/schedule" backLabel="Schedule"
         action={
           !cancelled && cls.status === 'draft'
             ? <PublishClassButton classId={cls.id} />
