@@ -1207,6 +1207,21 @@ Rejected:
 - **Split by ceremony** (presence for registration, verification for sign-in).
   A key registered without verification could then never sign in.
 
+### Passkey key algorithms
+
+`SUPPORTED_ALGORITHM_IDS` (`src/lib/auth/passkey.ts`) is what registration
+offers and what its verifier accepts: Ed25519, ES256, RS256. `@simplewebauthn/server`
+14 otherwise puts ML-DSA-44 first on a runtime that supports it, and accepts one
+on registration, and this app declines that for now:
+
+- Verifying an ML-DSA-44 signature needs Node's Web Crypto support for it, which
+  Node marks experimental and may change. Sign-in should not depend on that.
+- A passkey registered with it cannot sign in on `@simplewebauthn/server` 13, so
+  it would make a rollback lock its owner out of that passkey.
+- Few authenticators produce one yet, so declining costs almost nothing.
+
+Sign-in is not restricted: it verifies against the algorithm in the stored key.
+
 ### Passkey challenge store
 
 `src/lib/auth/passkey.ts` keeps WebAuthn challenges in memory, one bounded

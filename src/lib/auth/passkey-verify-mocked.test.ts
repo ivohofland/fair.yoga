@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { log } from '@/lib/log';
-import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/server';
 
 // Mocks `@simplewebauthn/server`'s verify calls directly, so each case states
 // the library outcome it needs instead of building a response that produces

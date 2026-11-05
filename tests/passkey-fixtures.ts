@@ -5,9 +5,9 @@
  * response can target the unit tier's stubbed environment or the app under
  * test.
  */
-import { createHash, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { cose, isoBase64URL, isoCBOR } from '@simplewebauthn/server/helpers';
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 /** The challenge a wrong-challenge `clientDataJSON` names. */
 export const WRONG_CHALLENGE = 'not-the-issued-challenge';
@@ -43,6 +43,24 @@ export function coseES256PublicKey(publicKey: KeyObject): Uint8Array {
   );
 }
 
+/**
+ * A COSE ML-DSA-44 (`alg: -48`) public key of the right length. Its bytes are
+ * random: a `fmt: 'none'` attestation verifies no signature with them, so the
+ * only thing this key exercises is the verifier's algorithm check.
+ */
+export function coseMlDsa44PublicKey(): Uint8Array {
+  const COSE_KTY_AKP = 7;
+  const COSE_ALG_ML_DSA_44 = -48;
+  const COSE_AKP_PUB = -1;
+  return isoCBOR.encode(
+    new Map<number, number | Uint8Array>([
+      [cose.COSEKEYS.kty, COSE_KTY_AKP],
+      [cose.COSEKEYS.alg, COSE_ALG_ML_DSA_44],
+      [COSE_AKP_PUB, new Uint8Array(randomBytes(1312))],
+    ]),
+  );
+}
+
 /** What a verifier will expect: the issued challenge, its origin and its RP ID. */
 export interface ExpectedCeremony {
   challenge: string;
@@ -62,7 +80,8 @@ function clientDataJSON(type: 'webauthn.create' | 'webauthn.get', expected: Expe
  * that knows the issued challenge, the origin and the RP ID can build one.
  * `authDataCredentialId` is the id written into the authenticator data — the
  * one the library returns — independently of `responseId`. The credential
- * key is a fresh P-256 key; nothing verifies a signature with it.
+ * key is a fresh P-256 key unless `credentialPublicKey` names another; nothing
+ * verifies a signature with it.
  *
  * `userVerified: false` clears the UV flag and nothing else, so the library
  * refuses the response at its user-verification check.
@@ -72,9 +91,12 @@ export function forgedNoneRegistration(
     authDataCredentialId: Uint8Array;
     responseId: string;
     userVerified?: boolean;
+    credentialPublicKey?: Uint8Array;
   },
 ): RegistrationResponseJSON {
-  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const credentialPublicKey =
+    params.credentialPublicKey ??
+    coseES256PublicKey(generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey);
   // UP | AT, plus UV unless `userVerified` is false: user present, attested
   // credential data, user verified.
   const flags = Uint8Array.of(0x01 | 0x40 | (params.userVerified === false ? 0 : 0x04));
@@ -90,7 +112,7 @@ export function forgedNoneRegistration(
       aaguid,
       credentialIdLength,
       params.authDataCredentialId,
-      coseES256PublicKey(publicKey),
+      credentialPublicKey,
     ]),
   );
 

@@ -5,17 +5,15 @@ import {
   verifyAuthenticationResponse,
 } from '@simplewebauthn/server';
 import type {
-  AuthenticatorTransportFuture,
+  AuthenticatorTransport,
   VerifiedRegistrationResponse,
   VerifiedAuthenticationResponse,
-} from '@simplewebauthn/server';
-import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
   AuthenticationResponseJSON,
   UserVerificationRequirement,
-} from '@simplewebauthn/types';
+} from '@simplewebauthn/server';
 import { log } from '@/lib/log';
 import { adminOrigin } from '@/lib/admin-host';
 
@@ -286,22 +284,20 @@ function warnRefused(ceremony: PasskeyCeremony, credentialId: string, cause: Ref
  * caller's own `params.response.response.transports`: the library passes it
  * through unchecked, and no attestation format's signature covers it, so
  * despite its declared type it can hold any value the caller sent —
- * including values that are not `AuthenticatorTransportFuture` members at
- * all. `satisfies Record<AuthenticatorTransportFuture, true>` makes a new
+ * including values that are not `AuthenticatorTransport` members at
+ * all. `satisfies Record<AuthenticatorTransport, true>` makes a new
  * member of that type a compile error here, rather than a filter silently
  * missing it.
  */
 const KNOWN_TRANSPORTS = {
   ble: true,
-  cable: true,
   hybrid: true,
   internal: true,
   nfc: true,
-  'smart-card': true,
   usb: true,
-} as const satisfies Record<AuthenticatorTransportFuture, true>;
+} as const satisfies Record<AuthenticatorTransport, true>;
 
-function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture {
+function isKnownTransport(value: unknown): value is AuthenticatorTransport {
   return typeof value === 'string' && Object.hasOwn(KNOWN_TRANSPORTS, value);
 }
 
@@ -317,6 +313,15 @@ function isKnownTransport(value: unknown): value is AuthenticatorTransportFuture
  * decision.
  */
 const USER_VERIFICATION: UserVerificationRequirement = 'required';
+
+/**
+ * The key algorithms a passkey may use: Ed25519, ES256, RS256, most preferred
+ * first. One declaration so what registration offers and what its verifier
+ * accepts cannot disagree. See docs/technical-architecture.md ("Passkey key
+ * algorithms") for why ML-DSA-44, the library's default first choice, is left
+ * out.
+ */
+const SUPPORTED_ALGORITHM_IDS = [-8, -7, -257];
 
 // ---------------------------------------------------------------------------
 // Registration
@@ -341,6 +346,7 @@ export async function generatePasskeyRegistrationOptions(params: {
       residentKey: 'preferred',
       userVerification: USER_VERIFICATION,
     },
+    supportedAlgorithmIDs: SUPPORTED_ALGORITHM_IDS,
   });
 
   storeChallenge('registration', accountId, options.challenge);
@@ -379,7 +385,7 @@ export async function verifyPasskeyRegistration(params: {
       credentialId: string;
       publicKey: Uint8Array;
       counter: number;
-      transports: AuthenticatorTransportFuture[];
+      transports: AuthenticatorTransport[];
     }
   | { verified: false; reason: string }
 > {
@@ -391,6 +397,7 @@ export async function verifyPasskeyRegistration(params: {
       expectedOrigin: getExpectedOrigin(),
       expectedRPID: getRpId(),
       requireUserVerification: USER_VERIFICATION === 'required',
+      supportedAlgorithmIDs: SUPPORTED_ALGORITHM_IDS,
     });
   } catch (error) {
     const cause = describeCaught(error);

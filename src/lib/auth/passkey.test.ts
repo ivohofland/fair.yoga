@@ -2,7 +2,7 @@ import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { log } from '@/lib/log';
-import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/types';
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from '@simplewebauthn/server';
 import {
   storeChallenge,
   getAndDeleteChallenge,
@@ -16,6 +16,7 @@ import {
 } from './passkey';
 import {
   coseES256PublicKey,
+  coseMlDsa44PublicKey,
   forgedNoneRegistration,
   signedAssertion,
   wrongChallengeClientDataJSON,
@@ -271,6 +272,16 @@ describe('generatePasskeyRegistrationOptions', () => {
 
     expect(options.authenticatorSelection?.userVerification).toBe('required');
   });
+
+  it('offers Ed25519, ES256 and RS256, in that order, and no post-quantum algorithm', async () => {
+    const options = await generatePasskeyRegistrationOptions({
+      accountId: 'alg-test',
+      userName: 'alg@example.com',
+      userDisplayName: 'Alg',
+    });
+
+    expect(options.pubKeyCredParams.map((param) => param.alg)).toEqual([-8, -7, -257]);
+  });
 });
 
 describe('generatePasskeyAuthenticationOptions', () => {
@@ -425,6 +436,25 @@ describe('verifyPasskeyRegistration, forged fmt: none attestation', () => {
       throw new Error(`expected a verified result, got: ${result.reason}`);
     }
     expect(result.credentialId).toBe(responseId);
+  });
+
+  it('refuses a credential whose key is ML-DSA-44, an algorithm it never offered', async () => {
+    const credentialId = new Uint8Array(randomBytes(16));
+    const response = forgedNoneRegistration({
+      ...FORGED,
+      authDataCredentialId: credentialId,
+      responseId: isoBase64URL.fromBuffer(credentialId),
+      credentialPublicKey: coseMlDsa44PublicKey(),
+    });
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+
+    const result = await verifyPasskeyRegistration({
+      response,
+      expectedChallenge: FORGED_CHALLENGE,
+    });
+
+    expect(result.verified).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('refuses, with one warn, a response whose authenticator did not verify the user', async () => {

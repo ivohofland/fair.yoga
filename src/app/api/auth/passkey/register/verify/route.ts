@@ -10,7 +10,7 @@ import {
   withErrorHandler,
 } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
-import type { RegistrationResponseJSON } from '@simplewebauthn/types';
+import type { RegistrationResponseJSON } from '@simplewebauthn/server';
 import { passkeyRegisterVerifySchema } from '@/lib/schemas';
 import { deliverPasskeyAddedNotice } from '@/services/passkey-notice';
 
