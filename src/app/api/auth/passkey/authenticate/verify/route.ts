@@ -9,7 +9,7 @@ import {
 import { respondOk, respondError, parseBody, withErrorHandler } from '@/lib/api-utils';
 import { prisma } from '@/lib/db';
 import { log } from '@/lib/log';
-import type { AuthenticationResponseJSON } from '@simplewebauthn/types';
+import type { AuthenticationResponseJSON } from '@simplewebauthn/server';
 import { passkeyAuthVerifySchema, TEACHER_PROFILE_PATH } from '@/lib/schemas';
 import { liveProfile } from '@/lib/live-profile';
 
