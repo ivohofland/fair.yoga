@@ -42,6 +42,8 @@ let teacherId: string;
 let teacherToken: string;
 let roomId: string;
 let classId: string;
+/** The seeded class's calendar date (midnight UTC of a Tuesday). */
+let classDate: Date;
 let studioTemplateId: string;
 
 async function signIn(context: BrowserContext): Promise<void> {
@@ -265,6 +267,7 @@ test.describe('Visual regression', () => {
     // date would render a changing "Week of …" heading, which is not
     // masked — headers share type-subtitle with card titles).
     const soon = tuesdayOfNextLocalWeek(new Date(), TEACHER_TIME_ZONE);
+    classDate = soon;
     const cls = await createClassFixture(prisma, {
         teacherId,
         teacherRoomId: teacherRoom.id,
@@ -398,6 +401,12 @@ test.describe('Visual regression', () => {
 
   test('teacher schedule', async ({ page, context }) => {
     await signIn(context);
+    // The schedule's "now" line reads the browser clock and names the next
+    // class's day in words — "Tuesday at 09:00" would trip DATE_SMELL and
+    // change with the run day. Pinned to midday UTC on the Monday before the
+    // seeded class, which is Monday in Amsterdam in either offset, the label
+    // always reads "tomorrow at 09:00".
+    await page.clock.setFixedTime(new Date(classDate.getTime() - 12 * 60 * 60 * 1000));
     const hydrated = hydrationSignal(page);
     await page.goto('/schedule');
     await expect(page.getByText('Visual Vinyasa')).toBeVisible();

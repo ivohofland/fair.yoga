@@ -121,6 +121,7 @@ export default async function SchedulePage() {
           emptyMessage="No classes this week"
           showAddLink={false}
           dimPast
+          showNow
         />
       </div>
 

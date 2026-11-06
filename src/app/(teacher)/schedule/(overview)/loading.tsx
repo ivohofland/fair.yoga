@@ -1,5 +1,5 @@
 import { ScheduleHeaderSkeleton } from '@/components/schedule/schedule-header';
-import { ClassListSkeleton } from '@/components/schedule/class-list';
+import { ClassListSkeleton } from '@/components/schedule/class-list-skeleton';
 
 export default function ScheduleLoading() {
   return (
