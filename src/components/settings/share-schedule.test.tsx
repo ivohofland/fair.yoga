@@ -92,6 +92,13 @@ describe('ShareSchedule', () => {
     expect(within(sheet).getByText('Students subscribed to your calendar feed will stop getting updates.')).toBeInTheDocument();
   });
 
+  it('opens the reset sheet with Cancel focused, not the Reset key button above it', async () => {
+    renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Reset embed key…' }));
+    const sheet = await screen.findByRole('dialog', { hidden: true });
+    await waitFor(() => expect(within(sheet).getByRole('button', { name: 'Cancel', hidden: true })).toHaveFocus());
+  });
+
   it('shows a failed turn-off inside the sheet, where the page behind is inert', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline'); }));
     renderPage();

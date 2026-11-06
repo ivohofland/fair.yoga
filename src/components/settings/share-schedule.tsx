@@ -299,7 +299,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
             >
               Reset key
             </Button>
-            <Button variant="ghost" autoFocus onClick={() => setSheet(null)} disabled={busy}>Cancel</Button>
+            <Button variant="ghost" data-autofocus onClick={() => setSheet(null)} disabled={busy}>Cancel</Button>
           </div>
         </Sheet>
       )}
@@ -313,7 +313,7 @@ export function ShareSchedule({ origin, slug, initial }: ShareScheduleProps) {
           </ul>
           {error && <p role="alert" className="type-label text-danger mb-4">{error}</p>}
           <div className="flex flex-col gap-3">
-            <Button autoFocus onClick={() => setSheet(null)} disabled={busy}>Keep sharing</Button>
+            <Button data-autofocus onClick={() => setSheet(null)} disabled={busy}>Keep sharing</Button>
             <Button
               variant="destructive"
               disabled={busy}

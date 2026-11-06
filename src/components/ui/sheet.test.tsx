@@ -61,6 +61,18 @@ describe('Sheet under StrictMode', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('focuses the descendant marked data-autofocus once open, though another comes first', () => {
+    const view = render(
+      <StrictMode>
+        <Sheet title="Reset" onClose={vi.fn()}>
+          <button type="button">Reset key</button>
+          <button type="button" data-autofocus>Cancel</button>
+        </Sheet>
+      </StrictMode>,
+    );
+    expect(view.getByRole('button', { name: 'Cancel', hidden: true })).toHaveFocus();
+  });
+
   it('does not report its own close on unmount', () => {
     const { onClose, view } = mount(true);
     flush();

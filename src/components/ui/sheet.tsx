@@ -18,7 +18,11 @@ interface SheetProps {
  * page behind it inert and turns Escape into `cancel`. While `dismissible`,
  * Escape and a tap on the backdrop close it, and so does a close the browser
  * makes on its own; while not, such a close is undone by opening it again.
- * The page does not scroll while it is open. Focus returns to the element
+ * Once open, focus goes to the descendant marked `data-autofocus`, else to
+ * the first focusable one, as `showModal()` chooses. React's `autoFocus` does
+ * not work inside: it focuses before the dialog opens, when nothing in it can
+ * take focus, and it renders no `autofocus` attribute for `showModal()` to
+ * find. The page does not scroll while it is open. Focus returns to the element
  * that held it when the sheet unmounts, if that element is still in the
  * document.
  */
@@ -31,6 +35,7 @@ export function Sheet({ title, onClose, dismissible = true, children }: SheetPro
     if (node === null) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!node.open) node.showModal();
+    node.querySelector<HTMLElement>('[data-autofocus]')?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
