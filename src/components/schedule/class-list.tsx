@@ -1,9 +1,12 @@
 import Link from 'next/link';
-import { ClassCard, ClassCardSkeleton, StudioClassCard, type ClassWithDetails, type StudioClassWithEntry } from '@/components/schedule/class-card';
+import { ClassCard, StudioClassCard, type ClassWithDetails, type StudioClassWithEntry } from '@/components/schedule/class-card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { SkeletonText } from '@/components/ui/skeleton';
 import { FULL_MONTHS } from '@/lib/format';
 import { classStartInstant, startOfLocalWeek, mondayOf } from '@/lib/timezone';
+import { classEndInstant } from '@/lib/finish-window';
+import type { TimelineItem } from '@/lib/now-line';
+import { NowSlot, NowTimeline } from '@/components/schedule/now-timeline';
+import { WEEK_HEADING_GAP, WEEK_ITEMS } from '@/components/schedule/class-list-skeleton';
 
 interface ClassListProps {
   classes: ClassWithDetails[];
@@ -12,6 +15,8 @@ interface ClassListProps {
   emptyMessage?: string;
   showAddLink?: boolean;
   dimPast?: boolean;
+  /** Draw the "now" line and the next/running labels; ascending lists only. */
+  showNow?: boolean;
   sortDesc?: boolean;
 }
 
@@ -31,12 +36,7 @@ type ScheduleItem =
   | { type: 'class'; data: ClassWithDetails; dateTime: Date }
   | { type: 'studio'; data: StudioClassWithEntry; dateTime: Date };
 
-// The week section's heading gap and item stack, shared by the real list
-// and `ClassListSkeleton` so neither can drift from the other's spacing.
-const WEEK_HEADING_GAP = 'mb-3';
-const WEEK_ITEMS = 'flex flex-col gap-3';
-
-export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, sortDesc = false }: ClassListProps) {
+export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage = 'No classes yet', showAddLink = true, dimPast = false, showNow = false, sortDesc = false }: ClassListProps) {
   const now = new Date();
   const thisMonday = startOfLocalWeek(now, timeZone).getTime();
 
@@ -58,7 +58,17 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
 
   const totalCount = items.length;
 
-  return (
+  // Keyed by family as well as id: the two families' ids are separate keyspaces.
+  const slotId = (item: ScheduleItem): string => `${item.type}:${item.data.id}`;
+  const timeline: TimelineItem[] = items.map((item) => ({
+    id: slotId(item),
+    start: item.dateTime.getTime(),
+    end: classEndInstant(item.data.calendarEntry, timeZone).getTime(),
+    cancelled: item.data.calendarEntry.cancelledAt !== null,
+    completed: item.type === 'class' && item.data.status === 'completed',
+  }));
+
+  const list = (
     <div>
       {showAddLink && (
         <div className="mb-4">
@@ -87,9 +97,13 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
               <div className={WEEK_ITEMS}>
                 {group.items.map((item) => {
                   const isPast = dimPast && item.dateTime < now;
-                  return item.type === 'class'
-                    ? <ClassCard key={item.data.id} cls={item.data} isPast={isPast} />
-                    : <StudioClassCard key={item.data.id} sc={item.data} isPast={isPast} />;
+                  return (
+                    <NowSlot key={slotId(item)} id={slotId(item)}>
+                      {item.type === 'class'
+                        ? <ClassCard cls={item.data} isPast={isPast} />
+                        : <StudioClassCard sc={item.data} isPast={isPast} />}
+                    </NowSlot>
+                  );
                 })}
               </div>
             </section>
@@ -98,19 +112,8 @@ export function ClassList({ classes, studioClasses = [], timeZone, emptyMessage 
       )}
     </div>
   );
-}
 
-// Loading state for one week section: a heading placeholder above `cards`
-// `ClassCardSkeleton`s, in the same frame the real list's section uses.
-export function ClassListSkeleton({ cards = 3 }: { cards?: number }) {
-  return (
-    <div aria-hidden="true">
-      <section>
-        <SkeletonText type="type-subtitle" width="w-1/4" className={WEEK_HEADING_GAP} />
-        <div className={WEEK_ITEMS}>
-          {Array.from({ length: cards }, (_, i) => <ClassCardSkeleton key={i} />)}
-        </div>
-      </section>
-    </div>
-  );
+  return showNow
+    ? <NowTimeline items={timeline} timeZone={timeZone} serverNow={now.getTime()}>{list}</NowTimeline>
+    : list;
 }

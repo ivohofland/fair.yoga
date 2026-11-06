@@ -15,10 +15,5 @@
     "baselineSha256": "bd49541dbb0465ba062c51b301664657d2c17725164dc96d99384bf528363d43",
     "verifiedAt": "2026-10-31",
     "note": "The /[slug] listing moved to listPublicSchedule and gained a subscribe link shown only when sharing is on (#916)"
-  },
-  "schedule": {
-    "sourceSha256": "4e385e13c2a7fde59e7b07c98b53ae382ed631fa72379552dabffc5baf8a43d1",
-    "baselineSha256": "d5697c592786a44090583406895c20fa4dca0094e9b3cd3144b71dfc4b5e0d0c",
-    "verifiedAt": "2026-10-10"
   }
 }
