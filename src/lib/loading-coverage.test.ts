@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { CLIENT_DIRECTIVE, SRC, chainsTo } from './import-walk';
 
-const SRC = path.resolve(__dirname, '..');
 const APP = path.join(SRC, 'app');
 
 /**
@@ -199,53 +199,14 @@ describe('every navigation between two pages paints the new page\'s loading stat
   });
 });
 
-const CLIENT_DIRECTIVE = /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*['"]use client['"]/;
-
-function resolveImport(from: string, specifier: string): string | null {
-  const base = specifier.startsWith('@/')
-    ? path.join(SRC, specifier.slice(2))
-    : specifier.startsWith('.')
-    ? path.resolve(path.dirname(from), specifier)
-    : null;
-  if (base === null) return null;
-  const candidates = [base, `${base}.tsx`, `${base}.ts`, path.join(base, 'index.tsx'), path.join(base, 'index.ts')];
-  return candidates.find((c) => existsSync(c) && !statSync(c).isDirectory()) ?? null;
-}
-
-// Every value import and re-export (`import type` / `export type` is erased,
-// so it is skipped), with its specifier.
-const IMPORT = /(?:^|\n)\s*(?:import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?['"]([^'"]+)['"]/g;
-
 // A loading.tsx's fallback that renders a client component cannot paint until
 // that component's JS has loaded; until then it suspends and the boundary
 // above shows its own fallback instead (docs/design-brief.md, Loading states).
+// Bare package imports (`next/link`, `next/image`) are not followed:
+// skeletons render no framework components.
 describe('every loading.tsx paints without waiting for JS', () => {
   it('reaches no \'use client\' module through its imports, however indirectly', () => {
-    const offending = loadings.flatMap((loading) => {
-      const found: string[] = [];
-      const visited = new Set<string>([loading]);
-      const queue: string[][] = [[loading]];
-      for (let chain = queue.shift(); chain !== undefined; chain = queue.shift()) {
-        const file = chain[chain.length - 1] ?? loading;
-        for (const [, typeOnly, specifier] of readFileSync(file, 'utf8').matchAll(IMPORT)) {
-          // Bare package imports (`next/link`, `next/image`) are not followed:
-          // skeletons render no framework components.
-          if (typeOnly !== undefined || specifier === undefined) continue;
-          if (!specifier.startsWith('@/') && !specifier.startsWith('.')) continue;
-          const show = (tail: string) => [...chain.map((f) => path.relative(SRC, f)), tail].join(' → ');
-          const target = resolveImport(file, specifier);
-          if (target === null) {
-            found.push(show(`${specifier} (unresolved)`));
-            continue;
-          }
-          if (visited.has(target)) continue;
-          visited.add(target);
-          if (CLIENT_DIRECTIVE.test(readFileSync(target, 'utf8'))) found.push(show(path.relative(SRC, target)));
-          else queue.push([...chain, target]);
-        }
-      }
-      return found;
-    });
+    const offending = loadings.flatMap((loading) => chainsTo(loading, (source) => CLIENT_DIRECTIVE.test(source)));
     expect(offending).toEqual([]);
   });
 });
