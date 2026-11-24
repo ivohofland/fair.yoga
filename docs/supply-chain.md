@@ -684,6 +684,12 @@ Measured 2026-10-28, after the `zod` 4.6.7 bump (#928): whole tree `{ low: 4,
 moderate: 19, high: 18, critical: 0 }` — the zod finding was the one high it
 lost; `--prod` every severity 0, no finding.
 
+Measured 2026-11-24, after the `eslint` 9.39.5 / `vitest` 4.1.12 bump and a
+`pnpm update <package> --depth 99` of every transitive package then flagged
+whose dependent's range admitted the patch: whole tree `{ low: 0, moderate: 1,
+high: 1, critical: 0 }`; `--prod` `{ high: 1 }` — `effect` alone
+(GHSA-7589-6fvf-x4pw, `<=3.22.0`), published against an unchanged Prisma.
+
 **`--prod` is a proxy for "could plausibly execute at runtime somewhere", not
 a description of any image this repo builds.** Neither of the two stages
 that ship matches it:
@@ -700,7 +706,7 @@ that ship matches it:
   history.)
   Check what is really in it with
   ```bash
-  for p in nanoid baseline-browser-mapping postcss prisma @prisma/config deepmerge-ts browserslist @babel/core; do
+  for p in nanoid baseline-browser-mapping postcss prisma @prisma/config deepmerge-ts effect browserslist @babel/core; do
     [ -d ".next-build/standalone/node_modules/$p" ] && echo "$p present" || echo "$p absent"
   done
   ```
@@ -725,9 +731,12 @@ standalone-image check above confirms it: `browserslist` never reaches the
 image that actually ships. It is exactly the situation this section already
 warns about, from a fresh package.
 
-**In the production dependency tree:** none, as of the 2026-10-28 zod
-measurement above. A finding that appears goes in a table here with the
-columns Package, Reached through, and Forward fix.
+**In the production dependency tree**, as of the 2026-11-24 measurement
+above:
+
+| Package | Reached through | Forward fix |
+|---|---|---|
+| `effect` | `@prisma/client` → `prisma` → `@prisma/config` | None short of a Prisma release: `@prisma/config@7.10.1` pins `effect` exactly to `3.20.0`, below the patched `>=3.22.1`. Absent from the `runner` image by the check above. |
 
 Re-derive the "reached through" column with `pnpm why <package> --prod`, and
 the dev-only paragraph below with `pnpm why <package> --dev` — these edges
@@ -746,21 +755,12 @@ dependent. An `overrides` block would work for a range and is the
 wrong tool regardless: heavier, and pinned against a range that will drift.
 Every version that update resolves still has to clear `minimumReleaseAge`.
 
-**Dev-only** — `brace-expansion` (two resolved major versions, both entirely
-inside the eslint/typescript-eslint toolchain), `@humanfs/node` (through
-`eslint` directly) and `js-yaml` (through `@eslint/eslintrc` → `eslint`),
-`vitest` (a direct devDependency) and `@vitest/mocker` (not one: it arrives
-through `vitest` and `@vitest/coverage-v8`, which are), the last two sharing
-one advisory — a path-traversal / arbitrary-file-read via `@vitest/mocker`'s
-redirect mock, GHSA-82fw-gwwq-j7x9, and `@vitest/mocker` alone carrying a
-second, code injection via unauthenticated manual-mock registration,
-GHSA-qxg6-89mg-rqv8; `vite` (through `vitest`), `undici`
-(through `jsdom`) and `fast-copy` (through `pino-pretty`). They run against
-this repo's own source on a developer's machine and on CI, and every advisory
-among them needs hostile input fed to the tool — which here would mean this
-repo's own files. Mostly denial-of-service, though not only:
-`@humanfs/node`'s GHSA-p498-v437-472g is a symlink escape during a recursive
-copy.
+**Dev-only** — `minimatch` 10.x (GHSA-g3hv-75wg-m249), through
+`@typescript-eslint/typescript-estree`, whose `^10.2.2` range stops short of
+the patched `>=11.0.1`, so it has no forward fix short of a typescript-eslint
+release. It runs against this repo's own source on a developer's machine and
+on CI, and the advisory is a denial of service that needs a hostile glob
+pattern fed to the tool — which here would mean this repo's own files.
 
 So the step reports real things, and none of them is a reason to stop a pull
 request that did not cause them. What would change that: an advisory against
