@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { type PrismaClient } from '@/lib/prisma-client';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
+import { createHash } from 'node:crypto';
 import type { SessionUser, TeacherSession } from '../types';
 import {
   SESSION_COOKIE_NAME,
@@ -30,8 +29,7 @@ let dualTeacherId: string;
 let dualStudentId: string;
 
 function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
+  return createHash('sha256').update(token).digest('hex');
 }
 
 /**

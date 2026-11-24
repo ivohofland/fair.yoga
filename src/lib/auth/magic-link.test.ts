@@ -21,6 +21,23 @@ function cleanupEmail(tag: string): string {
   return `${CLEANUP_PREFIX}${tag}-${Date.now()}@test.local`;
 }
 
+// Stored rows are keyed by this hash, so its output is a compatibility
+// contract with every token already in the database. Expected values come
+// from `shasum -a 256`, not from the implementation under test.
+describe('hashToken', () => {
+  it('is lowercase-hex SHA-256 of the token', () => {
+    expect(hashToken('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
+  it('hashes the UTF-8 bytes of a non-ASCII token', () => {
+    expect(hashToken('pré-🧘')).toBe(
+      '48efa6962964aedc60781297ac5d20ad97a4d329352d8a2a9754865640e5cf51',
+    );
+  });
+});
+
 beforeAll(async () => {
   await db.$connect();
 });
