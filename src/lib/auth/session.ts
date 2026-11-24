@@ -1,8 +1,6 @@
 import crypto from 'crypto';
 import type { NextRequest } from 'next/server';
 import type { PrismaClient } from '@/lib/prisma-client';
-import { sha256 } from '@oslojs/crypto/sha2';
-import { encodeHexLowerCase } from '@oslojs/encoding';
 import type { SessionUser } from '../types';
 import { liveProfile } from '@/lib/live-profile';
 import { isRecordNotFound } from '@/lib/api-errors';
@@ -15,8 +13,7 @@ const ABSOLUTE_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
 const ABSOLUTE_LIFETIME_SECONDS = ABSOLUTE_LIFETIME_MS / 1000;
 
 function hashToken(token: string): string {
-  const bytes = sha256(new TextEncoder().encode(token));
-  return encodeHexLowerCase(bytes);
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 /**

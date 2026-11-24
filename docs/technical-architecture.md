@@ -8,7 +8,7 @@
 | Language | TypeScript (strict mode) | `strict: true` in tsconfig. No `any`, no implicit types. Catches bugs at compile time, makes volunteer contributions safer. |
 | Database | PostgreSQL | Relational model fits the data perfectly (see data-model.md). Mature, free, low resource usage. |
 | ORM | Prisma | Type-safe queries generated from schema. Strict TypeScript integration. Easy for volunteers to understand. |
-| Auth | Custom (magic link + passkeys) | Magic links via email. WebAuthn/passkeys for returning users. No passwords, no SMS (cost). Tokens are `crypto.randomBytes`, hashed with `@oslojs/crypto` before storage — nothing is signed. `@simplewebauthn/server` handles passkey verification. |
+| Auth | Custom (magic link + passkeys) | Magic links via email. WebAuthn/passkeys for returning users. No passwords, no SMS (cost). Tokens are `crypto.randomBytes`, hashed with `node:crypto` (SHA-256) before storage — nothing is signed. `@simplewebauthn/server` handles passkey verification. |
 | Email | Lettermint (HTTP API, EU-hosted) | Transactional email for magic links, invitations, payment reminders, class reminders, notification fallback. The provider sits behind `sendEmail` (`src/lib/email.ts`); only `src/lib/email-lettermint.ts` talks to it. |
 | Payments | Mollie (EU) / Stripe (US) | Level 1 doesn't need these (manual tracking). Level 2 uses the Mollie Payments API with one method per payment — no card-on-file, no subscriptions. |
 | Styling | Tailwind CSS | Utility-first, matches the warm minimalist design brief. No custom CSS files to maintain. |
@@ -963,7 +963,7 @@ return {
 ### Magic Link (primary)
 
 Nothing here is signed. The token is `crypto.randomBytes(32)`, unguessable on
-its own merits; `@oslojs/crypto`'s only job is hashing it (SHA-256) before the
+its own merits; the only cryptography applied is hashing it (SHA-256) before the
 row is written, so a database read yields no usable token — same shape as a
 password hash, not a signature.
 

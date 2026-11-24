@@ -39,8 +39,6 @@
     "worktree:down": "tsx scripts/worktree-down.ts"
   },
   "dependencies": {
-    "@oslojs/crypto": "^1.0.1",
-    "@oslojs/encoding": "^1.1.0",
     "@prisma/adapter-pg": "7.10.1",
     "@prisma/client": "7.10.1",
     "@simplewebauthn/browser": "^14.0.0",
